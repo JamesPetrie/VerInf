@@ -1,6 +1,6 @@
-# infproof: zero-knowledge proofs of LLM inference
+# VerInf: zero-knowledge proofs of LLM inference
 
-infproof produces zero-knowledge proofs of LLM inference for large models. It has
+VerInf produces zero-knowledge proofs of LLM inference for large models. It has
 proven a 400B-parameter model, runs the prover on a single consumer NVIDIA DGX Spark,
 and relies only on hash-based commitments, so there is no trusted setup and the
 construction is plausibly post-quantum. The proof reveals nothing about the weights,
@@ -12,7 +12,7 @@ small Rust verifier checks the proof.
 
 Real inference runs in floating point, outside the finite field the proof works over,
 and is nondeterministic (summation order alone changes the result). Instead of
-requiring a bit-exact rerun, infproof proves that the committed outputs are well
+requiring a bit-exact rerun, VerInf proves that the committed outputs are well
 explained by a finite-field computation, and bounds the unexplained information: the
 output bits that computation does not account for. Proving similarity rather than
 exact reproduction is what lets it target a real, already-trained model, not just
@@ -25,7 +25,7 @@ high-stakes inference for bugs or tampering.
 
 ## Status
 
-infproof has produced a sound, four-round Ligero proof of a 1093-token forward pass of
+VerInf has produced a sound, four-round Ligero proof of a 1093-token forward pass of
 the full 48-layer Llama 4 Maverick (a 400B-parameter mixture of experts, all 128
 experts committed per MoE layer): 19.3 hours to prove on a single DGX Spark at a
 prover peak of 77.6 GB GPU memory, certifying an unexplained-information bound of
@@ -49,12 +49,12 @@ peak, and its 1.4 GB proof verifies in about 24 minutes on 20 CPU cores.
 
 To our knowledge, published zero-knowledge inference work has reached about 13B
 parameters (Sun, Li, and Zhang 2024 report 13 minutes for LLaMA-2 13B at 2,048 tokens
-on an A100). infproof reaches 400B, about thirty times larger, with a full prover and
+on an A100). VerInf reaches 400B, about thirty times larger, with a full prover and
 verifier checked end to end.
 
-infproof also differs in what it proves. Earlier inference proofs require the
+VerInf also differs in what it proves. Earlier inference proofs require the
 computation to match the integer proof structure exactly, so they cannot target a real
-model whose inference runs in floating point. infproof instead proves that the
+model whose inference runs in floating point. VerInf instead proves that the
 committed output tokens are well explained by a policy-compliant integer computation
 on the measured inputs, and bounds the output information that computation does not
 account for. Floating-point inference is nondeterministic (summation order alone
@@ -71,18 +71,18 @@ logit-noise model:        Q_i(o_i) proportional to exp(-(v* - l_i)^2 / sigma^2),
 
 A poor prediction only inflates the prover's own number, so Q can be left to the
 prover, who is best placed to make it accurate. Checking prediction quality rather
-than exact reproduction lets infproof certify the bound for a real, previously trained
+than exact reproduction lets VerInf certify the bound for a real, previously trained
 model: the weights, inputs, and output tokens stay committed and hidden, and only the
 bound is revealed. The formulation and security analysis are in the
 unexplained-information paper (PDF in this repository).
 
 ## The argument: Ligero over Goldilocks
 
-infproof uses Ligero because the setting tolerates large proofs and verifier work
+VerInf uses Ligero because the setting tolerates large proofs and verifier work
 (verification is occasional and offline), so we can favor a simple construction with a
 small verifier over proof size. Ligero arranges the committed values as a 2D array,
 supports a linear test and a Hadamard (quadratic) test over them, and opens a random
-subset of columns to bind the commitment. infproof stacks the weights, intermediate
+subset of columns to bind the commitment. VerInf stacks the weights, intermediate
 activations, and auxiliary witnesses as separate blocks of one such array, each with
 its own Merkle root.
 
@@ -286,7 +286,7 @@ larger models and longer contexts within a fixed time budget.
 
 **Quickstart: one command.** With the gated `Llama-2-7b-hf` checkpoint downloaded
 (`huggingface-cli login` then `huggingface-cli download meta-llama/Llama-2-7b-hf`, or
-set `INFPROOF_GATE_MODEL` to a local path), a CUDA GPU, and Rust installed, run the
+set `VERINF_GATE_MODEL` to a local path), a CUDA GPU, and Rust installed, run the
 prove-then-verify gate:
 ```sh
 python demo/gate.py

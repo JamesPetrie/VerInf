@@ -15,7 +15,7 @@ Requirements:
   * The Llama-2-7B weights, downloaded (the model is gated):
         huggingface-cli login
         huggingface-cli download meta-llama/Llama-2-7b-hf
-    or set INFPROOF_GATE_MODEL to a local path.
+    or set VERINF_GATE_MODEL to a local path.
   * A CUDA GPU (the prover JIT-compiles CUDA kernels on first run).
   * Rust/cargo (the verifier is auto-built on first run).
 
@@ -23,8 +23,8 @@ Knobs (env):
   LIGERO_T_QUERIES    opened columns, default 10 here (GATE speed; production
                       soundness is 80 -- this is a regression check, not a
                       soundness-grade proof).
-  INFPROOF_GATE_MODEL HF id or local path (default meta-llama/Llama-2-7b-hf).
-  INFPROOF_GATE_LAYERS transformer layers, default 32 (the full model).
+  VERINF_GATE_MODEL HF id or local path (default meta-llama/Llama-2-7b-hf).
+  VERINF_GATE_LAYERS  transformer layers, default 32 (the full model).
 """
 import os
 # Must be set BEFORE importing the demo: the config reads T_QUERIES at import.
@@ -44,8 +44,11 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "prover"))
 sys.path.insert(0, str(ROOT / "demo"))
 
-MODEL = os.environ.get("INFPROOF_GATE_MODEL", "meta-llama/Llama-2-7b-hf")
-LAYERS = int(os.environ.get("INFPROOF_GATE_LAYERS", "32"))
+MODEL = os.environ.get("VERINF_GATE_MODEL",
+                       os.environ.get("INFPROOF_GATE_MODEL",   # legacy name
+                                      "meta-llama/Llama-2-7b-hf"))
+LAYERS = int(os.environ.get("VERINF_GATE_LAYERS",
+                            os.environ.get("INFPROOF_GATE_LAYERS", "32")))
 # "<s> The capital of France is" -- a fixed, deterministic token stream so the
 # gate needs no tokenizer call and is reproducible.
 TOKENS = [1, 450, 7483, 310, 3444, 338]
@@ -75,7 +78,7 @@ def _check_model():
         sys.exit(f"[gate] FAIL: model {MODEL!r} not available ({type(e).__name__}). "
                  "Download it -- the Llama-2 weights are gated: accept the license on HF, "
                  "`huggingface-cli login`, `huggingface-cli download meta-llama/Llama-2-7b-hf` "
-                 "-- or set INFPROOF_GATE_MODEL to a local path.")
+                 "-- or set VERINF_GATE_MODEL to a local path.")
 
 
 def _verifier_bin() -> pathlib.Path:
