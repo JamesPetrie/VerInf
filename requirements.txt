@@ -1,0 +1,12 @@
+# Python dependencies for the Ligero prover (pipeline/).
+#
+# Reference environment: DGX Spark (GB10, sm_121, CUDA 13.0) under a venv.
+# Versions are intentionally unpinned — `torch` in particular must match the
+# local CUDA toolkit. After installing against your GPU, pin your validated
+# set with `pip freeze`.
+torch                # GPU tensor engine; witness generation + the NTT/encode path
+transformers         # Llama-2 model + tokenizer loading
+numpy                # host-side field/index math
+safetensors          # lazy per-tensor weight loading (loader.py)
+blake3               # Fiat-Shamir PRF + Merkle hash (matches verifier-rs)
+ninja                # JIT build backend for the CUDA primitives (cuda_primitives.py)

@@ -1,0 +1,21 @@
+[package]
+name = "ligero-verifier"
+version = "0.1.0"
+edition = "2021"
+
+# Bit-exact Rust port of the Python standalone Ligero verifier
+# (ligero/pipeline/protocol.py + verify.py). The TCB: field, domains, Merkle,
+# the blake3 challenge PRF, the constraint compile, and the 6 checks. No prover
+# logic. Differential-tested against the Python verifier on identical proofs.
+
+[dependencies]
+blake3 = "1"          # SAME hash as Python protocol.py (official crate)
+rayon  = "1"          # data-parallel column/row checks across cores
+serde_json = "1"      # read the claim/proof JSON the Python side dumps
+serde = { version = "1", features = ["derive"] }   # typed streaming parse of
+                      # the proof (Vec<u64>, not a Value DOM) — the full-model
+                      # proof is ~12 GB and a Value DOM OOMs at >120 GB.
+
+[profile.release]
+opt-level = 3
+lto = true

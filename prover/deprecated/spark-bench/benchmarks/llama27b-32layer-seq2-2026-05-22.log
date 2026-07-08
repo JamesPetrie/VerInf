@@ -1,0 +1,184 @@
+=== Llama 2 7B transformer block, production scale ===
+  cfg: ELL=8192, K_DEG=16384, N_LIG=65536, T_QUERIES=80
+  shapes: d=4096, d_ff=11008, SEQ=2, d_h=128, s=2^12
+  weights: HF model 'meta-llama/Llama-2-7b-hf', layers [0, 32)
+  prompt:  'Hello world'
+  prompt tokens (first 2): [1, 15043]
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/291 [00:00<?, ?it/s]Loading weights:  29%|██▉       | 85/291 [00:00<00:00, 819.44it/s]Loading weights:  57%|█████▋    | 167/291 [00:00<00:00, 724.39it/s]Loading weights:  84%|████████▍ | 244/291 [00:00<00:00, 743.63it/s]Loading weights: 100%|██████████| 291/291 [00:00<00:00, 774.78it/s]
+  E subset: 2 rows (full E would be vocab_size × d ≈ 131M cells — see SOUNDNESS NOTE)
+
+--- layer 0 ---
+Loading weights:   0%|          | 0/291 [00:00<?, ?it/s]Loading weights:  34%|███▎      | 98/291 [00:00<00:00, 969.40it/s]Loading weights:  67%|██████▋   | 195/291 [00:00<00:00, 943.62it/s]Loading weights: 100%|█████████▉| 290/291 [00:00<00:00, 723.92it/s]Loading weights: 100%|██████████| 291/291 [00:00<00:00, 777.02it/s]
+  claims: 25  ({'AddClaim': 2, 'EmbeddingLookupClaim': 3, 'FingerprintClaim': 2, 'HadamardClaim': 3, 'MatmulClaim': 9, 'RmsNormClaim': 2, 'RoPEClaim': 2, 'SiluClaim': 1, 'SoftmaxClaim': 1})
+  prove:  59.74s   verify: 14.47s   → ACCEPT  (OK)
+  fp_in (initial residual)  = 6263509753716306501
+
+--- layer 1 ---
+  claims: 24  ({'AddClaim': 2, 'EmbeddingLookupClaim': 2, 'FingerprintClaim': 2, 'HadamardClaim': 3, 'MatmulClaim': 9, 'RmsNormClaim': 2, 'RoPEClaim': 2, 'SiluClaim': 1, 'SoftmaxClaim': 1})
+  prove:  42.29s   verify: 14.91s   → ACCEPT  (OK)
+  link to L0: fp_in == prev fp_out? True  (fp_in=11977746987318384807, prev_fp_out=11977746987318384807)
+
+--- layer 2 ---
+  claims: 24  ({'AddClaim': 2, 'EmbeddingLookupClaim': 2, 'FingerprintClaim': 2, 'HadamardClaim': 3, 'MatmulClaim': 9, 'RmsNormClaim': 2, 'RoPEClaim': 2, 'SiluClaim': 1, 'SoftmaxClaim': 1})
+  prove:  47.96s   verify: 15.14s   → ACCEPT  (OK)
+  link to L1: fp_in == prev fp_out? True  (fp_in=14012744045094270984, prev_fp_out=14012744045094270984)
+
+--- layer 3 ---
+  claims: 24  ({'AddClaim': 2, 'EmbeddingLookupClaim': 2, 'FingerprintClaim': 2, 'HadamardClaim': 3, 'MatmulClaim': 9, 'RmsNormClaim': 2, 'RoPEClaim': 2, 'SiluClaim': 1, 'SoftmaxClaim': 1})
+  prove:  37.80s   verify: 13.89s   → ACCEPT  (OK)
+  link to L2: fp_in == prev fp_out? True  (fp_in=18296090845885843754, prev_fp_out=18296090845885843754)
+
+--- layer 4 ---
+  claims: 24  ({'AddClaim': 2, 'EmbeddingLookupClaim': 2, 'FingerprintClaim': 2, 'HadamardClaim': 3, 'MatmulClaim': 9, 'RmsNormClaim': 2, 'RoPEClaim': 2, 'SiluClaim': 1, 'SoftmaxClaim': 1})
+  prove:  28.91s   verify: 13.71s   → ACCEPT  (OK)
+  link to L3: fp_in == prev fp_out? True  (fp_in=12235992149231541124, prev_fp_out=12235992149231541124)
+
+--- layer 5 ---
+  claims: 24  ({'AddClaim': 2, 'EmbeddingLookupClaim': 2, 'FingerprintClaim': 2, 'HadamardClaim': 3, 'MatmulClaim': 9, 'RmsNormClaim': 2, 'RoPEClaim': 2, 'SiluClaim': 1, 'SoftmaxClaim': 1})
+  prove:  34.16s   verify: 14.28s   → ACCEPT  (OK)
+  link to L4: fp_in == prev fp_out? True  (fp_in=9175942086565862005, prev_fp_out=9175942086565862005)
+
+--- layer 6 ---
+  claims: 24  ({'AddClaim': 2, 'EmbeddingLookupClaim': 2, 'FingerprintClaim': 2, 'HadamardClaim': 3, 'MatmulClaim': 9, 'RmsNormClaim': 2, 'RoPEClaim': 2, 'SiluClaim': 1, 'SoftmaxClaim': 1})
+  prove:  35.88s   verify: 13.41s   → ACCEPT  (OK)
+  link to L5: fp_in == prev fp_out? True  (fp_in=13212241467700382461, prev_fp_out=13212241467700382461)
+
+--- layer 7 ---
+  claims: 24  ({'AddClaim': 2, 'EmbeddingLookupClaim': 2, 'FingerprintClaim': 2, 'HadamardClaim': 3, 'MatmulClaim': 9, 'RmsNormClaim': 2, 'RoPEClaim': 2, 'SiluClaim': 1, 'SoftmaxClaim': 1})
+  prove:  28.29s   verify: 13.43s   → ACCEPT  (OK)
+  link to L6: fp_in == prev fp_out? True  (fp_in=4791698519976563182, prev_fp_out=4791698519976563182)
+
+--- layer 8 ---
+  claims: 24  ({'AddClaim': 2, 'EmbeddingLookupClaim': 2, 'FingerprintClaim': 2, 'HadamardClaim': 3, 'MatmulClaim': 9, 'RmsNormClaim': 2, 'RoPEClaim': 2, 'SiluClaim': 1, 'SoftmaxClaim': 1})
+  prove:  28.10s   verify: 13.50s   → ACCEPT  (OK)
+  link to L7: fp_in == prev fp_out? True  (fp_in=2498366928128823655, prev_fp_out=2498366928128823655)
+
+--- layer 9 ---
+  claims: 24  ({'AddClaim': 2, 'EmbeddingLookupClaim': 2, 'FingerprintClaim': 2, 'HadamardClaim': 3, 'MatmulClaim': 9, 'RmsNormClaim': 2, 'RoPEClaim': 2, 'SiluClaim': 1, 'SoftmaxClaim': 1})
+  prove:  29.04s   verify: 13.69s   → ACCEPT  (OK)
+  link to L8: fp_in == prev fp_out? True  (fp_in=6604803350620360764, prev_fp_out=6604803350620360764)
+
+--- layer 10 ---
+  claims: 24  ({'AddClaim': 2, 'EmbeddingLookupClaim': 2, 'FingerprintClaim': 2, 'HadamardClaim': 3, 'MatmulClaim': 9, 'RmsNormClaim': 2, 'RoPEClaim': 2, 'SiluClaim': 1, 'SoftmaxClaim': 1})
+  prove:  29.35s   verify: 13.54s   → ACCEPT  (OK)
+  link to L9: fp_in == prev fp_out? True  (fp_in=17699334202486359848, prev_fp_out=17699334202486359848)
+
+--- layer 11 ---
+  claims: 24  ({'AddClaim': 2, 'EmbeddingLookupClaim': 2, 'FingerprintClaim': 2, 'HadamardClaim': 3, 'MatmulClaim': 9, 'RmsNormClaim': 2, 'RoPEClaim': 2, 'SiluClaim': 1, 'SoftmaxClaim': 1})
+  prove:  28.07s   verify: 11.21s   → ACCEPT  (OK)
+  link to L10: fp_in == prev fp_out? True  (fp_in=9329348131943239804, prev_fp_out=9329348131943239804)
+
+--- layer 12 ---
+  claims: 24  ({'AddClaim': 2, 'EmbeddingLookupClaim': 2, 'FingerprintClaim': 2, 'HadamardClaim': 3, 'MatmulClaim': 9, 'RmsNormClaim': 2, 'RoPEClaim': 2, 'SiluClaim': 1, 'SoftmaxClaim': 1})
+  prove:  29.59s   verify: 13.66s   → ACCEPT  (OK)
+  link to L11: fp_in == prev fp_out? True  (fp_in=12997054309001471093, prev_fp_out=12997054309001471093)
+
+--- layer 13 ---
+  claims: 24  ({'AddClaim': 2, 'EmbeddingLookupClaim': 2, 'FingerprintClaim': 2, 'HadamardClaim': 3, 'MatmulClaim': 9, 'RmsNormClaim': 2, 'RoPEClaim': 2, 'SiluClaim': 1, 'SoftmaxClaim': 1})
+  prove:  35.82s   verify: 13.73s   → ACCEPT  (OK)
+  link to L12: fp_in == prev fp_out? True  (fp_in=9421525534631431517, prev_fp_out=9421525534631431517)
+
+--- layer 14 ---
+  claims: 24  ({'AddClaim': 2, 'EmbeddingLookupClaim': 2, 'FingerprintClaim': 2, 'HadamardClaim': 3, 'MatmulClaim': 9, 'RmsNormClaim': 2, 'RoPEClaim': 2, 'SiluClaim': 1, 'SoftmaxClaim': 1})
+  prove:  27.33s   verify: 13.58s   → ACCEPT  (OK)
+  link to L13: fp_in == prev fp_out? True  (fp_in=13973236399197289077, prev_fp_out=13973236399197289077)
+
+--- layer 15 ---
+  claims: 24  ({'AddClaim': 2, 'EmbeddingLookupClaim': 2, 'FingerprintClaim': 2, 'HadamardClaim': 3, 'MatmulClaim': 9, 'RmsNormClaim': 2, 'RoPEClaim': 2, 'SiluClaim': 1, 'SoftmaxClaim': 1})
+  prove:  27.57s   verify: 13.63s   → ACCEPT  (OK)
+  link to L14: fp_in == prev fp_out? True  (fp_in=5162118346192115172, prev_fp_out=5162118346192115172)
+
+--- layer 16 ---
+  claims: 24  ({'AddClaim': 2, 'EmbeddingLookupClaim': 2, 'FingerprintClaim': 2, 'HadamardClaim': 3, 'MatmulClaim': 9, 'RmsNormClaim': 2, 'RoPEClaim': 2, 'SiluClaim': 1, 'SoftmaxClaim': 1})
+  prove:  28.03s   verify: 13.99s   → ACCEPT  (OK)
+  link to L15: fp_in == prev fp_out? True  (fp_in=3654140735680781959, prev_fp_out=3654140735680781959)
+
+--- layer 17 ---
+  claims: 24  ({'AddClaim': 2, 'EmbeddingLookupClaim': 2, 'FingerprintClaim': 2, 'HadamardClaim': 3, 'MatmulClaim': 9, 'RmsNormClaim': 2, 'RoPEClaim': 2, 'SiluClaim': 1, 'SoftmaxClaim': 1})
+  prove:  27.75s   verify: 13.69s   → ACCEPT  (OK)
+  link to L16: fp_in == prev fp_out? True  (fp_in=5537759161516708231, prev_fp_out=5537759161516708231)
+
+--- layer 18 ---
+  claims: 24  ({'AddClaim': 2, 'EmbeddingLookupClaim': 2, 'FingerprintClaim': 2, 'HadamardClaim': 3, 'MatmulClaim': 9, 'RmsNormClaim': 2, 'RoPEClaim': 2, 'SiluClaim': 1, 'SoftmaxClaim': 1})
+  prove:  30.56s   verify: 13.83s   → ACCEPT  (OK)
+  link to L17: fp_in == prev fp_out? True  (fp_in=11820268314952870158, prev_fp_out=11820268314952870158)
+
+--- layer 19 ---
+  claims: 24  ({'AddClaim': 2, 'EmbeddingLookupClaim': 2, 'FingerprintClaim': 2, 'HadamardClaim': 3, 'MatmulClaim': 9, 'RmsNormClaim': 2, 'RoPEClaim': 2, 'SiluClaim': 1, 'SoftmaxClaim': 1})
+  prove:  27.35s   verify: 13.73s   → ACCEPT  (OK)
+  link to L18: fp_in == prev fp_out? True  (fp_in=15696431622807534703, prev_fp_out=15696431622807534703)
+
+--- layer 20 ---
+  claims: 24  ({'AddClaim': 2, 'EmbeddingLookupClaim': 2, 'FingerprintClaim': 2, 'HadamardClaim': 3, 'MatmulClaim': 9, 'RmsNormClaim': 2, 'RoPEClaim': 2, 'SiluClaim': 1, 'SoftmaxClaim': 1})
+  prove:  37.29s   verify: 13.31s   → ACCEPT  (OK)
+  link to L19: fp_in == prev fp_out? True  (fp_in=16205342162112685393, prev_fp_out=16205342162112685393)
+
+--- layer 21 ---
+  claims: 24  ({'AddClaim': 2, 'EmbeddingLookupClaim': 2, 'FingerprintClaim': 2, 'HadamardClaim': 3, 'MatmulClaim': 9, 'RmsNormClaim': 2, 'RoPEClaim': 2, 'SiluClaim': 1, 'SoftmaxClaim': 1})
+  prove:  27.51s   verify: 13.48s   → ACCEPT  (OK)
+  link to L20: fp_in == prev fp_out? True  (fp_in=2905857780443433263, prev_fp_out=2905857780443433263)
+
+--- layer 22 ---
+  claims: 24  ({'AddClaim': 2, 'EmbeddingLookupClaim': 2, 'FingerprintClaim': 2, 'HadamardClaim': 3, 'MatmulClaim': 9, 'RmsNormClaim': 2, 'RoPEClaim': 2, 'SiluClaim': 1, 'SoftmaxClaim': 1})
+  prove:  28.18s   verify: 13.51s   → ACCEPT  (OK)
+  link to L21: fp_in == prev fp_out? True  (fp_in=11587543564922993556, prev_fp_out=11587543564922993556)
+
+--- layer 23 ---
+  claims: 24  ({'AddClaim': 2, 'EmbeddingLookupClaim': 2, 'FingerprintClaim': 2, 'HadamardClaim': 3, 'MatmulClaim': 9, 'RmsNormClaim': 2, 'RoPEClaim': 2, 'SiluClaim': 1, 'SoftmaxClaim': 1})
+  prove:  28.91s   verify: 11.42s   → ACCEPT  (OK)
+  link to L22: fp_in == prev fp_out? True  (fp_in=617135235744383128, prev_fp_out=617135235744383128)
+
+--- layer 24 ---
+  claims: 24  ({'AddClaim': 2, 'EmbeddingLookupClaim': 2, 'FingerprintClaim': 2, 'HadamardClaim': 3, 'MatmulClaim': 9, 'RmsNormClaim': 2, 'RoPEClaim': 2, 'SiluClaim': 1, 'SoftmaxClaim': 1})
+  prove:  35.11s   verify: 13.51s   → ACCEPT  (OK)
+  link to L23: fp_in == prev fp_out? True  (fp_in=15380126833583456426, prev_fp_out=15380126833583456426)
+
+--- layer 25 ---
+  claims: 24  ({'AddClaim': 2, 'EmbeddingLookupClaim': 2, 'FingerprintClaim': 2, 'HadamardClaim': 3, 'MatmulClaim': 9, 'RmsNormClaim': 2, 'RoPEClaim': 2, 'SiluClaim': 1, 'SoftmaxClaim': 1})
+  prove:  29.44s   verify: 14.00s   → ACCEPT  (OK)
+  link to L24: fp_in == prev fp_out? True  (fp_in=12037661904991304006, prev_fp_out=12037661904991304006)
+
+--- layer 26 ---
+  claims: 24  ({'AddClaim': 2, 'EmbeddingLookupClaim': 2, 'FingerprintClaim': 2, 'HadamardClaim': 3, 'MatmulClaim': 9, 'RmsNormClaim': 2, 'RoPEClaim': 2, 'SiluClaim': 1, 'SoftmaxClaim': 1})
+  prove:  27.33s   verify: 13.84s   → ACCEPT  (OK)
+  link to L25: fp_in == prev fp_out? True  (fp_in=7457510798530366807, prev_fp_out=7457510798530366807)
+
+--- layer 27 ---
+  claims: 24  ({'AddClaim': 2, 'EmbeddingLookupClaim': 2, 'FingerprintClaim': 2, 'HadamardClaim': 3, 'MatmulClaim': 9, 'RmsNormClaim': 2, 'RoPEClaim': 2, 'SiluClaim': 1, 'SoftmaxClaim': 1})
+  prove:  29.29s   verify: 13.72s   → ACCEPT  (OK)
+  link to L26: fp_in == prev fp_out? True  (fp_in=10665966261829709862, prev_fp_out=10665966261829709862)
+
+--- layer 28 ---
+  claims: 24  ({'AddClaim': 2, 'EmbeddingLookupClaim': 2, 'FingerprintClaim': 2, 'HadamardClaim': 3, 'MatmulClaim': 9, 'RmsNormClaim': 2, 'RoPEClaim': 2, 'SiluClaim': 1, 'SoftmaxClaim': 1})
+  prove:  27.53s   verify: 13.85s   → ACCEPT  (OK)
+  link to L27: fp_in == prev fp_out? True  (fp_in=10491130584818029753, prev_fp_out=10491130584818029753)
+
+--- layer 29 ---
+  claims: 24  ({'AddClaim': 2, 'EmbeddingLookupClaim': 2, 'FingerprintClaim': 2, 'HadamardClaim': 3, 'MatmulClaim': 9, 'RmsNormClaim': 2, 'RoPEClaim': 2, 'SiluClaim': 1, 'SoftmaxClaim': 1})
+  prove:  31.59s   verify: 13.77s   → ACCEPT  (OK)
+  link to L28: fp_in == prev fp_out? True  (fp_in=2966431811021584420, prev_fp_out=2966431811021584420)
+
+--- layer 30 ---
+  claims: 24  ({'AddClaim': 2, 'EmbeddingLookupClaim': 2, 'FingerprintClaim': 2, 'HadamardClaim': 3, 'MatmulClaim': 9, 'RmsNormClaim': 2, 'RoPEClaim': 2, 'SiluClaim': 1, 'SoftmaxClaim': 1})
+  prove:  28.24s   verify: 13.72s   → ACCEPT  (OK)
+  link to L29: fp_in == prev fp_out? True  (fp_in=13239183390919386920, prev_fp_out=13239183390919386920)
+
+--- layer 31 ---
+  claims: 24  ({'AddClaim': 2, 'EmbeddingLookupClaim': 2, 'FingerprintClaim': 2, 'HadamardClaim': 3, 'MatmulClaim': 9, 'RmsNormClaim': 2, 'RoPEClaim': 2, 'SiluClaim': 1, 'SoftmaxClaim': 1})
+  prove:  28.43s   verify: 13.69s   → ACCEPT  (OK)
+  link to L30: fp_in == prev fp_out? True  (fp_in=12445355295764878449, prev_fp_out=12445355295764878449)
+
+--- tail (final RmsNorm + LM head) ---
+  claims: 5  ({'EmbeddingLookupClaim': 1, 'FingerprintClaim': 1, 'HadamardClaim': 1, 'MatmulClaim': 1, 'RmsNormClaim': 1})  vocab=32000
+  prove:  14.79s   verify: 5.76s   → ACCEPT  (OK)
+  link to L31: tail fp_in == prev fp_out? True
+  argmax(logits[1]) = token 13
+  decoded: '\n'
+
+=== total across 32 layer(s) + tail ===
+  claims (sum):  774
+  prove (sum):   1037.22s
+  verify (sum):  442.60s
+  cross-layer fp chain: OK
+  → all proofs ACCEPT

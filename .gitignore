@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Rust verifier build output (Cargo.lock IS committed — do not ignore it)
+verifier/target/
+
+# Compiled / JIT artifacts
+*.so
+
+# spark-bench binaries (built in-place by `make`)
+/spark-bench/test_field
+/spark-bench/test_ntt
+/spark-bench/test_blake3
+/spark-bench/test_blake3_multi
+/spark-bench/bench_field_mul
+/spark-bench/bench_ntt
+/spark-bench/bench_blake3_columns
+/spark-bench/bench_goldilocks_matmul
+
+# Generated artifacts (proofs, logits)
+*.npy
+proof*.json
+logits*.npy
+.claude/
