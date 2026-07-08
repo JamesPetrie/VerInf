@@ -4,10 +4,6 @@ James Petrie
 
 ---
 
-## Abstract
-
-We report the first zero-knowledge proof of inference of a frontier-scale model: a 1093-token forward pass of the full 400B-parameter Llama-4-Maverick, proven in 19.3 hours on a single consumer DGX Spark and accepted by a Rust verifier that shares no code with the prover. Deployed inference typically runs in floating point and is nondeterministic across executions. Rather than requiring changes to the deployment, the proof certifies an upper bound on the unexplained information in the output, the bits of the generated tokens that a committed integer version of the model, run on the committed inputs, fails to predict. The prover supplies its own predictor of each output token; a poor predictor inflates only the prover's own reported bound. In an AI compute agreement, the certified bound caps the bandwidth available for hidden work such as covert training. The construction is instantiated over Ligero with hash-based commitments only, so it needs no trusted setup and is plausibly post-quantum. A streaming prover keeps peak memory at the working set of a single operation rather than the witness: the demonstrated run committed a witness of about 7.5 terabytes at a peak of 83.3 GB. The run certifies 0.394 unexplained bits per token, explaining about 98% of the information a token from the 202,048-token vocabulary can carry. A cost model validated against the measured runs shows the attention witness dominating the proof beyond roughly 11,000 tokens, and projects proof times of days on an NVL72-class cluster at a context of one million tokens.
-
 ---
 
 
