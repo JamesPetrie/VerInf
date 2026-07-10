@@ -80,7 +80,7 @@ columns checked, and still within 1.3x of the June verify time.
 
 ## Artifact
 
-- Path on the Spark: `/tmp/mav_1000_hidden_t40.json`
+- Path on the Spark: `~/proofs/mav_1000_hidden_t40.json` (moved out of /tmp to survive reboot)
 - Size: **93,612,373,444 bytes (93.6 GB)**
 - md5: `6b2de88a89809903b19f3501e6a9ca34`
 - Verdict: `rust_verify: ACCEPT` — merkle, irs_col, lin_sum, lin_col,
