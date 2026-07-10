@@ -13,8 +13,9 @@ A complete **sound** four-round Ligero proof of a **1000-token forward pass of
 the full 48-layer Llama-4-Maverick (128 experts per MoE layer)**, with **all
 1000 tokens hidden** (500-token prompt + 500-token continuation; the only
 public quantity is the unexplained-information bound), at T=40 opened columns,
-on a single DGX Spark. The independent Rust verifier **ACCEPTed** at T=30 of
-the 40 checked (all six checks OK). The four-round commit-before-challenge
+on a single DGX Spark. The independent Rust verifier **ACCEPTed with all 40
+opened columns checked** (all six checks OK) — prove and verify at the same
+T=40, per-challenge ε_IRS = (3/4)^40 ≈ 2^-16.6. The four-round commit-before-challenge
 consistency check passed (blind root reproducible across rounds).
 
 The scored output tokens are tied to the consumed input tokens by a shared
@@ -36,7 +37,7 @@ commitment, paper Appendix E) remains future work.
 | Claims | 11,624 |
 | Witness | m_total = 109,267,016 rows (ELL=8192 slots/row ≈ 7.2 TB committed); 21,370,360 quad rows |
 | Protocol | sound — four-round, commit-before-challenge |
-| Query columns | T_QUERIES=40 opened (ε_IRS at T=30 checked ≈ 2^-12.5) |
+| Query columns | T_QUERIES=40 opened, all 40 checked (ε_IRS = (3/4)^40 ≈ 2^-16.6) |
 | Code | VerInf @ f2bd3f3 (infproof port): RMSNorm integer-semantics bracket, FoldRunner shared-operand fix, persistent-weight layout B, all-hidden input + shared UI select, S2 verifier sentinel fix |
 | Hardware | DGX Spark (GB10, 121 GiB unified, ARM64, CUDA 13.0) |
 
@@ -61,13 +62,15 @@ commitment, paper Appendix E) remains future work.
 | Reveal / witness engine pass (yields Sz before the prove) | 3,609 s (60.2 min) |
 | **Prove (`prove returned`), four rounds** | **51,334.6 s = 14.26 h** |
 | Proof dump (93.6 GB JSON) | 756.3 s (12.6 min) |
-| **Verify (Rust, 20 threads, T=30 of 40 checked)** | **63,617.6 s = 17.67 h** |
+| **Verify (Rust, 20 threads, all 40 columns checked)** | **63,617.6 s = 17.67 h** |
 
 Prove is 26% faster than the June run's 19.3 h (the descriptor-kernel /
 fused-iNTT fold optimizations, landed after that run, at full scale).
-Verify is longer than June's 14.0 h: this proof carries more constraint rows
-(145,035,477 in lin_col vs ~115M — the all-hidden input indicators and their
-routing claims).
+Verify checked all 40 opened columns in one run (the current verifier has no
+column-limiting knob; the June run's 14.0 h checked a 30-column prefix on the
+older verifier). More constraint rows than June (145,035,477 in lin_col vs
+~115M — the all-hidden input indicators and their routing claims), more
+columns checked, and still within 1.3x of the June verify time.
 
 ## Memory
 
