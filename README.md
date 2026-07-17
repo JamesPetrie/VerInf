@@ -6,9 +6,9 @@ and relies only on hash-based commitments, so there is no trusted setup and the
 construction is plausibly post-quantum. The proof reveals nothing about the weights,
 activations, or the tokens kept hidden. Input and output tokens are committed, and
 either side can be revealed or hidden as the deployment requires (the full-model run
-hides the prompt and reveals the continuation; hiding both at once is future work, see
-the encrypted token-stream commitment under Future work). The prover is untrusted; a
-small Rust verifier checks the proof.
+hides both; anchoring the committed streams to a transcript recorded at generation
+time is future work, see the encrypted token-stream commitment under Future work).
+The prover is untrusted; a small Rust verifier checks the proof.
 
 Real inference runs in floating point, outside the finite field the proof works over,
 and is nondeterministic (summation order alone changes the result). Instead of
@@ -25,25 +25,26 @@ high-stakes inference for bugs or tampering.
 
 ## Status
 
-VerInf has produced a sound, four-round Ligero proof of a 1093-token forward pass of
+VerInf has produced a sound, four-round Ligero proof of a 1000-token forward pass of
 the full 48-layer Llama 4 Maverick (a 400B-parameter mixture of experts, all 128
-experts committed per MoE layer): 19.3 hours to prove on a single DGX Spark at a
-prover peak of 77.6 GB GPU memory, certifying an unexplained-information bound of
-0.394 bits per token over the 651-token continuation. The 442-token prompt stays
-hidden; the continuation tokens are public in this run. The prover opened 40 columns
-(`LIGERO_T_QUERIES=40`) and the independent Rust verifier accepted at T=30 of the 40
-(a per-challenge bound of about 2^-12.5), taking 14.0 hours on the Spark's 20 CPU
-cores at 78.6 GB peak RSS over the 92 GB proof
-(`analysis/full-model-sound-run-archive.md`).
+experts committed per MoE layer), with every token hidden: the 500-token prompt and
+the model's own 500-token greedy continuation enter the proof only as committed
+indicators. Proving took 14.3 hours on a single DGX Spark at a prover peak of 78.1 GB
+GPU memory (83.9 GB unified), certifying an unexplained-information bound of 0.880
+bits per token over the 500-token continuation — the proof's only public value. The
+prover opened 40 columns (`LIGERO_T_QUERIES=40`) and the independent Rust verifier
+accepted, checking all 40 (a per-challenge bound of about 2^-16.6), taking 17.7 hours
+on the Spark's 20 CPU cores at 75.7 GB peak RSS over the 93.6 GB proof
+(`analysis/full-model-hidden-run-archive.md`).
 
-Two soundness-relevant bugs were found and fixed after that run: the RMSNorm rsqrt
-bracket turned out to be vacuous in the production configuration (a forged output was
-accepted before the fix), and the constraint fold mishandled an operand shared across
-MoE layers. A re-run of the full-model proof on the current prover, with a 1000-token
-transcript (500 hidden prompt, 500 public continuation), is in progress and will
-replace the numbers above. The smaller gates have already re-run clean on the current
-code: the 32-layer Llama-2-7B at 1000 tokens proves in about 47 minutes at a 13 GB
-peak, and its 1.4 GB proof verifies in about 24 minutes on 20 CPU cores.
+This run supersedes an earlier 1093-token result (19.3 hours, 0.394 bits per token,
+continuation tokens public): two soundness-relevant bugs were found and fixed after
+that run — the RMSNorm rsqrt bracket turned out to be vacuous in the production
+configuration (a forged output was accepted before the fix), and the constraint fold
+mishandled an operand shared across MoE layers — and the run above is the re-run on
+the fixed prover. The smaller gates also run clean on the current code: the 32-layer
+Llama-2-7B at 1000 tokens proves in about 44 minutes at an 11.2 GB peak, and its
+1.44 GB proof verifies in about 23 minutes on 20 CPU cores.
 
 ## What is new
 
@@ -203,9 +204,10 @@ combined with measured NTT and hashing throughput on a few platforms (DGX Spark,
 clusters of H100s and NVL72s) at a few NTT dimensions. This gives runtime, proof size,
 and witness size across models, context lengths, hardware, and column widths. The
 measured runs to compare against are archived in
-`analysis/full-model-sound-run-archive.md` and
-`analysis/prover-optimization-investigation.md`, which also has a measured breakdown
-of where prover time goes and which optimizations help.
+`analysis/full-model-hidden-run-archive.md` and
+`analysis/full-model-sound-run-archive.md`, with a measured breakdown of where prover
+time goes and which optimizations help in
+`analysis/prover-optimization-investigation.md`.
 
 ## Architecture: streaming and parallelization
 
@@ -219,21 +221,19 @@ larger models and longer contexts within a fixed time budget.
 
 - Research prototype; no security audit of the full construction (the persistent
   weight commitment had an internal one, see above).
-- The demonstrated run explains about 98% of the per-token information in an FP4
-  Maverick token stream (0.394 unexplained bits per token against a 202,048-token
+- The demonstrated run explains about 95% of the per-token information in an FP4
+  Maverick token stream (0.880 unexplained bits per token against a 202,048-token
   vocabulary), which may not suffice for all applications.
-- Proofs are large, megabytes to gigabytes (92 GB for the 1093-token full-model run at
-  40 opened columns; higher soundness opens more columns and grows the proof).
+- Proofs are large, megabytes to gigabytes (93.6 GB for the 1000-token full-model run
+  at 40 opened columns; higher soundness opens more columns and grows the proof).
 - The soundness-grade protocol is interactive, which lets us tolerate lower
   per-challenge soundness without enabling grinding attacks.
-- The demonstrated full-scale soundness is T=30 (a per-challenge bound of about
-  2^-12.5, adequate for interactively-deterred parties). The gap to the T=80
+- The demonstrated full-scale soundness is T=40 (a per-challenge bound of about
+  2^-16.6, adequate for interactively-deterred parties). The gap to the T=80
   deployment grade is verify runtime, not memory: verifier RSS is dominated by parsing
-  the opened columns (78.6 GB, identical at T=4 and T=30), while the per-column check
-  took 14 hours at T=30 on 20 CPU cores and grows with T. A GPU verifier is the
-  planned fix (`analysis/full-model-sound-run-archive.md`).
-- The headline numbers predate the two fixes described in Status; the re-run on the
-  current prover is in progress.
+  the opened columns and does not depend on how many are checked, while the per-column
+  check took 17.7 hours at T=40 on 20 CPU cores and grows with T. A GPU verifier is
+  the planned fix (`analysis/full-model-hidden-run-archive.md`).
 
 ## Future work
 
@@ -252,12 +252,14 @@ larger models and longer contexts within a fixed time budget.
   information.
 - Support a wider column format for smaller proofs.
 - Support more models, for example DeepSeek V4.
-- Hide both input and output tokens at once: a parallel proof that
-  Hash(AES(key, tokens)) matches a public token-stream hash and Hash(key) matches a
-  public key hash, so the token commitments can be produced with standard network
-  hardware while both token streams stay hidden. The AES lookup tables and
-  token-to-byte plumbing have landed (`prover/token_binding.py`, difftested against a
-  reference recorder); the end-to-end binding remains.
+- Anchor the committed token streams to a transcript recorded at generation time:
+  a parallel proof that Hash(AES(key, tokens)) matches a public token-stream hash and
+  Hash(key) matches a public key hash, so the token commitments can be produced with
+  standard network hardware while both token streams stay hidden (the full-model run
+  already hides both inside the proof; what remains is tying them to an external
+  record). The AES lookup tables and token-to-byte plumbing have landed
+  (`prover/token_binding.py`, difftested against a reference recorder); the
+  end-to-end binding remains.
 - Stream by proving claims one at a time rather than running through the same proof up
   to four times, for up to a 4x speedup, at the cost of more complexity and many more
   prover-verifier messages.
@@ -363,8 +365,9 @@ enter the public claims, only U is revealed.
 - `design-feasibility.md`: the full specification and the cost model, including the
   mixture-of-experts routing and Llama 4 Maverick cost analysis.
 - `analysis/full-model-v1-design.md`: the verified Maverick result.
-- `analysis/full-model-sound-run-archive.md`: every metric of the full-model sound run
-  (prove, verify, memory, soundness, the artifact).
+- `analysis/full-model-hidden-run-archive.md`: every metric of the all-hidden
+  full-model run (prove, verify, memory, soundness, the artifact); the superseded
+  1093-token run is archived in `analysis/full-model-sound-run-archive.md`.
 - `analysis/persistent-weights.md`: the persistent weight commitment, refresh and
   linking design, and the audit findings.
 - `analysis/docs/degrees-of-freedom-review.md`: the claim-by-claim prover
