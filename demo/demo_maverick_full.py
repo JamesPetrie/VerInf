@@ -236,7 +236,7 @@ def build_model(tape, gguf, prompt_ids, cont_ids, *, V, d, n_layers, E, d_ff):
              f"{len(tape.claims)} claims so far")
 
     # final norm + gain -> LM head
-    n_f = tape.rmsnorm(x, d=d, s=S, eps_int=EPS_INT, slack_n_chunks=4,
+    n_f = tape.rmsnorm(x, d=d, s=S, eps_int=EPS_INT,
                         s_out=S, output_width=OUTPUT_WIDTH)
     g_out = tape.commit("g_out", _field_loader(gguf, "output_norm.weight")(), (d,))
     n_fg = tape.hadamard_broadcast(n_f, g_out, SEQ=T, d=d, s_a=S, s_b=S,

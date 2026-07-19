@@ -1175,6 +1175,34 @@ COMPILE_FNS[SiluClaim] = silu_compile
 # ===========================================================================
 
 
+def _chunk_widths(total_bits: int) -> List[int]:
+    """Split a range window of `total_bits` into 16-bit chunks plus one
+    narrower top chunk (strides 2^{16n}). Every chunk is range-checked
+    against a table of exactly its width, so the recomposition covers
+    [0, 2^total_bits) tightly — the B.1 width discipline."""
+    ws = [16] * (total_bits // 16)
+    if total_bits % 16:
+        ws.append(total_bits % 16)
+    return ws or [1]
+
+
+# S_total is decomposed into RMS_N_LIMBS limbs of RMS_LIMB_W bits each; the
+# carry-chain products q·S_limb and the final accumulator are sized against
+# this cap, so the bracket has exact integer semantics for ANY committed
+# S_total the limbs admit — no bound on x is assumed (rmsnorm-bracket-fix.md).
+#
+# LIMB_W is the one knob for the S_total headroom (= row RMS ≲ 2^(cap/2)/√d).
+# Its ceiling is set by two asserts: the product q·S_limb must stay < P
+# (2·y_width + LIMB_W ≤ 63) and the slack/G2 accumulator must not wrap
+# (3·LIMB_W ≲ 59). LIMB_W=18 → cap 2^54 (row RMS ≲ ~460 at s=2^12), well
+# above the ~2^44 seen on real activations. The carry-chain high parts
+# (g0h/g1h/G2) stay 16-bit-chunked (independent of LIMB_W); only the limbs
+# and the carry lows g0l/g1l live in the 2^LIMB_W table.
+RMS_LIMB_W = 18
+RMS_N_LIMBS = 3
+RMS_S_CAP_BITS = RMS_LIMB_W * RMS_N_LIMBS
+
+
 @dataclass(frozen=True, slots=True)
 class RmsNormConfig:
     """B rows of length d each. Integer scales: input `s_in`, internal `s`.
@@ -1184,17 +1212,15 @@ class RmsNormConfig:
     (loose but combined with the bracket pins x uniquely). The bracket then
     operates on x at scale s, with magic = d·s^4 unchanged.
 
-    `slack_n_chunks` × `slack_chunk_width` must cover the maximum slack
-    width given (B, d, s, x_range). For Llama 2 7B (d=4096, s=2^12) the
-    worst-case honest slack is ~2^49, so slack_n_chunks=4 of 16-bit chunks
-    gives a 64-bit budget — plenty of margin. Toy uses slack_n_chunks=1
-    when slacks already fit in `slack_chunk_width` bits."""
+    All range-window widths (the slack windows, the y window, and the
+    limb-carry windows of the wrap-free bracket) are DERIVED from
+    (d, s, eps_int) — see the properties below and rmsnorm-bracket-fix.md.
+    The verifier derives the same widths independently from the public
+    config, so the prover cannot widen a window."""
     B: int
     d: int
     s: int
     eps_int: int
-    slack_n_chunks: int = 1
-    slack_chunk_width: int = 16
     s_in: int = 0                # 0 → no input rescale (s_in == s implicitly)
     s_out: int = 0               # 0 → no output rescale (output stays at s²)
     output_width: int = 16
@@ -1202,6 +1228,64 @@ class RmsNormConfig:
     @property
     def magic(self) -> int:
         return self.d * (self.s ** 4)
+
+    # ---- Derived widths for the wrap-free bracket (rmsnorm-bracket-fix.md).
+    # Every bracket operand is independently range-bounded so each identity
+    # holds over the integers, not merely mod P.
+
+    @property
+    def y_max(self) -> int:
+        """Largest honest y: the pinned rsqrt at the smallest valid row
+        energy S_min = d·eps_int."""
+        s_min = self.d * self.eps_int
+        assert s_min >= 1, "rmsnorm needs eps_int >= 1 (S_total floor)"
+        y = max(1, math.isqrt(self.magic // s_min))
+        while y * y * s_min < self.magic:
+            y += 1
+        return y
+
+    @property
+    def y_width(self) -> int:
+        """y − 1 is range-checked into [0, 2^y_width). Bounds q1 = y² and
+        q2 = (y−1)² below 2^{2·y_width}, which makes every limb product
+        q·S_limb < 2^{2·y_width + LIMB_W} wrap-free."""
+        w = max(1, (self.y_max - 1).bit_length())
+        assert 2 * w + RMS_LIMB_W <= 63, (
+            f"rmsnorm y_width={w}: limb products q·S_limb would wrap at "
+            f"LIMB_W={RMS_LIMB_W}; raise eps_int, lower the scale, or narrow LIMB_W")
+        return w
+
+    @property
+    def slack_width(self) -> int:
+        """Window for the bracket slacks s_lo/s_hi. Covers the largest honest
+        slack for any S_total the limbs admit (< 2^RMS_S_CAP_BITS): one
+        bracket step is ≤ 2√(magic·S) + S. The assert is the B.1 rule — a
+        wrapped negative slack (≥ P − magic) must not be decomposable."""
+        cap = 1 << RMS_S_CAP_BITS
+        w = (2 * math.isqrt(self.magic * cap) + cap).bit_length()
+        assert self.magic + (1 << w) < P, (
+            "rmsnorm slack window would admit wrapped negatives")
+        return w
+
+    @property
+    def g0h_width(self) -> int:
+        """High part of q·S0 (< 2^{2·y_width + LIMB_W}) shifted down LIMB_W;
+        independent of LIMB_W."""
+        return 2 * self.y_width
+
+    @property
+    def g1h_width(self) -> int:
+        """High part of q·S1 + g0h, one bit wider than g0h."""
+        return 2 * self.y_width + 1
+
+    @property
+    def G2_width(self) -> int:
+        """Top accumulator of the carry chain: G2 = (magic + slack) >> 2·LIMB_W.
+        Its tight range check is what keeps G2·2^{2·LIMB_W} wrap-free in the
+        final bracket identity."""
+        w = ((self.magic + (1 << self.slack_width)) >> (2 * RMS_LIMB_W)).bit_length()
+        assert w + 2 * RMS_LIMB_W <= 62, "rmsnorm G2 window would wrap"
+        return max(1, w)
 
     @property
     def rescale_bits(self) -> int:
@@ -1247,19 +1331,60 @@ class RmsNormClaim:
     q2: Variable                # length B:    y_m1 · y_m1
     s_lo: Variable              # length B:    q1·S_total − magic
     s_hi: Variable              # length B:    magic − 1 − q2·S_total
-    # Word-decomposed slack chunks: s_lo = Σ_n (1<<(n·w))·s_lo_chunks[n], same for s_hi.
-    # Each chunk is range-checked against range_slack (a width-w range table).
+    # Word-decomposed slack chunks: s_lo = Σ_n (1<<(16n))·s_lo_chunks[n], same
+    # for s_hi. Chunk n is range-checked against a table of exactly
+    # _chunk_widths(config.slack_width)[n] bits (16-bit chunks use
+    # range_slack; the narrower top chunk uses range_slack_top).
     s_lo_chunks: List[Variable]
     s_hi_chunks: List[Variable]
+
+    # ---- Wrap-free bracket limbs (rmsnorm-bracket-fix.md). All length B.
+    # The bracket products y²·S_total and (y−1)²·S_total are assembled from
+    # 16-bit limbs of S_total with range-checked carries, so the two bracket
+    # identities hold over the INTEGERS (every operand independently bounded),
+    # closing the field-wraparound freedom flagged in
+    # degrees-of-freedom-review.md §3.
+    ym1_chunks: List[Variable]     # y−1 = Σ 2^{16n}·ym1_chunks[n], tight to y_width
+    S_limbs: List[Variable]        # S_total = S0 + 2^16·S1 + 2^32·S2, 16-bit each
+    lo_H: List[Variable]           # [q1·S0, q1·S1, q1·S2]
+    lo_gl: List[Variable]          # [g0l, g1l]: low 16 bits of the carry chain
+    lo_g0h_chunks: List[Variable]  # g0h = (q1·S0) >> 16, chunked to g0h_width
+    lo_g1h_chunks: List[Variable]  # g1h = (q1·S1 + g0h) >> 16, chunked to g1h_width
+    lo_G2_chunks: List[Variable]   # G2 = q1·S2 + g1h, chunked to G2_width
+    hi_H: List[Variable]           # the same chain for q2 = (y−1)²
+    hi_gl: List[Variable]
+    hi_g0h_chunks: List[Variable]
+    hi_g1h_chunks: List[Variable]
+    hi_G2_chunks: List[Variable]
 
     # Phase-2 aux witnesses (Freivalds + per-chunk LogUp z's)
     u: Variable                 # length B
     p: Variable                 # length B
     z_lo_chunks: List[Variable] # one z per s_lo chunk
     z_hi_chunks: List[Variable] # one z per s_hi chunk
+    # Phase-2 z's for the limb range checks, one per var, same order.
+    z_ym1_chunks: List[Variable]
+    z_S_limbs: List[Variable]
+    z_lo_gl: List[Variable]
+    z_lo_g0h: List[Variable]
+    z_lo_g1h: List[Variable]
+    z_lo_G2: List[Variable]
+    z_hi_gl: List[Variable]
+    z_hi_g0h: List[Variable]
+    z_hi_g1h: List[Variable]
+    z_hi_G2: List[Variable]
 
     # Range table shared with other slack-using claims
     range_slack: Table
+    # 2^LIMB_W table for the S_total limbs and the carry lows g0l/g1l.
+    range_limb: Table
+    # Top-chunk range tables (None when the role's width is a multiple of 16;
+    # 16-bit chunks always check against range_slack).
+    range_y_top: Optional[Table]
+    range_slack_top: Optional[Table]
+    range_g0h_top: Optional[Table]
+    range_g1h_top: Optional[Table]
+    range_G2_top: Optional[Table]
 
     # Optional rescale plumbing (only present when config.rescale_bits > 0):
     #   x_in: public input at scale config.s_in
@@ -1288,6 +1413,35 @@ class RmsNormClaim:
     range_output: Optional[Table] = None           # 2^output_width loose check
 
 
+def _rms_limb_range_groups(c: RmsNormClaim):
+    """The limb range-checked vars, their z's, and their tables, in the
+    FROZEN order shared by rmsnorm_aux, rmsnorm_compile, tape side-effects,
+    and the Rust verifier: ym1_chunks, S_limbs, then per bracket (lo, hi):
+    gl, g0h chunks, g1h chunks, G2 chunks. The LIMB_W-wide limbs and carry
+    lows (S_limbs, gl) check against range_limb (2^LIMB_W); the carry highs'
+    16-bit chunks check against range_slack, their narrower top chunks
+    against the role's top table."""
+    sc = c.config
+    def tbls(widths, top):
+        return [c.range_slack if w == 16 else top for w in widths]
+    yw  = _chunk_widths(sc.y_width)
+    g0w = _chunk_widths(sc.g0h_width)
+    g1w = _chunk_widths(sc.g1h_width)
+    g2w = _chunk_widths(sc.G2_width)
+    return [
+        (c.ym1_chunks,    c.z_ym1_chunks, tbls(yw,  c.range_y_top)),
+        (c.S_limbs,       c.z_S_limbs,    [c.range_limb] * RMS_N_LIMBS),
+        (c.lo_gl,         c.z_lo_gl,      [c.range_limb] * 2),
+        (c.lo_g0h_chunks, c.z_lo_g0h,     tbls(g0w, c.range_g0h_top)),
+        (c.lo_g1h_chunks, c.z_lo_g1h,     tbls(g1w, c.range_g1h_top)),
+        (c.lo_G2_chunks,  c.z_lo_G2,      tbls(g2w, c.range_G2_top)),
+        (c.hi_gl,         c.z_hi_gl,      [c.range_limb] * 2),
+        (c.hi_g0h_chunks, c.z_hi_g0h,     tbls(g0w, c.range_g0h_top)),
+        (c.hi_g1h_chunks, c.z_hi_g1h,     tbls(g1w, c.range_g1h_top)),
+        (c.hi_G2_chunks,  c.z_hi_G2,      tbls(g2w, c.range_G2_top)),
+    ]
+
+
 def rmsnorm_sample(c: RmsNormClaim, ci: int, s_op) -> List[int]:
     return protocol.op_vec(s_op, ci, "rho", c.config.d)    # ρ ∈ F^d, by index
 
@@ -1306,13 +1460,25 @@ def rmsnorm_aux(c: RmsNormClaim, witness: dict, rho: List[int]) -> dict:
     u = gl_matvec(x_t,   rho_t)                       # (B,)
     p = gl_matvec(out_t, rho_t)                       # (B,)
     α = c.range_slack.alpha
+    slack_widths = _chunk_widths(c.config.slack_width)
+    def _slack_alpha(n):
+        return α if slack_widths[n] == 16 else c.range_slack_top.alpha
     result = {c.u: u, c.p: p}
-    for chunk_var, z_var in zip(c.s_lo_chunks, c.z_lo_chunks):
+    for n, (chunk_var, z_var) in enumerate(zip(c.s_lo_chunks, c.z_lo_chunks)):
         chunk_t = _t(witness[chunk_var])
-        result[z_var] = gl_inv_batched(gl_sub(torch.full_like(chunk_t, α), chunk_t))
-    for chunk_var, z_var in zip(c.s_hi_chunks, c.z_hi_chunks):
+        result[z_var] = gl_inv_batched(
+            gl_sub(torch.full_like(chunk_t, _slack_alpha(n)), chunk_t))
+    for n, (chunk_var, z_var) in enumerate(zip(c.s_hi_chunks, c.z_hi_chunks)):
         chunk_t = _t(witness[chunk_var])
-        result[z_var] = gl_inv_batched(gl_sub(torch.full_like(chunk_t, α), chunk_t))
+        result[z_var] = gl_inv_batched(
+            gl_sub(torch.full_like(chunk_t, _slack_alpha(n)), chunk_t))
+    # Limb range-check z's: each var against the alpha of ITS table (16-bit
+    # chunks → range_slack; narrower top chunks → the role's top table).
+    for vars_, zs, tbls in _rms_limb_range_groups(c):
+        for var, z_var, tbl in zip(vars_, zs, tbls):
+            v_t = _t(witness[var])
+            result[z_var] = gl_inv_batched(
+                gl_sub(torch.full_like(v_t, tbl.alpha), v_t))
     if c.config.rescale_bits > 0:
         α_R = c.range_rescale.alpha
         x_low_t     = _t(witness[c.x_low])
@@ -1333,18 +1499,32 @@ def rmsnorm_aux(c: RmsNormClaim, witness: dict, rho: List[int]) -> dict:
 
 def rmsnorm_compile(c: RmsNormClaim, rho: List[int], cfg: LigeroConfig,
                             base: int):
-    """Compile RmsNormClaim (no rescale yet).
+    """Compile RmsNormClaim.
 
-    Seven linear families, total 7·B constraints (IDs occupy [base, base+7B)):
-      F1 [base..base+B):   S_total = S + d·ε
-      F2 [base+B..+2B):    y_m1 = y − 1
-      F3 [base+2B..+3B):   S = Σ_i X_sq[b·d+i]
-      F4 [base+3B..+4B):   u = Σ_i ρ_i · x[b·d+i]
-      F5 [base+4B..+5B):   p = Σ_i ρ_i · output[b·d+i]
-      F6 [base+5B..+6B):   s_lo = Σ_n chunk_strides[n] · s_lo_chunks[n][b]
-      F7 [base+6B..+7B):   s_hi = Σ_n chunk_strides[n] · s_hi_chunks[n][b]
+    Seventeen linear families, total 17·B constraints (IDs [base, base+17B)):
+      F1  [+0):    S_total = S + d·ε
+      F2  [+B):    y_m1 = y − 1
+      F3  [+2B):   S = Σ_i X_sq[b·d+i]
+      F4  [+3B):   u = Σ_i ρ_i · x[b·d+i]
+      F5  [+4B):   p = Σ_i ρ_i · output[b·d+i]
+      F6  [+5B):   s_lo = Σ_n 2^{16n} · s_lo_chunks[n]
+      F7  [+6B):   s_hi = Σ_n 2^{16n} · s_hi_chunks[n]
+      F8  [+7B):   y_m1 = Σ_n 2^{16n} · ym1_chunks[n]
+      F9  [+8B):   S_total = S0 + 2^16·S1 + 2^32·S2
+      --- wrap-free bracket, lower (q1 = y²); see rmsnorm-bracket-fix.md ---
+      F10 [+9B):   H0 = g0l + 2^16·g0h              (g0h from its chunks)
+      F11 [+10B):  H1 + g0h = g1l + 2^16·g1h
+      F12 [+11B):  H2 + g1h = G2                    (G2 from its chunks)
+      F13 [+12B):  2^32·G2 + 2^16·g1l + g0l − s_lo = magic
+      --- wrap-free bracket, upper (q2 = (y−1)²) ---
+      F14 [+13B):  H0' = g0l' + 2^16·g0h'
+      F15 [+14B):  H1' + g0h' = g1l' + 2^16·g1h'
+      F16 [+15B):  H2' + g1h' = G2'
+      F17 [+16B):  2^32·G2' + 2^16·g1l' + g0l' + s_hi = magic − 1
 
-    All quadratics are emitted exactly as legacy.
+    With every chunk range-checked to its exact width, F10–F13 force
+    y²·S_total = magic + s_lo and F14–F17 force (y−1)²·S_total = magic−1−s_hi
+    as INTEGER identities (no term can wrap), which pins y uniquely.
     """
     ell, B, d = cfg.ELL, c.config.B, c.config.d
     L_full = B * d
@@ -1353,8 +1533,8 @@ def rmsnorm_compile(c: RmsNormClaim, rho: List[int], cfg: LigeroConfig,
     rho_t = torch.tensor(rho, dtype=torch.uint64, device="cuda")
     neg_rho = gl_neg(rho_t)
     neg_ones_d = torch.full((d,), neg1, dtype=torch.uint64, device="cuda")
-    chunk_strides = [1 << (n * c.config.slack_chunk_width)
-                     for n in range(c.config.slack_n_chunks)]
+    chunk_strides = [1 << (16 * n)
+                     for n in range(len(_chunk_widths(c.config.slack_width)))]
     # Freivalds binds the raw product `output_full` when output rescale is on.
     out_target = c.output_full if c.config.output_rescale_bits > 0 else c.output
 
@@ -1406,12 +1586,65 @@ def rmsnorm_compile(c: RmsNormClaim, rho: List[int], cfg: LigeroConfig,
     for n, chunk_var in enumerate(c.s_hi_chunks):
         emit_idscalar(chunk_var, f7, B, (P - chunk_strides[n] % P) % P)
 
-    cur = base + 7 * B
+    # F8: y_m1 tight decomposition (bounds y ≤ 2^y_width, so q1, q2 < 2^{2w}).
+    f8 = base + 7 * B
+    emit_idscalar(c.y_m1, f8, B, 1)
+    for n, chunk_var in enumerate(c.ym1_chunks):
+        emit_idscalar(chunk_var, f8, B, (P - (1 << (16 * n)) % P) % P)
+
+    # F9: S_total limb decomposition (bounds S_total < 2^RMS_S_CAP_BITS).
+    Lw = RMS_LIMB_W
+    f9 = base + 8 * B
+    emit_idscalar(c.S_total, f9, B, 1)
+    for n, limb_var in enumerate(c.S_limbs):
+        emit_idscalar(limb_var, f9, B, (P - (1 << (Lw * n)) % P) % P)
+
+    # F10..F13 / F14..F17: the carry chains assembling q·S_total = magic ± slack
+    # over the integers. The limbs and carry lows g0l/g1l are LIMB_W-wide (stride
+    # 2^Lw); the highs g0h/g1h/G2 appear only through their 16-bit range-checked
+    # chunks (internal stride 2^{16j}), never as standalone committed values.
+    def emit_bracket(f0: int, H: List[Variable], gl: List[Variable],
+                     g0h: List[Variable], g1h: List[Variable],
+                     G2: List[Variable], slack_var: Variable, slack_coef: int):
+        # F+0: H0 − g0l − 2^Lw·g0h = 0   (g0h = Σ 2^{16j}·chunk_j)
+        emit_idscalar(H[0], f0, B, 1)
+        emit_idscalar(gl[0], f0, B, neg1)
+        for j, ch in enumerate(g0h):
+            emit_idscalar(ch, f0, B, (P - (1 << (Lw + 16 * j)) % P) % P)
+        # F+1: H1 + g0h − g1l − 2^Lw·g1h = 0
+        f1_ = f0 + B
+        emit_idscalar(H[1], f1_, B, 1)
+        for j, ch in enumerate(g0h):
+            emit_idscalar(ch, f1_, B, (1 << (16 * j)) % P)
+        emit_idscalar(gl[1], f1_, B, neg1)
+        for j, ch in enumerate(g1h):
+            emit_idscalar(ch, f1_, B, (P - (1 << (Lw + 16 * j)) % P) % P)
+        # F+2: H2 + g1h − G2 = 0
+        f2_ = f0 + 2 * B
+        emit_idscalar(H[2], f2_, B, 1)
+        for j, ch in enumerate(g1h):
+            emit_idscalar(ch, f2_, B, (1 << (16 * j)) % P)
+        for j, ch in enumerate(G2):
+            emit_idscalar(ch, f2_, B, (P - (1 << (16 * j)) % P) % P)
+        # F+3: 2^{2Lw}·G2 + 2^Lw·g1l + g0l + slack_coef·slack = b (b via nz below)
+        f3_ = f0 + 3 * B
+        for j, ch in enumerate(G2):
+            emit_idscalar(ch, f3_, B, (1 << (2 * Lw + 16 * j)) % P)
+        emit_idscalar(gl[1], f3_, B, (1 << Lw) % P)
+        emit_idscalar(gl[0], f3_, B, 1)
+        emit_idscalar(slack_var, f3_, B, slack_coef)
+
+    emit_bracket(base + 9 * B, c.lo_H, c.lo_gl, c.lo_g0h_chunks,
+                 c.lo_g1h_chunks, c.lo_G2_chunks, c.s_lo, neg1)
+    emit_bracket(base + 13 * B, c.hi_H, c.hi_gl, c.hi_g0h_chunks,
+                 c.hi_g1h_chunks, c.hi_G2_chunks, c.s_hi, 1)
+
+    cur = base + 17 * B
 
     # ---- Input rescale (rescale_bits > 0): x_in = (1<<r)·x + x_low, plus
-    # offset-trick x_shifted = x + 2^(slack_chunk_width-1). Two L_full families.
+    # offset-trick x_shifted = x + 2^15. Two L_full families.
     if c.config.rescale_bits > 0:
-        rescale_offset = 1 << (c.config.slack_chunk_width - 1)
+        rescale_offset = 1 << 15   # signed shift against the 16-bit slack table
         _emit_lin_csr_idscalar(
             c.x_in, [c.x, c.x_low], [1 << c.config.rescale_bits, 1],
             L_full, ell, cur, row_pkts); cur += L_full
@@ -1429,21 +1662,37 @@ def rmsnorm_compile(c: RmsNormClaim, rho: List[int], cfg: LigeroConfig,
         _emit_lin_csr_idscalar(
             c.output_shifted, [c.output], [1], L_full, ell, cur, row_pkts); cur += L_full
 
-    # Quadratics (verbatim from legacy).
+    # Quadratics. The bracket products are per-limb (H = q·S_limb) so each is
+    # a wrap-free integer; the old whole-product quads (q·S_total vs magic)
+    # are replaced by the F10..F17 carry chains above.
     quads: List[QuadraticConstraint] = []
-    quads += _per_slot_quad("rms.X_sq",      c.x,    c.x,       c.X_sq,    neg1, 0,         L_full, ell)
-    quads += _per_slot_quad("rms.q1",        c.y,    c.y,       c.q1,      neg1, 0,         B,      ell)
-    quads += _per_slot_quad("rms.q2",        c.y_m1, c.y_m1,    c.q2,      neg1, 0,         B,      ell)
-    quads += _per_slot_quad("rms.lower",     c.q1,   c.S_total, c.s_lo,    neg1, magic,     B,      ell)
-    quads += _per_slot_quad("rms.upper",     c.q2,   c.S_total, c.s_hi,    1,    magic - 1, B,      ell)
-    quads += _per_slot_quad("rms.freivalds", c.y,    c.u,       c.p,       neg1, 0,         B,      ell)
+    quads += _per_slot_quad("rms.X_sq",      c.x,    c.x,       c.X_sq,    neg1, 0, L_full, ell)
+    quads += _per_slot_quad("rms.q1",        c.y,    c.y,       c.q1,      neg1, 0, B,      ell)
+    quads += _per_slot_quad("rms.q2",        c.y_m1, c.y_m1,    c.q2,      neg1, 0, B,      ell)
+    for k in range(RMS_N_LIMBS):
+        quads += _per_slot_quad(f"rms.loH{k}", c.q1, c.S_limbs[k], c.lo_H[k],
+                                 neg1, 0, B, ell)
+    for k in range(RMS_N_LIMBS):
+        quads += _per_slot_quad(f"rms.hiH{k}", c.q2, c.S_limbs[k], c.hi_H[k],
+                                 neg1, 0, B, ell)
+    quads += _per_slot_quad("rms.freivalds", c.y,    c.u,       c.p,       neg1, 0, B,      ell)
     α_T = c.range_slack.alpha
+    slack_tbl_widths = _chunk_widths(c.config.slack_width)
+    def slack_alpha(n):
+        if slack_tbl_widths[n] == 16:
+            return α_T
+        return c.range_slack_top.alpha
     for n, (chunk_var, z_var) in enumerate(zip(c.s_lo_chunks, c.z_lo_chunks)):
         quads += _per_slot_quad(f"rms.RW[s_lo_c{n}]", chunk_var, z_var, z_var,
-                                 (P - α_T) % P, neg1, B, ell)
+                                 (P - slack_alpha(n)) % P, neg1, B, ell)
     for n, (chunk_var, z_var) in enumerate(zip(c.s_hi_chunks, c.z_hi_chunks)):
         quads += _per_slot_quad(f"rms.RW[s_hi_c{n}]", chunk_var, z_var, z_var,
-                                 (P - α_T) % P, neg1, B, ell)
+                                 (P - slack_alpha(n)) % P, neg1, B, ell)
+    # Limb range checks, in the frozen _rms_limb_range_groups order.
+    for vars_, zs, tbls in _rms_limb_range_groups(c):
+        for var, z_var, tbl in zip(vars_, zs, tbls):
+            quads += _per_slot_quad(f"rms.RW[{var.name}]", var, z_var, z_var,
+                                     (P - tbl.alpha) % P, neg1, B, ell)
     if c.config.rescale_bits > 0:
         α_R = c.range_rescale.alpha
         quads += _per_slot_quad(
@@ -1463,20 +1712,24 @@ def rmsnorm_compile(c: RmsNormClaim, rho: List[int], cfg: LigeroConfig,
             (P - α_O) % P, neg1, L_full, ell)
 
     # b for rmsnorm linear families:
-    #   F1 [0, B):      S_total = S + d·ε   →  b = d·ε
-    #   F2 [B, 2B):     y_m1 = y − 1        →  b = neg1
-    #   F3..F7:         b = 0
-    #   input rescale (if enabled): [7B + L_full, 7B + 2·L_full): b = rescale_offset
+    #   F1 [0, B):        S_total = S + d·ε   →  b = d·ε
+    #   F2 [B, 2B):       y_m1 = y − 1        →  b = neg1
+    #   F13 [12B, 13B):   lower bracket       →  b = magic
+    #   F17 [16B, 17B):   upper bracket       →  b = magic − 1
+    #   all others:       b = 0
+    #   input rescale (if enabled): [17B + L_full, 17B + 2·L_full): b = rescale_offset
     #   output rescale (if enabled): adds at end with b = out_offset
     nz: List[Tuple[int, int, Any]] = [
         (0, B, (c.config.d * c.config.eps_int) % P),
         (B, B, neg1),
+        (12 * B, B, magic % P),
+        (16 * B, B, (magic - 1) % P),
     ]
-    cur_off = 7 * B
+    cur_off = 17 * B
     if c.config.rescale_bits > 0:
         # x_in family (b=0): cur_off..cur_off+L_full; x_shifted family with b=rescale_offset.
         cur_off += L_full
-        nz.append((cur_off, L_full, 1 << (c.config.slack_chunk_width - 1)))
+        nz.append((cur_off, L_full, 1 << 15))
         cur_off += L_full
     if c.config.output_rescale_bits > 0:
         cur_off += L_full

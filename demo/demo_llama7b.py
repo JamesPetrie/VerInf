@@ -91,7 +91,6 @@ Z_NONZERO_REAL = 40000 / 4096         # softmax non-zero exp region (~9.77·s_c)
 Z_MAX      = round(Z_NONZERO_REAL * S)  # softmax saturation at scale S (40000 @ 2^12)
 SILU_CFG   = SiluConfig(b=4, T_LEN=1 << 14, b_2=1 << 16, b_3=1 << 32, b_4=1 << 48,
                         width_2=16, width_3=16, width_4=14, r=SCALE_BITS)  # s_x = S
-RMS_SLACK_N_CHUNKS = 4
 
 # Production-shape independent benchmarks (NOT chained from x).
 SM_B     = 512
@@ -211,7 +210,6 @@ def _run_block(tape, x, weights, *, H: int):
 
     # ----- Attention -----
     norm1 = tape.rmsnorm(x, d=d, s=S, eps_int=EPS_INT,
-                         slack_n_chunks=RMS_SLACK_N_CHUNKS,
                          s_out=S, output_width=OUTPUT_WIDTH)
     norm1_g = tape.hadamard_broadcast(norm1, rms_pre_attn_w, SEQ=SEQ, d=d,
                                        s_a=S, s_b=S, s_out=S, output_width=OUTPUT_WIDTH)
@@ -239,7 +237,6 @@ def _run_block(tape, x, weights, *, H: int):
 
     # ----- FFN -----
     norm2 = tape.rmsnorm(resid_1, d=d, s=S, eps_int=EPS_INT,
-                          slack_n_chunks=RMS_SLACK_N_CHUNKS,
                           s_out=S, output_width=OUTPUT_WIDTH)
     norm2_g = tape.hadamard_broadcast(norm2, rms_pre_ffn_w, SEQ=SEQ, d=d,
                                        s_a=S, s_b=S, s_out=S, output_width=OUTPUT_WIDTH)
@@ -262,7 +259,6 @@ def _run_tail(tape, x, final_norm_w, W_lm_head, *,
     bound so the bound-relevant gaps land in a feasible range, BOUND by the
     matmul's own rescale (no separate coarsening claim)."""
     final_norm = tape.rmsnorm(x, d=d, s=S, eps_int=EPS_INT,
-                               slack_n_chunks=RMS_SLACK_N_CHUNKS,
                                s_out=S, output_width=OUTPUT_WIDTH)
     final_norm_g = tape.hadamard_broadcast(
         final_norm, final_norm_w, SEQ=SEQ, d=d,

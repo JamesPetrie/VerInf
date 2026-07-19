@@ -29,8 +29,13 @@ the bottom.
 **Function.** `output[b,i] = x[b,i] / √(mean(x[b]²) + ε)` for `b ∈ [0, B)`,
 `i ∈ [0, d)`. Integer-quantized at scale `s` throughout.
 
-**Config.** `B, d, s, eps_int, slack_n_chunks=K, slack_chunk_width=w (=16),
-s_in (optional, ≥ s)`. Derived: `magic = d·s⁴`, `rescale_bits r = log2(s_in/s)`.
+**Config.** `B, d, s, eps_int, s_in (optional, ≥ s)`. Derived:
+`magic = d·s⁴`, `rescale_bits r = log2(s_in/s)`, and the wrap-free-bracket
+range windows `y_width`, `slack_width`, `g0h_width`, `g1h_width`,
+`G2_width` — all computed from `(d, s, eps_int)` on BOTH sides, so no
+window is prover-chosen (rmsnorm-bracket-fix.md §3). Slacks decompose into
+`K = len(_chunk_widths(slack_width))` chunks at 16-bit strides, the top
+chunk narrower.
 
 **I/O.**
 
@@ -54,6 +59,11 @@ s_in (optional, ≥ s)`. Derived: `magic = d·s⁴`, `rescale_bits r = log2(s_in
 | `s_lo` | B | q1·S_total − magic (lower-bracket slack) |
 | `s_hi` | B | magic − 1 − q2·S_total (upper-bracket slack) |
 | `s_lo_chunks[n], s_hi_chunks[n]` | B each (K of each) | word decomp of slacks |
+| `ym1_chunks[n]` | B each | tight decomp of y−1 (window `y_width`) |
+| `S_limbs[0..3)` | B each | S_total = S0 + 2^18·S1 + 2^36·S2, 18-bit limbs (LIMB_W) |
+| `lo_H[0..3)`, `hi_H[0..3)` | B each | q·S_limb products (q = q1 / q2) |
+| `lo_gl[0..2)`, `hi_gl[0..2)` | B each | g0l, g1l: low 16 bits of the carry chain |
+| `lo_g0h_chunks, lo_g1h_chunks, lo_G2_chunks` (+ hi twins) | B each | carry-chain highs, tight-chunked |
 | *rescale (r > 0):* `x_in, x_low` | B·d each | public input, low word |
 
 **Phase-2 vars** (committed after challenges):
@@ -61,12 +71,15 @@ s_in (optional, ≥ s)`. Derived: `magic = d·s⁴`, `rescale_bits r = log2(s_in
 | var | length | what it is |
 |---|---|---|
 | `u, p` | B each | Freivalds row aggs: `u = Σ ρᵢ·x[b·d+i]`, `p = Σ ρᵢ·output[b·d+i]` |
-| `z_lo_chunks[n], z_hi_chunks[n]` | B each | 1/(α_slack − chunk) |
+| `z_lo_chunks[n], z_hi_chunks[n]` | B each | 1/(α − chunk), α of the chunk's table |
+| `z_ym1_chunks, z_S_limbs, z_{lo,hi}_{gl,g0h,g1h,G2}` | B each | 1/(α − v) for every limb range check |
 | *rescale:* `z_x_low, z_x` | B·d each | 1/(α_rescale − x_low), 1/(α_slack − x) |
 
-**Tables.** `range_slack` (2^w = 2^16 entries, shared across slack chunks
-and the rescale's loose check); `range_rescale` (2^r entries, when
-rescale active).
+**Tables.** `range_slack` (2^16 entries, shared by every 16-bit chunk and
+the rescale's loose check); `range_limb` (2^LIMB_W = 2^18 entries, for the
+S_total limbs and the carry lows g0l/g1l); `rms_w{k}` top-chunk tables
+(2^k entries) for the narrow top chunk of each derived window;
+`range_rescale` (2^r entries, when rescale active).
 
 **Constraints.**
 
@@ -75,24 +88,33 @@ Linear (per row unless noted):
 - `S_total = S + d·ε`, `y_m1 = y − 1`
 - `S = Σᵢ X_sq[b·d+i]` (row-sum, d nnz)
 - `u = Σᵢ ρᵢ · x[b·d+i]`, `p = Σᵢ ρᵢ · output[b·d+i]` (Freivalds)
-- `s_lo = Σₙ (1<<(n·w))·s_lo_chunks[n]`, same for `s_hi`
+- `s_lo = Σₙ 2^{16n}·s_lo_chunks[n]`, same for `s_hi`
+- `y_m1 = Σₙ 2^{16n}·ym1_chunks[n]` (F8), `S_total = Σₙ 2^{LIMB_W·n}·S_limbs[n]` (F9, LIMB_W=18)
+- Carry chains (F10–F13 lower, F14–F17 upper; rmsnorm-bracket-fix.md §2):
+  `H0 = g0l + 2^16·g0h`; `H1 + g0h = g1l + 2^16·g1h`; `H2 + g1h = G2`;
+  `2^32·G2 + 2^16·g1l + g0l ∓ slack = magic (−1)` — the bracket identities,
+  now over the integers since every term is range-bounded below P
 - *rescale (per cell):* `x_in = (1<<r)·x + x_low`
 
 Quadratic:
 
 - `X_sq = x ⊙ x` (per cell)
 - `q1 = y², q2 = y_m1²` (per row)
-- **Lower bracket:** `q1·S_total − s_lo = magic` (per row)
-- **Upper bracket:** `q2·S_total + s_hi = magic − 1` (per row)
+- **Bracket limb products:** `lo_H[k] = q1·S_limbs[k]`,
+  `hi_H[k] = q2·S_limbs[k]`, k ∈ {0,1,2} (per row; the whole-product
+  bracket quads were replaced by the F10–F17 carry chains)
 - **Freivalds check:** `y · u = p` (per row)
-- Range LogUps: `(α_slack − chunk)·z = 1` for every slack chunk
+- Range LogUps: `(α − v)·z = 1` for every slack chunk and every limb
+  range check (α of the chunk's own table)
 - *rescale:* `(α_rescale − x_low)·z_x_low = 1`, `(α_slack − x)·z_x = 1`
 
 **Intuition.** Algebraic-rsqrt bracket pins `y` to `⌈√(magic / S_total)⌉`
-without an rsqrt lookup table. Slacks accommodate the integer width
-and are word-decomposed so we don't need a giant range table.
-Freivalds-folded broadcast (`y · u = p`) avoids committing `B·d` cells
-of `y_broadcast`.
+without an rsqrt lookup table. The bracket products are assembled from
+LIMB_W-bit limbs of `S_total` with range-checked carries, so both bracket
+identities hold over the integers — a field-wrapped `y′` has no valid
+witness (this replaced a vacuous configuration; see
+rmsnorm-bracket-fix.md §1). Freivalds-folded broadcast (`y · u = p`)
+avoids committing `B·d` cells of `y_broadcast`.
 
 ---
 
