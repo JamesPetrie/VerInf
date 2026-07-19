@@ -267,7 +267,7 @@ from claims import (
     matmul_claim, AddClaim, HadamardClaim,
     RangeWordClaim, WordExtractionClaim, PairedTlookupClaim,
     SiluConfig, SILU_TOY, SILU_14BIT, SiluClaim, silu_tpos_tneg,
-    RmsNormConfig, RmsNormClaim,
+    RmsNormConfig, RmsNormClaim, _chunk_widths, _rms_limb_range_groups, RMS_LIMB_W,
     SoftmaxConfig, SoftmaxClaim, _softmax_exp_tables,
     RoPEConfig, RoPEClaim, _rope_cos_sin,
     EmbeddingLookupClaim,
@@ -867,7 +867,6 @@ class Tape:
         return WitnessTensor(outs[output_var] if outs else None, output_var, x.shape, self)
 
     def rmsnorm(self, x, *, d: int, s: int = 4, eps_int: int = 1,
-                slack_chunk_width: int = 16, slack_n_chunks: int = 1,
                 s_in: Optional[int] = None,
                 s_out: Optional[int] = None, output_width: int = 16):
         """Batched RMSNorm: y[b] = 1/√(mean(x[b]²) + ε), output = x·broadcast(y).
@@ -878,35 +877,45 @@ class Tape:
         the raw product `output_full` is committed internally and the
         Freivalds linear binds to output_full.
 
-        At Llama 2 7B parameters (d=4096, s=2^12), slacks reach ~2^49;
-        set slack_n_chunks=4."""
+        All range-window widths (slack, y, limb carries) are DERIVED from
+        (d, s, eps_int) — see RmsNormConfig and rmsnorm-bracket-fix.md."""
         L = x.var.length
         assert L % d == 0, f"rmsnorm: x length {L} not divisible by d={d}"
         B = L // d
         s_in_eff = s if s_in is None else s_in
         s_out_eff = 0 if s_out is None else s_out
         sc = RmsNormConfig(B=B, d=d, s=s, eps_int=eps_int,
-                            slack_n_chunks=slack_n_chunks,
-                            slack_chunk_width=slack_chunk_width,
                             s_in=s_in_eff,
                             s_out=s_out_eff,
                             output_width=output_width)
         rescale_bits = sc.rescale_bits
         output_rescale_bits = sc.output_rescale_bits
         magic = sc.magic
-        K, w = slack_n_chunks, slack_chunk_width
-        chunk_mask = (1 << w) - 1
-        slack_max = 1 << (K * w)
 
-        # Cache the slack range table on first call (keyed by chunk width).
-        cache_key = f"_rmsnorm_range_w{w}"
+        # Cache the 16-bit slack range table on first call.
+        cache_key = "_rmsnorm_range_w16"
         if not hasattr(self, cache_key):
             range_slack = self.register_table(
-                f"rmsnorm_range_w{w}",
-                T_data=list(range(1 << w)),
+                "rmsnorm_range_w16",
+                T_data=list(range(1 << 16)),
             )
             setattr(self, cache_key, range_slack)
         range_slack = getattr(self, cache_key)
+
+        # 2^LIMB_W table for the S_total limbs and the carry lows g0l/g1l.
+        range_limb = self._range_table("rms", RMS_LIMB_W)
+
+        # Top-chunk tables for the derived windows (None when the window is a
+        # multiple of 16 — then every chunk checks against range_slack).
+        def top_table(width):
+            rem = width % 16 if width >= 16 else width
+            return self._range_table("rms", rem) if rem else None
+        range_y_top     = top_table(sc.y_width)
+        range_slack_top = top_table(sc.slack_width)
+        range_g0h_top   = top_table(sc.g0h_width)
+        range_g1h_top   = top_table(sc.g1h_width)
+        range_G2_top    = top_table(sc.G2_width)
+        K = len(_chunk_widths(sc.slack_width))
 
         # Input rescale aux (when s_in > s).
         if rescale_bits > 0:
@@ -944,6 +953,23 @@ class Tape:
                              for n in range(K)]
         s_hi_chunks_vars = [self._alloc(f"{x.var.name}_rms_s_hi_c{n}", B)
                              for n in range(K)]
+        # Wrap-free-bracket limb witnesses (rmsnorm-bracket-fix.md).
+        pfx = x.var.name
+        ym1_chunks_vars = [self._alloc(f"{pfx}_rms_ym1_c{n}", B)
+                            for n in range(len(_chunk_widths(sc.y_width)))]
+        S_limbs_vars = [self._alloc(f"{pfx}_rms_Slimb{n}", B) for n in range(3)]
+        def _alloc_bracket(tag):
+            return dict(
+                H=[self._alloc(f"{pfx}_rms_{tag}_H{k}", B) for k in range(3)],
+                gl=[self._alloc(f"{pfx}_rms_{tag}_g{k}l", B) for k in range(2)],
+                g0h=[self._alloc(f"{pfx}_rms_{tag}_g0h_c{j}", B)
+                     for j in range(len(_chunk_widths(sc.g0h_width)))],
+                g1h=[self._alloc(f"{pfx}_rms_{tag}_g1h_c{j}", B)
+                     for j in range(len(_chunk_widths(sc.g1h_width)))],
+                G2=[self._alloc(f"{pfx}_rms_{tag}_G2_c{j}", B)
+                    for j in range(len(_chunk_widths(sc.G2_width)))])
+        lo = _alloc_bracket("lo")
+        hi = _alloc_bracket("hi")
         if output_rescale_bits > 0:
             output_full_var = self._alloc(f"{x.var.name}_rms_out_full", L)
             output_low_var, output_shifted_var, z_output_low, z_output_shifted = \
@@ -960,8 +986,17 @@ class Tape:
                         for n in range(K)]
         z_hi_chunks = [Variable(f"{x.var.name}_rms_z_hi_c{n}", length=B, phase=2)
                         for n in range(K)]
-        for z in z_lo_chunks + z_hi_chunks:
-            range_slack.z_vars.append(z)
+        slack_widths = _chunk_widths(sc.slack_width)
+        for n, z in enumerate(z_lo_chunks):
+            (range_slack if slack_widths[n] == 16 else range_slack_top).z_vars.append(z)
+        for n, z in enumerate(z_hi_chunks):
+            (range_slack if slack_widths[n] == 16 else range_slack_top).z_vars.append(z)
+        def _z_list(vars_):
+            return [Variable(f"z_{v.name}", length=B, phase=2) for v in vars_]
+        z_ym1   = _z_list(ym1_chunks_vars)
+        z_Slimb = _z_list(S_limbs_vars)
+        z_lo = {k: _z_list(lo[k]) for k in ("gl", "g0h", "g1h", "G2")}
+        z_hi = {k: _z_list(hi[k]) for k in ("gl", "g0h", "g1h", "G2")}
 
         claim = RmsNormClaim(
             x=x_internal_var, output=output_var, config=sc,
@@ -969,9 +1004,22 @@ class Tape:
             y=y_var, y_m1=y_m1_var, q1=q1_var, q2=q2_var,
             s_lo=s_lo_var, s_hi=s_hi_var,
             s_lo_chunks=s_lo_chunks_vars, s_hi_chunks=s_hi_chunks_vars,
+            ym1_chunks=ym1_chunks_vars, S_limbs=S_limbs_vars,
+            lo_H=lo["H"], lo_gl=lo["gl"], lo_g0h_chunks=lo["g0h"],
+            lo_g1h_chunks=lo["g1h"], lo_G2_chunks=lo["G2"],
+            hi_H=hi["H"], hi_gl=hi["gl"], hi_g0h_chunks=hi["g0h"],
+            hi_g1h_chunks=hi["g1h"], hi_G2_chunks=hi["G2"],
             u=u, p=p,
             z_lo_chunks=z_lo_chunks, z_hi_chunks=z_hi_chunks,
-            range_slack=range_slack,
+            z_ym1_chunks=z_ym1, z_S_limbs=z_Slimb,
+            z_lo_gl=z_lo["gl"], z_lo_g0h=z_lo["g0h"],
+            z_lo_g1h=z_lo["g1h"], z_lo_G2=z_lo["G2"],
+            z_hi_gl=z_hi["gl"], z_hi_g0h=z_hi["g0h"],
+            z_hi_g1h=z_hi["g1h"], z_hi_G2=z_hi["G2"],
+            range_slack=range_slack, range_limb=range_limb,
+            range_y_top=range_y_top, range_slack_top=range_slack_top,
+            range_g0h_top=range_g0h_top, range_g1h_top=range_g1h_top,
+            range_G2_top=range_G2_top,
             x_in=x_in_var, x_low=x_low_var, x_shifted=x_shifted_var,
             z_x_low=z_x_low, z_x_shifted=z_x_shifted,
             range_rescale=range_rescale,
@@ -983,10 +1031,25 @@ class Tape:
             range_output_rescale=range_output_rescale,
             range_output=range_output,
         )
+        # Register the limb z's on their tables (frozen group order).
+        limb_groups = _rms_limb_range_groups(claim)
+        for vars_, zs, tbls in limb_groups:
+            for z, tbl in zip(zs, tbls):
+                tbl.z_vars.append(z)
+
         def side_effects(values):
-            for var in s_lo_chunks_vars + s_hi_chunks_vars:
-                lookup_multiplicities_into(values[var], range_slack.T,
-                                            self.inputs[range_slack.mult_var])
+            for n, var in enumerate(s_lo_chunks_vars):
+                tbl = range_slack if slack_widths[n] == 16 else range_slack_top
+                lookup_multiplicities_into(values[var], tbl.T,
+                                            self.inputs[tbl.mult_var])
+            for n, var in enumerate(s_hi_chunks_vars):
+                tbl = range_slack if slack_widths[n] == 16 else range_slack_top
+                lookup_multiplicities_into(values[var], tbl.T,
+                                            self.inputs[tbl.mult_var])
+            for vars_, _zs, tbls in limb_groups:
+                for var, tbl in zip(vars_, tbls):
+                    lookup_multiplicities_into(values[var], tbl.T,
+                                                self.inputs[tbl.mult_var])
             if rescale_bits > 0:
                 lookup_multiplicities_into(values[x_low_var], range_rescale.T,
                                             self.inputs[range_rescale.mult_var])

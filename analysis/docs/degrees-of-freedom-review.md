@@ -54,6 +54,18 @@ of §5.4, with the commit-before-challenge order doing the work:
 
 ## 3. Flagged: the RMSNorm rsqrt bracket needs a wrap-exclusion argument
 
+**RESOLVED 2026-07-06 — and the flag understated the severity.** The
+production configs used slack windows of 4×16 bits = 2^64 ≥ P, so EVERY
+field element decomposed and the bracket was fully vacuous: any forged y′
+was accepted, no search needed (the ~2⁻¹⁵ estimate below assumed W ≈ 2²⁴).
+The recommended lone range check on y is also insufficient — the honest
+slack needs a window (~2⁵³) wider than one-wrap exclusion tolerates
+(~2⁴¹). Fixed instead by assembling both bracket products from 16-bit
+limbs of S_total with tight range-checked carries, giving the identities
+integer semantics outright; all windows are derived from (d, s, eps_int)
+on both sides. See `rmsnorm-bracket-fix.md` and `test_rmsnorm_bracket.py`
+(the forgery is a negative test). The original finding follows.
+
 The bracket pins y by y²·S ≥ magic and (y−1)²·S < magic (slacks s_lo, s_hi
 range-checked into a window of width W). Over the *integers* this pins a unique
 y ≥ 0. Over the *field*, the constraints read y²·S ≡ magic + s_lo (mod P) etc.,

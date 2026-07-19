@@ -25,7 +25,7 @@ from claims import (
     WordExtractionClaim, PairedTlookupClaim, RangeWordClaim,
     EmbeddingLookupClaim,
     RoPEClaim, _rope_cos_sin,
-    SiluClaim, RmsNormClaim,
+    SiluClaim, RmsNormClaim, _chunk_widths, RMS_LIMB_W, RMS_N_LIMBS,
     SoftmaxClaim, _softmax_exp_tables,
 )
 from core import Variable
@@ -333,16 +333,21 @@ def rmsnorm_compute(claim: RmsNormClaim, live):
     witness tensors and ACCEPTs identically."""
     sc = claim.config
     B, d, s, eps_int = sc.B, sc.d, sc.s, sc.eps_int
-    K, w = sc.slack_n_chunks, sc.slack_chunk_width
-    chunk_mask = (1 << w) - 1
-    slack_max = 1 << (K * w)
+    slack_max = 1 << sc.slack_width
     magic = sc.magic
     out: Dict[Variable, torch.Tensor] = {}
+
+    def _split(v: int, widths) -> list:
+        """Chunk v at 16-bit strides into the given widths (top chunk narrow).
+        Tight by construction: asserts v fits the window."""
+        assert v < (1 << (16 * (len(widths) - 1) + widths[-1])), \
+            f"rmsnorm witness value {v} exceeds its derived window {widths}"
+        return [(v >> (16 * n)) & ((1 << wn) - 1) for n, wn in enumerate(widths)]
 
     if sc.rescale_bits > 0:
         r = sc.rescale_bits
         k_resc = 1 << r
-        offset = 1 << (w - 1)
+        offset = 1 << 15   # signed shift against the 16-bit slack table
         x_in_d = live[claim.x_in]
         device = x_in_d.device
         x_in_np      = x_in_d.cpu().numpy()                                # uint64
@@ -369,9 +374,18 @@ def rmsnorm_compute(claim: RmsNormClaim, live):
 
     S_l, S_total_l, y_l, y_m1_l = [], [], [], []
     q1_l, q2_l, s_lo_l, s_hi_l = [], [], [], []
+    S_limbs_l = [[] for _ in range(RMS_N_LIMBS)]
+    bracket_l = {t: dict(H=[[] for _ in range(RMS_N_LIMBS)], gl=[[], []],
+                         g0h=[], g1h=[], G2=[])
+                 for t in ("lo", "hi")}
+    ym1_chunks_l = []
+    _s_cap = RMS_LIMB_W * RMS_N_LIMBS
     for b in range(B):
         S_b = ((int(hi_sum[b]) << 32) + int(lo_sum[b])) % P
         S_tot_b = (S_b + d_eps) % P
+        assert S_tot_b < (1 << _s_cap), (
+            f"rmsnorm row {b}: S_total={S_tot_b} exceeds the 2^{_s_cap} limb cap "
+            f"(row energy too large for the claim's integer bracket; raise LIMB_W)")
         # Smallest y >= 1 with y² · S_tot >= magic. ceil(sqrt(magic/S_tot))
         # is an exact starting point via isqrt; the while-loops adjust the
         # rare off-by-one from non-square ratios.
@@ -393,6 +407,31 @@ def rmsnorm_compute(claim: RmsNormClaim, live):
         y_l.append(y_int);        y_m1_l.append(ym1)
         q1_l.append(q1_b);        q2_l.append(q2_b)
         s_lo_l.append(int(slack_lo)); s_hi_l.append(int(slack_hi))
+        # Wrap-free-bracket limbs (all exact non-negative integers < P; see
+        # rmsnorm-bracket-fix.md). Limbs + carry lows are LIMB_W-wide; the
+        # carry highs g0h/g1h/G2 are 16-bit-chunked.
+        Lw = RMS_LIMB_W
+        Lmask = (1 << Lw) - 1
+        ym1_chunks_l.append(_split(ym1, _chunk_widths(sc.y_width)))
+        limbs = [(S_tot_b >> (Lw * n)) & Lmask for n in range(RMS_N_LIMBS)]
+        for n in range(RMS_N_LIMBS):
+            S_limbs_l[n].append(limbs[n])
+        for tag, q in (("lo", q1_b), ("hi", q2_b)):
+            acc = bracket_l[tag]
+            G0 = q * limbs[0]
+            g0l, g0h = G0 & Lmask, G0 >> Lw
+            G1 = q * limbs[1] + g0h
+            g1l, g1h = G1 & Lmask, G1 >> Lw
+            G2 = q * limbs[2] + g1h
+            # Sanity: the chain reassembles the bracket identity exactly.
+            ref = magic + int(slack_lo) if tag == "lo" else magic - 1 - int(slack_hi)
+            assert (G2 << (2 * Lw)) + (g1l << Lw) + g0l == ref, "rmsnorm limb chain broke"
+            for k, hv in enumerate((G0, q * limbs[1], q * limbs[2])):
+                acc["H"][k].append(hv % P)
+            acc["gl"][0].append(g0l); acc["gl"][1].append(g1l)
+            acc["g0h"].append(_split(g0h, _chunk_widths(sc.g0h_width)))
+            acc["g1h"].append(_split(g1h, _chunk_widths(sc.g1h_width)))
+            acc["G2"].append(_split(G2, _chunk_widths(sc.G2_width)))
 
     y_t = torch.tensor([v % P for v in y_l], dtype=torch.uint64, device=device)
     y_per_cell = y_t.view(B, 1).expand(B, d).contiguous().view(-1)
@@ -418,13 +457,36 @@ def rmsnorm_compute(claim: RmsNormClaim, live):
     out[claim.q2]      = torch.tensor(q2_l,      dtype=torch.uint64, device=device)
     out[claim.s_lo]    = torch.tensor(s_lo_l,    dtype=torch.uint64, device=device)
     out[claim.s_hi]    = torch.tensor(s_hi_l,    dtype=torch.uint64, device=device)
-    for n in range(K):
+    slack_widths = _chunk_widths(sc.slack_width)
+    for n, wn in enumerate(slack_widths):
+        mask = (1 << wn) - 1
         out[claim.s_lo_chunks[n]] = torch.tensor(
-            [(v >> (n * w)) & chunk_mask for v in s_lo_l],
+            [(v >> (16 * n)) & mask for v in s_lo_l],
             dtype=torch.uint64, device=device)
         out[claim.s_hi_chunks[n]] = torch.tensor(
-            [(v >> (n * w)) & chunk_mask for v in s_hi_l],
+            [(v >> (16 * n)) & mask for v in s_hi_l],
             dtype=torch.uint64, device=device)
+
+    def _tens(vals):
+        return torch.tensor(vals, dtype=torch.uint64, device=device)
+    for n, var in enumerate(claim.ym1_chunks):
+        out[var] = _tens([row[n] for row in ym1_chunks_l])
+    for n, var in enumerate(claim.S_limbs):
+        out[var] = _tens(S_limbs_l[n])
+    for tag, (H_vars, gl_vars, g0h_vars, g1h_vars, G2_vars) in (
+            ("lo", (claim.lo_H, claim.lo_gl, claim.lo_g0h_chunks,
+                    claim.lo_g1h_chunks, claim.lo_G2_chunks)),
+            ("hi", (claim.hi_H, claim.hi_gl, claim.hi_g0h_chunks,
+                    claim.hi_g1h_chunks, claim.hi_G2_chunks))):
+        acc = bracket_l[tag]
+        for k, var in enumerate(H_vars):
+            out[var] = _tens(acc["H"][k])
+        for k, var in enumerate(gl_vars):
+            out[var] = _tens(acc["gl"][k])
+        for chunks_key, vars_ in (("g0h", g0h_vars), ("g1h", g1h_vars),
+                                   ("G2", G2_vars)):
+            for j, var in enumerate(vars_):
+                out[var] = _tens([row[j] for row in acc[chunks_key]])
     return out
 
 COMPUTE_FNS[RmsNormClaim] = rmsnorm_compute

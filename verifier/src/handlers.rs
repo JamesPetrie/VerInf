@@ -314,6 +314,52 @@ fn compile_matmul(cl: &Claim, ci: usize, s_op: &[u8], b: &mut Build, cfg: &Confi
     }
 }
 
+fn isqrt_u128(n: u128) -> u128 {
+    if n < 2 { return n; }
+    let mut x = 1u128 << ((128 - n.leading_zeros() + 1) / 2);
+    loop {
+        let y = (x + n / x) / 2;
+        if y >= x { return x; }
+        x = y;
+    }
+}
+
+fn bitlen_u128(n: u128) -> u32 { 128 - n.leading_zeros() }
+
+// S_total limb width / count — the single S_total-headroom knob (must equal
+// claims.RMS_LIMB_W / RMS_N_LIMBS; the compile is positional across sides).
+const RMS_LIMB_W: u32 = 18;
+const RMS_N_LIMBS: usize = 3;
+
+/// 16-bit chunks plus one narrow top chunk (mirrors claims._chunk_widths).
+fn rms_chunk_widths(total_bits: u32) -> Vec<u32> {
+    let mut ws = vec![16u32; (total_bits / 16) as usize];
+    if total_bits % 16 != 0 { ws.push(total_bits % 16); }
+    if ws.is_empty() { ws.push(1); }
+    ws
+}
+
+/// Derived range-window widths of the wrap-free rmsnorm bracket, computed
+/// INDEPENDENTLY from the public config (mirrors RmsNormConfig's properties
+/// — the prover cannot widen a window). See rmsnorm-bracket-fix.md.
+struct RmsWidths { y: u32, slack: u32, g0h: u32, g1h: u32, g2: u32 }
+
+fn rms_widths(d: u64, eps_int: u64, magic: u64) -> RmsWidths {
+    let s_min = d as u128 * eps_int as u128;
+    assert!(s_min >= 1, "rmsnorm needs eps_int >= 1");
+    let m = magic as u128;
+    let mut y = std::cmp::max(1, isqrt_u128(m / s_min));
+    while y * y * s_min < m { y += 1; }
+    let yw = std::cmp::max(1, bitlen_u128(y - 1));
+    assert!(2 * yw + RMS_LIMB_W <= 63, "rmsnorm y_width too wide for wrap-free limbs");
+    let cap: u128 = 1 << (RMS_LIMB_W * RMS_N_LIMBS as u32);
+    let sw = bitlen_u128(2 * isqrt_u128(m * cap) + cap);
+    assert!(m + (1u128 << sw) < P as u128, "rmsnorm slack window admits wrapped negatives");
+    let g2 = std::cmp::max(1, bitlen_u128((m + (1u128 << sw)) >> (2 * RMS_LIMB_W)));
+    assert!(g2 + 2 * RMS_LIMB_W <= 62, "rmsnorm G2 window would wrap");
+    RmsWidths { y: yw, slack: sw, g0h: 2 * yw, g1h: 2 * yw + 1, g2 }
+}
+
 fn compile_rmsnorm(cl: &Claim, ci: usize, s_op: &[u8], b: &mut Build, cfg: &Config) {
     let ell = cfg.ell as usize;
     let bsz = cl.cfg_int("config", "B") as usize;
@@ -327,9 +373,9 @@ fn compile_rmsnorm(cl: &Claim, ci: usize, s_op: &[u8], b: &mut Build, cfg: &Conf
     let rho = op_vec(s_op, ci, "rho", d);
     let neg_rho: Vec<u64> = rho.iter().map(|&r| (P - r % P) % P).collect();
     let neg_ones_d = vec![P - 1; d];
-    let scw = cl.cfg_int("config", "slack_chunk_width");
-    let snc = cl.cfg_int("config", "slack_n_chunks") as usize;
-    let chunk_strides: Vec<u64> = (0..snc).map(|n| 1u64 << (n as u64 * scw)).collect();
+    let w = rms_widths(d as u64, eps_int, magic);
+    let slack_widths = rms_chunk_widths(w.slack);
+    let chunk_strides: Vec<u64> = (0..slack_widths.len()).map(|n| 1u64 << (16 * n)).collect();
 
     let base = b.nxt;
     b.emit_id(cl.var("S_total"), base, 1, ell); b.emit_id(cl.var("S"), base, P - 1, ell);
@@ -353,30 +399,130 @@ fn compile_rmsnorm(cl: &Claim, ci: usize, s_op: &[u8], b: &mut Build, cfg: &Conf
     for (n, &chunk) in hi_chunks.iter().enumerate() {
         b.emit_id(chunk, f7, (P - chunk_strides[n] % P) % P, ell);
     }
-    let mut cur = base + 7 * bsz;
+
+    // F8: y_m1 tight decomposition; F9: S_total limb decomposition.
+    let f8 = base + 7 * bsz;
+    b.emit_id(cl.var("y_m1"), f8, 1, ell);
+    let ym1_chunks = cl.var_list("ym1_chunks");
+    for (n, &chunk) in ym1_chunks.iter().enumerate() {
+        b.emit_id(chunk, f8, (P - (1u64 << (16 * n)) % P) % P, ell);
+    }
+    let f9 = base + 8 * bsz;
+    b.emit_id(cl.var("S_total"), f9, 1, ell);
+    let s_limbs = cl.var_list("S_limbs");
+    for (n, &limb) in s_limbs.iter().enumerate() {
+        b.emit_id(limb, f9, (P - (1u64 << (RMS_LIMB_W * n as u32)) % P) % P, ell);
+    }
+
+    // F10..F13 / F14..F17: wrap-free bracket carry chains
+    // (rmsnorm-bracket-fix.md); mirrors claims.rmsnorm_compile.emit_bracket.
+    // Limbs + carry lows are LIMB_W-wide (stride 2^Lw); the carry highs
+    // g0h/g1h/G2 use 16-bit internal chunk strides.
+    let lw = RMS_LIMB_W;
+    let emit_bracket = |b: &mut Build, f0: usize, h: &[Var], gl: &[Var],
+                            g0h: &[Var], g1h: &[Var], g2: &[Var],
+                            slack: Var, slack_coef: u64| {
+        b.emit_id(h[0], f0, 1, ell);
+        b.emit_id(gl[0], f0, P - 1, ell);
+        for (j, &ch) in g0h.iter().enumerate() {
+            b.emit_id(ch, f0, (P - (1u64 << (lw + 16 * j as u32)) % P) % P, ell);
+        }
+        let f1_ = f0 + bsz;
+        b.emit_id(h[1], f1_, 1, ell);
+        for (j, &ch) in g0h.iter().enumerate() {
+            b.emit_id(ch, f1_, (1u64 << (16 * j)) % P, ell);
+        }
+        b.emit_id(gl[1], f1_, P - 1, ell);
+        for (j, &ch) in g1h.iter().enumerate() {
+            b.emit_id(ch, f1_, (P - (1u64 << (lw + 16 * j as u32)) % P) % P, ell);
+        }
+        let f2_ = f0 + 2 * bsz;
+        b.emit_id(h[2], f2_, 1, ell);
+        for (j, &ch) in g1h.iter().enumerate() {
+            b.emit_id(ch, f2_, (1u64 << (16 * j)) % P, ell);
+        }
+        for (j, &ch) in g2.iter().enumerate() {
+            b.emit_id(ch, f2_, (P - (1u64 << (16 * j)) % P) % P, ell);
+        }
+        let f3_ = f0 + 3 * bsz;
+        for (j, &ch) in g2.iter().enumerate() {
+            b.emit_id(ch, f3_, (1u64 << (2 * lw + 16 * j as u32)) % P, ell);
+        }
+        b.emit_id(gl[1], f3_, (1u64 << lw) % P, ell);
+        b.emit_id(gl[0], f3_, 1, ell);
+        b.emit_id(slack, f3_, slack_coef, ell);
+    };
+    let (lo_h, lo_gl) = (cl.var_list("lo_H"), cl.var_list("lo_gl"));
+    let (lo_g0h, lo_g1h, lo_g2) = (cl.var_list("lo_g0h_chunks"),
+        cl.var_list("lo_g1h_chunks"), cl.var_list("lo_G2_chunks"));
+    let (hi_h, hi_gl) = (cl.var_list("hi_H"), cl.var_list("hi_gl"));
+    let (hi_g0h, hi_g1h, hi_g2) = (cl.var_list("hi_g0h_chunks"),
+        cl.var_list("hi_g1h_chunks"), cl.var_list("hi_G2_chunks"));
+    emit_bracket(b, base + 9 * bsz, &lo_h, &lo_gl, &lo_g0h, &lo_g1h, &lo_g2,
+                 cl.var("s_lo"), P - 1);
+    emit_bracket(b, base + 13 * bsz, &hi_h, &hi_gl, &hi_g0h, &hi_g1h, &hi_g2,
+                 cl.var("s_hi"), 1);
+    let mut cur = base + 17 * bsz;
 
     // QUAD ORDER load-bearing (combiner indexed by position): op quads (arithmetic
-    // + slack range checks) FIRST, rescale range quads LAST — matching the prover.
+    // + slack range checks + limb range checks) FIRST, rescale range quads LAST —
+    // matching the prover.
     b.emit_quad(cl.var("x"), cl.var("x"), cl.var("X_sq"), P - 1, 0, l, ell);
     b.emit_quad(cl.var("y"), cl.var("y"), cl.var("q1"), P - 1, 0, bsz, ell);
     b.emit_quad(cl.var("y_m1"), cl.var("y_m1"), cl.var("q2"), P - 1, 0, bsz, ell);
-    b.emit_quad(cl.var("q1"), cl.var("S_total"), cl.var("s_lo"), P - 1, magic, bsz, ell);
-    b.emit_quad(cl.var("q2"), cl.var("S_total"), cl.var("s_hi"), 1, sub(magic, 1), bsz, ell);
+    for k in 0..RMS_N_LIMBS {
+        b.emit_quad(cl.var("q1"), s_limbs[k], lo_h[k], P - 1, 0, bsz, ell);
+    }
+    for k in 0..RMS_N_LIMBS {
+        b.emit_quad(cl.var("q2"), s_limbs[k], hi_h[k], P - 1, 0, bsz, ell);
+    }
     b.emit_quad(cl.var("y"), cl.var("u"), cl.var("p"), P - 1, 0, bsz, ell);
     let alpha_t = cl.table("range_slack").alpha;
+    let alpha_limb = cl.table("range_limb").alpha;
+    let slack_top_alpha = if w.slack % 16 != 0 || w.slack < 16 {
+        cl.table("range_slack_top").alpha } else { alpha_t };
+    let slack_alpha = |n: usize| if slack_widths[n] == 16 { alpha_t } else { slack_top_alpha };
     let lo_z = cl.var_list("z_lo_chunks");
-    for (chunk, z) in lo_chunks.iter().zip(lo_z.iter()) {
-        b.emit_quad(*chunk, *z, *z, (P - alpha_t) % P, P - 1, bsz, ell);
+    for (n, (chunk, z)) in lo_chunks.iter().zip(lo_z.iter()).enumerate() {
+        b.emit_quad(*chunk, *z, *z, (P - slack_alpha(n)) % P, P - 1, bsz, ell);
     }
     let hi_z = cl.var_list("z_hi_chunks");
-    for (chunk, z) in hi_chunks.iter().zip(hi_z.iter()) {
-        b.emit_quad(*chunk, *z, *z, (P - alpha_t) % P, P - 1, bsz, ell);
+    for (n, (chunk, z)) in hi_chunks.iter().zip(hi_z.iter()).enumerate() {
+        b.emit_quad(*chunk, *z, *z, (P - slack_alpha(n)) % P, P - 1, bsz, ell);
+    }
+    // Limb range checks, in the frozen _rms_limb_range_groups order.
+    let top_alpha = |width: u32, tbl: &str| -> u64 {
+        if width % 16 != 0 || width < 16 { cl.table(tbl).alpha } else { alpha_t }
+    };
+    let group_alphas = |widths: &[u32], tbl: &str| -> Vec<u64> {
+        widths.iter().map(|&cw| if cw == 16 { alpha_t } else { top_alpha(cw, tbl) }).collect()
+    };
+    let yw_chunks = rms_chunk_widths(w.y);
+    let g0w_chunks = rms_chunk_widths(w.g0h);
+    let g1w_chunks = rms_chunk_widths(w.g1h);
+    let g2w_chunks = rms_chunk_widths(w.g2);
+    let groups: Vec<(Vec<Var>, Vec<Var>, Vec<u64>)> = vec![
+        (ym1_chunks.clone(), cl.var_list("z_ym1_chunks"), group_alphas(&yw_chunks, "range_y_top")),
+        (s_limbs.clone(), cl.var_list("z_S_limbs"), vec![alpha_limb; RMS_N_LIMBS]),
+        (lo_gl.clone(), cl.var_list("z_lo_gl"), vec![alpha_limb; 2]),
+        (lo_g0h.clone(), cl.var_list("z_lo_g0h"), group_alphas(&g0w_chunks, "range_g0h_top")),
+        (lo_g1h.clone(), cl.var_list("z_lo_g1h"), group_alphas(&g1w_chunks, "range_g1h_top")),
+        (lo_g2.clone(), cl.var_list("z_lo_G2"), group_alphas(&g2w_chunks, "range_G2_top")),
+        (hi_gl.clone(), cl.var_list("z_hi_gl"), vec![alpha_limb; 2]),
+        (hi_g0h.clone(), cl.var_list("z_hi_g0h"), group_alphas(&g0w_chunks, "range_g0h_top")),
+        (hi_g1h.clone(), cl.var_list("z_hi_g1h"), group_alphas(&g1w_chunks, "range_g1h_top")),
+        (hi_g2.clone(), cl.var_list("z_hi_G2"), group_alphas(&g2w_chunks, "range_G2_top")),
+    ];
+    for (vars_, zs, alphas) in &groups {
+        for ((v, z), a) in vars_.iter().zip(zs.iter()).zip(alphas.iter()) {
+            b.emit_quad(*v, *z, *z, (P - a) % P, P - 1, bsz, ell);
+        }
     }
 
     if in_rs > 0 {
         cur = b.emit_rescale(cur, cl.var("x"), cl.var("x_low"), cl.var("x_in"),
             cl.var("x_shifted"), cl.var("z_x_low"), cl.var("z_x_shifted"),
-            in_rs as u32, scw as u32,
+            in_rs as u32, 16u32,
             cl.table("range_rescale").alpha, cl.table("range_slack").alpha, l, ell);
     }
     if out_rs > 0 {
@@ -386,7 +532,8 @@ fn compile_rmsnorm(cl: &Claim, ci: usize, s_op: &[u8], b: &mut Build, cfg: &Conf
             cl.table("range_output_rescale").alpha, cl.table("range_output").alpha, l, ell);
     }
     b.nxt = cur;
-    b.add_rhs(base, &[(0, bsz, (d as u64 * eps_int) % P), (bsz, bsz, P - 1)]);
+    b.add_rhs(base, &[(0, bsz, (d as u64 * eps_int) % P), (bsz, bsz, P - 1),
+                      (12 * bsz, bsz, magic % P), (16 * bsz, bsz, sub(magic, 1))]);
 }
 
 fn compile_silu(cl: &Claim, b: &mut Build, cfg: &Config) {
