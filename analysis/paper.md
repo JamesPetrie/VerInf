@@ -424,7 +424,7 @@ Read: for each $i$, the prover commits $\boldsymbol{p}[i]$, defined as the produ
 
 - `rescale`: $\boldsymbol{x} \leftarrow \texttt{rescale}(\boldsymbol{x}_{\text{full}})$ returns a raw product to the working scale, keeping the signed high word and dropping the low bits: the third fixed-footprint composite. Five slots (the kept word, the low word, the shifted copy, two inverses), two linear, two quadratic per element; the expansion and its tables are in B.1.
 
-**Extents and binding.** The third column carries each line's extent in $\forall$ notation. An index letter is bound with its range once, at the first line using it; later lines write the bare letter. An extent may be filtered by a public predicate on its indices, as in $\forall\, h, q,\; i \le q$, and the Iverson bracket $[\![\cdot]\!]$ writes such a predicate as a public 0/1 value inside an expression. When a definition's filter does not cover its variable's full extent, the remaining elements are unconstrained: they must appear as a `decl` over the complement, and the lemma must argue that freedom. The comment column annotates declarations and phase rows only; a constraint line's equation is its own documentation.
+**Extents and binding.** The third column carries each line's extent in $\forall$ notation. An index letter is bound with its range once, at the first line using it; later lines write the bare letter. An extent may be filtered by a public predicate on its indices, as in $\forall\, h, q,\; i \le q$, and the Iverson bracket $[\![\cdot]\!]$ writes such a predicate as a public 0/1 value inside an expression. When a definition's filter does not cover its variable's full extent, the remaining elements are unconstrained: they must appear as a `decl` over the complement, and the lemma must argue that freedom. A comment, when one is needed, sits on its own italic row above the line it annotates — declarations and phase boundaries only; a constraint line's equation is its own documentation.
 
 **Public constants and the registry.** Every claim's size parameters and scales are public constants of the claim list; a claim's header names only its further public constants, such as window widths and saturation thresholds. Everything about lookup tables lives in one place, the table registry (B.1.0): contents, rounding rule, length, which claims share the table, and total query volume. An upright name in a `lookup` bracket or after $\sqsubseteq$ is a key into the registry, and listings never restate registry facts. In the demonstrated configuration every claim's inputs and outputs sit at the working scale $\mathrm{S} = 2^{12}$, with each multiplicative claim rescaling its output to $\mathrm{S}$ (B.1); the compiler supports per-claim scales, and the surprisal claims use distinct scales for table values and nats (B.7).
 
@@ -469,31 +469,31 @@ Three composites recur across the claims as their own line kinds, the range chec
 
 #### B.1.0 The table registry
 
-Each row records one public table: its contents, length, which claims query it, the total query volume $M$ over the demonstrated Maverick claim list at $S = 1000$ (48 layers, $n_q = 40$, $E = 128$, $V = 202{,}048$; §A.2), and the per-table LogUp soundness term $(M + T_{\text{len}} + 1)/\vert F \vert$ evaluated at $\vert F \vert \approx 2^{64}$, with $T_{\text{len}}$ the table length. In the sharers column, $N$, $B$, $T$, $E$ are the invoking claim's size parameters.
+Each row records one public table: its contents, length, which claims query it, the query volume $M(S)$ summed over the Maverick claim list as a polynomial in the context length $S$ (48 layers, $n_q = 40$, $E = 128$, $V = 202{,}048$; §A.2), and the per-table LogUp soundness term $(M + T_{\text{len}} + 1)/\vert F \vert$, with $T_{\text{len}}$ the table length, evaluated in the error column at $\vert F \vert \approx 2^{64}$ and the demonstrated $S = 1000$. In the sharers column, $N$, $B$, $T$, $E$ are the invoking claim's size parameters.
 
-| table | contents | length | queried by (per instance) | $M$ at $S{=}1000$ | error |
+| table | contents | length | queried by (per instance) | $M(S)$ | error at $S{=}1000$ |
 |---|---|---|---|---|---|
-| $\mathrm{range}_{2}$ | identity on $[0, 2^{2})$ | $4$ | SiLU word $\boldsymbol{a}_0$ ($N$) | 786,432,000 | $2^{-34.4}$ |
-| $\mathrm{range}_{5}$ | identity on $[0, 2^{5})$ | $2^{5}$ | RMSNorm $\boldsymbol{y}{-}1$ top chunk ($B$) | 97,000 | $2^{-47.4}$ |
-| $\mathrm{range}_{9}$ | identity on $[0, 2^{9})$ | $2^{9}$ | RMSNorm $\boldsymbol{G}_2$ top chunks ($2B$) | 194,000 | $2^{-46.4}$ |
-| $\mathrm{range}_{10}$ | identity on $[0, 2^{10})$ | $2^{10}$ | RMSNorm $\boldsymbol{g}_{0h}$ top chunks ($2B$) | 194,000 | $2^{-46.4}$ |
-| $\mathrm{range}_{11}$ | identity on $[0, 2^{11})$ | $2^{11}$ | routing gap words ($3TE$); hidden-token select gap words ($2TV$, B.8); RMSNorm $\boldsymbol{g}_{1h}$ and slack top chunks ($4B$) | 413,700,000 | $2^{-35.4}$ |
-| $\mathrm{range}_{12}$ | identity on $[0, 2^{12})$ | $2^{12}$ | rescale low words (all ⓡ claims); surprisal slack words ($4$ per position) | 73,110,852,000 | $2^{-27.9}$ |
-| $\mathrm{range}_{14}$ | identity on $[0, 2^{14})$ | $2^{14}$ | SiLU word $\boldsymbol{a}_4$ ($N$) | 786,432,000 | $2^{-34.4}$ |
-| $\mathrm{range}_{16}$ | identity on $[0, 2^{16})$ | $2^{16}$ | softmax $\boldsymbol{z}_{\text{high}}$ ($n_q S^2$); SiLU $\boldsymbol{a}_2, \boldsymbol{a}_3$ ($2N$); RMSNorm 16-bit chunks ($17B$); surprisal remainder ($1$ per position) | 3,494,514,000 | $2^{-32.3}$ |
-| $\mathrm{range}_{18}$ | identity on $[0, 2^{18})$ | $2^{18}$ | RMSNorm $\boldsymbol{S}_{\text{tot}}$ limbs and carry lows ($7B$) | 679,000 | $2^{-44.2}$ |
-| $\mathrm{range}_{20}$ | identity on $[0, 2^{20})$ | $2^{20}$ | surprisal argmax gaps ($V$ per position, alongside $\mathrm{EXP}$'s key bound) | 202,048,000 | $2^{-36.4}$ |
-| $\mathrm{range}_{24}$ | identity on $[0, 2^{24})$ | $2^{24}$ | softmax slacks ($2 n_q S$) and the shift's signed copy ($n_q S$) | 5,760,000 | $2^{-39.6}$ |
-| $\mathrm{range}_{26}$ | identity on $[0, 2^{26})$ | $2^{26}$ | rescale shifted words (all ⓡ claims) | 73,110,848,000 | $2^{-27.9}$ |
-| $\mathrm{T_A}, \mathrm{T_B}$ | $\mathrm{round}(\mathrm{s_y}\, e^{-j/\mathrm{s_c}})$, $\delta$-shifted pair, half-to-even; doubled with a zero half, targeted by the masked-key term $[\![ i > q ]\!]$; zero from index 36{,}909 / 36{,}910 | $2\,\mathrm{Z_{max}} = 80{,}000$ | softmax, every attention layer ($n_q S^2$ per table) | 1,920,000,000 each | $2^{-33.2}$ |
-| $\mathrm{silu}$ | branch-concatenated, bin width $4$, bin-centre rounding | $2^{15}$ | SiLU ($N$) | 786,432,000 | $2^{-34.4}$ |
-| $\mathrm{sigmoid}$ | $\mathrm{round}(\sigma((j - 2^{18})/\mathrm{S})\cdot \mathrm{S})$ | $2^{19}$ | routing weight ($T$ per MoE layer) | 24,000 | $2^{-44.9}$ |
-| $\mathrm{EXP}$ | $\max(1, \lceil \mathrm{s_y}\, e^{-g^2/\mathrm{s_c}} \rceil)$ | $2^{20}$ | surprisal ($V$ per position) | 202,048,000 | $2^{-36.4}$ |
-| $\mathrm{POW}$ | $\lfloor \mathrm{s_y}\, e^{j/\mathrm{s_b}} \rfloor$ | $\lceil \mathrm{s_b} \ln V \rceil + 4 = 50{,}042$ | surprisal ($1$ per position) | 1,000 | $2^{-48.4}$ |
+| $\mathrm{range}_{2}$ | identity on $[0, 2^{2})$ | $4$ | SiLU word $\boldsymbol{a}_0$ ($N$) | $786{,}432\,S$ | $2^{-34.4}$ |
+| $\mathrm{range}_{5}$ | identity on $[0, 2^{5})$ | $2^{5}$ | RMSNorm $\boldsymbol{y}{-}1$ top chunk ($B$) | $97\,S$ | $2^{-47.4}$ |
+| $\mathrm{range}_{9}$ | identity on $[0, 2^{9})$ | $2^{9}$ | RMSNorm $\boldsymbol{G}_2$ top chunks ($2B$) | $194\,S$ | $2^{-46.4}$ |
+| $\mathrm{range}_{10}$ | identity on $[0, 2^{10})$ | $2^{10}$ | RMSNorm $\boldsymbol{g}_{0h}$ top chunks ($2B$) | $194\,S$ | $2^{-46.4}$ |
+| $\mathrm{range}_{11}$ | identity on $[0, 2^{11})$ | $2^{11}$ | routing gap words ($3TE$); hidden-token select gap words ($2TV$, B.8); RMSNorm $\boldsymbol{g}_{1h}$ and slack top chunks ($4B$) | $413{,}700\,S$ | $2^{-35.4}$ |
+| $\mathrm{range}_{12}$ | identity on $[0, 2^{12})$ | $2^{12}$ | rescale low words (all ⓡ claims); surprisal slack words ($4$ per position) | $1{,}920\,S^2 + 71{,}190{,}852\,S$ | $2^{-27.9}$ |
+| $\mathrm{range}_{14}$ | identity on $[0, 2^{14})$ | $2^{14}$ | SiLU word $\boldsymbol{a}_4$ ($N$) | $786{,}432\,S$ | $2^{-34.4}$ |
+| $\mathrm{range}_{16}$ | identity on $[0, 2^{16})$ | $2^{16}$ | softmax $\boldsymbol{z}_{\text{high}}$ ($n_q S^2$); SiLU $\boldsymbol{a}_2, \boldsymbol{a}_3$ ($2N$); RMSNorm 16-bit chunks ($17B$); surprisal remainder ($1$ per position) | $1{,}920\,S^2 + 1{,}574{,}514\,S$ | $2^{-32.3}$ |
+| $\mathrm{range}_{18}$ | identity on $[0, 2^{18})$ | $2^{18}$ | RMSNorm $\boldsymbol{S}_{\text{tot}}$ limbs and carry lows ($7B$) | $679\,S$ | $2^{-44.2}$ |
+| $\mathrm{range}_{20}$ | identity on $[0, 2^{20})$ | $2^{20}$ | surprisal argmax gaps ($V$ per position, alongside $\mathrm{EXP}$'s key bound) | $202{,}048\,S$ | $2^{-36.4}$ |
+| $\mathrm{range}_{24}$ | identity on $[0, 2^{24})$ | $2^{24}$ | softmax slacks ($2 n_q S$) and the shift's signed copy ($n_q S$) | $5{,}760\,S$ | $2^{-39.6}$ |
+| $\mathrm{range}_{26}$ | identity on $[0, 2^{26})$ | $2^{26}$ | rescale shifted words (all ⓡ claims) | $1{,}920\,S^2 + 71{,}190{,}848\,S$ | $2^{-27.9}$ |
+| $\mathrm{T_A}, \mathrm{T_B}$ | $\mathrm{round}(\mathrm{s_y}\, e^{-j/\mathrm{s_c}})$, $\delta$-shifted pair, half-to-even; doubled with a zero half, targeted by the masked-key term $[\![ i > q ]\!]$; zero from index 36{,}909 / 36{,}910 | $2\,\mathrm{Z_{max}} = 80{,}000$ | softmax, every attention layer ($n_q S^2$ per table) | $1{,}920\,S^2$ each | $2^{-33.2}$ |
+| $\mathrm{silu}$ | branch-concatenated, bin width $4$, bin-centre rounding | $2^{15}$ | SiLU ($N$) | $786{,}432\,S$ | $2^{-34.4}$ |
+| $\mathrm{sigmoid}$ | $\mathrm{round}(\sigma((j - 2^{18})/\mathrm{S})\cdot \mathrm{S})$ | $2^{19}$ | routing weight ($T$ per MoE layer) | $24\,S$ | $2^{-44.9}$ |
+| $\mathrm{EXP}$ | $\max(1, \lceil \mathrm{s_y}\, e^{-g^2/\mathrm{s_c}} \rceil)$ | $2^{20}$ | surprisal ($V$ per position) | $202{,}048\,S$ | $2^{-36.4}$ |
+| $\mathrm{POW}$ | $\lfloor \mathrm{s_y}\, e^{j/\mathrm{s_b}} \rfloor$ | $\lceil \mathrm{s_b} \ln V \rceil + 4 = 50{,}042$ | surprisal ($1$ per position) | $S$ | $2^{-48.4}$ |
 
 Each row also carries its own constants: for the attention pair, $\delta = 1$, $\mathrm{Z_{max}} = 40{,}000$, and $\mathrm{s_y} = \mathrm{s_c} = \mathrm{S}$; the surprisal rows use $\mathrm{s_c} = \mathrm{s_y} = 2^{28}$ and $\mathrm{s_b} = 2^{12}$; the sigmoid row's shift is $2^{18}$. Token-binding tables join the registry when Appendix E's binding runs. One resident multiplicity histogram per row is the persistent prover state of §6.1.
 
-The two rescale rows, at $2^{-27.9}$, are the binding terms of the soundness section's LogUp sum, previously quoted there as "$M$ reaches $10^{10}$" and now checkable here. Rows are keyed by table contents. The implementation registers a few same-content families as separate LogUp instances (each routing invocation's word table; the three width-16 families); this splits a row's $M$ and histogram across copies and adds only the extra settlements' $(T_{\text{len}} + 1)/\vert F \vert$ terms, negligible against every row above.
+The two rescale rows, at $2^{-27.9}$, are the binding terms of the soundness section's LogUp sum, previously quoted there as "$M$ reaches $10^{10}$" and now checkable here. The $S^2$ terms are attention's: the exponential pair, the saturation words, and the scores matmul's share of the two rescale rows; every other row grows linearly with context. Rows are keyed by table contents. The implementation registers a few same-content families as separate LogUp instances (each routing invocation's word table; the three width-16 families); this splits a row's $M$ and histogram across copies and adds only the extra settlements' $(T_{\text{len}} + 1)/\vert F \vert$ terms, negligible against every row above.
 
 **LogUp lookups.** Two of the composites below, the range check and the paired lookup, are lookup arguments, built on LogUp as described in the claims section. A query against a public table is certified by committing, after the table's challenges $(\alpha, \beta)$ are drawn, a folded key that combines the query's components under $\beta$ and the inverse $\boldsymbol{z} = 1/(\alpha - \text{key})$; a per-table settlement then proves that the multiset of all queries matches the table. The settlement commits a multiplicity histogram (before the challenges) and per-entry weights $\boldsymbol{w}[j] = \boldsymbol{m}[j]/(\alpha - v[j])$ (after), and emits one linear constraint per entry, with the public coefficient $\alpha - v[j]$, plus a single cross-claim sum identity equating the query inverses with the entry weights. Because the challenge folds the query's components together, a query matches an entry only when every component agrees. Shared by all lookups, and per the factoring rule implied rather than listed: the challenge turns, the folded keys and inverses, the settlement, and the histogram. The challenges are sampled per table from the round seed.
 
@@ -530,22 +530,23 @@ Counts per element: five witness slots ($\boldsymbol{x}$, $\boldsymbol{x}_{\text
 Matmul proves $\boldsymbol{C}_{\text{full}} = \boldsymbol{A}\boldsymbol{B}$ for $\boldsymbol{A} \in F^{m \times k}$ and $\boldsymbol{B} \in F^{k \times n}$; the output consumed downstream is the rescale of $\boldsymbol{C}_{\text{full}}$ to the working scale, committed in the same pre-challenge message.
 
 $$
-\begin{array}{lll|ccc|l}
- & & & W & L & Q & \\
-\texttt{input} & \boldsymbol{A} & \forall\, a \in [m],\; j \in [k] & \cdot & \cdot & \cdot & \\
-\texttt{input} & \boldsymbol{B} & \forall\, j,\; b \in [n] & \cdot & \cdot & \cdot & \\
+\begin{array}{lll|ccc}
+ &  &  & W & L & Q \\
+\texttt{input} & \boldsymbol{A} & \forall\, a \in [m],\; j \in [k] & \cdot & \cdot & \cdot \\
+\texttt{input} & \boldsymbol{B} & \forall\, j,\; b \in [n] & \cdot & \cdot & \cdot \\
 \hline
-\texttt{decl} & \boldsymbol{C}_{\text{full}} & \forall\, a, b & mn & \cdot & \cdot & \text{raw product at } s_a s_b \\
-\texttt{rescale} & \boldsymbol{C}[a,b] \leftarrow \texttt{rescale}(\boldsymbol{C}_{\text{full}}[a,b]) & \forall\, a, b & 5mn & 2mn & 2mn & \\
+& \textit{raw product at } s_a s_b & & & & \\
+\texttt{decl} & \boldsymbol{C}_{\text{full}} & \forall\, a, b & mn & \cdot & \cdot \\
+\texttt{rescale} & \boldsymbol{C}[a,b] \leftarrow \texttt{rescale}(\boldsymbol{C}_{\text{full}}[a,b]) & \forall\, a, b & 5mn & 2mn & 2mn \\
 \hline
-\texttt{chal} & \rho & \forall\, b & \cdot & \cdot & \cdot & \\
-\texttt{chal} & \lambda & \forall\, a & \cdot & \cdot & \cdot & \\
+\texttt{chal} & \rho & \forall\, b & \cdot & \cdot & \cdot \\
+\texttt{chal} & \lambda & \forall\, a & \cdot & \cdot & \cdot \\
 \hline
-\texttt{lin} & \boldsymbol{y}[j] \leftarrow \textstyle\sum_{b \in [n]} \boldsymbol{B}[j,b]\,\rho[b] & \forall\, j & k & k & \cdot & \\
-\texttt{lin} & \boldsymbol{u}[j] \leftarrow \textstyle\sum_{a \in [m]} \lambda[a]\,\boldsymbol{A}[a,j] & \forall\, j & k & k & \cdot & \\
-\texttt{quad} & \boldsymbol{p}[j] \leftarrow \boldsymbol{u}[j]\,\boldsymbol{y}[j] & \forall\, j & k & \cdot & k & \\
-\texttt{lin} & \textstyle\sum_{a, b} \lambda[a]\,\rho[b]\,\boldsymbol{C}_{\text{full}}[a,b] == \textstyle\sum_{j} \boldsymbol{p}[j] & & \cdot & 1 & \cdot & \\
-\textit{totals} & & & 6mn + 3k & 2mn + 2k + 1 & 2mn + k & \\
+\texttt{lin} & \boldsymbol{y}[j] \leftarrow \textstyle\sum_{b \in [n]} \boldsymbol{B}[j,b]\,\rho[b] & \forall\, j & k & k & \cdot \\
+\texttt{lin} & \boldsymbol{u}[j] \leftarrow \textstyle\sum_{a \in [m]} \lambda[a]\,\boldsymbol{A}[a,j] & \forall\, j & k & k & \cdot \\
+\texttt{quad} & \boldsymbol{p}[j] \leftarrow \boldsymbol{u}[j]\,\boldsymbol{y}[j] & \forall\, j & k & \cdot & k \\
+\texttt{lin} & \textstyle\sum_{a, b} \lambda[a]\,\rho[b]\,\boldsymbol{C}_{\text{full}}[a,b] == \textstyle\sum_{j} \boldsymbol{p}[j] &  & \cdot & 1 & \cdot \\
+\textit{totals} &  &  & 6mn + 3k & 2mn + 2k + 1 & 2mn + k \\
 \end{array}
 $$
 
@@ -562,36 +563,41 @@ The totals row matches A.1's matmul row at $H = 1$.
 Softmax proves, per attention head and query position, the exponentiated causal scores at scale $\mathrm{s_y}$, normalized by pinning the per-row shift. The tables $\mathrm{T_A}$ and $\mathrm{T_B}$, with their rounding rule and constants, are specified in the registry (B.1.0).
 
 $$
-\begin{array}{lll|ccc|l}
- & & & W & L & Q & \\
-\texttt{input} & \boldsymbol{x} & \forall\, h \in [n_q],\; q \in [S],\; i \in [S] & \cdot & \cdot & \cdot & \\
+\begin{array}{lll|ccc}
+ &  &  & W & L & Q \\
+\texttt{input} & \boldsymbol{x} & \forall\, h \in [n_q],\; q \in [S],\; i \in [S] & \cdot & \cdot & \cdot \\
 \hline
-& \textit{--- shift and exponentiate ---} & & & & & \\
-\texttt{decl} & \boldsymbol{c} & \forall\, h, q & n_q S & \cdot & \cdot & \text{per-row shift} \\
-\texttt{range} & \boldsymbol{c}[h,q] \sqsubseteq \pm\mathrm{range}_{24} & \forall\, h, q & 2 n_q S & n_q S & n_q S & \\
-\texttt{decl} & \boldsymbol{z}_{\text{high}} & \forall\, h, q, i & n_q S^2 & \cdot & \cdot & \text{saturation words} \\
-\texttt{range} & \boldsymbol{z}_{\text{high}}[h,q,i] \sqsubseteq \mathrm{range}_{16} & \forall\, h, q, i & n_q S^2 & \cdot & n_q S^2 & \\
-\texttt{lin} & \boldsymbol{z}[h,q,i] \leftarrow \boldsymbol{c}[h,q] - \boldsymbol{x}[h,q,i] - \mathrm{Z_{max}}\, \boldsymbol{z}_{\text{high}}[h,q,i] & \forall\, h, q,\; i \le q & \tfrac12 n_q S(S{+}1) & \tfrac12 n_q S(S{+}1) & \cdot & \\
-\texttt{decl} & \boldsymbol{z}[h,q,i] & \forall\, h, q,\; i > q & \tfrac12 n_q S(S{-}1) & \cdot & \cdot & \text{free in key range; value-neutral} \\
-\texttt{lookup} & \boldsymbol{e}_1[h,q,i] \leftarrow \mathrm{T_A}\big[\, \boldsymbol{z}[h,q,i] + \mathrm{Z_{max}} \cdot [\![\, i > q \,]\!] \,\big] & \forall\, h, q, i & 3 n_q S^2 & n_q S^2 & n_q S^2 & \\
-\texttt{lookup} & \boldsymbol{e}_2[h,q,i] \leftarrow \mathrm{T_B}\big[\, \boldsymbol{z}[h,q,i] + \mathrm{Z_{max}} \cdot [\![\, i > q \,]\!] \,\big] & \forall\, h, q, i & 3 n_q S^2 & n_q S^2 & n_q S^2 & \\
-& \textit{--- saturate the tail ---} & & & & & \\
-\texttt{decl} & \boldsymbol{inv} & \forall\, h, q, i & n_q S^2 & \cdot & \cdot & \text{free at } \boldsymbol{z}_{\text{high}} = 0 \text{; value-neutral} \\
-\texttt{quad} & \boldsymbol{t}[h,q,i] \leftarrow \boldsymbol{z}_{\text{high}}[h,q,i] \cdot \boldsymbol{inv}[h,q,i] & \forall\, h, q, i & n_q S^2 & \cdot & n_q S^2 & \\
-\texttt{quad} & \boldsymbol{t}[h,q,i] \cdot \boldsymbol{z}_{\text{high}}[h,q,i] == \boldsymbol{z}_{\text{high}}[h,q,i] & \forall\, h, q, i & \cdot & \cdot & n_q S^2 & \\
-\texttt{quad} & \boldsymbol{t}[h,q,i]^2 == \boldsymbol{t}[h,q,i] & \forall\, h, q, i & \cdot & \cdot & n_q S^2 & \\
-\texttt{quad} & \boldsymbol{mux}_1[h,q,i] \leftarrow \boldsymbol{t}[h,q,i] \cdot \boldsymbol{e}_1[h,q,i] & \forall\, h, q, i & n_q S^2 & \cdot & n_q S^2 & \\
-\texttt{quad} & \boldsymbol{mux}_2[h,q,i] \leftarrow \boldsymbol{t}[h,q,i] \cdot \boldsymbol{e}_2[h,q,i] & \forall\, h, q, i & n_q S^2 & \cdot & n_q S^2 & \\
-\texttt{lin} & \boldsymbol{y}_1[h,q,i] \leftarrow \boldsymbol{e}_1[h,q,i] - \boldsymbol{mux}_1[h,q,i] & \forall\, h, q, i & n_q S^2 & n_q S^2 & \cdot & \\
-\texttt{lin} & \boldsymbol{y}_2[h,q,i] \leftarrow \boldsymbol{e}_2[h,q,i] - \boldsymbol{mux}_2[h,q,i] & \forall\, h, q, i & n_q S^2 & n_q S^2 & \cdot & \\
-& \textit{--- bracket the shift ---} & & & & & \\
-\texttt{lin} & \boldsymbol{s}_1[h,q] \leftarrow \textstyle\sum_{i \in [S]} \boldsymbol{y}_1[h,q,i] & \forall\, h, q & n_q S & n_q S & \cdot & \\
-\texttt{lin} & \boldsymbol{s}_2[h,q] \leftarrow \textstyle\sum_{i \in [S]} \boldsymbol{y}_2[h,q,i] & \forall\, h, q & n_q S & n_q S & \cdot & \\
-\texttt{decl} & \boldsymbol{r}_{\text{lo}},\; \boldsymbol{r}_{\text{hi}} & \forall\, h, q & 2 n_q S & \cdot & \cdot & \text{bracket slacks} \\
-\texttt{range} & \boldsymbol{r}_{\text{lo}}[h,q] \sqsubseteq \mathrm{range}_{24}, \quad \boldsymbol{r}_{\text{hi}}[h,q] \sqsubseteq \mathrm{range}_{24} & \forall\, h, q & 2 n_q S & \cdot & 2 n_q S & \\
-\texttt{lin} & \boldsymbol{s}_1[h,q] + \boldsymbol{r}_{\text{lo}}[h,q] == \mathrm{s_y} & \forall\, h, q & \cdot & n_q S & \cdot & \\
-\texttt{lin} & \boldsymbol{r}_{\text{hi}}[h,q] - \boldsymbol{s}_2[h,q] == -(\mathrm{s_y} + 1) & \forall\, h, q & \cdot & n_q S & \cdot & \\
-\textit{totals} & & & 15\, n_q S^2 + 9\, n_q S & \tfrac12 n_q S(S{+}1) + 4\, n_q S^2 + 5\, n_q S & 8\, n_q S^2 + 3\, n_q S & \\
+ & \textit{--- shift and exponentiate ---} &  &  &  &  \\
+& \textit{per-row shift} & & & & \\
+\texttt{decl} & \boldsymbol{c} & \forall\, h, q & n_q S & \cdot & \cdot \\
+\texttt{range} & \boldsymbol{c}[h,q] \sqsubseteq \pm\mathrm{range}_{24} & \forall\, h, q & 2 n_q S & n_q S & n_q S \\
+& \textit{saturation words} & & & & \\
+\texttt{decl} & \boldsymbol{z}_{\text{high}} & \forall\, h, q, i & n_q S^2 & \cdot & \cdot \\
+\texttt{range} & \boldsymbol{z}_{\text{high}}[h,q,i] \sqsubseteq \mathrm{range}_{16} & \forall\, h, q, i & n_q S^2 & \cdot & n_q S^2 \\
+\texttt{lin} & \boldsymbol{z}[h,q,i] \leftarrow \boldsymbol{c}[h,q] - \boldsymbol{x}[h,q,i] - \mathrm{Z_{max}}\, \boldsymbol{z}_{\text{high}}[h,q,i] & \forall\, h, q,\; i \le q & \tfrac12 n_q S(S{+}1) & \tfrac12 n_q S(S{+}1) & \cdot \\
+& \textit{free in key range; value-neutral} & & & & \\
+\texttt{decl} & \boldsymbol{z}[h,q,i] & \forall\, h, q,\; i > q & \tfrac12 n_q S(S{-}1) & \cdot & \cdot \\
+\texttt{lookup} & \boldsymbol{e}_1[h,q,i] \leftarrow \mathrm{T_A}\big[\, \boldsymbol{z}[h,q,i] + \mathrm{Z_{max}} \cdot [\![\, i > q \,]\!] \,\big] & \forall\, h, q, i & 3 n_q S^2 & n_q S^2 & n_q S^2 \\
+\texttt{lookup} & \boldsymbol{e}_2[h,q,i] \leftarrow \mathrm{T_B}\big[\, \boldsymbol{z}[h,q,i] + \mathrm{Z_{max}} \cdot [\![\, i > q \,]\!] \,\big] & \forall\, h, q, i & 3 n_q S^2 & n_q S^2 & n_q S^2 \\
+ & \textit{--- saturate the tail ---} &  &  &  &  \\
+& \textit{free at } \boldsymbol{z}_{\text{high}} = 0 \textit{; value-neutral} & & & & \\
+\texttt{decl} & \boldsymbol{inv} & \forall\, h, q, i & n_q S^2 & \cdot & \cdot \\
+\texttt{quad} & \boldsymbol{t}[h,q,i] \leftarrow \boldsymbol{z}_{\text{high}}[h,q,i] \cdot \boldsymbol{inv}[h,q,i] & \forall\, h, q, i & n_q S^2 & \cdot & n_q S^2 \\
+\texttt{quad} & \boldsymbol{t}[h,q,i] \cdot \boldsymbol{z}_{\text{high}}[h,q,i] == \boldsymbol{z}_{\text{high}}[h,q,i] & \forall\, h, q, i & \cdot & \cdot & n_q S^2 \\
+\texttt{quad} & \boldsymbol{t}[h,q,i]^2 == \boldsymbol{t}[h,q,i] & \forall\, h, q, i & \cdot & \cdot & n_q S^2 \\
+\texttt{quad} & \boldsymbol{mux}_1[h,q,i] \leftarrow \boldsymbol{t}[h,q,i] \cdot \boldsymbol{e}_1[h,q,i] & \forall\, h, q, i & n_q S^2 & \cdot & n_q S^2 \\
+\texttt{quad} & \boldsymbol{mux}_2[h,q,i] \leftarrow \boldsymbol{t}[h,q,i] \cdot \boldsymbol{e}_2[h,q,i] & \forall\, h, q, i & n_q S^2 & \cdot & n_q S^2 \\
+\texttt{lin} & \boldsymbol{y}_1[h,q,i] \leftarrow \boldsymbol{e}_1[h,q,i] - \boldsymbol{mux}_1[h,q,i] & \forall\, h, q, i & n_q S^2 & n_q S^2 & \cdot \\
+\texttt{lin} & \boldsymbol{y}_2[h,q,i] \leftarrow \boldsymbol{e}_2[h,q,i] - \boldsymbol{mux}_2[h,q,i] & \forall\, h, q, i & n_q S^2 & n_q S^2 & \cdot \\
+ & \textit{--- bracket the shift ---} &  &  &  &  \\
+\texttt{lin} & \boldsymbol{s}_1[h,q] \leftarrow \textstyle\sum_{i \in [S]} \boldsymbol{y}_1[h,q,i] & \forall\, h, q & n_q S & n_q S & \cdot \\
+\texttt{lin} & \boldsymbol{s}_2[h,q] \leftarrow \textstyle\sum_{i \in [S]} \boldsymbol{y}_2[h,q,i] & \forall\, h, q & n_q S & n_q S & \cdot \\
+& \textit{bracket slacks} & & & & \\
+\texttt{decl} & \boldsymbol{r}_{\text{lo}},\; \boldsymbol{r}_{\text{hi}} & \forall\, h, q & 2 n_q S & \cdot & \cdot \\
+\texttt{range} & \boldsymbol{r}_{\text{lo}}[h,q] \sqsubseteq \mathrm{range}_{24}, \quad \boldsymbol{r}_{\text{hi}}[h,q] \sqsubseteq \mathrm{range}_{24} & \forall\, h, q & 2 n_q S & \cdot & 2 n_q S \\
+\texttt{lin} & \boldsymbol{s}_1[h,q] + \boldsymbol{r}_{\text{lo}}[h,q] == \mathrm{s_y} & \forall\, h, q & \cdot & n_q S & \cdot \\
+\texttt{lin} & \boldsymbol{r}_{\text{hi}}[h,q] - \boldsymbol{s}_2[h,q] == -(\mathrm{s_y} + 1) & \forall\, h, q & \cdot & n_q S & \cdot \\
+\textit{totals} &  &  & 15\, n_q S^2 + 9\, n_q S & \tfrac12 n_q S(S{+}1) + 4\, n_q S^2 + 5\, n_q S & 8\, n_q S^2 + 3\, n_q S \\
 \end{array}
 $$
 
@@ -608,51 +614,59 @@ The totals row matches the emitted counts and A.1's row at $B = n_q S$, $M = S$.
 RMSNorm proves $\boldsymbol{out}[b,i] = \boldsymbol{x}[b,i]\, \boldsymbol{y}[b]$ with $\boldsymbol{y}[b]$ the rounded reciprocal square root $\lceil \sqrt{\mathrm{magic}/\boldsymbol{S}_{\text{tot}}[b]} \rceil$, where $\boldsymbol{S}_{\text{tot}}[b] = \sum_i \boldsymbol{x}[b,i]^2 + d\,\varepsilon$ and $\mathrm{magic} = d\,\mathrm{S}^4$, over $B$ rows of width $d$. It is the one nonlinearity with no lookup table: the rsqrt is pinned by an algebraic bracket, two inequalities that only the correct rounding satisfies. An inequality means nothing over a field, so the bracket must compare genuine integers: the products $\boldsymbol{y}^2\, \boldsymbol{S}_{\text{tot}}$ are too wide to commit whole, and each is instead assembled limb by limb through a carry chain whose every part is range-checked into a window no step can wrap. All windows are derived from $(d, \mathrm{S}, \varepsilon)$ by both sides independently, never chosen by the prover. At the demonstrated parameters the limb width is $18$; the $\boldsymbol{y}$ window is $21$ bits, split $(16, 5)$; the slack window $59$ bits, split $(16,16,16,11)$; and the carry windows $42$, $43$, and $25$ bits, chunked $(16,16,10)$, $(16,16,11)$, $(16,9)$.
 
 $$
-\begin{array}{lll|ccc|l}
- & & & W & L & Q & \\
-\texttt{input} & \boldsymbol{x} & \forall\, b \in [B],\; i \in [d] & \cdot & \cdot & \cdot & \\
+\begin{array}{lll|ccc}
+ &  &  & W & L & Q \\
+\texttt{input} & \boldsymbol{x} & \forall\, b \in [B],\; i \in [d] & \cdot & \cdot & \cdot \\
 \hline
-& \textit{--- row energy ---} & & & & & \\
-\texttt{quad} & \boldsymbol{X}_{\text{sq}}[b,i] \leftarrow \boldsymbol{x}[b,i]^2 & \forall\, b, i & Bd & \cdot & Bd & \\
-\texttt{lin} & \boldsymbol{S}_{\text{sum}}[b] \leftarrow \textstyle\sum_{i \in [d]} \boldsymbol{X}_{\text{sq}}[b,i] & \forall\, b & B & B & \cdot & \\
-\texttt{lin} & \boldsymbol{S}_{\text{tot}}[b] \leftarrow \boldsymbol{S}_{\text{sum}}[b] + d\,\varepsilon & \forall\, b & B & B & \cdot & \\
-& \textit{--- the rsqrt and its windows ---} & & & & & \\
-\texttt{decl} & \boldsymbol{y} & \forall\, b & B & \cdot & \cdot & \text{the rsqrt scalars} \\
-\texttt{lin} & \boldsymbol{y}_{m1}[b] \leftarrow \boldsymbol{y}[b] - 1 & \forall\, b & B & B & \cdot & \\
-\texttt{decl} & \boldsymbol{y}_{w0},\; \boldsymbol{y}_{w1} & \forall\, b & 2B & \cdot & \cdot & \text{window words of } \boldsymbol{y} - 1 \\
-\texttt{range} & \boldsymbol{y}_{w0}[b] \sqsubseteq \mathrm{range}_{16}, \quad \boldsymbol{y}_{w1}[b] \sqsubseteq \mathrm{range}_{5} & \forall\, b & 2B & \cdot & 2B & \\
-\texttt{lin} & \boldsymbol{y}_{m1}[b] == \boldsymbol{y}_{w0}[b] + 2^{16} \boldsymbol{y}_{w1}[b] & \forall\, b & \cdot & B & \cdot & \\
-\texttt{decl} & \boldsymbol{S}_0,\; \boldsymbol{S}_1,\; \boldsymbol{S}_2 & \forall\, b & 3B & \cdot & \cdot & \text{limbs of } \boldsymbol{S}_{\text{tot}} \\
-\texttt{range} & \boldsymbol{S}_{\ell}[b] \sqsubseteq \mathrm{range}_{18} & \forall\, b,\; \ell \in \{0,1,2\} & 3B & \cdot & 3B & \\
-\texttt{lin} & \boldsymbol{S}_{\text{tot}}[b] == \boldsymbol{S}_0[b] + 2^{18} \boldsymbol{S}_1[b] + 2^{36} \boldsymbol{S}_2[b] & \forall\, b & \cdot & B & \cdot & \\
-\texttt{quad} & \boldsymbol{q}_1[b] \leftarrow \boldsymbol{y}[b]^2 & \forall\, b & B & \cdot & B & \\
-\texttt{quad} & \boldsymbol{q}_2[b] \leftarrow \boldsymbol{y}_{m1}[b]^2 & \forall\, b & B & \cdot & B & \\
-\texttt{quad} & \boldsymbol{H}_{\ell}[b] \leftarrow \boldsymbol{q}[b]\, \boldsymbol{S}_{\ell}[b] & \forall\, b,\; \ell;\; \text{per chain } \boldsymbol{q} \in \{\boldsymbol{q}_1, \boldsymbol{q}_2\} & 6B & \cdot & 6B & \\
-& \textit{--- carry chain, per chain ---} & & & & & \\
-\texttt{decl} & \boldsymbol{g}_{0h} \text{ (chunks } 16,16,10), \;\; \boldsymbol{g}_{1h} \text{ (chunks } 16,16,11) & \forall\, b & 24B & \cdot & 12B & \text{carry high parts} \\
-\texttt{lin} & \boldsymbol{g}_{0l}[b] \leftarrow \boldsymbol{H}_0[b] - 2^{18}\, \boldsymbol{g}_{0h}[b] & \forall\, b & 2B & 2B & \cdot & \\
-\texttt{lin} & \boldsymbol{g}_{1l}[b] \leftarrow \boldsymbol{H}_1[b] + \boldsymbol{g}_{0h}[b] - 2^{18}\, \boldsymbol{g}_{1h}[b] & \forall\, b & 2B & 2B & \cdot & \\
-\texttt{range} & \boldsymbol{g}_{0l}[b] \sqsubseteq \mathrm{range}_{18}, \quad \boldsymbol{g}_{1l}[b] \sqsubseteq \mathrm{range}_{18} & \forall\, b & 4B & \cdot & 4B & \\
-\texttt{decl} & \boldsymbol{G}_2 \text{ (chunks } 16, 9) & \forall\, b & 8B & \cdot & 4B & \text{top accumulator} \\
-\texttt{lin} & \boldsymbol{H}_2[b] + \boldsymbol{g}_{1h}[b] == \boldsymbol{G}_2[b] & \forall\, b & \cdot & 2B & \cdot & \\
-& \textit{--- bracket pins ---} & & & & & \\
-\texttt{decl} & \boldsymbol{s}_{\text{lo}},\; \boldsymbol{s}_{\text{hi}} & \forall\, b & 2B & \cdot & \cdot & \text{bracket slacks} \\
-\texttt{decl} & \boldsymbol{w}_{\text{lo}},\; \boldsymbol{w}_{\text{hi}} & \forall\, b,\; n \in [4] & 8B & \cdot & \cdot & \text{slack words} \\
-\texttt{range} & \boldsymbol{w}_{\text{lo}}[b,n] \sqsubseteq \mathrm{range}_{16}, \quad \boldsymbol{w}_{\text{hi}}[b,n] \sqsubseteq \mathrm{range}_{16} & \forall\, b,\; n \le 2 & 6B & \cdot & 6B & \\
-\texttt{range} & \boldsymbol{w}_{\text{lo}}[b,3] \sqsubseteq \mathrm{range}_{11}, \quad \boldsymbol{w}_{\text{hi}}[b,3] \sqsubseteq \mathrm{range}_{11} & \forall\, b & 2B & \cdot & 2B & \\
-\texttt{lin} & \boldsymbol{s}_{\text{lo}}[b] == \textstyle\sum_{n \in [4]} 2^{16n}\, \boldsymbol{w}_{\text{lo}}[b,n] & \forall\, b & \cdot & B & \cdot & \\
-\texttt{lin} & \boldsymbol{s}_{\text{hi}}[b] == \textstyle\sum_{n \in [4]} 2^{16n}\, \boldsymbol{w}_{\text{hi}}[b,n] & \forall\, b & \cdot & B & \cdot & \\
-\texttt{lin} & 2^{36} \boldsymbol{G}_2[b] + 2^{18} \boldsymbol{g}_{1l}[b] + \boldsymbol{g}_{0l}[b] - \boldsymbol{s}_{\text{lo}}[b] == \mathrm{magic} & \forall\, b,\; \text{chain } \boldsymbol{q}_1 & \cdot & B & \cdot & \\
-\texttt{lin} & 2^{36} \boldsymbol{G}_2[b] + 2^{18} \boldsymbol{g}_{1l}[b] + \boldsymbol{g}_{0l}[b] + \boldsymbol{s}_{\text{hi}}[b] == \mathrm{magic} - 1 & \forall\, b,\; \text{chain } \boldsymbol{q}_2 & \cdot & B & \cdot & \\
-\texttt{decl} & \boldsymbol{out}_{\text{full}} & \forall\, b, i & Bd & \cdot & \cdot & \text{broadcast product at } \mathrm{S}^2 \\
-\texttt{rescale} & \boldsymbol{out}[b,i] \leftarrow \texttt{rescale}(\boldsymbol{out}_{\text{full}}[b,i]) & \forall\, b, i & 5Bd & 2Bd & 2Bd & \\
+ & \textit{--- row energy ---} &  &  &  &  \\
+\texttt{quad} & \boldsymbol{X}_{\text{sq}}[b,i] \leftarrow \boldsymbol{x}[b,i]^2 & \forall\, b, i & Bd & \cdot & Bd \\
+\texttt{lin} & \boldsymbol{S}_{\text{sum}}[b] \leftarrow \textstyle\sum_{i \in [d]} \boldsymbol{X}_{\text{sq}}[b,i] & \forall\, b & B & B & \cdot \\
+\texttt{lin} & \boldsymbol{S}_{\text{tot}}[b] \leftarrow \boldsymbol{S}_{\text{sum}}[b] + d\,\varepsilon & \forall\, b & B & B & \cdot \\
+ & \textit{--- the rsqrt and its windows ---} &  &  &  &  \\
+& \textit{the rsqrt scalars} & & & & \\
+\texttt{decl} & \boldsymbol{y} & \forall\, b & B & \cdot & \cdot \\
+\texttt{lin} & \boldsymbol{y}_{m1}[b] \leftarrow \boldsymbol{y}[b] - 1 & \forall\, b & B & B & \cdot \\
+& \textit{window words of } \boldsymbol{y} - 1 & & & & \\
+\texttt{decl} & \boldsymbol{y}_{w0},\; \boldsymbol{y}_{w1} & \forall\, b & 2B & \cdot & \cdot \\
+\texttt{range} & \boldsymbol{y}_{w0}[b] \sqsubseteq \mathrm{range}_{16}, \quad \boldsymbol{y}_{w1}[b] \sqsubseteq \mathrm{range}_{5} & \forall\, b & 2B & \cdot & 2B \\
+\texttt{lin} & \boldsymbol{y}_{m1}[b] == \boldsymbol{y}_{w0}[b] + 2^{16} \boldsymbol{y}_{w1}[b] & \forall\, b & \cdot & B & \cdot \\
+& \textit{limbs of } \boldsymbol{S}_{\text{tot}} & & & & \\
+\texttt{decl} & \boldsymbol{S}_0,\; \boldsymbol{S}_1,\; \boldsymbol{S}_2 & \forall\, b & 3B & \cdot & \cdot \\
+\texttt{range} & \boldsymbol{S}_{\ell}[b] \sqsubseteq \mathrm{range}_{18} & \forall\, b,\; \ell \in \{0,1,2\} & 3B & \cdot & 3B \\
+\texttt{lin} & \boldsymbol{S}_{\text{tot}}[b] == \boldsymbol{S}_0[b] + 2^{18} \boldsymbol{S}_1[b] + 2^{36} \boldsymbol{S}_2[b] & \forall\, b & \cdot & B & \cdot \\
+\texttt{quad} & \boldsymbol{q}_1[b] \leftarrow \boldsymbol{y}[b]^2 & \forall\, b & B & \cdot & B \\
+\texttt{quad} & \boldsymbol{q}_2[b] \leftarrow \boldsymbol{y}_{m1}[b]^2 & \forall\, b & B & \cdot & B \\
+\texttt{quad} & \boldsymbol{H}_{\ell}[b] \leftarrow \boldsymbol{q}[b]\, \boldsymbol{S}_{\ell}[b] & \forall\, b,\; \ell;\; \text{per chain } \boldsymbol{q} \in \{\boldsymbol{q}_1, \boldsymbol{q}_2\} & 6B & \cdot & 6B \\
+ & \textit{--- carry chain, per chain ---} &  &  &  &  \\
+& \textit{carry high parts} & & & & \\
+\texttt{decl} & \boldsymbol{g}_{0h} \text{ (chunks } 16,16,10), \;\; \boldsymbol{g}_{1h} \text{ (chunks } 16,16,11) & \forall\, b & 24B & \cdot & 12B \\
+\texttt{lin} & \boldsymbol{g}_{0l}[b] \leftarrow \boldsymbol{H}_0[b] - 2^{18}\, \boldsymbol{g}_{0h}[b] & \forall\, b & 2B & 2B & \cdot \\
+\texttt{lin} & \boldsymbol{g}_{1l}[b] \leftarrow \boldsymbol{H}_1[b] + \boldsymbol{g}_{0h}[b] - 2^{18}\, \boldsymbol{g}_{1h}[b] & \forall\, b & 2B & 2B & \cdot \\
+\texttt{range} & \boldsymbol{g}_{0l}[b] \sqsubseteq \mathrm{range}_{18}, \quad \boldsymbol{g}_{1l}[b] \sqsubseteq \mathrm{range}_{18} & \forall\, b & 4B & \cdot & 4B \\
+& \textit{top accumulator} & & & & \\
+\texttt{decl} & \boldsymbol{G}_2 \text{ (chunks } 16, 9) & \forall\, b & 8B & \cdot & 4B \\
+\texttt{lin} & \boldsymbol{H}_2[b] + \boldsymbol{g}_{1h}[b] == \boldsymbol{G}_2[b] & \forall\, b & \cdot & 2B & \cdot \\
+ & \textit{--- bracket pins ---} &  &  &  &  \\
+& \textit{bracket slacks} & & & & \\
+\texttt{decl} & \boldsymbol{s}_{\text{lo}},\; \boldsymbol{s}_{\text{hi}} & \forall\, b & 2B & \cdot & \cdot \\
+& \textit{slack words} & & & & \\
+\texttt{decl} & \boldsymbol{w}_{\text{lo}},\; \boldsymbol{w}_{\text{hi}} & \forall\, b,\; n \in [4] & 8B & \cdot & \cdot \\
+\texttt{range} & \boldsymbol{w}_{\text{lo}}[b,n] \sqsubseteq \mathrm{range}_{16}, \quad \boldsymbol{w}_{\text{hi}}[b,n] \sqsubseteq \mathrm{range}_{16} & \forall\, b,\; n \le 2 & 6B & \cdot & 6B \\
+\texttt{range} & \boldsymbol{w}_{\text{lo}}[b,3] \sqsubseteq \mathrm{range}_{11}, \quad \boldsymbol{w}_{\text{hi}}[b,3] \sqsubseteq \mathrm{range}_{11} & \forall\, b & 2B & \cdot & 2B \\
+\texttt{lin} & \boldsymbol{s}_{\text{lo}}[b] == \textstyle\sum_{n \in [4]} 2^{16n}\, \boldsymbol{w}_{\text{lo}}[b,n] & \forall\, b & \cdot & B & \cdot \\
+\texttt{lin} & \boldsymbol{s}_{\text{hi}}[b] == \textstyle\sum_{n \in [4]} 2^{16n}\, \boldsymbol{w}_{\text{hi}}[b,n] & \forall\, b & \cdot & B & \cdot \\
+\texttt{lin} & 2^{36} \boldsymbol{G}_2[b] + 2^{18} \boldsymbol{g}_{1l}[b] + \boldsymbol{g}_{0l}[b] - \boldsymbol{s}_{\text{lo}}[b] == \mathrm{magic} & \forall\, b,\; \text{chain } \boldsymbol{q}_1 & \cdot & B & \cdot \\
+\texttt{lin} & 2^{36} \boldsymbol{G}_2[b] + 2^{18} \boldsymbol{g}_{1l}[b] + \boldsymbol{g}_{0l}[b] + \boldsymbol{s}_{\text{hi}}[b] == \mathrm{magic} - 1 & \forall\, b,\; \text{chain } \boldsymbol{q}_2 & \cdot & B & \cdot \\
+& \textit{broadcast product at } \mathrm{S}^2 & & & & \\
+\texttt{decl} & \boldsymbol{out}_{\text{full}} & \forall\, b, i & Bd & \cdot & \cdot \\
+\texttt{rescale} & \boldsymbol{out}[b,i] \leftarrow \texttt{rescale}(\boldsymbol{out}_{\text{full}}[b,i]) & \forall\, b, i & 5Bd & 2Bd & 2Bd \\
 \hline
-\texttt{chal} & \rho & \forall\, i & \cdot & \cdot & \cdot & \\
+\texttt{chal} & \rho & \forall\, i & \cdot & \cdot & \cdot \\
 \hline
-\texttt{lin} & \boldsymbol{u}[b] \leftarrow \textstyle\sum_{i \in [d]} \rho[i]\, \boldsymbol{x}[b,i] & \forall\, b & B & B & \cdot & \\
-\texttt{lin} & \boldsymbol{p}[b] \leftarrow \textstyle\sum_{i \in [d]} \rho[i]\, \boldsymbol{out}_{\text{full}}[b,i] & \forall\, b & B & B & \cdot & \\
-\texttt{quad} & \boldsymbol{y}[b]\, \boldsymbol{u}[b] == \boldsymbol{p}[b] & \forall\, b & \cdot & \cdot & B & \\
-\textit{totals} & & & 7Bd + 82B & 2Bd + 17B & 3Bd + 42B & \\
+\texttt{lin} & \boldsymbol{u}[b] \leftarrow \textstyle\sum_{i \in [d]} \rho[i]\, \boldsymbol{x}[b,i] & \forall\, b & B & B & \cdot \\
+\texttt{lin} & \boldsymbol{p}[b] \leftarrow \textstyle\sum_{i \in [d]} \rho[i]\, \boldsymbol{out}_{\text{full}}[b,i] & \forall\, b & B & B & \cdot \\
+\texttt{quad} & \boldsymbol{y}[b]\, \boldsymbol{u}[b] == \boldsymbol{p}[b] & \forall\, b & \cdot & \cdot & B \\
+\textit{totals} &  &  & 7Bd + 82B & 2Bd + 17B & 3Bd + 42B \\
 \end{array}
 $$
 
@@ -671,33 +685,36 @@ The totals row matches A.1's RMSNorm row. (A.1's per-row constants were updated 
 SiLU proves $\boldsymbol{out} = \boldsymbol{x}\,\sigma(\boldsymbol{x})$, saturating to $\boldsymbol{x}$ for large positive $\boldsymbol{x}$ and to $0$ for large negative $\boldsymbol{x}$. The construction is a sign split, a magnitude decomposition whose low words index a table and whose high words detect saturation, a paired lookup, and a mux that swaps in the saturated value when the high words are live. The $\mathrm{silu}$ table is specified in the registry (bin width $\mathrm{w_{bin}} = 4$, half-length $2^{14}$ per branch); the magnitude words $\boldsymbol{a}_0, \dots, \boldsymbol{a}_4$ have widths $2$, $14$ (the table index), $16$, $16$, $14$ at strides $1, \mathrm{w_{bin}}, 2^{16}, 2^{32}, 2^{48}$.
 
 $$
-\begin{array}{lll|ccc|l}
- & & & W & L & Q & \\
-\texttt{input} & \boldsymbol{x} & \forall\, n \in [N] & \cdot & \cdot & \cdot & \\
+\begin{array}{lll|ccc}
+ &  &  & W & L & Q \\
+\texttt{input} & \boldsymbol{x} & \forall\, n \in [N] & \cdot & \cdot & \cdot \\
 \hline
-& \textit{--- sign split ---} & & & & & \\
-\texttt{decl} & \boldsymbol{sign} & \forall\, n & N & \cdot & \cdot & \text{sign bit} \\
-\texttt{quad} & \boldsymbol{sign}[n]^2 == \boldsymbol{sign}[n] & \forall\, n & \cdot & \cdot & N & \\
-\texttt{quad} & \boldsymbol{C}[n] \leftarrow \boldsymbol{sign}[n] \cdot \boldsymbol{x}[n] & \forall\, n & N & \cdot & N & \\
-\texttt{lin} & \boldsymbol{mag}[n] \leftarrow \boldsymbol{x}[n] - 2\,\boldsymbol{C}[n] & \forall\, n & N & N & \cdot & \\
-& \textit{--- magnitude words ---} & & & & & \\
-\texttt{decl} & \boldsymbol{a}_0,\; \boldsymbol{a}_1,\; \boldsymbol{a}_2,\; \boldsymbol{a}_3,\; \boldsymbol{a}_4 & \forall\, n & 5N & \cdot & \cdot & \text{magnitude words} \\
-\texttt{range} & \boldsymbol{a}_0[n] \sqsubseteq \mathrm{range}_{2}, \quad \boldsymbol{a}_2[n] \sqsubseteq \mathrm{range}_{16}, \quad \boldsymbol{a}_3[n] \sqsubseteq \mathrm{range}_{16}, \quad \boldsymbol{a}_4[n] \sqsubseteq \mathrm{range}_{14} & \forall\, n & 4N & \cdot & 4N & \\
-\texttt{lin} & \boldsymbol{mag}[n] == \boldsymbol{a}_0[n] + \mathrm{w_{bin}}\, \boldsymbol{a}_1[n] + 2^{16} \boldsymbol{a}_2[n] + 2^{32} \boldsymbol{a}_3[n] + 2^{48} \boldsymbol{a}_4[n] & \forall\, n & \cdot & N & \cdot & \\
-& \textit{--- saturation flag ---} & & & & & \\
-\texttt{lin} & \boldsymbol{g}[n] \leftarrow 2^{16} \boldsymbol{a}_2[n] + 2^{32} \boldsymbol{a}_3[n] + 2^{48} \boldsymbol{a}_4[n] & \forall\, n & N & N & \cdot & \\
-\texttt{decl} & \boldsymbol{inv} & \forall\, n & N & \cdot & \cdot & \text{free at } \boldsymbol{g} = 0 \text{; value-neutral} \\
-\texttt{quad} & \boldsymbol{t}[n] \leftarrow \boldsymbol{g}[n] \cdot \boldsymbol{inv}[n] & \forall\, n & N & \cdot & N & \\
-\texttt{quad} & \boldsymbol{t}[n] \cdot \boldsymbol{g}[n] == \boldsymbol{g}[n] & \forall\, n & \cdot & \cdot & N & \\
-\texttt{quad} & \boldsymbol{t}[n]^2 == \boldsymbol{t}[n] & \forall\, n & \cdot & \cdot & N & \\
-& \textit{--- lookup and mux ---} & & & & & \\
-\texttt{lin} & \boldsymbol{key}[n] \leftarrow 2^{14}\, \boldsymbol{sign}[n] + \boldsymbol{a}_1[n] & \forall\, n & N & N & \cdot & \\
-\texttt{lin} & \boldsymbol{sat}[n] \leftarrow \boldsymbol{x}[n] - \boldsymbol{C}[n] & \forall\, n & N & N & \cdot & \\
-\texttt{lookup} & \boldsymbol{y}[n] \leftarrow \mathrm{silu}[\boldsymbol{key}[n]] & \forall\, n & 3N & N & N & \\
-\texttt{quad} & \boldsymbol{mux}_a[n] \leftarrow \boldsymbol{t}[n] \cdot \boldsymbol{y}[n] & \forall\, n & N & \cdot & N & \\
-\texttt{quad} & \boldsymbol{mux}_b[n] \leftarrow \boldsymbol{t}[n] \cdot \boldsymbol{sat}[n] & \forall\, n & N & \cdot & N & \\
-\texttt{lin} & \boldsymbol{out}[n] \leftarrow \boldsymbol{y}[n] - \boldsymbol{mux}_a[n] + \boldsymbol{mux}_b[n] & \forall\, n & N & N & \cdot & \\
-\textit{totals} & & & 23N & 7N & 12N & \\
+ & \textit{--- sign split ---} &  &  &  &  \\
+& \textit{sign bit} & & & & \\
+\texttt{decl} & \boldsymbol{sign} & \forall\, n & N & \cdot & \cdot \\
+\texttt{quad} & \boldsymbol{sign}[n]^2 == \boldsymbol{sign}[n] & \forall\, n & \cdot & \cdot & N \\
+\texttt{quad} & \boldsymbol{C}[n] \leftarrow \boldsymbol{sign}[n] \cdot \boldsymbol{x}[n] & \forall\, n & N & \cdot & N \\
+\texttt{lin} & \boldsymbol{mag}[n] \leftarrow \boldsymbol{x}[n] - 2\,\boldsymbol{C}[n] & \forall\, n & N & N & \cdot \\
+ & \textit{--- magnitude words ---} &  &  &  &  \\
+& \textit{magnitude words} & & & & \\
+\texttt{decl} & \boldsymbol{a}_0,\; \boldsymbol{a}_1,\; \boldsymbol{a}_2,\; \boldsymbol{a}_3,\; \boldsymbol{a}_4 & \forall\, n & 5N & \cdot & \cdot \\
+\texttt{range} & \boldsymbol{a}_0[n] \sqsubseteq \mathrm{range}_{2}, \quad \boldsymbol{a}_2[n] \sqsubseteq \mathrm{range}_{16}, \quad \boldsymbol{a}_3[n] \sqsubseteq \mathrm{range}_{16}, \quad \boldsymbol{a}_4[n] \sqsubseteq \mathrm{range}_{14} & \forall\, n & 4N & \cdot & 4N \\
+\texttt{lin} & \boldsymbol{mag}[n] == \boldsymbol{a}_0[n] + \mathrm{w_{bin}}\, \boldsymbol{a}_1[n] + 2^{16} \boldsymbol{a}_2[n] + 2^{32} \boldsymbol{a}_3[n] + 2^{48} \boldsymbol{a}_4[n] & \forall\, n & \cdot & N & \cdot \\
+ & \textit{--- saturation flag ---} &  &  &  &  \\
+\texttt{lin} & \boldsymbol{g}[n] \leftarrow 2^{16} \boldsymbol{a}_2[n] + 2^{32} \boldsymbol{a}_3[n] + 2^{48} \boldsymbol{a}_4[n] & \forall\, n & N & N & \cdot \\
+& \textit{free at } \boldsymbol{g} = 0 \textit{; value-neutral} & & & & \\
+\texttt{decl} & \boldsymbol{inv} & \forall\, n & N & \cdot & \cdot \\
+\texttt{quad} & \boldsymbol{t}[n] \leftarrow \boldsymbol{g}[n] \cdot \boldsymbol{inv}[n] & \forall\, n & N & \cdot & N \\
+\texttt{quad} & \boldsymbol{t}[n] \cdot \boldsymbol{g}[n] == \boldsymbol{g}[n] & \forall\, n & \cdot & \cdot & N \\
+\texttt{quad} & \boldsymbol{t}[n]^2 == \boldsymbol{t}[n] & \forall\, n & \cdot & \cdot & N \\
+ & \textit{--- lookup and mux ---} &  &  &  &  \\
+\texttt{lin} & \boldsymbol{key}[n] \leftarrow 2^{14}\, \boldsymbol{sign}[n] + \boldsymbol{a}_1[n] & \forall\, n & N & N & \cdot \\
+\texttt{lin} & \boldsymbol{sat}[n] \leftarrow \boldsymbol{x}[n] - \boldsymbol{C}[n] & \forall\, n & N & N & \cdot \\
+\texttt{lookup} & \boldsymbol{y}[n] \leftarrow \mathrm{silu}[\boldsymbol{key}[n]] & \forall\, n & 3N & N & N \\
+\texttt{quad} & \boldsymbol{mux}_a[n] \leftarrow \boldsymbol{t}[n] \cdot \boldsymbol{y}[n] & \forall\, n & N & \cdot & N \\
+\texttt{quad} & \boldsymbol{mux}_b[n] \leftarrow \boldsymbol{t}[n] \cdot \boldsymbol{sat}[n] & \forall\, n & N & \cdot & N \\
+\texttt{lin} & \boldsymbol{out}[n] \leftarrow \boldsymbol{y}[n] - \boldsymbol{mux}_a[n] + \boldsymbol{mux}_b[n] & \forall\, n & N & N & \cdot \\
+\textit{totals} &  &  & 23N & 7N & 12N \\
 \end{array}
 $$
 
@@ -712,35 +729,38 @@ The totals row matches A.1's SiLU row exactly.
 Routing pins a one-hot mask $\boldsymbol{m} \in \{0,1\}^{T \times E}$ to the argmax of committed router logits $\boldsymbol{r}$, tiebroken by expert index; the combine forms $\boldsymbol{y}[t,:] = \sum_e \boldsymbol{m}[t,e]\, \boldsymbol{X}_e[t,:]$ over the $E$ committed expert streams without committing the $E\,T\,F$ masked products. Public constants: the tiebreak stride $2^{L}$ with $L = \lceil \log_2 E \rceil$, and the gap window $\mathrm{w_r} + L$ with $\mathrm{w_r}$ the router-logit width (demonstrated: $E = 128$, $L = 7$, $\mathrm{w_r} = 26$, three $11$-bit words covering the $33$-bit window).
 
 $$
-\begin{array}{lll|ccc|l}
- & & & W & L & Q & \\
-\texttt{input} & \boldsymbol{r} & \forall\, t \in [T],\; e \in [E] & \cdot & \cdot & \cdot & \\
-\texttt{input} & \boldsymbol{X}_e & \forall\, e,\; t,\; f \in [F] & \cdot & \cdot & \cdot & \\
+\begin{array}{lll|ccc}
+ &  &  & W & L & Q \\
+\texttt{input} & \boldsymbol{r} & \forall\, t \in [T],\; e \in [E] & \cdot & \cdot & \cdot \\
+\texttt{input} & \boldsymbol{X}_e & \forall\, e,\; t,\; f \in [F] & \cdot & \cdot & \cdot \\
 \hline
-& \textit{--- routing ---} & & & & & \\
-\texttt{decl} & \boldsymbol{m} & \forall\, t, e & TE & \cdot & \cdot & \text{the mask} \\
-\texttt{quad} & \boldsymbol{m}[t,e]^2 == \boldsymbol{m}[t,e] & \forall\, t, e & \cdot & \cdot & TE & \\
-\texttt{lin} & \boldsymbol{rt}[t,e] \leftarrow 2^{L}\, \boldsymbol{r}[t,e] + (E{-}1{-}e) & \forall\, t, e & TE & TE & \cdot & \\
-\texttt{quad} & \boldsymbol{mrt}[t,e] \leftarrow \boldsymbol{m}[t,e] \cdot \boldsymbol{rt}[t,e] & \forall\, t, e & TE & \cdot & TE & \\
-\texttt{lin} & \textstyle\sum_{e} \boldsymbol{m}[t,e] == 1 & \forall\, t & \cdot & T & \cdot & \\
-\texttt{lin} & \boldsymbol{r}^{\ast}[t] \leftarrow \textstyle\sum_{e} \boldsymbol{mrt}[t,e] & \forall\, t & T & T & \cdot & \\
-\texttt{lin} & \boldsymbol{gap}[t,e] \leftarrow \boldsymbol{r}^{\ast}[t] - \boldsymbol{rt}[t,e] & \forall\, t, e & TE & TE & \cdot & \\
-\texttt{decl} & \boldsymbol{w}_g & \forall\, t, e,\; n \in [3] & 3TE & \cdot & \cdot & \text{gap words} \\
-\texttt{range} & \boldsymbol{w}_g[t,e,n] \sqsubseteq \mathrm{range}_{11} & \forall\, t, e, n & 3TE & \cdot & 3TE & \\
-\texttt{lin} & \boldsymbol{gap}[t,e] == \textstyle\sum_{n \in [3]} 2^{11n}\, \boldsymbol{w}_g[t,e,n] & \forall\, t, e & \cdot & TE & \cdot & \\
-\texttt{lin} & \boldsymbol{r}_{\text{chosen}}[t] \leftarrow 2^{-L}\big(\boldsymbol{r}^{\ast}[t] - \textstyle\sum_{e} (E{-}1{-}e)\, \boldsymbol{m}[t,e]\big) & \forall\, t & T & T & \cdot & \\
-\textit{routing totals} & & & 10TE + 2T & 3TE + 3T & 5TE & \\
+ & \textit{--- routing ---} &  &  &  &  \\
+& \textit{the mask} & & & & \\
+\texttt{decl} & \boldsymbol{m} & \forall\, t, e & TE & \cdot & \cdot \\
+\texttt{quad} & \boldsymbol{m}[t,e]^2 == \boldsymbol{m}[t,e] & \forall\, t, e & \cdot & \cdot & TE \\
+\texttt{lin} & \boldsymbol{rt}[t,e] \leftarrow 2^{L}\, \boldsymbol{r}[t,e] + (E{-}1{-}e) & \forall\, t, e & TE & TE & \cdot \\
+\texttt{quad} & \boldsymbol{mrt}[t,e] \leftarrow \boldsymbol{m}[t,e] \cdot \boldsymbol{rt}[t,e] & \forall\, t, e & TE & \cdot & TE \\
+\texttt{lin} & \textstyle\sum_{e} \boldsymbol{m}[t,e] == 1 & \forall\, t & \cdot & T & \cdot \\
+\texttt{lin} & \boldsymbol{r}^{\ast}[t] \leftarrow \textstyle\sum_{e} \boldsymbol{mrt}[t,e] & \forall\, t & T & T & \cdot \\
+\texttt{lin} & \boldsymbol{gap}[t,e] \leftarrow \boldsymbol{r}^{\ast}[t] - \boldsymbol{rt}[t,e] & \forall\, t, e & TE & TE & \cdot \\
+& \textit{gap words} & & & & \\
+\texttt{decl} & \boldsymbol{w}_g & \forall\, t, e,\; n \in [3] & 3TE & \cdot & \cdot \\
+\texttt{range} & \boldsymbol{w}_g[t,e,n] \sqsubseteq \mathrm{range}_{11} & \forall\, t, e, n & 3TE & \cdot & 3TE \\
+\texttt{lin} & \boldsymbol{gap}[t,e] == \textstyle\sum_{n \in [3]} 2^{11n}\, \boldsymbol{w}_g[t,e,n] & \forall\, t, e & \cdot & TE & \cdot \\
+\texttt{lin} & \boldsymbol{r}_{\text{chosen}}[t] \leftarrow 2^{-L}\big(\boldsymbol{r}^{\ast}[t] - \textstyle\sum_{e} (E{-}1{-}e)\, \boldsymbol{m}[t,e]\big) & \forall\, t & T & T & \cdot \\
+\textit{routing totals} &  &  & 10TE + 2T & 3TE + 3T & 5TE \\
 \hline
-\texttt{chal} & \rho & \forall\, f & \cdot & \cdot & \cdot & \\
-& \textit{--- combine ---} & & & & & \\
-\texttt{decl} & \boldsymbol{y} & \forall\, t, f & TF & \cdot & \cdot & \text{the combined output} \\
-\texttt{lin} & \boldsymbol{m}_{\text{em}}[e,t] \leftarrow \boldsymbol{m}[t,e] & \forall\, e, t & ET & ET & \cdot & \\
-\texttt{lin} & \boldsymbol{s}[e,t] \leftarrow \textstyle\sum_{f} \boldsymbol{X}_e[t,f]\, \rho[f] & \forall\, e, t & ET & ET & \cdot & \\
-\texttt{quad} & \boldsymbol{ms}[e,t] \leftarrow \boldsymbol{m}_{\text{em}}[e,t] \cdot \boldsymbol{s}[e,t] & \forall\, e, t & ET & \cdot & ET & \\
-\texttt{lin} & \boldsymbol{ms}_{\text{tm}}[t,e] \leftarrow \boldsymbol{ms}[e,t] & \forall\, t, e & ET & ET & \cdot & \\
-\texttt{lin} & \boldsymbol{y}_{\rho}[t] \leftarrow \textstyle\sum_{f} \rho[f]\, \boldsymbol{y}[t,f] & \forall\, t & T & T & \cdot & \\
-\texttt{lin} & \textstyle\sum_{e} \boldsymbol{ms}_{\text{tm}}[t,e] == \boldsymbol{y}_{\rho}[t] & \forall\, t & \cdot & T & \cdot & \\
-\textit{combine totals} & & & TF + 4ET + T & 3ET + 2T & ET & \\
+\texttt{chal} & \rho & \forall\, f & \cdot & \cdot & \cdot \\
+ & \textit{--- combine ---} &  &  &  &  \\
+& \textit{the combined output} & & & & \\
+\texttt{decl} & \boldsymbol{y} & \forall\, t, f & TF & \cdot & \cdot \\
+\texttt{lin} & \boldsymbol{m}_{\text{em}}[e,t] \leftarrow \boldsymbol{m}[t,e] & \forall\, e, t & ET & ET & \cdot \\
+\texttt{lin} & \boldsymbol{s}[e,t] \leftarrow \textstyle\sum_{f} \boldsymbol{X}_e[t,f]\, \rho[f] & \forall\, e, t & ET & ET & \cdot \\
+\texttt{quad} & \boldsymbol{ms}[e,t] \leftarrow \boldsymbol{m}_{\text{em}}[e,t] \cdot \boldsymbol{s}[e,t] & \forall\, e, t & ET & \cdot & ET \\
+\texttt{lin} & \boldsymbol{ms}_{\text{tm}}[t,e] \leftarrow \boldsymbol{ms}[e,t] & \forall\, t, e & ET & ET & \cdot \\
+\texttt{lin} & \boldsymbol{y}_{\rho}[t] \leftarrow \textstyle\sum_{f} \rho[f]\, \boldsymbol{y}[t,f] & \forall\, t & T & T & \cdot \\
+\texttt{lin} & \textstyle\sum_{e} \boldsymbol{ms}_{\text{tm}}[t,e] == \boldsymbol{y}_{\rho}[t] & \forall\, t & \cdot & T & \cdot \\
+\textit{combine totals} &  &  & TF + 4ET + T & 3ET + 2T & ET \\
 \end{array}
 $$
 
@@ -759,44 +779,49 @@ The bound of the unexplained-information section is computed from the LM-head lo
 Per position $t$, with $\boldsymbol{\ell}$ the logit row and $\boldsymbol{tok}$ the committed token stream:
 
 $$
-\begin{array}{lll|ccc|l}
- & & & W & L & Q & \\
-\texttt{input} & \boldsymbol{\ell} & \forall\, i \in [V] & \cdot & \cdot & \cdot & \\
-\texttt{input} & \boldsymbol{tok}[t] & & \cdot & \cdot & \cdot & \\
+\begin{array}{lll|ccc}
+ &  &  & W & L & Q \\
+\texttt{input} & \boldsymbol{\ell} & \forall\, i \in [V] & \cdot & \cdot & \cdot \\
+\texttt{input} & \boldsymbol{tok}[t] &  & \cdot & \cdot & \cdot \\
 \hline
-& \textit{--- argmax and output select ---} & & & & & \\
-\texttt{decl} & \boldsymbol{A},\; \boldsymbol{O} & \forall\, i & 2V & \cdot & \cdot & \text{argmax and output-select one-hots} \\
-\texttt{quad} & \boldsymbol{A}[i]^2 == \boldsymbol{A}[i] & \forall\, i & \cdot & \cdot & V & \\
-\texttt{quad} & \boldsymbol{O}[i]^2 == \boldsymbol{O}[i] & \forall\, i & \cdot & \cdot & V & \\
-\texttt{lin} & \textstyle\sum_i \boldsymbol{A}[i] == 1 & & \cdot & 1 & \cdot & \\
-\texttt{lin} & \textstyle\sum_i \boldsymbol{O}[i] == 1 & & \cdot & 1 & \cdot & \\
-\texttt{lin} & \textstyle\sum_i i\,\boldsymbol{O}[i] == \boldsymbol{tok}[t] & & \cdot & 1 & \cdot & \\
-\texttt{quad} & \boldsymbol{A\ell}[i] \leftarrow \boldsymbol{A}[i] \cdot \boldsymbol{\ell}[i] & \forall\, i & V & \cdot & V & \\
-\texttt{lin} & \boldsymbol{v}^{\ast} \leftarrow \textstyle\sum_i \boldsymbol{A\ell}[i] & & 1 & 1 & \cdot & \\
-\texttt{lin} & \boldsymbol{gap}[i] \leftarrow \boldsymbol{v}^{\ast} - \boldsymbol{\ell}[i] & \forall\, i & V & V & \cdot & \\
-\texttt{range} & \boldsymbol{gap}[i] \sqsubseteq \mathrm{range}_{20} & \forall\, i & V & \cdot & V & \\
-\texttt{quad} & \boldsymbol{Ogap}[i] \leftarrow \boldsymbol{O}[i] \cdot \boldsymbol{gap}[i] & \forall\, i & V & \cdot & V & \\
-\texttt{lin} & \boldsymbol{gap}_o \leftarrow \textstyle\sum_i \boldsymbol{Ogap}[i] & & 1 & 1 & \cdot & \\
-& \textit{--- kernel and log pin ---} & & & & & \\
-\texttt{lookup} & \boldsymbol{e}[i] \leftarrow \mathrm{EXP}[\boldsymbol{gap}[i]] & \forall\, i & 3V & V & V & \\
-\texttt{quad} & \boldsymbol{g}_2 \leftarrow \boldsymbol{gap}_o \cdot \boldsymbol{gap}_o & & 1 & \cdot & 1 & \\
-\texttt{lin} & \boldsymbol{a} \leftarrow \textstyle\sum_i \boldsymbol{e}[i] & & 1 & 1 & \cdot & \\
-\texttt{decl} & \boldsymbol{b} & & 1 & \cdot & \cdot & \text{the log-pin index} \\
-\texttt{lookup} & \boldsymbol{pw} \leftarrow \mathrm{POW}[\boldsymbol{b}] & & 3 & 1 & 1 & \\
-\texttt{decl} & \boldsymbol{d} & & 1 & \cdot & \cdot & \text{log-pin slack} \\
-\texttt{decl} & \boldsymbol{d}_w & \forall\, n \in [4] & 4 & \cdot & \cdot & \text{slack words} \\
-\texttt{range} & \boldsymbol{d}_w[n] \sqsubseteq \mathrm{range}_{12} & \forall\, n & 4 & \cdot & 4 & \\
-\texttt{lin} & \boldsymbol{d} == \textstyle\sum_{n \in [4]} 2^{12n}\, \boldsymbol{d}_w[n] & & \cdot & 1 & \cdot & \\
-\texttt{lin}\,\le & \boldsymbol{a} + \boldsymbol{d} == \boldsymbol{pw} & & \cdot & 1 & \cdot & \\
-\texttt{decl} & \boldsymbol{rem} & & 1 & \cdot & \cdot & \text{ceiling remainder} \\
-\texttt{range} & \boldsymbol{rem} \sqsubseteq \mathrm{range}_{16} & & 1 & \cdot & 1 & \\
-\texttt{lin} & \boldsymbol{z}_o \leftarrow \mathrm{k}^{-1}(\boldsymbol{g}_2 + \boldsymbol{rem}) & & 1 & 1 & \cdot & \\
-\texttt{lin} & \boldsymbol{surprisal}[t] \leftarrow \boldsymbol{z}_o + \boldsymbol{b} & & 1 & 1 & \cdot & \\
+ & \textit{--- argmax and output select ---} &  &  &  &  \\
+& \textit{argmax and output-select one-hots} & & & & \\
+\texttt{decl} & \boldsymbol{A},\; \boldsymbol{O} & \forall\, i & 2V & \cdot & \cdot \\
+\texttt{quad} & \boldsymbol{A}[i]^2 == \boldsymbol{A}[i] & \forall\, i & \cdot & \cdot & V \\
+\texttt{quad} & \boldsymbol{O}[i]^2 == \boldsymbol{O}[i] & \forall\, i & \cdot & \cdot & V \\
+\texttt{lin} & \textstyle\sum_i \boldsymbol{A}[i] == 1 &  & \cdot & 1 & \cdot \\
+\texttt{lin} & \textstyle\sum_i \boldsymbol{O}[i] == 1 &  & \cdot & 1 & \cdot \\
+\texttt{lin} & \textstyle\sum_i i\,\boldsymbol{O}[i] == \boldsymbol{tok}[t] &  & \cdot & 1 & \cdot \\
+\texttt{quad} & \boldsymbol{A\ell}[i] \leftarrow \boldsymbol{A}[i] \cdot \boldsymbol{\ell}[i] & \forall\, i & V & \cdot & V \\
+\texttt{lin} & \boldsymbol{v}^{\ast} \leftarrow \textstyle\sum_i \boldsymbol{A\ell}[i] &  & 1 & 1 & \cdot \\
+\texttt{lin} & \boldsymbol{gap}[i] \leftarrow \boldsymbol{v}^{\ast} - \boldsymbol{\ell}[i] & \forall\, i & V & V & \cdot \\
+\texttt{range} & \boldsymbol{gap}[i] \sqsubseteq \mathrm{range}_{20} & \forall\, i & V & \cdot & V \\
+\texttt{quad} & \boldsymbol{Ogap}[i] \leftarrow \boldsymbol{O}[i] \cdot \boldsymbol{gap}[i] & \forall\, i & V & \cdot & V \\
+\texttt{lin} & \boldsymbol{gap}_o \leftarrow \textstyle\sum_i \boldsymbol{Ogap}[i] &  & 1 & 1 & \cdot \\
+ & \textit{--- kernel and log pin ---} &  &  &  &  \\
+\texttt{lookup} & \boldsymbol{e}[i] \leftarrow \mathrm{EXP}[\boldsymbol{gap}[i]] & \forall\, i & 3V & V & V \\
+\texttt{quad} & \boldsymbol{g}_2 \leftarrow \boldsymbol{gap}_o \cdot \boldsymbol{gap}_o &  & 1 & \cdot & 1 \\
+\texttt{lin} & \boldsymbol{a} \leftarrow \textstyle\sum_i \boldsymbol{e}[i] &  & 1 & 1 & \cdot \\
+& \textit{the log-pin index} & & & & \\
+\texttt{decl} & \boldsymbol{b} &  & 1 & \cdot & \cdot \\
+\texttt{lookup} & \boldsymbol{pw} \leftarrow \mathrm{POW}[\boldsymbol{b}] &  & 3 & 1 & 1 \\
+& \textit{log-pin slack} & & & & \\
+\texttt{decl} & \boldsymbol{d} &  & 1 & \cdot & \cdot \\
+& \textit{slack words} & & & & \\
+\texttt{decl} & \boldsymbol{d}_w & \forall\, n \in [4] & 4 & \cdot & \cdot \\
+\texttt{range} & \boldsymbol{d}_w[n] \sqsubseteq \mathrm{range}_{12} & \forall\, n & 4 & \cdot & 4 \\
+\texttt{lin} & \boldsymbol{d} == \textstyle\sum_{n \in [4]} 2^{12n}\, \boldsymbol{d}_w[n] &  & \cdot & 1 & \cdot \\
+\texttt{lin}\,\le & \boldsymbol{a} + \boldsymbol{d} == \boldsymbol{pw} &  & \cdot & 1 & \cdot \\
+& \textit{ceiling remainder} & & & & \\
+\texttt{decl} & \boldsymbol{rem} &  & 1 & \cdot & \cdot \\
+\texttt{range} & \boldsymbol{rem} \sqsubseteq \mathrm{range}_{16} &  & 1 & \cdot & 1 \\
+\texttt{lin} & \boldsymbol{z}_o \leftarrow \mathrm{k}^{-1}(\boldsymbol{g}_2 + \boldsymbol{rem}) &  & 1 & 1 & \cdot \\
+\texttt{lin} & \boldsymbol{surprisal}[t] \leftarrow \boldsymbol{z}_o + \boldsymbol{b} &  & 1 & 1 & \cdot \\
 \hline
-& \textit{--- across positions ---} & & & & & \\
-\texttt{lin} & \boldsymbol{S}_z \leftarrow \textstyle\sum_{t \in \text{scored}} \boldsymbol{surprisal}[t] & & 1 & 1 & \cdot & \\
-\texttt{lin} & \boldsymbol{S}_z == \text{the revealed public value} & & \cdot & 1 & \cdot & \\
-\textit{totals per position} & & & 9V + 22 & 2V + 13 & 6V + 7 & \\
+ & \textit{--- across positions ---} &  &  &  &  \\
+\texttt{lin} & \boldsymbol{S}_z \leftarrow \textstyle\sum_{t \in \text{scored}} \boldsymbol{surprisal}[t] &  & 1 & 1 & \cdot \\
+\texttt{lin} & \boldsymbol{S}_z == \text{the revealed public value} &  & \cdot & 1 & \cdot \\
+\textit{totals per position} &  &  & 9V + 22 & 2V + 13 & 6V + 7 \\
 \end{array}
 $$
 
