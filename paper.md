@@ -77,12 +77,71 @@ The exact-circuit systems also leave the prover freedom in the witness. zkLLM co
 
 **Verified inference with a trusted verifier.** A separate line verifies inference in the unilateral setting, where the verifier is trusted and sees plaintext. Rinberg et al. (2025) and Karvonen et al. (2025), companion works, verify recomputation against hardware nondeterminism to detect weight exfiltration and inference-specification violations; VerInf shares their per-token surprisal measure under a logit-noise model. TOPLOC (Ong et al. 2025) attests with locality-sensitive hashes of activations, and Verde (Arun et al. 2025) instead makes inference bitwise reproducible so that arbitration can settle disputes. VerInf targets the bilateral setting, where the verifier trusts neither the prover's hardware nor its software and must not see the tokens: the recomputation is replaced by a zero-knowledge proof, and the verifier learns only the bound.
 
+## 4. Proof system
 
-## 4. From a model to constraints
+VerInf is built on the Ligero zero-knowledge argument system (Ames, Hazay, Ishai, and Venkitasubramaniam 2017), which supports commitments, linear tests, and Hadamard tests, all in zero knowledge, with security resting only on the collision resistance of a hash function. This section describes these tools (§4.1); how matrix multiplication (§4.2), mixture-of-experts routing (§4.3), table lookups (§4.4), and softmax (§4.5) are proven with them; and rescaling and overflow handling (§4.6). Every claim's full listing and soundness lemma is in Appendix B.
 
-VerInf compiles a forward pass into a flat list of linear and quadratic constraints over a committed witness, which the Ligero argument of §5 then proves all at once. This section describes the compilation: how a model is written (§4.1), how its values are represented as field elements (§4.2), how matrix multiplication (§4.3), the nonlinearities (§4.4), and mixture-of-experts routing (§4.5) become constraints, and how the unexplained-information bound is added as further claims (§4.6).
+### 4.1 Argument interface
 
-### 4.1 The claim language
+Ligero provides three tools, and everything in the paper is built from them:
+
+* **Zero-knowledge commitment.** A short commitment binds a block of field values while revealing nothing about them. Commitments can be issued across turns, and a proof can span several blocks, including a persistent block reused across proofs (the model weights, §7.4).
+* **Linear test.** Demonstrates that $M\boldsymbol{x} = v$ holds for public $M, v$ and hidden $\boldsymbol{x}$.
+* **Hadamard test.** Demonstrates that committed vectors satisfy $\boldsymbol{x} \circ \boldsymbol{y} = \boldsymbol{z}$, the elementwise (Hadamard) product, with $\boldsymbol{x}$, $\boldsymbol{y}$, and $\boldsymbol{z}$ all hidden. Every quadratic constraint in the paper is of this form.
+
+The base Ligero protocol runs in three rounds: (1) the prover commits; (2) the verifier sends random challenges, and the prover folds all constraints into a few short test results; (3) the verifier picks random locations of the commitment to audit, and the prover opens them, letting the verifier check that the test results are consistent with the committed values.
+
+Every committed value is a 64-bit fixed-point integer at the working scale $\mathrm{S} = 2^{12}$, in the Goldilocks field $|F| = 2^{64} - 2^{32} + 1$; the lookups and brackets of the checks below need integer keys and integer comparisons, and fixed point provides them. Products of fixed-point values arrive at a higher scale and are returned to the working scale by a rescaling operation (§4.6).
+
+### 4.2 Matrix multiplication via Freivalds
+
+Consider a committed product $\boldsymbol{C} = \boldsymbol{A}\boldsymbol{B}$ of shapes $(m, k)$ and $(k, n)$. Checking it entrywise would need $mnk$ Hadamard constraints. VerInf instead checks the random projection
+
+$$\lambda^\top \boldsymbol{C}\,\rho \;=\; \lambda^\top(\boldsymbol{A}\boldsymbol{B})\,\rho,$$
+
+with $\rho \in F^n$ and $\lambda \in F^m$ supplied by the verifier after $\boldsymbol{A}$, $\boldsymbol{B}$, and $\boldsymbol{C}$ are committed; a wrong $\boldsymbol{C}$ survives with probability at most $2/|F|$. To evaluate the right side, the prover commits three length-$k$ vectors, $\boldsymbol{y} = \boldsymbol{B}\rho$, $\boldsymbol{u} = \lambda^\top \boldsymbol{A}$, and $\boldsymbol{p} = \boldsymbol{u} \circ \boldsymbol{y}$, enforced by two linear tests and one Hadamard test. The identity is then the single linear constraint $\textstyle\sum_{a,b} \lambda[a]\,\rho[b]\,\boldsymbol{C}[a,b] = \sum_{j} \boldsymbol{p}[j]$. In total, $3k$ committed values, $2k + 1$ linear constraints, and $k$ Hadamard constraints replace the full check's $mnk$ committed products, $mnk$ Hadamard constraints, and $mn$ linear sums. Details, including the rescale of the output (§4.6), are in Appendix B.2.
+
+### 4.3 Mixture-of-experts routing
+
+In a mixture-of-experts layer each token routes to one of $E$ experts. The routing decision is a committed one-hot vector $\boldsymbol{m} \in \{0,1\}^E$ per token: the Hadamard test $\boldsymbol{m} \circ \boldsymbol{m} = \boldsymbol{m}$ forces every entry to 0 or 1, the linear test $\sum_e \boldsymbol{m}[e] = 1$ forces exactly one 1, and a range-checked gap constraint (§4.4) forces the 1 to the argmax of the router logits, tiebroken by expert index. The layer output $\boldsymbol{y} = \sum_e \boldsymbol{m}[e]\, \boldsymbol{x}_e$ over the $E$ committed expert outputs $\boldsymbol{x}_e$ is checked by projection, as with matmul: for a verifier-supplied $\rho$, the prover commits each projection $\boldsymbol{s}_e = \boldsymbol{x}_e \cdot \rho$ (linear tests), the masked values $\boldsymbol{m}[e]\,\boldsymbol{s}_e$ (Hadamard tests), and one linear constraint equates their sum with $\boldsymbol{y} \cdot \rho$. All $E$ expert outputs are committed even though one fires; committing only the active expert would reveal the route (B.6).
+
+### 4.4 Lookup tables
+
+A nonlinearity $\boldsymbol{y}_i = f(\boldsymbol{x}_i)$, such as the exponential, is proven by lookup against the public table of all input-output pairs $(t_j, f(t_j))$. LogUp (Haböck 2022) reduces a batch of queries to the single identity
+
+$$\sum_{i} \frac{1}{\beta + \boldsymbol{x}_i + \alpha\, \boldsymbol{y}_i} \;=\; \sum_{j} \frac{\boldsymbol{m}_j}{\beta + t_j + \alpha\, f(t_j)},$$
+
+over random challenges $\alpha, \beta$, with the multiplicities $\boldsymbol{m}_j$ (how often each entry is queried) committed before $\alpha, \beta$ are drawn and the per-query inverses committed after. The challenge folds key and value together, so one lookup certifies both that $\boldsymbol{x}_i$ is in the table's range and that $\boldsymbol{y}_i = f(\boldsymbol{x}_i)$. Tables are computed by a deterministic rounding rule the verifier reproduces.
+
+### 4.5 Softmax
+
+Per row of scores $\boldsymbol{x}$, softmax must produce
+
+$$\boldsymbol{y}[i] \;=\; \frac{e^{\boldsymbol{x}[i]}}{\sum_{j} e^{\boldsymbol{x}[j]}}.$$
+
+Following zkLLM (Sun, Li, and Zhang 2024), the prover proposes a per-row shift $\boldsymbol{c}$ instead of verifying the division, and each output is computed by table lookup (§4.4) as $\boldsymbol{y}[i] = e^{\boldsymbol{x}[i] - \boldsymbol{c}}$. Softmax is shift-invariant, so this is correct exactly when $\boldsymbol{c}$ equals the row's log-sum-exp, which makes the outputs sum to the normalization target (one, up to quantization). The true log-sum-exp is not an integer, so an exact check on it is impossible. zkLLM accepts any $\boldsymbol{c}$ whose outputs sum to within a tolerance of the target: the tolerance absorbs rounding error, but it also admits several neighboring integer shifts, and the prover can pick whichever nudges the outputs in its favor, a direct lever on the bound (§2.2). VerInf instead requires the sum at $\boldsymbol{c}$ to be at most the target and the sum at $\boldsymbol{c} - 1$ to exceed it. Raising the shift shrinks every exponential, so the row sum is monotonically decreasing in $\boldsymbol{c}$: $\boldsymbol{c}$ must be the first shift at which the sum crosses the target, a monotonic sequence crosses a threshold only once, and the satisfying integer is therefore unique. The sum at $\boldsymbol{c} - 1$ is evaluated against a second copy of the exponential table shifted by one index, so both sums are exact table sums. The full claim, with the saturation of large scores and the causal mask compiled in as public structure, is B.3.
+
+### 4.6 Rescaling and overflow
+
+A product of two values at the working scale arrives at scale $\mathrm{S}^2$. Each multiplicative claim returns its output to the working scale by a *rescale*: the committed raw product $\boldsymbol{x}_{\text{full}}$ is split into a kept word $\boldsymbol{x}$ and dropped low bits $\boldsymbol{x}_{\text{low}}$ by one linear constraint and two range memberships,
+
+$$\boldsymbol{x}_{\text{full}} \;=\; 2^{12}\,\boldsymbol{x} + \boldsymbol{x}_{\text{low}}, \qquad \boldsymbol{x}_{\text{low}} \in [0,\, 2^{12}), \qquad \boldsymbol{x} + 2^{25} \in [0,\, 2^{26}),$$
+
+each membership one lookup (§4.4) against the table of every integer in its range, the second checked on a shifted copy so that the signed output lies in $[-2^{25}, 2^{25})$. The linear constraint fixes the weighted sum, the range checks confine each word to its window, and the windows tile, so exactly one assignment satisfies all three. The products themselves are computed exactly, since every accumulator stays below $2^{53}$; the accuracy cost of the representation is the dropped bits, priced by the bound (§2.1).
+
+The central numeric constraint is overflow: every committed value and every intermediate product must stay below the modulus. This is what fixes the scale choices, and what forces a rescale into a claim when an input arrives at a higher scale than the claim can absorb.
+
+If a value nevertheless overflows, one of two things happens. Where it feeds a decomposition like the one above, the wrapped field element has no valid split into range-checked words, and the proof rejects. Elsewhere the constraints are field identities, so the proof accepts and attests the wrapped computation. This costs accuracy, not soundness: the wrapped computation is still deterministic, with a unique witness. In practice its logits predict the deployment's tokens poorly, and the divergence surfaces as a large bound. Overflow needs careful management in two places: in arguments that rely on monotonicity, such as the softmax bracket (§4.5, B.3), and in the unexplained-information claims, where wraparound must not let the prover deflate the bound (§5, B.7).
+
+## 5. Bounding unexplained information
+
+The bound of §2.1 is computed inside the proof, from the LM-head logits, by four claims per output position. The predictor is the logit-noise model of §2.1, $Q(o) \propto e^{-(v^{*} - \ell_o)^2/\sigma^2}$ with $v^{*}$ the maximum logit: an argmax gadget pins $v^{*}$, a kernel table (§4.4) evaluates the exponential at each logit's gap to it, and the observed token's gap is selected by an indicator pinned exactly as the routing mask of §4.3. A one-sided logarithm pin against a second table then converts the summed kernel, the normalizer of $Q$, into the surprisal $-\log Q(o)$. Summed over the scored positions and revealed, this is the proof's only public value.
+
+The soundness property here is the weaker downstream one of §2.2: the witness is deliberately not unique, and every prover freedom provably inflates the report. The kernel table rounds up and the logarithm table rounds down, so the normalizer is over-counted and its logarithm never under-counted, and choosing any index above the least valid one in the one-sided pin only raises the reported value; every freedom pushes the surprisal up. Normalization is where the asymmetry between §2.2's two rules pays: softmax (§4.5) pins its shift exactly, because upstream slack is unanalyzable, while the bound replaces normalization with the one-sided pin, because downstream slack only inflates.
+
+The output tokens enter only as committed witness, never the public claim list, and their indicator rows are shared with the input selection, so the scored tokens are, by shared committed variable, the tokens the model consumed (B.7). Because the bound folds onto logits already inside the proof, certifying it adds about 0.1% to the per-token witness (Appendix A). Binding the committed streams to digests recorded at generation time is Appendix E.
+
+## 6. Claim format
 
 A model is written as ordinary tensor code against a tape, in the style of PyTorch. Each `tape.<op>` call records one claim, a public statement of what was computed, and returns a handle; handles overload the usual `@`, `*`, and `+`. A few lines of an attention block read:
 
@@ -95,128 +154,75 @@ sm   = tape.softmax(sc, M=SEQ, s_x=S)
 out  = tape.matmul(sm, v)
 ```
 
-The same claim list drives both witness generation, computing each value in the forward pass, and the constraint compile, emitting the linear and quadratic constraints that define a correct computation. Verification recompiles those constraints from the public claim list and checks the proof against them, so it depends only on the claims, never on constraints supplied with the proof. Everything a claim depends on beyond the committed witness, the lookup tables, the quantization scales, and the noise-model parameters, is a public constant of the claim list, fixed before any challenge is drawn; nothing the prover chooses privately enters a constraint (§3). A model built from existing operations needs no change to the prover or verifier; only a genuinely new operation needs a new claim type. The unexplained-information claims were added this way, reusing existing table lookups and elementwise steps (§4.6).
+Each construction of §4.2 to §4.5, and the bound of §5, is one claim type. A claim does three jobs: it computes its values during witness generation, emits the linear and quadratic constraints that define a correct computation, and declares which of its values are committed with the forward pass and which only after a challenge (§7.2). The verifier recompiles the constraints from the public claim list and never accepts prover-supplied ones. Everything a claim depends on beyond the committed witness (lookup tables, quantization scales, noise-model parameters) is a public constant, fixed before any challenge. A model built from existing operations needs no prover or verifier changes; only a new operation needs a new claim type, which is how the surprisal claims of §5 were added. The remaining claim types (RMSNorm, SiLU, embedding select, elementwise operations, the routing weight) are compositions of the same machinery; their listings are Appendix B.
 
-### 4.2 The fixed-point witness
-
-The proof works over a finite field, so every value is quantized to a 64-bit fixed-point integer at a scale $S$ (we use $S = 2^{12}$). The prover commits integers; the verifier checks them with field constraints, and lookup tables handle the nonlinearities. Matrix multiplications are carried out in Int64 or in FP64, which is bit-exact at these magnitudes because every accumulator stays below $2^{53}$, then requantized.
-
-The central numeric constraint is overflow: every committed value and every intermediate product must stay below the Goldilocks modulus, which bounds the usable scales and contraction depths. This is what fixes the scale choices and what forces a rescaling step into some of the nonlinearity claims when an input arrives at a higher scale than the claim can absorb (§4.4). The accuracy cost of the representation is priced by the bound (§2.1).
-
-If a value nevertheless exceeds its budget, one of two things happens. Where it feeds a word decomposition or range check, a wrapped field element has no valid decomposition into range-checked words and the proof rejects (Appendix B.1). Elsewhere the constraints are field identities and the proof accepts, but what it then attests is the wrapped field computation: still a deterministic function of the committed inputs with a unique witness, so the requirement of §2.2 is unaffected, and the bound remains genuine for that computation; in practice wrapped logits predict the deployment's tokens poorly and the divergence surfaces as a large $U(o)$. Care is needed only where a uniqueness or exclusion argument itself assumes a magnitude bound, since a bracket whose operand is not independently bounded can admit a wrapped second solution. Every such operand therefore carries a range check or a written width argument tracing to one; Appendix B applies this discipline claim by claim, and it is most load-bearing in the surprisal claims of B.7, where slack is deliberately permitted and the safe direction must be established in the field (§9).
-
-### 4.3 Matrix multiplication via Freivalds
-
-Checking $C = AB$ of shapes $(m, k)$ and $(k, n)$ entrywise would need $mnk$ product constraints, which is infeasible at frontier scale. VerInf uses Freivalds' randomized check instead, with a projection on each side: the verifier samples $\rho \in F^n$ and $\lambda \in F^m$, and the identity $C = AB$ is checked through its projection $\lambda^\top C \rho = \lambda^\top A B \rho$. We call this two-sided form double Freivalds. The prover commits three short projections, $y = B\rho$ and $u = \lambda^\top A$ (each of length $k$) and their pointwise product $p[i] = u[i]\, y[i]$, so the claim emits about $2k + 1$ linear constraints and $k$ quadratic constraints, and one length-$k$ dot product stands in for the whole matmul. The soundness error is $2/|F|$ per matmul, negligible at $|F| \approx 2^{64}$.
-
-|  | naive per-element | single Freivalds | double Freivalds |
-|---|---|---|---|
-| auxiliary witness slots | $mnk$ | $mk + k$ | $3k$ |
-| quadratic constraints | $mnk$ | $mk$ | $k$ |
-| soundness error | exact | $1/\vert F\vert$ | $2/\vert F\vert$ |
-
-Relative to the usual single-projection form, the second projection reduces the auxiliary witness and the quadratic-constraint count by further factors of $m/3$ and $m$, at the cost of doubling an already-negligible soundness error. VerInf uses the double form for every matmul in the model.
-
-### 4.4 Nonlinearities via lookup tables
-
-Each nonlinearity is verified against a public table with a lookup argument. LogUp (Haböck 2022) reduces a lookup to an identity over multiplicative inverses: to prove a functional relationship $y_i = f(x_i)$, the table is a set of input-output pairs $(x^{(j)}, f(x^{(j)}))$, each query and table entry is folded into one field element with a random challenge $\alpha$, and the check is the single identity
-
-$$
-\sum_{i} \frac{1}{\beta + x_i + \alpha\, y_i} \;=\; \sum_{j} \frac{m_j}{\beta + x^{(j)} + \alpha\, f\!\big(x^{(j)}\big)},
-$$
-
-over random $\alpha, \beta$, with multiplicities $m_j$ counting how often each table entry is queried, tallied during witness generation and committed before $\alpha, \beta$ are drawn. Because $\alpha$ is random, a query matches a table entry only when both its key $x_i$ and its value $y_i$ agree, so the identity holds if and only if every committed $(x_i, y_i)$ is a genuine input-output pair of $f$: one lookup certifies both that $x_i$ is in range and that $y_i = f(x_i)$. The prover commits the inputs, the outputs, the inverses, and the multiplicities; a per-table settlement, synthesized automatically in the compile, samples the lookup challenges and emits the cross-claim sum identity, and the constraints feed the same linear and quadratic tests that handle the arithmetic (§5). Table entries are public and computed by a deterministic rounding rule, so the verifier evaluates the right-hand side itself. The three nonlinearities in the model are arithmetized as follows.
-
-**RMSNorm.** Rather than look up a reciprocal square root, the claim pins the rsqrt scalar $y$ algebraically, with two quadratic brackets that force $y$ to the unique integer with $y^2\, S_{\text{total}} \ge \text{magic}$ and $(y - 1)^2\, S_{\text{total}} \lt \text{magic}$, where $\text{magic} = d\, s^4$, with the bracket products assembled from range-checked limbs so the inequalities hold over the integers, and no large table is needed. The broadcast multiply is folded by Freivalds rather than committed cellwise.
-
-**Softmax.** The claim pins the per-row log-sum-exp shift with a two-table monotonicity bracket, rather than leaving it constrained only by a tolerance on the row sum. Two exponential tables $T_A$ and $T_B$, the second the first shifted by one integer unit $\delta$, are computed from the same rounded expression, so $T_B[k] = T_A[k-\delta]$ bit-for-bit and the row sums satisfy $s_2(c) = s_1(c-\delta)$ exactly. Since $s_1(c)$ is monotone non-increasing in the shift $c$, bracketing it between $s_1 \le s_y$ and $s_2 \ge s_y + 1$ pins $c$ to the unique integer where $s_1$ crosses $s_y$, with no tolerance band. Two paired lookups against $T_A$ and $T_B$ then certify the outputs. Pinning the shift this way removes the deflating freedom of §2.2, at the cost of a second table and the bracket constraints. An optional saturating mux sizes the table to the nonzero region of the exponential.
-
-**SiLU.** The input is split into sign and magnitude, the magnitude is decomposed into a low word that indexes the table and high words that detect saturation, and a paired lookup returns the table value; when the high words are nonzero a mux replaces the lookup with the saturated value (the input itself for large positive inputs, zero for large negative).
-
-When an input arrives at a higher scale than a claim can absorb without overflow (§4.2), the claim emits a shared rescale block, a word decomposition that drops the low bits, before its main constraints. The full per-claim constraint listings are in Appendix B.
-
-### 4.5 Mixture-of-experts routing
-
-In a top-1 MoE layer each token routes to one expert by routing logit. The routing claim pins a one-hot mask $m$ to the argmax of the routing logits, made unique by a public tiebreaker that packs the expert index into the low bits of each logit so no two are equal. Booleanity ($m_e^2 = m_e$) and cardinality ($\sum_e m_e = 1$) force $m$ to be one-hot, and a range-checked gap constraint forces its support to be the argmax: if the mask selected a non-maximal expert, the gap to the true maximum would be a negative field element, which cannot be recomposed from the range-checked words, and the proof rejects. A masked-combine claim then forms the layer output as $\sum_e m_e\, \text{expert}_e(x)$.
-
-All $E$ experts' streams are committed even though only one is active. This is a hiding requirement, not an inefficiency: a witness that committed only the active expert would reveal the routing decision, so the inactive experts are committed and zeroed by the mask. (A top-1 simplification applies the elementwise nonlinearity once after the masked sum rather than per expert, since the sum already selects the chosen expert's stream; this reduces the committed intermediates without changing what is proven.)
-
-### 4.6 The unexplained-information bound as claims
-
-The bound of §2.1 is computed from the LM-head logits by four claims per output position, reusing the gap gadget of the routing claim, the paired table lookup, and the elementwise steps; Appendix B.7 gives the full specification, and Appendix E binds the same committed tokens to the digests recorded at generation time (§2.4). Its soundness property is the weaker downstream one of §2.2: the witness is deliberately not unique, and instead every prover freedom provably inflates the reported value. Normalization is where the asymmetry between the two requirements pays. Softmax pins its per-row shift exactly, because upstream slack is unanalyzable, while the bound replaces normalization with a one-sided logarithm pin, because downstream slack can be shown to only inflate. The output tokens enter only as committed witness consumed by these claims; they never appear in the public claim list, so the proof reveals the bound and nothing about which tokens were produced. Because the bound folds onto the logits inside the proof, certifying it costs little beyond the forward pass it sits on top of.
-
-
-## 5. The Ligero argument and soundness
-
-Section 4 produced a witness and a flat list of linear and quadratic constraints. This section gives the argument that proves them all at once: the Ligero construction and our parameters (§5.1), the zero-knowledge masking (§5.2), the four interactive rounds across which the stages run (§5.3), and the soundness analysis (§5.4).
-
-### 5.1 Commit, test, open
-
-Ligero (Ames, Hazay, Ishai, and Venkitasubramaniam 2017) is a zero-knowledge argument built from Reed-Solomon codes and a Merkle commitment, with no trusted setup and security resting only on the collision resistance of a hash function. It proceeds in three stages. In the commit stage it arranges the committed values as a matrix whose rows are Reed-Solomon codewords and hashes the columns into a Merkle tree, whose single root binds the whole witness. In the test stage it folds the constraints into a few short polynomials with random combiners: a linear test that a system $Ax = b$ holds, a quadratic (Hadamard) test that a system of pointwise products holds, and an interleaved Reed-Solomon test that every row is close to a codeword. In the open stage the verifier names a random subset of columns; the prover reveals them with Merkle paths, and the verifier checks that they hash to the root and are consistent with the test polynomials. Soundness comes from Reed-Solomon distance: any inconsistency appears in a constant fraction of columns, so a few random column checks catch it with high probability.
-
-The trade Ligero makes is proof size and verifier work, both growing as the square root of the witness rather than polylogarithmically, in exchange for a simple construction, a small trusted base, and transparent, plausibly post-quantum security. In the setting of §1 this is the right trade: verification is occasional and offline, the verifier is well resourced, and a short auditable trusted base with no trusted setup matters more than proof size.
-
-**Parameters.** VerInf works over the Goldilocks field, $|F| = 2^{64} - 2^{32} + 1$, which admits fast number-theoretic transforms and fits the fixed-point magnitudes of §4.2 without wraparound. The constants are
-
-$$\mathrm{ELL} = 8192, \quad \mathrm{K\_DEG} = 16384, \quad \rho = 4, \quad \mathrm{N\_LIG} = \rho \cdot \mathrm{K\_DEG} = 65536,$$
-
-where `ELL` is the number of constrained message slots per row, `K_DEG` the polynomial degree bound, $\rho$ the Reed-Solomon inverse rate, and `N_LIG` the codeword length (the number of columns). The demonstrated runs hold these constants fixed as the witness grows, which is simpler but makes proof size and verifier work grow linearly rather than as the square root Ligero permits (§9). The number of columns opened, `T_QUERIES`, is a deployment choice that sets the soundness level (§5.4); the demonstrated runs are reported with their values in §7. The hash is BLAKE3.
-
-**Commit.** The witness is laid out as a matrix, each variable occupying a contiguous block of rows of `ELL` slots. Each row is Reed-Solomon encoded: the `ELL` message values, padded with `K_DEG − ELL` random slots for zero-knowledge, are interpolated to polynomial coefficients (an inverse NTT of length `K_DEG`) and evaluated on a coset of length `N_LIG` (a forward NTT) to give the codeword. The codeword columns are hashed into a BLAKE3 Merkle tree whose single root binds the witness. The witness is committed as three stacked blocks, sharing one column-query set: the weights $R_W$, committed once and persistent across queries; the per-prefill activations $R_{p1}$; and the per-query auxiliary values $R_{p2}$, such as the Freivalds projections and LogUp inverses, which depend on challenges and so are committed after them.
-
-**Test.** Random combiners fold all constraints into three short polynomials: an interleaved Reed-Solomon test that every row is close to a codeword, a linear test that aggregates the entire linear system $Ax = b$ into one weighted combination (Freivalds applied to the constraint system, caught with probability $1 - 1/|F|$), and a quadratic test that aggregates all the pointwise products. The linear test dominates the prover's cost (§6.1).
-
-**Open.** The verifier names `T_QUERIES` random columns; the prover reveals them with Merkle paths. The verifier re-hashes the opened columns against the root and recomputes the three test polynomials at those columns, checking they match.
-
-### 5.2 Zero-knowledge
-
-Two mechanisms hide the witness. Each row carries `K_DEG − ELL` random padding slots, so the values revealed at the opened columns are evaluations whose dependence on the witness is masked; this sustains a finite number of openings per persistent commitment (8,192 distinct columns at these parameters) before the random budget is spent, after which the commitment is refreshed: the same weights are re-committed under fresh randomness, and a linking proof, a per-slot equality claim between the two weight blocks, ties the new commitment to the old (the ledger that decides when to refresh is future work, §9). Each of the three tests additionally mixes in a structured blinding row that leaves the verifier's checks unaffected while hiding the witness-derived part of the test polynomial. The challenges are drawn from a seed; with a randomly generated seed the proof is hiding, and the demonstrated runs use a fixed seed for reproducibility, which a one-line change replaces.
-
-### 5.3 Protocol rounds
-
-The three stages of §5.1 run across four interactive rounds, so that each commitment is fixed before the verifier draws the next challenge. After the tape records the claims, the prover and verifier exchange:
-
-| Round | Prover sends | Verifier replies |
-|---|---|---|
-| 1 | Commitment to the intermediate witness ($R_{p1}$: activations, routing masks, normalization auxiliaries) | Per-claim challenges (Freivalds projections $\rho, \lambda$; LogUp $\alpha, \beta$) |
-| 2 | Commitment to the challenge-dependent auxiliary witness ($R_{p2}$: Freivalds projections, LogUp inverses) | Combiner challenges for the test polynomials |
-| 3 | The folded interleaved Reed-Solomon, linear, and quadratic test polynomials | The random column set |
-| 4 | The named columns, with Merkle paths | ACCEPT or REJECT |
-
-Splitting the commit stage across rounds 1 and 2, with the auxiliary witness committed only after its challenges, and fixing each commitment before the next challenge, is what prevents the prover from fitting a witness to a challenge it has already seen. The interactivity assumed available in §1 is used here: because the prover commits before each challenge is drawn, it cannot search over challenges offline, so a per-challenge soundness level bounds the chance of passing a live attempt rather than the best of many.
-
-### 5.4 Soundness
-
-The total probability that a cheating prover is accepted is bounded by the sum of the Ligero test errors and the per-claim reduction errors:
-
-$$\varepsilon \;\le\; \underbrace{\varepsilon_{\text{IRS}} + \varepsilon_{\text{lin}} + \varepsilon_{\text{quad}} + \varepsilon_{\text{field}}}_{\text{Ligero}} \;+\; \sum_{\text{matmuls}} \frac{2}{|F|} \;+\; \sum_{\text{LogUp}} \frac{M + T + 1}{|F|},$$
-
-with the range checks contributing nothing (bit and word decompositions are exact). The Ligero side is dominated by the interleaved Reed-Solomon term $\varepsilon_{\text{IRS}} = (1 - 1/\rho)^{\mathrm{T\_QUERIES}} = (3/4)^{\mathrm{T\_QUERIES}}$; reaching $2^{-s}$ needs `T_QUERIES` $\approx 2.4\,s$. The field term floors at $\varepsilon_{\text{field}} \approx \mathrm{N\_LIG}/|F| \approx 2^{-48}$, and the Freivalds terms are negligible at $|F| \approx 2^{64}$. The binding term in practice is the LogUp $(M + T + 1)/|F|$, where $M$, the number of lookup queries in a batched instance, reaches $10^{10}$ at frontier scale, giving a per-instance error around $2^{-28}$ to $2^{-30}$; it is tightened where needed by parallel repetition of the LogUp challenge.
-
-`T_QUERIES` is therefore the dial. Opening more columns drives the interleaved Reed-Solomon term down geometrically until, past roughly $\mathrm{T\_QUERIES} = 80$, the LogUp term becomes the binding one and raising soundness further also requires parallel repetition of the LogUp challenge. The demonstrated configuration sits below that point, at a per-challenge bound of about $2^{-16.6}$ (§7). In the setting of §1 this is a meaningful level rather than a compromise: the protocol is interactive, so the bound holds per live attempt with no offline grinding, and the intended parties are deterred by any non-negligible chance of being caught even once, since a detected violation is diplomatically costly. The relevant quantity is the probability of escaping detection on a given challenge, not an asymptotically small forgery probability, and the configuration is a deployment choice trading proof size and verifier time for a smaller error rather than a property of the construction.
-
-
-## 6. Implementation
+## 7. Implementation
 
 We implemented the prover in CUDA and the verifier in Rust; the two share no code.
 
-### 6.1 The streaming prover
+### 7.1 Ligero instantiation
 
-In the prover, the field arithmetic, the Reed-Solomon transforms, and the Merkle hashing of §5.1 are GPU kernels over the Goldilocks field, compiled for the local device on first use.
+VerInf works over the Goldilocks field, $|F| = 2^{64} - 2^{32} + 1$, which admits fast number-theoretic transforms and fits the fixed-point magnitudes of §4.6 without wraparound. The constants are
 
-At frontier scale the committed witness is far larger than any single machine's memory: for §7's 400B-parameter run it is about 7.2 terabytes ($9.0{\times}10^{11}$ field elements, Appendix A). The prover therefore streams the witness, committing one operation at a time: each row is Reed-Solomon encoded, folded into the column hashes and into running accumulators for the test polynomials, then freed before the next is computed. Because the Merkle tree is built over columns and the test polynomials are linear and quadratic accumulations over rows, no later step needs the full encoded matrix resident, so peak memory tracks the working set of a single operation rather than the witness or the proof. Streaming bounds working-set memory only; proof size and proving time are unaffected. The same row-by-row structure admits parallelization across GPUs, with transform work split across rows and the column hashes partitioned across nodes, each accumulating its assigned columns (§9).
+$$\mathrm{ELL} = 8192, \quad \mathrm{K\_DEG} = 16384, \quad \mathrm{N\_LIG} = 4 \cdot \mathrm{K\_DEG} = 65536,$$
 
-[Todo: fix writing] Peak memory is therefore set by the largest single working set. At long context that is softmax's: its witness grows quadratically with context length, and the implementation currently proves each softmax over its full score matrix at once. This is a choice rather than a necessity, since the rows could be split into chunks and proven piece by piece, capping the working set at the chunk size. One small piece of state also persists across the whole proof: the lookup argument of §4.4 needs per-table counts of how often each entry was queried, kept as one resident histogram per table and fixed in size by the tables.
+where $\mathrm{ELL}$ is the number of message slots per row, $\mathrm{K\_DEG}$ the polynomial degree bound, and $\mathrm{N\_LIG}$ the codeword length, a Reed-Solomon rate of $1/4$. The hash is BLAKE3. The number of audited columns, $\mathrm{T\_QUERIES}$, is a deployment choice that sets the soundness level (§8); the demonstrated runs are reported with their values in §10. The demonstrated runs hold the constants fixed as the witness grows, which is simpler but makes proof size and verifier work grow linearly rather than as the square root Ligero permits (§11).
 
-Appendix C specifies how the sparse constraint system is regenerated and evaluated against the streamed witness during the test folds; the resulting cost profile is analyzed in §8.
+A commitment (§4.1) is built as follows. The values are laid out as a matrix, each variable occupying a contiguous block of rows of $\mathrm{ELL}$ slots. Each row is Reed-Solomon encoded: the $\mathrm{ELL}$ message values, padded with $\mathrm{K\_DEG} - \mathrm{ELL}$ random slots for zero-knowledge, are interpolated to polynomial coefficients (an inverse NTT of length $\mathrm{K\_DEG}$) and evaluated at $\mathrm{N\_LIG}$ points (a forward NTT) to give the codeword. The codeword columns are hashed into a Merkle tree whose single root is the commitment, and the audited locations of §7.2 are columns, revealed with their Merkle paths. One proof carries up to five such blocks under a single column-query set: the blinding rows, the weights $R_W$ (committed once and persistent, §7.4), the refreshed weight block during a refresh, the forward-pass witness $R_{p1}$, and the challenge-dependent auxiliaries $R_{p2}$.
 
-### 6.2 The verifier
+The folded test results of §7.2 are three short polynomials. The linear test aggregates the entire linear system into one weighted combination, Freivalds' check applied to the constraint system itself; the Hadamard test aggregates all the pointwise products; and the commitment-consistency test, an interleaved Reed-Solomon test ($\varepsilon_{\text{cons}}$ in §8), shows that every row is close to a codeword. Soundness comes from Reed-Solomon distance: any inconsistency appears in a constant fraction of columns, so a few audited columns catch it with high probability (§8). The verifier checks the linear total against the public right-hand sides and the Hadamard total against zero before any column is audited; the audited columns then tie all three polynomials to the commitments.
 
-The verifier is a Rust program that reads a proof and decides whether to accept it. Sharing no code with the prover, it recompiles the constraint system from the public claim list (§4.1) and checks the proof against its own derivation, never against constraints supplied with the proof. Its work is, first, to confirm that the claim list meets the requirements of §2.2, and then to check, at the columns opened in the final round (§5.3), that they re-hash to the committed Merkle root and that the three test polynomials of §5.1, recomputed at those columns, match the prover's. A proof is accepted only if every check passes.
+Zero knowledge rests on two mechanisms. The random padding makes the values revealed at audited columns uniform conditioned on the message, provided the number of distinct columns ever audited against a commitment stays below $\mathrm{K\_DEG} - \mathrm{ELL}$; per-proof blocks refresh their padding every proof, and the persistent weight block's budget is managed in §7.4. Each test polynomial additionally mixes in a blinding row that leaves the verifier's checks unaffected while hiding its witness-derived part. Challenges are never materialized: each is a value of a hash PRF on (seed, index, label), derivable in $O(1)$ by both sides, with labels separating the challenge families.
 
-The trusted base comprises the field arithmetic, the hash and Merkle check, the challenge derivation, the constraint compile, and these checks. Proof parsing and all other handling sit outside it, since a malformed or dishonest value fails a check and the proof is rejected. The verifier depends on three crates (`blake3`, `rayon`, `serde_json`) and is differential-tested bit-for-bit against a Python reference implementation. It needs no GPU, but at full model scale it needs a large-memory host, because the compiled constraint system grows with the witness; the heaviest step, the linear identity at the opened columns, is dense field arithmetic over the constraints, parallelizes across cores, and is the natural candidate for a GPU port (§9).
+### 7.2 Protocol rounds
+
+The checks of §4.2 to §4.5 use challenges of their own, drawn only after the initial commitments: the Freivalds projections after the matrices and their product are committed, the lookup challenges after the queries and multiplicities. Each check then commits new values built from its challenges (the projections, masked products, and lookup inverses). VerInf therefore inserts a commitment round between these challenges and the test challenges, so that the new values are fixed before the tests that fold them are drawn and cannot be fitted to a fold the prover has seen. This gives four rounds:
+
+| Round | Prover sends | Verifier replies |
+|---|---|---|
+| 1 | Commitments to the first-phase blocks: forward-pass witness (activations, routing masks, normalization auxiliaries, lookup multiplicities), weights (or a reference to a standing weight commitment, plus the refreshed block during a refresh, §7.4), and blinding randomness (§7.1) | Challenge seed $s_{\text{op}}$, from which the Freivalds projections $\rho, \lambda$ and lookup challenges $\alpha, \beta$ derive |
+| 2 | Commitment to the challenge-dependent auxiliaries (Freivalds projections, lookup inverses) | Test-challenge seed $s_{\text{comb}}$ |
+| 3 | Folded test results: linear, Hadamard, and a commitment-consistency test (§7.1) | Audit seed $s_{\text{col}}$, sent after first checking the parts of the test results that need no audit |
+| 4 | The audited locations, derived from $s_{\text{col}}$ by both sides, with the data to check them against the commitments | ACCEPT or REJECT, after checking the audited locations against the commitments and the test results |
+
+Each seed is drawn only after the message above it is committed, so the per-challenge soundness bound (§8) holds per live attempt, with no offline search over challenges.
+
+### 7.3 Streaming prover
+
+The prover's field arithmetic, Reed-Solomon transforms, and Merkle hashing are GPU kernels over the Goldilocks field, compiled for the local device on first use.
+
+At frontier scale the committed witness is far larger than any single machine's memory: for §10's 400B-parameter run it is about 7.2 terabytes ($9.0{\times}10^{11}$ field elements, Appendix A). The prover therefore streams the witness, committing one operation at a time: each row is encoded, folded into the column hashes and into running accumulators for the test polynomials, then freed before the next is computed. Because the Merkle tree is built over columns and the test polynomials are accumulations over rows, no later step needs the full encoded matrix resident, so peak memory tracks the working set of a single operation rather than the witness or the proof. Each round of §7.2 is one streaming sweep, with the witness regenerated per round rather than stored. Streaming bounds working-set memory only; proof size and proving time are unaffected. The same row-by-row structure admits parallelization across GPUs, with transform work split across rows and the column hashes partitioned across nodes, each accumulating its assigned columns (§11).
+
+Peak memory is set by the largest single working set. At long context that is softmax's: its witness grows quadratically with context length, and the implementation proves each softmax over its full score matrix at once. This is a choice rather than a necessity, since the rows could be split into chunks and proven piece by piece, capping the working set at the chunk size (§11). One small piece of state persists across the whole proof: the lookup multiplicities of §4.4, kept as one resident histogram per table and fixed in size by the tables. Appendix C specifies how the constraint system is regenerated and evaluated against the streamed witness during the test folds; the resulting cost profile is analyzed in §9.
+
+### 7.4 Persistent weight commitment
+
+The weights are committed once, and later proofs reference the standing root $R_W$ rather than re-hashing the weight block, which removes the largest per-proof commitment cost at small context (§9).
+
+Auditing spends hiding. Opening a commitment at columns $C_1$ in one proof and $C_2$ in another reveals exactly the evaluations at $C_1 \cup C_2$, so the single-proof hiding bound applies to the union: $\mathrm{K\_DEG} - \mathrm{ELL} = 8{,}192$ distinct columns are perfectly hiding, and the budget is the count of distinct columns ever audited against $R_W$ across all proofs, on the order of a hundred proofs at production audit counts. $\mathrm{T\_QUERIES}$ sets only the spend rate; the per-test blinding rows are refreshed each proof and spend nothing.
+
+When the union nears the budget, the prover refreshes: the same weights are re-committed under fresh randomness, giving a new root $R_W'$, and a linking proof ties it to the old one. The linking proof is a per-slot equality claim between the two weight blocks, checked by the existing linear test with no new machinery; a single differing element is caught with probability $1 - 1/|F|$, independent of how many columns are audited. The verifier adopts $R_W'$ only if the proof accepts, the old block matches the currently trusted $R_W$, and the verified claim set is exactly the canonical link statement, so a prover cannot substitute a weaker relation. The bookkeeping that tracks the audited-column budget and triggers the refresh is future work (§11).
+
+### 7.5 Verifier
+
+The verifier is a Rust program that reads a proof and decides whether to accept it. It recompiles the constraint system from the public claim list (§6) and checks the proof against its own derivation, never against constraints supplied with the proof. Its work is, first, to confirm that the claim list meets the requirements of §2.2, and then to check that the audited columns re-hash to the committed roots and that the three test polynomials, recomputed at those columns, match the prover's. A proof is accepted only if every check passes.
+
+The trusted base comprises the field arithmetic, the hash and Merkle check, the challenge derivation, the constraint compile, and these checks. Proof parsing and all other handling sit outside it, since a malformed or dishonest value fails a check and the proof is rejected. The verifier depends on three crates (`blake3`, `rayon`, `serde_json`) and is differential-tested bit for bit against a Python reference implementation. It needs no GPU, but at full model scale it needs a large-memory host, because the compiled constraint system grows with the witness; the heaviest step, the linear identity at the audited columns, parallelizes across cores and is the natural candidate for a GPU port (§11).
 
 This division of labor follows the trust model of §2.3: only the verifier requires review, and prover-side code can be modified freely without enlarging the trusted base, since a fault there causes a proof to fail rather than to verify falsely.
+
+## 8. Soundness
+
+Every claim carries a soundness lemma in Appendix B discharging the requirement of §2.2: values defined by constraints from values above them are unique by construction, and every declared value must be pinned, uniquely upstream of the logits, or, downstream in the surprisal claims (§5), with every freedom shown to inflate the reported bound. A declaration without an argued pin is a defect by definition.
+
+At the protocol level, the probability that a cheating prover is accepted is bounded by the sum of the test errors and the per-claim reduction errors:
+
+$$\varepsilon \;\le\; \underbrace{\varepsilon_{\text{cons}} + \varepsilon_{\text{lin}} + \varepsilon_{\text{quad}} + \varepsilon_{\text{field}}}_{\text{argument}} \;+\; \sum_{\text{matmuls}} \frac{2}{|F|} \;+\; \sum_{\text{tables}} \frac{M + T_{\text{len}} + 1}{|F|},$$
+
+with range checks contributing nothing (word decompositions are exact). At the parameters of §7.1 the test errors are $\varepsilon_{\text{cons}} = (3/4)^{\mathrm{T\_QUERIES}}$, $\varepsilon_{\text{lin}} = (3/8)^{\mathrm{T\_QUERIES}}$, and $\varepsilon_{\text{quad}} = (1/2)^{\mathrm{T\_QUERIES}}$ in the audit count, so the consistency term dominates and reaching $2^{-s}$ needs $\mathrm{T\_QUERIES} \approx 2.4\,s$; $\varepsilon_{\text{field}} \approx 2^{-48}$, and the Freivalds terms are negligible at $|F| \approx 2^{64}$. The binding term in practice is the LogUp sum: the busiest tables absorb about $7 \times 10^{10}$ queries at frontier scale, a per-instance error near $2^{-28}$ (B.1.0), tightened where needed by parallel repetition of the lookup challenge.
+
+$\mathrm{T\_QUERIES}$ is the dial, a deployment parameter rather than a property of the construction: more audits drive the consistency term down geometrically until, past roughly 80, the LogUp term binds and parallel repetition is also required. The demonstrated values are reported with the runs (§10). A modest per-challenge level is meaningful in the setting of §1: the protocol is interactive, so the bound holds per live attempt with no grinding, and the intended parties are deterred by any non-negligible chance of being caught even once, since a detected violation is diplomatically costly.
+
 
 
 ## 7. Results
