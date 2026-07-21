@@ -304,7 +304,7 @@ Each claim type contributes to $W$, $L$, and $Q$ as a function of its size param
 | claim | $W$ | $L$ | $Q$ |
 |---|---|---|---|
 | matmul $(m,k,n,H)$ ⓡ | $6\,mHn + 3k$ | $2k + H + 2\,mHn$ | $k + 2\,mHn$ |
-| rmsnorm $(B,d)$ ⓡ | $7Bd + 26B$ | $7B + 2Bd$ | $3Bd + 13B$ |
+| rmsnorm $(B,d)$ ⓡ | $7Bd + 82B$ | $17B + 2Bd$ | $3Bd + 42B$ |
 | softmax $(B,M)$ sat+causal | $15BM + 9B$ | $\tfrac{1}{2}B(M{+}1) + 4BM + 5B$ | $8BM + 3B$ |
 | silu $(N)$ | $23N$ | $7N$ | $12N$ |
 | hadamard $(N)$ ⓡ | $6N$ | $2N$ | $3N$ |
@@ -396,358 +396,457 @@ The weights floor is taken as the parameter count rather than recomputed from la
 
 ## Appendix B. Claim specifications
 
-Each claim is specified by a listing, followed by its counts, a soundness lemma, and a generalization note. Every listing below is reconciled against the compiler; emitted counts match Appendix A.1's rows exactly except where a deviation is stated in place.
+This appendix specifies every claim type. Each entry gives a listing of the claim's commitments and constraints in protocol order, the witness and constraint counts the listing contributes, a soundness lemma discharging every declaration, and a note on how the concrete shapes generalize. The listings use a small fixed grammar, defined below, with two aims: a claim's totals can be read off its listing line by line, and every point where the prover has any freedom is visible as a declaration the lemma must argue. The listings match the constraint systems the implementation emits, and the counts match the cost model of Appendix A.1.
 
-**Typography.** Private witness is set in the default math italic ($c$, $z$, $e_1$). Everything public is upright: table names ($\mathrm{T_A}$, $\mathrm{EXP}$), public constants ($\mathrm{Z_{max}}$, $\mathrm{s_y}$, $\updelta$), challenges, and index predicates. All committed values are Goldilocks field elements; listings do not repeat this. A value that is private until a final pin reveals it ($S_z$, B.7) stays italic, with the revealing pin noted. Scanning any listing, the upright symbols are exactly what the verifier knows.
+A single line shows most of the grammar at work:
 
-**Line kinds and footprints.**
+$$\texttt{quad} \quad \boldsymbol{p}[i] \leftarrow \boldsymbol{u}[i]\, \boldsymbol{y}[i] \quad\quad \forall\, i \in [k]$$
 
-- `input` names values inherited from upstream claims or the committed weights, with their index extents; no slots, no constraints (each value is counted by the claim that creates it).
-- `decl` introduces private variables, with their extents; one slot per element. A declaration constrains nothing; every declaration must be argued in the lemma.
-- An arrow line, tagged `lin` or `quad`, defines its left side: exactly one new variable per line, computed from values above. One slot and one constraint of the tagged kind, per element of its extent.
-- A `==` line, tagged `lin` or `quad`, constrains existing values: one constraint, no slots. When it pins a declaration, the lemma argues it; the marker $\le$ denotes a deliberately one-sided pin.
-- `range` $x \sqsubseteq \mathrm{NAME}$ pins $x$ into the named registry table: one slot (the LogUp inverse) and one quadratic per element. The signed form $x \sqsubseteq \pm\mathrm{NAME}$ pins $x \in [-2^{w-1}, 2^{w-1})$ for the width-$w$ table by committing the shifted copy $x + 2^{w-1}$ and checking it against the *same* table: two slots, one linear, one quadratic per element. No separate signed table exists; signed queries count toward the plain table's registry row.
-- `lookup` $v \leftarrow \mathrm{NAME}[\mathit{key}]$ defines $v$ as the registry table's value at $\mathit{key}$ and simultaneously pins $\mathit{key}$ into the table's key range: the one sanctioned dual-purpose line. Three slots (value, folded key, inverse), one linear, one quadratic per element; the expansion is B.1's paired lookup, whose challenge-turn placement follows B.1 without appearing in listings.
-- `gadget` invokes a B.1 gadget at a stated size, contributing B.1's footprint times the size; a gadget's tables are named in its B.1 entry.
+Read: for each $i$, the prover commits $\boldsymbol{p}[i]$, defined as the product of the already-committed $\boldsymbol{u}[i]$ and $\boldsymbol{y}[i]$, enforced by one quadratic constraint. The keyword names the test the constraint feeds; the arrow marks $\boldsymbol{p}$ as newly defined, exactly one new variable per line; bold marks all three as committed witness; the third column gives the extent, the indices the line ranges over, bound with their ranges at first use. Each keyword has a fixed footprint of witness slots and constraints per element of its extent; the last three columns of every listing record the resulting contributions to $W$, $L$, and $Q$, so a claim's totals are column sums.
 
-**Extents, binding, and filters.** The third column carries each line's extent in $\forall$ notation. An index letter is bound with its range exactly once, at the first line whose extent uses it ($\forall\, q \in [S]$); later lines write the bare letter. Index letters never collide with size or width constants. An extent may be filtered by a public predicate on bound indices ($\forall\, h, q,\; i \le q$); the Iverson bracket $[\![\cdot]\!]$ denotes a public 0/1 indicator of such a predicate inside an expression. **Complement rule:** when a definition line's filter does not cover its variable's full extent, the remaining elements are unconstrained and must appear as a `decl` over the complement, with the freedom argued in the lemma. The comment column annotates declarations and phase rows only; a constraint line's equation is its own documentation.
+**Typography.** Bold marks the witness. Every committed value — inherited input, declaration, or arrow-defined — is set in bold ($\boldsymbol{c}$, $\boldsymbol{z}$, $\boldsymbol{e}_1$), and everything thin is public: indices and sizes, table names ($\mathrm{T_A}$, $\mathrm{EXP}$), public constants ($\mathrm{Z_{max}}$, $\mathrm{s_y}$, $\delta$), challenges ($\rho$, $\lambda$), and index predicates. Scanning any listing, the thin symbols are exactly what the verifier knows, and every bold symbol is a commitment. A lemma may introduce thin working symbols of its own (the error matrix $E$ of B.2); bold is reserved for committed values. All committed values are Goldilocks field elements; listings do not repeat this. A value that is private until a final pin reveals it (the surprisal sum of B.7) is bold like any witness, with the revealing pin noted.
 
-**Registry names.** An upright name in a `lookup` bracket or after $\sqsubseteq$ is a key into the table registry (B.1.0), the single home of every table's contents, rounding rule, length, sharers, and query volume. Listings never restate registry facts.
+**Line kinds.**
 
-**Public constants.** Every claim's size parameters and scales are public constants of the claim list; a claim's header names only its further public constants (gadget sizes, window widths), with all lookup-table facts living in the registry (B.1.0). In the demonstrated configuration every claim's inputs and outputs sit at the working scale $\mathrm{S} = 2^{12}$, with each multiplicative claim rescaling its output to $\mathrm{S}$ (B.1); the compiler supports per-claim scales, and the surprisal claims use distinct scales for table values and nats (B.7).
+- `input`: values inherited from upstream claims or the committed weights, with their extents. No slots or constraints; each value is counted by the claim that creates it, and an `input` line promises nothing about its values.
 
-**What may be factored out.** A `gadget` line, or an omitted expansion, is permitted only for machinery that is soundness-inert: no lemma in this appendix may ever need its internals. Under this rule the LogUp bookkeeping is factored everywhere: the per-table challenges, the committed inverses and folded keys, and the settlements are identical boilerplate whose soundness is the per-table LogUp term of §5.4's error sum, cited by no claim lemma, and each `lookup` or `range` line implies them (B.1). Anything a lemma touches stays inline: the softmax saturation mechanics, the bracket slacks, and every pin appear in their listings explicitly.
+- `decl`: the prover asserts private variables, one slot per element, constrained by nothing at introduction. Every declaration must be argued in the lemma.
 
-**Turn boundaries.** Each horizontal rule is a message boundary: the lines between two rules are one party's message, committed together, and a `chal` line is drawn only after everything above its rule is committed. This ordering is what each lemma's "committed before the challenge" step refers to. The factored LogUp turns follow the same discipline (folded keys and inverses commit after their table's challenges) without appearing in the listings. The block above the first rule (`input` lines) is inherited context, not part of the claim's transcript: an `input` line promises nothing, and each claim's guarantees are conditional on its inputs, the weights included. One qualification: a lemma's width or exclusion argument may rely on a magnitude bound established by an upstream claim, as B.6's gap exclusion relies on the router logits being bounded by their producing matmul's rescale. Such reliance is stated in the lemma with the upstream source named, and these cross-claim width dependencies are part of what the claim-graph audit of §2.2 must trace.
+- `chal`: verifier randomness, with its extents. No slots and no constraints; challenges are derived from the round seed, not committed, and everything on a `chal` line is public.
 
-**Witness and coefficients.** Every declaration and every arrow-defined value is committed, including values with purely linear participation such as row sums. Constraint coefficients may be arbitrary public functions of the challenges (the product coefficients $\uplambda[a]\,\uprho[b]$ in the matmul pin; the public per-entry coefficients $\alpha - v[j]$ in the LogUp settlements), derived identically by both sides and never materialized. A value that appears in no line — the per-cell broadcast product inside RMSNorm's projections (B.4) — is never committed at all; the claim reaches it only through projections.
+- Arrow lines, tagged `lin` or `quad`: define the left side, exactly one new variable per line, from values above. One slot and one constraint of the tagged kind per element.
 
-**Counting.** Each claim's Counts line is verifiable against its listing: sum the footprints per line, times each line's extent (filtered extents count their filtered size). LogUp settlements, multiplicity histograms, and challenges are per registry table, shared across all claims, and appear in the registry, not in claim counts.
+- `==` lines, tagged `lin` or `quad`: constrain existing values, one constraint and no slots. A `==` that pins a declaration is argued in the lemma; the marker $\le$ denotes a deliberately one-sided pin.
 
-**Soundness obligation.** Each claim's lemma first discharges the arrow lines (unique by definition given the commitments and challenges), then argues every `decl`: pinned to a unique value, or, where the pin is marked one-sided, bounded from the safe direction. A declaration left deliberately unconstrained in some region (a flag inverse at zero; a masked cell's key) must be argued value-neutral: no downstream committed value or public output depends on the free choice. Declarations may be discharged in any order that avoids circularity. The lemma classifies the claim's overflow behavior under the cases of §4.2. A declaration without an argued pin is a defect by definition. Gadget invocations carry B.1's lemmas at the invoked size.
+- `range`: $\boldsymbol{x} \sqsubseteq \mathrm{NAME}$ pins $\boldsymbol{x}$ into the named registry table, one slot (the lookup inverse) and one quadratic per element. The signed form $\boldsymbol{x} \sqsubseteq \pm\mathrm{NAME}$ pins $\boldsymbol{x} \in [-2^{w-1}, 2^{w-1})$ by committing the shifted copy $\boldsymbol{x} + 2^{w-1}$ and checking it against the same width-$w$ table: two slots, one linear, one quadratic. There is no separate signed table.
 
-### B.1 Shared gadgets
+- `lookup`: $\boldsymbol{v} \leftarrow \mathrm{NAME}[\boldsymbol{key}]$ defines $\boldsymbol{v}$ as the table's value at $\boldsymbol{key}$ and simultaneously pins $\boldsymbol{key}$ into the table's key range, the one line with two jobs. Three slots (value, folded key, inverse), one linear, one quadratic per element; the expansion is the paired lookup of B.1, whose challenge-turn placement follows B.1 without appearing in listings.
 
-Four gadgets recur across the claims. The LogUp lookup is the underlying mechanism; the range check and the paired lookup are its two specializations, and the word decomposition and rescale build on the range check. Each entry depends only on entries above it.
+- `rescale`: $\boldsymbol{x} \leftarrow \texttt{rescale}(\boldsymbol{x}_{\text{full}})$ returns a raw product to the working scale, keeping the signed high word and dropping the low bits: the third fixed-footprint composite. Five slots (the kept word, the low word, the shifted copy, two inverses), two linear, two quadratic per element; the expansion and its tables are in B.1.
+
+**Extents and binding.** The third column carries each line's extent in $\forall$ notation. An index letter is bound with its range once, at the first line using it; later lines write the bare letter. An extent may be filtered by a public predicate on its indices, as in $\forall\, h, q,\; i \le q$, and the Iverson bracket $[\![\cdot]\!]$ writes such a predicate as a public 0/1 value inside an expression. When a definition's filter does not cover its variable's full extent, the remaining elements are unconstrained: they must appear as a `decl` over the complement, and the lemma must argue that freedom. A comment, when one is needed, sits on its own italic row above the line it annotates — declarations and phase boundaries only; a constraint line's equation is its own documentation.
+
+**Public constants and the registry.** Every claim's size parameters and scales are public constants of the claim list; a claim's header names only its further public constants, such as window widths and saturation thresholds. Everything about lookup tables lives in one place, the table registry (B.1.0): contents, rounding rule, length, which claims share the table, and total query volume. An upright name in a `lookup` bracket or after $\sqsubseteq$ is a key into the registry, and listings never restate registry facts. In the demonstrated configuration every claim's inputs and outputs sit at the working scale $\mathrm{S} = 2^{12}$, with each multiplicative claim rescaling its output to $\mathrm{S}$ (B.1); the compiler supports per-claim scales, and the surprisal claims use distinct scales for table values and nats (B.7).
+
+**Witness and coefficients.** Every declaration and every arrow-defined value is committed, including values with purely linear participation such as row sums, with one stated exception: the chunked declaration of B.1 commits a value's words while the whole value remains notation. Constraint coefficients may be arbitrary public functions of the challenges (the product coefficients $\lambda[a]\,\rho[b]$ in the matmul pin; the per-entry coefficients $\alpha - v[j]$ in the LogUp settlements), derived identically by both sides and never materialized. A value that appears in no line, such as the per-cell broadcast product inside RMSNorm's projections (B.4), is never committed at all; the claim reaches it only through projections.
+
+**Turn boundaries.** Each horizontal rule in a listing is a message boundary: the lines between two rules are one party's message, committed together, and a `chal` line is drawn only after everything above its rule is committed. This ordering is what each lemma's "committed before the challenge" step refers to. The composite lines (`range`, `lookup`, `rescale`) span turns without showing it: their visible content commits at the line's position, and their challenge-dependent companions (folded keys, inverses) commit after the table's challenges, per B.1. Hiding the split is safe because the visible half is the half whose timing matters: LogUp soundness needs the queries' values and the multiplicity histograms fixed before the table's challenges are drawn, which is exactly what the line's pre-challenge position shows, while the deferred companions are functions of the challenges, their timing forced, with no prover choice in when they land. The block above the first rule (`input` lines) is inherited context, not part of the claim's transcript, and each claim's guarantees are conditional on its inputs, the weights included.
+
+A lemma's width or exclusion argument may, however, rely on a magnitude bound established by an upstream claim, as B.6's gap exclusion relies on the router logits being bounded by their producing matmul's rescale. Such reliance is stated in the lemma with the upstream source named; these cross-claim width dependencies are part of what the claim-graph audit of §2.2 must trace. [Cross-reference pass: §2.2 here means the soundness-requirements section.]
+
+**What may be factored out.** The reader should be able to trust that nothing hidden matters, so the rule is strict: exactly three line kinds carry an implied expansion, `range`, `lookup`, and `rescale`, and an expansion is permitted only because it is soundness-inert, meaning no lemma in this appendix ever needs its internals beyond the entry in B.1. Under this rule the LogUp bookkeeping is factored everywhere: the per-table challenges, folded keys, inverses, and settlements are identical boilerplate whose soundness is the per-table LogUp term of the soundness section's error sum, cited by no claim lemma, and each `lookup` or `range` line implies them (B.1). Anything a lemma touches stays inline: the softmax saturation mechanics, the bracket slacks, and every pin appear in their listings explicitly. [Cross-reference pass: the error-sum citation currently reads §5.4.]
+
+**Counting.** The last three columns of every listing carry each line's contribution to the three drivers — witness slots $W$, linear constraints $L$, quadratic products $Q$ — written in the claim's size parameters, with a dot for zero; an italic totals row closes each listing, so verifying a claim's counts is summing columns. Two principles fix the cells.
+
+Constraints: a constraint line (arrow, `==`, `range`, `lookup`, `rescale`) contributes one constraint per assignment of its free indices, once per comma-separated clause, respecting any filter on the extent. Indices bound by a summation inside the equation contribute nothing to the multiplicity. So the vector equality $\boldsymbol{s}_1[h,q] + \boldsymbol{r}_{\text{lo}}[h,q] == \mathrm{s_y}$, free in $h$ and $q$, is one constraint per row, while the matmul pin, whose every index is summed, is a single constraint however many committed values it touches. The tag names the test the constraints feed; a `range` contributes its quadratic, the signed form also one linear (the shift relation), and a `lookup` one linear (the key folding) and one quadratic (the inverse).
+
+Witness: each variable a line introduces contributes one slot per element of its extent. Declared variables and arrow left-sides are introduced visibly; a `range` also introduces its lookup inverse (the signed form additionally the shifted copy), and a `lookup` its value, folded key, and inverse; a `rescale` its kept word, low word, shifted copy, and two inverses. `input` and `chal` lines introduce nothing committed.
+
+For reference, the footprints per element these principles give:
+
+| line kind | $W$ | $L$ | $Q$ |
+|---|---|---|---|
+| `input`, `chal` | 0 | 0 | 0 |
+| `decl` | 1 per variable | 0 | 0 |
+| `decl` (chunked, $t$ words) | $2t$ | 0 | $t$ |
+| `lin` arrow | 1 | 1 | 0 |
+| `quad` arrow | 1 | 0 | 1 |
+| `lin` `==` | 0 | 1 | 0 |
+| `quad` `==` | 0 | 0 | 1 |
+| `range` $\sqsubseteq$ | 1 | 0 | 1 |
+| `range` $\sqsubseteq \pm$ | 2 | 1 | 1 |
+| `lookup` | 3 | 1 | 1 |
+| `rescale` | 5 | 2 | 2 |
+
+A count cell is its line's footprint times its extent. A filtered extent counts its filtered size, as in the softmax triangle; B.4's carry-chain lines state both chains at once, and their cells include the factor of two. How many committed values an equation touches is not tracked: the total across all constraints is proportional to $W$ (each slot appears in a handful of constraints, the $2$ to $4\times W$ of Appendix C) and is priced through $W$ in the cost model. LogUp settlements, multiplicity histograms, and challenges are per registry table, shared across all claims, and appear in the registry rather than in any claim's counts.
+
+
+**Every declaration is argued.** Each claim ends with a soundness lemma, and its job is to show that the prover had no unaccounted freedom in the witness. Values introduced by arrow lines need no argument: by construction, their constraints admit exactly one satisfying assignment once everything above them is fixed. The work concerns the declared values, the ones the prover asserts freely. For each declaration, the lemma shows one of three things: that the constraints pin it to a single possible value; or, where a pin is deliberately one-sided, that every remaining choice moves the reported result in the safe direction; or, where a declaration is left unconstrained in some region (a flag's inverse where the flag is zero, a masked cell's key), that the choice is value-neutral, meaning no downstream committed value or public output depends on it. Declarations may be argued in any order that avoids circularity, and a `range`, `lookup`, or `rescale` line inherits its B.1 lemma at the invoked size. Each lemma also classifies how the claim behaves under overflow, following the cases of the number-format section. A declaration without an argued pin is a defect by definition. [Cross-reference pass: the overflow cases currently cite §4.2.]
+
+### B.1 Shared machinery
+
+Three composites recur across the claims as their own line kinds, the range check, the paired lookup, and the rescale, and one shared pattern, the word decomposition, recurs written out inline. The LogUp lookup is the mechanism underlying the first two, and the decomposition and rescale build on the range check, so each entry below depends only on entries above it. All of them query public tables, and every table lives in one registry, given first.
 
 #### B.1.0 The table registry
 
-Query volumes $M$ feed the per-table LogUp error of §5.4, $(M + T_{\text{len}} + 1)/\vert F \vert$, with $T_{\text{len}}$ the table length; the error column evaluates it at $\vert F \vert \approx 2^{64}$. The $M$ column totals the sharers' volumes over the demonstrated Maverick claim list at $S = 1000$ (48 layers, $n_q = 40$, $E = 128$, $V = 202{,}048$; §A.2), with $N$, $B$, $T$, $E$ the invoking claim's size parameters.
+Each row records one public table: its contents, length, which claims query it, the query volume $M(S)$ summed over the Maverick claim list as a polynomial in the context length $S$ (48 layers, $n_q = 40$, $E = 128$, $V = 202{,}048$; §A.2), and the per-table LogUp soundness term $(M + T_{\text{len}} + 1)/\vert F \vert$, with $T_{\text{len}}$ the table length, evaluated in the error column at $\vert F \vert \approx 2^{64}$ and the demonstrated $S = 1000$. In the sharers column, $N$, $B$, $T$, $E$ are the invoking claim's size parameters.
 
-| table | contents | length | queried by (per instance) | $M$ at $S{=}1000$ | error |
+| table | contents | length | queried by (per instance) | $M(S)$ | error at $S{=}1000$ |
 |---|---|---|---|---|---|
-| $\mathrm{range}_{2}$ | identity on $[0, 2^{2})$ | $4$ | SiLU word $a_0$ ($N$) | 786,432,000 | $2^{-34.4}$ |
-| $\mathrm{range}_{5}$ | identity on $[0, 2^{5})$ | $2^{5}$ | RMSNorm $y{-}1$ top chunk ($B$) | 97,000 | $2^{-47.4}$ |
-| $\mathrm{range}_{9}$ | identity on $[0, 2^{9})$ | $2^{9}$ | RMSNorm $G_2$ top chunks ($2B$) | 194,000 | $2^{-46.4}$ |
-| $\mathrm{range}_{10}$ | identity on $[0, 2^{10})$ | $2^{10}$ | RMSNorm $g_{0h}$ top chunks ($2B$) | 194,000 | $2^{-46.4}$ |
-| $\mathrm{range}_{11}$ | identity on $[0, 2^{11})$ | $2^{11}$ | routing gap words ($3TE$); hidden-token select gap words ($2TV$, B.8); RMSNorm $g_{1h}$ and slack top chunks ($4B$) | 413,700,000 | $2^{-35.4}$ |
-| $\mathrm{range}_{12}$ | identity on $[0, 2^{12})$ | $2^{12}$ | rescale low words (all ⓡ claims); surprisal slack words ($4$ per position) | 73,110,852,000 | $2^{-27.9}$ |
-| $\mathrm{range}_{14}$ | identity on $[0, 2^{14})$ | $2^{14}$ | SiLU word $a_4$ ($N$) | 786,432,000 | $2^{-34.4}$ |
-| $\mathrm{range}_{16}$ | identity on $[0, 2^{16})$ | $2^{16}$ | softmax $z_{\text{high}}$ ($n_q S^2$); SiLU $a_2, a_3$ ($2N$); RMSNorm 16-bit chunks ($17B$); surprisal remainder ($1$ per position) | 3,494,514,000 | $2^{-32.3}$ |
-| $\mathrm{range}_{18}$ | identity on $[0, 2^{18})$ | $2^{18}$ | RMSNorm $S_{\text{tot}}$ limbs and carry lows ($7B$) | 679,000 | $2^{-44.2}$ |
-| $\mathrm{range}_{20}$ | identity on $[0, 2^{20})$ | $2^{20}$ | surprisal argmax gaps ($V$ per position, alongside $\mathrm{EXP}$'s key bound) | 202,048,000 | $2^{-36.4}$ |
-| $\mathrm{range}_{24}$ | identity on $[0, 2^{24})$ | $2^{24}$ | softmax slacks ($2 n_q S$) and the shift's signed copy ($n_q S$) | 5,760,000 | $2^{-39.6}$ |
-| $\mathrm{range}_{26}$ | identity on $[0, 2^{26})$ | $2^{26}$ | rescale shifted words (all ⓡ claims) | 73,110,848,000 | $2^{-27.9}$ |
-| $\mathrm{T_A}, \mathrm{T_B}$ | $\mathrm{round}(\mathrm{s_y}\, e^{-j/\mathrm{s_c}})$, $\updelta$-shifted pair, half-to-even; doubled with a zero half, targeted by the masked-key term $[\![ i > q ]\!]$; zero from index 36{,}909 / 36{,}910 | $2\,\mathrm{Z_{max}} = 80{,}000$ | softmax, every attention layer ($n_q S^2$ per table) | 1,920,000,000 each | $2^{-33.2}$ |
-| $\mathrm{silu}$ | branch-concatenated, bin width $4$, bin-centre rounding | $2^{15}$ | SiLU ($N$) | 786,432,000 | $2^{-34.4}$ |
-| $\mathrm{sigmoid}$ | $\mathrm{round}(\sigma((j - 2^{18})/\mathrm{S})\cdot \mathrm{S})$ | $2^{19}$ | routing weight ($T$ per MoE layer) | 24,000 | $2^{-44.9}$ |
-| $\mathrm{EXP}$ | $\max(1, \lceil \mathrm{s_y}\, e^{-g^2/\mathrm{s_c}} \rceil)$ | $2^{20}$ | surprisal ($V$ per position) | 202,048,000 | $2^{-36.4}$ |
-| $\mathrm{POW}$ | $\lfloor \mathrm{s_y}\, e^{j/\mathrm{s_b}} \rfloor$ | $\lceil \mathrm{s_b} \ln V \rceil + 4 = 50{,}042$ | surprisal ($1$ per position) | 1,000 | $2^{-48.4}$ |
+| $\mathrm{range}_{2}$ | identity on $[0, 2^{2})$ | $4$ | SiLU word $\boldsymbol{a}_0$ ($N$) | $786{,}432\,S$ | $2^{-34.4}$ |
+| $\mathrm{range}_{5}$ | identity on $[0, 2^{5})$ | $2^{5}$ | RMSNorm $\boldsymbol{y}{-}1$ top chunk ($B$) | $97\,S$ | $2^{-47.4}$ |
+| $\mathrm{range}_{9}$ | identity on $[0, 2^{9})$ | $2^{9}$ | RMSNorm $\boldsymbol{G}_2$ top chunks ($2B$) | $194\,S$ | $2^{-46.4}$ |
+| $\mathrm{range}_{10}$ | identity on $[0, 2^{10})$ | $2^{10}$ | RMSNorm $\boldsymbol{g}_{0h}$ top chunks ($2B$) | $194\,S$ | $2^{-46.4}$ |
+| $\mathrm{range}_{11}$ | identity on $[0, 2^{11})$ | $2^{11}$ | routing gap words ($3TE$); hidden-token select gap words ($2TV$, B.8); RMSNorm $\boldsymbol{g}_{1h}$ and slack top chunks ($4B$) | $413{,}700\,S$ | $2^{-35.4}$ |
+| $\mathrm{range}_{12}$ | identity on $[0, 2^{12})$ | $2^{12}$ | rescale low words (all ⓡ claims); surprisal slack words ($4$ per position) | $1{,}920\,S^2 + 71{,}190{,}852\,S$ | $2^{-27.9}$ |
+| $\mathrm{range}_{14}$ | identity on $[0, 2^{14})$ | $2^{14}$ | SiLU word $\boldsymbol{a}_4$ ($N$) | $786{,}432\,S$ | $2^{-34.4}$ |
+| $\mathrm{range}_{16}$ | identity on $[0, 2^{16})$ | $2^{16}$ | softmax $\boldsymbol{z}_{\text{high}}$ ($n_q S^2$); SiLU $\boldsymbol{a}_2, \boldsymbol{a}_3$ ($2N$); RMSNorm 16-bit chunks ($17B$); surprisal remainder ($1$ per position) | $1{,}920\,S^2 + 1{,}574{,}514\,S$ | $2^{-32.3}$ |
+| $\mathrm{range}_{18}$ | identity on $[0, 2^{18})$ | $2^{18}$ | RMSNorm $\boldsymbol{S}_{\text{tot}}$ limbs and carry lows ($7B$) | $679\,S$ | $2^{-44.2}$ |
+| $\mathrm{range}_{20}$ | identity on $[0, 2^{20})$ | $2^{20}$ | surprisal argmax gaps ($V$ per position, alongside $\mathrm{EXP}$'s key bound) | $202{,}048\,S$ | $2^{-36.4}$ |
+| $\mathrm{range}_{24}$ | identity on $[0, 2^{24})$ | $2^{24}$ | softmax slacks ($2 n_q S$) and the shift's signed copy ($n_q S$) | $5{,}760\,S$ | $2^{-39.6}$ |
+| $\mathrm{range}_{26}$ | identity on $[0, 2^{26})$ | $2^{26}$ | rescale shifted words (all ⓡ claims) | $1{,}920\,S^2 + 71{,}190{,}848\,S$ | $2^{-27.9}$ |
+| $\mathrm{T_A}, \mathrm{T_B}$ | $\mathrm{round}(\mathrm{s_y}\, e^{-j/\mathrm{s_c}})$, $\delta$-shifted pair, half-to-even; doubled with a zero half, targeted by the masked-key term $[\![ i > q ]\!]$; zero from index 36{,}909 / 36{,}910 | $2\,\mathrm{Z_{max}} = 80{,}000$ | softmax, every attention layer ($n_q S^2$ per table) | $1{,}920\,S^2$ each | $2^{-33.2}$ |
+| $\mathrm{silu}$ | branch-concatenated, bin width $4$, bin-centre rounding | $2^{15}$ | SiLU ($N$) | $786{,}432\,S$ | $2^{-34.4}$ |
+| $\mathrm{sigmoid}$ | $\mathrm{round}(\sigma((j - 2^{18})/\mathrm{S})\cdot \mathrm{S})$ | $2^{19}$ | routing weight ($T$ per MoE layer) | $24\,S$ | $2^{-44.9}$ |
+| $\mathrm{EXP}$ | $\max(1, \lceil \mathrm{s_y}\, e^{-g^2/\mathrm{s_c}} \rceil)$ | $2^{20}$ | surprisal ($V$ per position) | $202{,}048\,S$ | $2^{-36.4}$ |
+| $\mathrm{POW}$ | $\lfloor \mathrm{s_y}\, e^{j/\mathrm{s_b}} \rfloor$ | $\lceil \mathrm{s_b} \ln V \rceil + 4 = 50{,}042$ | surprisal ($1$ per position) | $S$ | $2^{-48.4}$ |
 
-Constants ride rows: $\updelta = 1$, $\mathrm{Z_{max}} = 40{,}000$, $\mathrm{s_y} = \mathrm{s_c} = \mathrm{S}$ for the attention pair; the surprisal rows carry $\mathrm{s_c} = \mathrm{s_y} = 2^{28}$, $\mathrm{s_b} = 2^{12}$; the sigmoid row's shift is $2^{18}$. Token-binding tables join the registry when Appendix E's binding runs. One resident multiplicity histogram per row is the persistent prover state of §6.1. The two rescale rows at $2^{-27.9}$ are the binding terms of §5.4's LogUp sum, its "$M$ reaches $10^{10}$" row now checkable here. Rows are keyed by table contents; the implementation registers a few same-content families as separate LogUp instances (each routing invocation's word table; the three width-16 families), which splits a row's $M$ and histogram across copies while adding only the extra settlements' $(T_{\text{len}} + 1)/\vert F \vert$ terms — negligible against every row above.
+Each row also carries its own constants: for the attention pair, $\delta = 1$, $\mathrm{Z_{max}} = 40{,}000$, and $\mathrm{s_y} = \mathrm{s_c} = \mathrm{S}$; the surprisal rows use $\mathrm{s_c} = \mathrm{s_y} = 2^{28}$ and $\mathrm{s_b} = 2^{12}$; the sigmoid row's shift is $2^{18}$. Token-binding tables join the registry when Appendix E's binding runs. One resident multiplicity histogram per row is the persistent prover state of §6.1.
 
-**LogUp lookups.** Two of the gadgets below are lookup arguments, built on LogUp as described in §4.4. A query against a public table is certified by committing, after the table's challenges $(\alpha, \beta)$ are drawn, a folded key that combines the query's components under $\beta$ and the inverse $z = 1/(\alpha - \text{key})$; a per-table settlement then proves that the multiset of all queries matches the table. The settlement commits a multiplicity histogram (before the challenges) and per-entry weights $w[j] = m[j]/(\alpha - v[j])$ (after), and emits one linear constraint per entry, with the public coefficient $\alpha - v[j]$, plus a single cross-claim sum identity equating the query inverses with the entry weights. Because the challenge folds the query's components together, a query matches an entry only when every component agrees. Shared by all lookups, and per the factoring rule implied rather than listed: the challenge turns, the folded keys and inverses, the settlement, and the histogram. The challenges are sampled per table from the round seed.
+The two rescale rows, at $2^{-27.9}$, are the binding terms of the soundness section's LogUp sum, previously quoted there as "$M$ reaches $10^{10}$" and now checkable here. The $S^2$ terms are attention's: the exponential pair, the saturation words, and the scores matmul's share of the two rescale rows; every other row grows linearly with context. Rows are keyed by table contents. The implementation registers a few same-content families as separate LogUp instances (each routing invocation's word table; the three width-16 families); this splits a row's $M$ and histogram across copies and adds only the extra settlements' $(T_{\text{len}} + 1)/\vert F \vert$ terms, negligible against every row above.
 
-**Range check.** A range check proves that a committed value $x$ lies in $[0, 2^w)$: a LogUp lookup against the table containing every integer in that range, keyed on $x$ alone, so no folded key is needed and the per-query constraint is the single quadratic $(\alpha - x)\,z = 1$. In listings it is the `range` line. Counts per checked slot: one witness slot ($z$) and one quadratic.
+**LogUp lookups.** Two of the composites below, the range check and the paired lookup, are lookup arguments, built on LogUp as described in the claims section. A query against a public table is certified by committing, after the table's challenges $(\alpha, \beta)$ are drawn, a folded key that combines the query's components under $\beta$ and the inverse $\boldsymbol{z} = 1/(\alpha - \text{key})$; a per-table settlement then proves that the multiset of all queries matches the table. The settlement commits a multiplicity histogram (before the challenges) and per-entry weights $\boldsymbol{w}[j] = \boldsymbol{m}[j]/(\alpha - v[j])$ (after), and emits one linear constraint per entry, with the public coefficient $\alpha - v[j]$, plus a single cross-claim sum identity equating the query inverses with the entry weights. Because the challenge folds the query's components together, a query matches an entry only when every component agrees. Shared by all lookups, and per the factoring rule implied rather than listed: the challenge turns, the folded keys and inverses, the settlement, and the histogram. The challenges are sampled per table from the round seed.
 
-A range check as stated rejects negative values, whose field representatives lie near $P$ rather than in $[0, 2^w)$. To check a signed value $x \in [-2^{w-1}, 2^{w-1})$ — the `range` line's $\pm$ form — the prover commits the shifted form $x_{\text{shifted}} = x + 2^{w-1}$, one linear constraint ties it to $x$, and the range check runs on $x_{\text{shifted}}$; the signed range follows from the offset. The signed form adds one slot and one linear constraint.
+**Range check.** A range check proves that a committed value $\boldsymbol{x}$ lies in $[0, 2^w)$: a LogUp lookup against the table containing every integer in that range, keyed on $\boldsymbol{x}$ alone, so no folded key is needed and the per-query constraint is the single quadratic $(\alpha - \boldsymbol{x})\,\boldsymbol{z} = 1$. In listings it is the `range` line. Counts per checked slot: one witness slot ($\boldsymbol{z}$) and one quadratic.
 
-**Paired lookup.** A paired lookup proves a functional relation $y = T[x]$ against a table of input-output pairs — the expansion of the `lookup` line: the LogUp query is the pair, folded as $u = (x + \text{shift}) + \beta\,y$, so one lookup certifies both that $x$ is in the table's key range and that $y$ is the table's value there. Committed per query: the value $y$, the folded key $u$, and the inverse $z$; the input $x$ belongs to its producer. Per-query constraints: one linear (the key folding) and one quadratic (the inverse). Counts per query: three slots, one linear, one quadratic, matching A.1's paired-lookup row.
+A range check as stated rejects negative values, whose field representatives lie near $P$ rather than in $[0, 2^w)$. To check a signed value $\boldsymbol{x} \in [-2^{w-1}, 2^{w-1})$, which is the `range` line's $\pm$ form, the prover commits the shifted copy $\boldsymbol{x}_{\text{shifted}} = \boldsymbol{x} + 2^{w-1}$, one linear constraint ties it to $\boldsymbol{x}$, and the range check runs on $\boldsymbol{x}_{\text{shifted}}$; the signed range follows from the offset. The signed form adds one slot and one linear constraint.
+
+**Paired lookup.** A paired lookup proves a functional relation $\boldsymbol{y} = \mathrm{T}[\boldsymbol{x}]$ against a table of input-output pairs; it is the expansion of the `lookup` line. The LogUp query is the pair, folded as $\boldsymbol{u} = (\boldsymbol{x} + \text{shift}) + \beta\,\boldsymbol{y}$, so one lookup certifies both that $\boldsymbol{x}$ is in the table's key range and that $\boldsymbol{y}$ is the table's value there. Committed per query: the value $\boldsymbol{y}$, the folded key $\boldsymbol{u}$, and the inverse $\boldsymbol{z}$; the input $\boldsymbol{x}$ belongs to its producer. Per-query constraints: one linear (the key folding) and one quadratic (the inverse). Counts per query: three slots, one linear, one quadratic, matching A.1's paired-lookup row.
 
 **Word decomposition.** A word decomposition proves that a wide value is built from narrow pieces in a fixed way: the single linear constraint
 
-$$x = \textstyle\sum_{n} \text{coeff}_n \cdot \text{word}_n,$$
+$$\boldsymbol{x} = \textstyle\sum_{n} \text{coeff}_n \cdot \boldsymbol{word}_n,$$
 
-with each word separately range-checked (signed words via the shifted form above). The coefficients are public constants of the invoking claim, powers of two chosen so the words' windows tile the intended range, as in splitting a product into a kept high word and a dropped low word. In listings a decomposition appears as a `gadget` line, $x \sqsubseteq \text{words}(w_1, \dots, w_t)$, naming its window widths; each word lands in its width's registry table.
+with each word separately range-checked (signed words via the shifted form above). The coefficients are public constants of the invoking claim, powers of two chosen so the words' windows tile the intended range, as in splitting a product into a kept high word and a dropped low word. A decomposition is not a line kind: listings write it out, declaring the words, range-checking each into its width's registry table, and tying them to $\boldsymbol{x}$ with one linear `==`, and the lemma cites Lemma B.1a for the pattern's uniqueness. The softmax key split (B.3) is the worked example.
 
-The point of the gadget is uniqueness, and it is worth seeing why it holds. The linear constraint fixes the weighted sum; each range check confines its word to a window; and because the windows tile, no two distinct word assignments produce the same sum. So exactly one assignment satisfies all the constraints, with one proviso. The argument runs over the integers, but the constraints run over the field, and a wrapped negative value has a representative near $P$. Uniqueness therefore additionally requires that the largest value the words can recompose, $\sum_n \text{coeff}_n (2^{w_n} - 1)$ plus any shift, lies below $P$: then no wrapped value is reachable by any valid assignment. This is the **width condition**, and every claim that leans on a decomposition for an exclusion argument must state it with its actual widths. Overflow of a decomposed operand is thus the rejecting case of §4.2: excluded by construction rather than priced by the bound.
+The point of the pattern is uniqueness, and it is worth seeing why it holds. The linear constraint fixes the weighted sum; each range check confines its word to a window; and because the windows tile, no two distinct word assignments produce the same sum. So exactly one assignment satisfies all the constraints, with one proviso. The argument runs over the integers, but the constraints run over the field, and a wrapped negative value has a representative near $P$. Uniqueness therefore additionally requires that the largest value the words can recompose, $\sum_n \text{coeff}_n (2^{w_n} - 1)$ plus any shift, lies below $P$: then no wrapped value is reachable by any valid assignment. This is the width condition, and every claim that leans on a decomposition for an exclusion argument must state it with its actual widths. Overflow of a decomposed operand is thus the rejecting case of the number-format section: excluded by construction rather than priced by the bound.
 
 Counts for a $t$-word decomposition: $t$ word slots plus their range checks, one linear constraint plus any signed shifts, $t$ quadratics.
 
-One variant: a **chunked declaration**, written `decl` $g\ \text{(chunks } w_1, \dots, w_t)$, commits only the words — the whole value $g$ is never committed, and the bare symbol abbreviates the weighted chunk sum wherever later lines use it. Footprint: $2t$ slots (words and inverses) and $t$ quadratics, with no linear, since the sum is notation rather than a constraint. The carry chains of B.4 are the user.
+One variant serves values that are only ever used through their pieces: a **chunked declaration**, written `decl` $\boldsymbol{g}\ (\text{chunks } w_1, \dots, w_t)$, commits only the words. The whole value $\boldsymbol{g}$ is never committed; the bare symbol abbreviates the weighted chunk sum wherever later lines use it. Footprint: $2t$ slots (words and inverses) and $t$ quadratics, with no linear constraint, since the sum is notation rather than a constraint. The carry chains of B.4 are its users.
 
 **Soundness (Lemma B.1a).** As argued above: given the linear constraint, the range checks, and the width condition, exactly one word assignment satisfies the constraints.
 
-**Rescale.** A rescale returns a raw product to the working scale. A product of two values at scale $\mathrm{S}$ arrives at scale $\mathrm{S}^2$; the rescale keeps the signed high word $x$ and drops the $r = \log_2(s_a s_b / s_{\text{out}})$ low bits, which are the quantization error the bound prices. It is the two-word instance of the decomposition, in the form the compiler emits: the decomposition constraint $x_{\text{full}} - 2^{r} x - x_{\text{low}} = 0$, the signed-shift relation $x_{\text{shifted}} - x = 2^{w-1}$, and the two range-check quadratics on $x_{\text{low}}$ and $x_{\text{shifted}}$. In listings it is the `gadget` line $x \leftarrow \texttt{rescale}(x_{\text{full}})$; the low word queries $\mathrm{range}_{12}$ and the shifted word $\mathrm{range}_{26}$ (registry).
+**Rescale.** A rescale returns a raw product to the working scale. A product of two values at scale $\mathrm{S}$ arrives at scale $\mathrm{S}^2$; the rescale keeps the signed high word $\boldsymbol{x}$ and drops the $r = \log_2(s_a s_b / s_{\text{out}})$ low bits, which are the quantization error the bound prices. It is the two-word instance of the decomposition, in the form the compiler emits: the decomposition constraint $\boldsymbol{x}_{\text{full}} - 2^{r} \boldsymbol{x} - \boldsymbol{x}_{\text{low}} = 0$, the signed-shift relation $\boldsymbol{x}_{\text{shifted}} - \boldsymbol{x} = 2^{w-1}$, and the two range-check quadratics on $\boldsymbol{x}_{\text{low}}$ and $\boldsymbol{x}_{\text{shifted}}$. In listings it is the `rescale` line, $\boldsymbol{x} \leftarrow \texttt{rescale}(\boldsymbol{x}_{\text{full}})$; the low word queries $\mathrm{range}_{12}$ and the shifted word $\mathrm{range}_{26}$ (registry).
 
-Counts per element: five witness slots ($x$, $x_{\text{low}}$, $x_{\text{shifted}}$, two inverses), two linear, two quadratic; the input $x_{\text{full}}$ is counted by the invoking claim. The demonstrated widths are $r = 12$ and $w = 26$, so the kept word satisfies $x \in [-2^{25}, 2^{25})$.
+Counts per element: five witness slots ($\boldsymbol{x}$, $\boldsymbol{x}_{\text{low}}$, $\boldsymbol{x}_{\text{shifted}}$, two inverses), two linear, two quadratic; the input $\boldsymbol{x}_{\text{full}}$ is counted by the invoking claim. The demonstrated widths are $r = 12$ and $w = 26$, so the kept word satisfies $\boldsymbol{x} \in [-2^{25}, 2^{25})$.
 
 **Soundness (Lemma B.1b).** Lemma B.1a at two words with the signed form. The width condition at the demonstrated parameters: the maximum recomposable value is $2^{12} \cdot 2^{25} + (2^{12} - 1) \approx 2^{37}$, against $P \approx 2^{64}$, about 27 bits of margin, so no wrapped negative has a valid decomposition and the kept word is the unique high part of the committed product.
 
+[Cross-reference pass: the LogUp explanation cites §4.4, which becomes the claims section's LogUp subsection; the registry paragraphs cite §5.4 (soundness), §6.1 (implementation), §A.2, and the overflow cases §4.2. Body fix: the soundness section's "$M$ reaches $10^{10}$" understates the registry's $7.3 \times 10^{10}$; update the body figure.]
+
 ### B.2 Matmul
 
-Matmul proves $C_{\text{full}} = AB$ for $A \in F^{m \times k}$ and $B \in F^{k \times n}$; the output consumed downstream is the rescale of $C_{\text{full}}$ to the working scale, whose commitments ride the same pre-challenge turn.
+Matmul proves $\boldsymbol{C}_{\text{full}} = \boldsymbol{A}\boldsymbol{B}$ for $\boldsymbol{A} \in F^{m \times k}$ and $\boldsymbol{B} \in F^{k \times n}$; the output consumed downstream is the rescale of $\boldsymbol{C}_{\text{full}}$ to the working scale, committed in the same pre-challenge message.
 
 $$
-\begin{array}{llll}
-\texttt{input} & A & \forall\, a \in [m],\; j \in [k] & \\
-\texttt{input} & B & \forall\, j,\; b \in [n] & \\
+\begin{array}{lll|ccc}
+ &  &  & W & L & Q \\
+\texttt{input} & \boldsymbol{A} & \forall\, a \in [m],\; j \in [k] & \cdot & \cdot & \cdot \\
+\texttt{input} & \boldsymbol{B} & \forall\, j,\; b \in [n] & \cdot & \cdot & \cdot \\
 \hline
-\texttt{decl} & C_{\text{full}} & \forall\, a, b & \text{raw product at } s_a s_b \\
-\texttt{gadget} & C[a,b] \leftarrow \texttt{rescale}(C_{\text{full}}[a,b]) & \forall\, a, b & \\
+& \textit{raw product at } s_a s_b & & & & \\
+\texttt{decl} & \boldsymbol{C}_{\text{full}} & \forall\, a, b & mn & \cdot & \cdot \\
+\texttt{rescale} & \boldsymbol{C}[a,b] \leftarrow \texttt{rescale}(\boldsymbol{C}_{\text{full}}[a,b]) & \forall\, a, b & 5mn & 2mn & 2mn \\
 \hline
-\texttt{chal} & \uprho & \forall\, b & \\
-\texttt{chal} & \uplambda & \forall\, a & \\
+\texttt{chal} & \rho & \forall\, b & \cdot & \cdot & \cdot \\
+\texttt{chal} & \lambda & \forall\, a & \cdot & \cdot & \cdot \\
 \hline
-\texttt{lin} & y[j] \leftarrow \textstyle\sum_{b \in [n]} B[j,b]\,\uprho[b] & \forall\, j & \\
-\texttt{lin} & u[j] \leftarrow \textstyle\sum_{a \in [m]} \uplambda[a]\,A[a,j] & \forall\, j & \\
-\texttt{quad} & p[j] \leftarrow u[j]\,y[j] & \forall\, j & \\
-\texttt{lin} & \textstyle\sum_{a, b} \uplambda[a]\,\uprho[b]\,C_{\text{full}}[a,b] == \textstyle\sum_{j} p[j] & & \\
+\texttt{lin} & \boldsymbol{y}[j] \leftarrow \textstyle\sum_{b \in [n]} \boldsymbol{B}[j,b]\,\rho[b] & \forall\, j & k & k & \cdot \\
+\texttt{lin} & \boldsymbol{u}[j] \leftarrow \textstyle\sum_{a \in [m]} \lambda[a]\,\boldsymbol{A}[a,j] & \forall\, j & k & k & \cdot \\
+\texttt{quad} & \boldsymbol{p}[j] \leftarrow \boldsymbol{u}[j]\,\boldsymbol{y}[j] & \forall\, j & k & \cdot & k \\
+\texttt{lin} & \textstyle\sum_{a, b} \lambda[a]\,\rho[b]\,\boldsymbol{C}_{\text{full}}[a,b] == \textstyle\sum_{j} \boldsymbol{p}[j] &  & \cdot & 1 & \cdot \\
+\textit{totals} &  &  & 6mn + 3k & 2mn + 2k + 1 & 2mn + k \\
 \end{array}
 $$
 
-**Counts, read off the listing.** Cells are $(a,b)$ pairs, $mn$ in all. Per cell: $C_{\text{full}}$ ($1$ slot) and the rescale gadget ($5$ slots, $2$ lin, $2$ quad). Per inner index $j$: $y$ and $u$ ($2$ slots, $2$ lin), $p$ ($1$ slot, $1$ quad). The pin: $1$ lin. Totals $W = 6mn + 3k$, $L = 2mn + 2k + 1$, $Q = 2mn + k$, matching A.1's row at $H = 1$.
+The totals row matches A.1's matmul row at $H = 1$.
 
-**Soundness (Lemma B.2).** The one declaration is $C_{\text{full}}$. The arrow lines define $y$, $u$, $p$ exactly: given the commitments and challenges, each has one satisfying value, and by associativity $\sum_j p[j] = (\uplambda^\top A)(B\uprho) = \uplambda^\top (AB)\uprho$. The pin therefore enforces $\uplambda^\top C_{\text{full}}\,\uprho = \uplambda^\top (AB)\uprho$, i.e. $\uplambda^\top E \uprho = 0$ for $E = C_{\text{full}} - AB$. If $E \neq 0$, then $E\uprho \neq 0$ except with probability $1/\vert F \vert$ over $\uprho$: a nonzero matrix has a nonzero row, and that row's inner product with a uniform $\uprho$ is uniform. Conditioned on $E\uprho \neq 0$, $\uplambda^\top(E\uprho) = 0$ with probability $1/\vert F \vert$ over $\uplambda$. A false $C_{\text{full}}$ survives with probability at most $2/\vert F \vert$, and since it is committed before $(\uprho, \uplambda)$ are drawn, the prover cannot select it against the challenge; each matmul adds $2/\vert F \vert$ to the error sum of §5.4. Given $C_{\text{full}}$, the output $C$ is unique by Lemma B.1b. Overflow in the projection constraints is the accepting case of §4.2: field identities, wrapped values unique but wrong, priced by the bound; the magnitude exclusion lives in the rescale (Lemma B.1b).
+**Soundness (Lemma B.2).** The one declaration is $\boldsymbol{C}_{\text{full}}$. The arrow lines define $\boldsymbol{y}$, $\boldsymbol{u}$, $\boldsymbol{p}$ exactly: given the commitments and challenges, each has one satisfying value, and by associativity $\sum_j \boldsymbol{p}[j] = (\lambda^\top \boldsymbol{A})(\boldsymbol{B}\rho) = \lambda^\top (\boldsymbol{A}\boldsymbol{B})\rho$. The pin therefore enforces $\lambda^\top \boldsymbol{C}_{\text{full}}\,\rho = \lambda^\top (\boldsymbol{A}\boldsymbol{B})\rho$, i.e. $\lambda^\top E \rho = 0$ for $E = \boldsymbol{C}_{\text{full}} - \boldsymbol{A}\boldsymbol{B}$. If $E \neq 0$, then $E\rho \neq 0$ except with probability $1/\vert F \vert$ over $\rho$: a nonzero matrix has a nonzero row, and that row's inner product with a uniform $\rho$ is uniform. Conditioned on $E\rho \neq 0$, $\lambda^\top(E\rho) = 0$ with probability $1/\vert F \vert$ over $\lambda$. A false $\boldsymbol{C}_{\text{full}}$ survives with probability at most $2/\vert F \vert$, and since it is committed before $(\rho, \lambda)$ are drawn, the prover cannot select it against the challenge; each matmul adds $2/\vert F \vert$ to the error sum of the soundness section. Given $\boldsymbol{C}_{\text{full}}$, the output $\boldsymbol{C}$ is unique by Lemma B.1b. Overflow in the projection constraints is the accepting case of the number-format section: field identities, wrapped values unique but wrong, priced by the bound; the magnitude exclusion lives in the rescale (Lemma B.1b).
 
-**Generalization.** $H$-head batches share one challenge pair, with one pin constraint per head (coefficients $\uplambda[a]\,\uprho[b]$ on $C_{\text{full}}[a,h,b]$), the $O(k)$ terms counted once across heads: A.1's $+H$ term. `transpose_b` reindexes $B$ only. Attention-shaped instances are written in B.3's $(h, q, i)$ indexing: the scores matmul's output extent is $\forall\, h \in [n_q],\; q \in [S],\; i \in [S]$ with one pin per head $h$, so its cells align with softmax's and with A.3's per-cell accounting.
+**Generalization.** $H$-head batches share one challenge pair, with one pin constraint per head (coefficients $\lambda[a]\,\rho[b]$ on $\boldsymbol{C}_{\text{full}}[a,h,b]$), the $O(k)$ terms counted once across heads: A.1's $+H$ term. `transpose_b` reindexes $\boldsymbol{B}$ only. Attention-shaped instances are written in B.3's $(h, q, i)$ indexing: the scores matmul's output extent is $\forall\, h \in [n_q],\; q \in [S],\; i \in [S]$ with one pin per head $h$, so its cells align with softmax's and with A.3's per-cell accounting.
+
+[Cross-reference pass: the lemma's error-sum and overflow citations read §5.4 and §4.2 in the agent's source and are written out above pending the new numbering.]
 
 ### B.3 Softmax
 
-Softmax proves, per attention head and query position, the exponentiated causal scores at scale $\mathrm{s_y}$, normalized by pinning the per-row shift. Tables $\mathrm{T_A}, \mathrm{T_B}$ and their constants ride the registry.
+Softmax proves, per attention head and query position, the exponentiated causal scores at scale $\mathrm{s_y}$, normalized by pinning the per-row shift. The tables $\mathrm{T_A}$ and $\mathrm{T_B}$, with their rounding rule and constants, are specified in the registry (B.1.0).
 
 $$
-\begin{array}{llll}
-\texttt{input} & x & \forall\, h \in [n_q],\; q \in [S],\; i \in [S] & \\
+\begin{array}{lll|ccc}
+ &  &  & W & L & Q \\
+\texttt{input} & \boldsymbol{x} & \forall\, h \in [n_q],\; q \in [S],\; i \in [S] & \cdot & \cdot & \cdot \\
 \hline
-& \textit{--- shift and exponentiate ---} & & \\
-\texttt{decl} & c & \forall\, h, q & \text{per-row shift} \\
-\texttt{range} & c[h,q] \sqsubseteq \pm\mathrm{range}_{24} & \forall\, h, q & \\
-\texttt{decl} & z_{\text{high}} & \forall\, h, q, i & \text{saturation words} \\
-\texttt{range} & z_{\text{high}}[h,q,i] \sqsubseteq \mathrm{range}_{16} & \forall\, h, q, i & \\
-\texttt{lin} & z[h,q,i] \leftarrow c[h,q] - x[h,q,i] - \mathrm{Z_{max}}\, z_{\text{high}}[h,q,i] & \forall\, h, q,\; i \le q & \\
-\texttt{decl} & z[h,q,i] & \forall\, h, q,\; i > q & \text{free in key range; value-neutral} \\
-\texttt{lookup} & e_1[h,q,i] \leftarrow \mathrm{T_A}\big[\, z[h,q,i] + \mathrm{Z_{max}} \cdot [\![\, i > q \,]\!] \,\big] & \forall\, h, q, i & \\
-\texttt{lookup} & e_2[h,q,i] \leftarrow \mathrm{T_B}\big[\, z[h,q,i] + \mathrm{Z_{max}} \cdot [\![\, i > q \,]\!] \,\big] & \forall\, h, q, i & \\
-& \textit{--- saturate the tail ---} & & \\
-\texttt{decl} & \mathit{inv} & \forall\, h, q, i & \text{free at } z_{\text{high}} = 0 \text{; value-neutral} \\
-\texttt{quad} & t[h,q,i] \leftarrow z_{\text{high}}[h,q,i] \cdot \mathit{inv}[h,q,i] & \forall\, h, q, i & \\
-\texttt{quad} & t[h,q,i] \cdot z_{\text{high}}[h,q,i] == z_{\text{high}}[h,q,i] & \forall\, h, q, i & \\
-\texttt{quad} & t[h,q,i]^2 == t[h,q,i] & \forall\, h, q, i & \\
-\texttt{quad} & \mathit{mux}_1[h,q,i] \leftarrow t[h,q,i] \cdot e_1[h,q,i] & \forall\, h, q, i & \\
-\texttt{quad} & \mathit{mux}_2[h,q,i] \leftarrow t[h,q,i] \cdot e_2[h,q,i] & \forall\, h, q, i & \\
-\texttt{lin} & y_1[h,q,i] \leftarrow e_1[h,q,i] - \mathit{mux}_1[h,q,i] & \forall\, h, q, i & \\
-\texttt{lin} & y_2[h,q,i] \leftarrow e_2[h,q,i] - \mathit{mux}_2[h,q,i] & \forall\, h, q, i & \\
-& \textit{--- bracket the shift ---} & & \\
-\texttt{lin} & s_1[h,q] \leftarrow \textstyle\sum_{i \in [S]} y_1[h,q,i] & \forall\, h, q & \\
-\texttt{lin} & s_2[h,q] \leftarrow \textstyle\sum_{i \in [S]} y_2[h,q,i] & \forall\, h, q & \\
-\texttt{decl} & r_{\text{lo}},\; r_{\text{hi}} & \forall\, h, q & \text{bracket slacks} \\
-\texttt{range} & r_{\text{lo}}[h,q] \sqsubseteq \mathrm{range}_{24}, \quad r_{\text{hi}}[h,q] \sqsubseteq \mathrm{range}_{24} & \forall\, h, q & \\
-\texttt{lin} & s_1[h,q] + r_{\text{lo}}[h,q] == \mathrm{s_y} & \forall\, h, q & \\
-\texttt{lin} & r_{\text{hi}}[h,q] - s_2[h,q] == -(\mathrm{s_y} + 1) & \forall\, h, q & \\
+ & \textit{--- shift and exponentiate ---} &  &  &  &  \\
+& \textit{per-row shift} & & & & \\
+\texttt{decl} & \boldsymbol{c} & \forall\, h, q & n_q S & \cdot & \cdot \\
+\texttt{range} & \boldsymbol{c}[h,q] \sqsubseteq \pm\mathrm{range}_{24} & \forall\, h, q & 2 n_q S & n_q S & n_q S \\
+& \textit{saturation words} & & & & \\
+\texttt{decl} & \boldsymbol{z}_{\text{high}} & \forall\, h, q, i & n_q S^2 & \cdot & \cdot \\
+\texttt{range} & \boldsymbol{z}_{\text{high}}[h,q,i] \sqsubseteq \mathrm{range}_{16} & \forall\, h, q, i & n_q S^2 & \cdot & n_q S^2 \\
+\texttt{lin} & \boldsymbol{z}[h,q,i] \leftarrow \boldsymbol{c}[h,q] - \boldsymbol{x}[h,q,i] - \mathrm{Z_{max}}\, \boldsymbol{z}_{\text{high}}[h,q,i] & \forall\, h, q,\; i \le q & \tfrac12 n_q S(S{+}1) & \tfrac12 n_q S(S{+}1) & \cdot \\
+& \textit{free in key range; value-neutral} & & & & \\
+\texttt{decl} & \boldsymbol{z}[h,q,i] & \forall\, h, q,\; i > q & \tfrac12 n_q S(S{-}1) & \cdot & \cdot \\
+\texttt{lookup} & \boldsymbol{e}_1[h,q,i] \leftarrow \mathrm{T_A}\big[\, \boldsymbol{z}[h,q,i] + \mathrm{Z_{max}} \cdot [\![\, i > q \,]\!] \,\big] & \forall\, h, q, i & 3 n_q S^2 & n_q S^2 & n_q S^2 \\
+\texttt{lookup} & \boldsymbol{e}_2[h,q,i] \leftarrow \mathrm{T_B}\big[\, \boldsymbol{z}[h,q,i] + \mathrm{Z_{max}} \cdot [\![\, i > q \,]\!] \,\big] & \forall\, h, q, i & 3 n_q S^2 & n_q S^2 & n_q S^2 \\
+ & \textit{--- saturate the tail ---} &  &  &  &  \\
+& \textit{free at } \boldsymbol{z}_{\text{high}} = 0 \textit{; value-neutral} & & & & \\
+\texttt{decl} & \boldsymbol{inv} & \forall\, h, q, i & n_q S^2 & \cdot & \cdot \\
+\texttt{quad} & \boldsymbol{t}[h,q,i] \leftarrow \boldsymbol{z}_{\text{high}}[h,q,i] \cdot \boldsymbol{inv}[h,q,i] & \forall\, h, q, i & n_q S^2 & \cdot & n_q S^2 \\
+\texttt{quad} & \boldsymbol{t}[h,q,i] \cdot \boldsymbol{z}_{\text{high}}[h,q,i] == \boldsymbol{z}_{\text{high}}[h,q,i] & \forall\, h, q, i & \cdot & \cdot & n_q S^2 \\
+\texttt{quad} & \boldsymbol{t}[h,q,i]^2 == \boldsymbol{t}[h,q,i] & \forall\, h, q, i & \cdot & \cdot & n_q S^2 \\
+\texttt{quad} & \boldsymbol{mux}_1[h,q,i] \leftarrow \boldsymbol{t}[h,q,i] \cdot \boldsymbol{e}_1[h,q,i] & \forall\, h, q, i & n_q S^2 & \cdot & n_q S^2 \\
+\texttt{quad} & \boldsymbol{mux}_2[h,q,i] \leftarrow \boldsymbol{t}[h,q,i] \cdot \boldsymbol{e}_2[h,q,i] & \forall\, h, q, i & n_q S^2 & \cdot & n_q S^2 \\
+\texttt{lin} & \boldsymbol{y}_1[h,q,i] \leftarrow \boldsymbol{e}_1[h,q,i] - \boldsymbol{mux}_1[h,q,i] & \forall\, h, q, i & n_q S^2 & n_q S^2 & \cdot \\
+\texttt{lin} & \boldsymbol{y}_2[h,q,i] \leftarrow \boldsymbol{e}_2[h,q,i] - \boldsymbol{mux}_2[h,q,i] & \forall\, h, q, i & n_q S^2 & n_q S^2 & \cdot \\
+ & \textit{--- bracket the shift ---} &  &  &  &  \\
+\texttt{lin} & \boldsymbol{s}_1[h,q] \leftarrow \textstyle\sum_{i \in [S]} \boldsymbol{y}_1[h,q,i] & \forall\, h, q & n_q S & n_q S & \cdot \\
+\texttt{lin} & \boldsymbol{s}_2[h,q] \leftarrow \textstyle\sum_{i \in [S]} \boldsymbol{y}_2[h,q,i] & \forall\, h, q & n_q S & n_q S & \cdot \\
+& \textit{bracket slacks} & & & & \\
+\texttt{decl} & \boldsymbol{r}_{\text{lo}},\; \boldsymbol{r}_{\text{hi}} & \forall\, h, q & 2 n_q S & \cdot & \cdot \\
+\texttt{range} & \boldsymbol{r}_{\text{lo}}[h,q] \sqsubseteq \mathrm{range}_{24}, \quad \boldsymbol{r}_{\text{hi}}[h,q] \sqsubseteq \mathrm{range}_{24} & \forall\, h, q & 2 n_q S & \cdot & 2 n_q S \\
+\texttt{lin} & \boldsymbol{s}_1[h,q] + \boldsymbol{r}_{\text{lo}}[h,q] == \mathrm{s_y} & \forall\, h, q & \cdot & n_q S & \cdot \\
+\texttt{lin} & \boldsymbol{r}_{\text{hi}}[h,q] - \boldsymbol{s}_2[h,q] == -(\mathrm{s_y} + 1) & \forall\, h, q & \cdot & n_q S & \cdot \\
+\textit{totals} &  &  & 15\, n_q S^2 + 9\, n_q S & \tfrac12 n_q S(S{+}1) + 4\, n_q S^2 + 5\, n_q S & 8\, n_q S^2 + 3\, n_q S \\
 \end{array}
 $$
 
-**Counts, read off the listing.** Cells are $(h,q,i)$ triples, $n_q S^2$ in all; rows are $(h,q)$ pairs, $n_q S$. Per cell: $z_{\text{high}}$ and its range ($2$ slots, $1$ quad); $z$ ($1$ slot everywhere: defined on $i \le q$, declared on the complement; the definition's constraint totals $S(S{+}1)/2$ per head, the source of the half); two lookups ($6$ slots, $2$ lin, $2$ quad); $\mathit{inv}$ ($1$); $t$ ($1$ slot, $1$ quad); two `==` quads; two mux arrows ($2$ slots, $2$ quad); two $y$ arrows ($2$ slots, $2$ lin). $W = 15$, $L = 4$ plus the half family, $Q = 8$. Per row: $c$ ($1$) and its signed range ($2$ slots, $1$ lin, $1$ quad); $s_1, s_2$ ($2$ slots, $2$ lin); slacks ($2$) and their ranges ($2$ slots, $2$ quad); two bracket `==` ($2$ lin). $W = 9$, $L = 5$, $Q = 3$. Totals $W = 15\,n_q S^2 + 9\,n_q S$, $L = \tfrac12 n_q S(S{+}1) + 4\,n_q S^2 + 5\,n_q S$, $Q = 8\,n_q S^2 + 3\,n_q S$, matching the emitted counts and A.1's row at $B = n_q S$, $M = S$.
+The totals row matches the emitted counts and A.1's row at $B = n_q S$, $M = S$. The half-terms are the causal filter: the definition line and the complement declaration split each head's $S^2$ cells into $\tfrac12 S(S{+}1)$ unmasked and $\tfrac12 S(S{-}1)$ masked.
 
-**Soundness (Lemma B.3).** The declarations are $c$, $z_{\text{high}}$, the masked $z$, $\mathit{inv}$, $r_{\text{lo}}$, $r_{\text{hi}}$. $z_{\text{high}}$: given $c$, the pair $(z, z_{\text{high}})$ is unique on unmasked cells by Lemma B.1a, $z$'s window from the lookup key range and $z_{\text{high}}$'s from its range pin; the width condition spans $\mathrm{Z_{max}} \cdot 2^{16} \approx 2^{31.3} \ll P$. The masked $z$: for $i > q$ the lookup key lies in the zero half, so $e_1 = e_2 = 0$ whatever value is committed; the freedom is value-neutral, and by the same reading token $i$ contributes nothing to row $q$'s sums, outputs, or shift. Causality then holds globally by induction: every attention claim carries the filter $i \le q$ in its key, and every other claim in the graph is position-local, so position $q$'s logits depend only on tokens $\le q$ (the position-locality of the non-attention claims is a claim-graph fact the §2.2 audit confirms). $\mathit{inv}$: at $z_{\text{high}} \neq 0$ the flag constraints force $t = 1$, $\mathit{inv} = 1/z_{\text{high}}$, unique; at $z_{\text{high}} = 0$ they force $t = 0$ and leave $\mathit{inv}$ free, value-neutral. The slacks: fixed by their equalities once $s_1, s_2$ are, non-negative by their range pins, so the pins state $s_1(c) \le \mathrm{s_y}$ and $s_2(c) \ge \mathrm{s_y} + 1$. For $c$: the lookups bound every unmasked key, so $c \ge \max_{i \le q} x[h,q,i]$; the tables are bit-identical up to $\updelta$ and reach zero before $\mathrm{Z_{max}}$ (registry), so a saturated cell equals what an unbounded table would return and $s_2(c) = s_1(c - \updelta)$ over the muxed sums as exact integers; $s_1$ is monotone non-increasing in $c$; hence exactly one integer $c$ satisfies both pins. Overflow: the rejecting case of §4.2 at the bracket, honest-fit $S\,\mathrm{s_y} \lesssim 2^{24}$ limiting $S \lesssim 4096$ at $\mathrm{s_y} = 2^{12}$, all checked values below $2^{24} \ll P$; elsewhere the accepting case.
+**Soundness (Lemma B.3).** The declarations are $\boldsymbol{c}$, $\boldsymbol{z}_{\text{high}}$, the masked $\boldsymbol{z}$, $\boldsymbol{inv}$, $\boldsymbol{r}_{\text{lo}}$, $\boldsymbol{r}_{\text{hi}}$. $\boldsymbol{z}_{\text{high}}$: given $\boldsymbol{c}$, the pair $(\boldsymbol{z}, \boldsymbol{z}_{\text{high}})$ is unique on unmasked cells by Lemma B.1a, $\boldsymbol{z}$'s window from the lookup key range and $\boldsymbol{z}_{\text{high}}$'s from its range pin; the width condition spans $\mathrm{Z_{max}} \cdot 2^{16} \approx 2^{31.3} \ll P$. The masked $\boldsymbol{z}$: for $i > q$ the lookup key lies in the zero half, so $\boldsymbol{e}_1 = \boldsymbol{e}_2 = 0$ whatever value is committed; the freedom is value-neutral, and by the same reading token $i$ contributes nothing to row $q$'s sums, outputs, or shift. Causality then holds globally by induction: every attention claim carries the filter $i \le q$ in its key, and every other claim in the graph is position-local, so position $q$'s logits depend only on tokens $\le q$ (the position-locality of the non-attention claims is a claim-graph fact the soundness-requirements audit confirms). $\boldsymbol{inv}$: at $\boldsymbol{z}_{\text{high}} \neq 0$ the flag constraints force $\boldsymbol{t} = 1$, $\boldsymbol{inv} = 1/\boldsymbol{z}_{\text{high}}$, unique; at $\boldsymbol{z}_{\text{high}} = 0$ they force $\boldsymbol{t} = 0$ and leave $\boldsymbol{inv}$ free, value-neutral. The slacks: fixed by their equalities once $\boldsymbol{s}_1, \boldsymbol{s}_2$ are, non-negative by their range pins, so the pins state $\boldsymbol{s}_1(\boldsymbol{c}) \le \mathrm{s_y}$ and $\boldsymbol{s}_2(\boldsymbol{c}) \ge \mathrm{s_y} + 1$. For $\boldsymbol{c}$: the lookups bound every unmasked key, so $\boldsymbol{c} \ge \max_{i \le q} \boldsymbol{x}[h,q,i]$; the tables are bit-identical up to $\delta$ and reach zero before $\mathrm{Z_{max}}$ (registry), so a saturated cell equals what an unbounded table would return and $\boldsymbol{s}_2(\boldsymbol{c}) = \boldsymbol{s}_1(\boldsymbol{c} - \delta)$ over the muxed sums as exact integers; $\boldsymbol{s}_1$ is monotone non-increasing in $\boldsymbol{c}$; hence exactly one integer $\boldsymbol{c}$ satisfies both pins. Overflow: the rejecting case of the number-format section at the bracket, honest-fit $S\,\mathrm{s_y} \lesssim 2^{24}$ limiting $S \lesssim 4096$ at $\mathrm{s_y} = 2^{12}$, all checked values below $2^{24} \ll P$; elsewhere the accepting case.
 
-**Scope.** The claim supports index-predicate masks whose predicate implies $i \le q$, compiled in as public structure; a sliding window, $q - \mathrm{w} \lt i \le q$, is the worked example, and preserves the causality reading since the upper edge is unchanged. Arbitrary mask inputs are out of scope: admitting one would replace the syntactic causality check with a per-deployment audit of mask support, reopening the obligation the fixed predicate discharges. The non-causal form is the empty predicate with an undoubled table. The counting remark: the definition line's extent is $\sum_q (q{+}1) = S(S{+}1)/2$ per head, the diagonal $i = q$ included, which is A.1's $+1$.
+**Scope.** The claim supports index-predicate masks whose predicate implies $i \le q$, compiled in as public structure; a sliding window, $q - \mathrm{w} \lt i \le q$, is the worked example, and preserves the causality reading since the upper edge is unchanged. Arbitrary mask inputs are out of scope: admitting one would replace the syntactic causality check with a per-deployment audit of mask support, reopening the obligation the fixed predicate discharges. The non-causal form is the empty predicate with an undoubled table. A counting remark: the definition line's extent is $\sum_q (q{+}1) = S(S{+}1)/2$ per head, the diagonal $i = q$ included, which is A.1's $+1$.
+
+[Cross-reference pass: the lemma's audit and overflow citations read §2.2 and §4.2 in the agent's source and are written out above pending the new numbering.]
 
 ### B.4 RMSNorm
 
-RMSNorm proves $\text{out}[b,i] = x[b,i]\, y[b]$ with $y[b]$ the rounded reciprocal square root $\lceil \sqrt{\mathrm{magic}/S_{\text{tot}}[b]} \rceil$, where $S_{\text{tot}}[b] = \sum_i x[b,i]^2 + d\,\upvarepsilon$ and $\mathrm{magic} = d\,\mathrm{S}^4$, over $B$ rows of width $d$. It is the one nonlinearity with no lookup table: the rsqrt is pinned by an algebraic bracket. Because the bracket compares products of committed values, its operands are assembled from range-checked limbs so the comparison holds over the integers; all windows are derived from $(d, \mathrm{S}, \upvarepsilon)$ by both sides independently, never chosen by the prover. At the demonstrated parameters the limb width is $18$, the $y$ window $21$ bits as words $(16, 5)$, the slack window $59$ bits as words $(16,16,16,11)$, and the carry windows $42$, $43$, and $25$ bits as chunks $(16,16,10)$, $(16,16,11)$, $(16,9)$.
+RMSNorm proves $\boldsymbol{out}[b,i] = \boldsymbol{x}[b,i]\, \boldsymbol{y}[b]$ with $\boldsymbol{y}[b]$ the rounded reciprocal square root $\lceil \sqrt{\mathrm{magic}/\boldsymbol{S}_{\text{tot}}[b]} \rceil$, where $\boldsymbol{S}_{\text{tot}}[b] = \sum_i \boldsymbol{x}[b,i]^2 + d\,\varepsilon$ and $\mathrm{magic} = d\,\mathrm{S}^4$, over $B$ rows of width $d$. It is the one nonlinearity with no lookup table: the rsqrt is pinned by an algebraic bracket, two inequalities that only the correct rounding satisfies. An inequality means nothing over a field, so the bracket must compare genuine integers: the products $\boldsymbol{y}^2\, \boldsymbol{S}_{\text{tot}}$ are too wide to commit whole, and each is instead assembled limb by limb through a carry chain whose every part is range-checked into a window no step can wrap. All windows are derived from $(d, \mathrm{S}, \varepsilon)$ by both sides independently, never chosen by the prover. At the demonstrated parameters the limb width is $18$; the $\boldsymbol{y}$ window is $21$ bits, split $(16, 5)$; the slack window $59$ bits, split $(16,16,16,11)$; and the carry windows $42$, $43$, and $25$ bits, chunked $(16,16,10)$, $(16,16,11)$, $(16,9)$.
 
 $$
-\begin{array}{llll}
-\texttt{input} & x & \forall\, b \in [B],\; i \in [d] & \\
+\begin{array}{lll|ccc}
+ &  &  & W & L & Q \\
+\texttt{input} & \boldsymbol{x} & \forall\, b \in [B],\; i \in [d] & \cdot & \cdot & \cdot \\
 \hline
-& \textit{--- row energy ---} & & \\
-\texttt{quad} & X_{\text{sq}}[b,i] \leftarrow x[b,i]^2 & \forall\, b, i & \\
-\texttt{lin} & S_{\text{sum}}[b] \leftarrow \textstyle\sum_{i \in [d]} X_{\text{sq}}[b,i] & \forall\, b & \\
-\texttt{lin} & S_{\text{tot}}[b] \leftarrow S_{\text{sum}}[b] + d\,\upvarepsilon & \forall\, b & \\
-& \textit{--- the rsqrt bracket ---} & & \\
-\texttt{decl} & y & \forall\, b & \text{the rsqrt scalars} \\
-\texttt{lin} & y_{m1}[b] \leftarrow y[b] - 1 & \forall\, b & \\
-\texttt{gadget} & y_{m1}[b] \sqsubseteq \text{words}(16, 5) & \forall\, b & \\
-\texttt{gadget} & S_{\text{tot}}[b] \sqsubseteq \text{words}(18, 18, 18) \text{ naming limbs } S_0, S_1, S_2 & \forall\, b & \\
-\texttt{quad} & q_1[b] \leftarrow y[b]^2 & \forall\, b & \\
-\texttt{quad} & q_2[b] \leftarrow y_{m1}[b]^2 & \forall\, b & \\
-\texttt{quad} & H_{\ell}[b] \leftarrow q[b]\, S_{\ell}[b] & \forall\, b,\; \ell \in \{0,1,2\};\; \text{per chain } q \in \{q_1, q_2\} & \\
-& \textit{--- carry chain, per chain ---} & & \\
-\texttt{decl} & g_{0h} \text{ (chunks } 16,16,10), \;\; g_{1h} \text{ (chunks } 16,16,11) & \forall\, b & \text{carry high parts} \\
-\texttt{lin} & g_{0l}[b] \leftarrow H_0[b] - 2^{18}\, g_{0h}[b] & \forall\, b & \\
-\texttt{range} & g_{0l}[b] \sqsubseteq \mathrm{range}_{18} & \forall\, b & \\
-\texttt{lin} & g_{1l}[b] \leftarrow H_1[b] + g_{0h}[b] - 2^{18}\, g_{1h}[b] & \forall\, b & \\
-\texttt{range} & g_{1l}[b] \sqsubseteq \mathrm{range}_{18} & \forall\, b & \\
-\texttt{decl} & G_2 \text{ (chunks } 16, 9) & \forall\, b & \text{top accumulator} \\
-\texttt{lin} & H_2[b] + g_{1h}[b] == G_2[b] & \forall\, b & \\
-& \textit{--- bracket pins ---} & & \\
-\texttt{decl} & s_{\text{lo}},\; s_{\text{hi}} & \forall\, b & \text{bracket slacks} \\
-\texttt{gadget} & s_{\text{lo}}[b] \sqsubseteq \text{words}(16,16,16,11), \quad s_{\text{hi}}[b] \text{ likewise} & \forall\, b & \\
-\texttt{lin} & 2^{36} G_2[b] + 2^{18} g_{1l}[b] + g_{0l}[b] - s_{\text{lo}}[b] == \mathrm{magic} & \forall\, b,\; \text{chain } q_1 & \\
-\texttt{lin} & 2^{36} G_2[b] + 2^{18} g_{1l}[b] + g_{0l}[b] + s_{\text{hi}}[b] == \mathrm{magic} - 1 & \forall\, b,\; \text{chain } q_2 & \\
-\texttt{decl} & \text{out}_{\text{full}} & \forall\, b, i & \text{broadcast product at } \mathrm{S}^2 \\
-\texttt{gadget} & \text{out}[b,i] \leftarrow \texttt{rescale}(\text{out}_{\text{full}}[b,i]) & \forall\, b, i & \\
+ & \textit{--- row energy ---} &  &  &  &  \\
+\texttt{quad} & \boldsymbol{X}_{\text{sq}}[b,i] \leftarrow \boldsymbol{x}[b,i]^2 & \forall\, b, i & Bd & \cdot & Bd \\
+\texttt{lin} & \boldsymbol{S}_{\text{sum}}[b] \leftarrow \textstyle\sum_{i \in [d]} \boldsymbol{X}_{\text{sq}}[b,i] & \forall\, b & B & B & \cdot \\
+\texttt{lin} & \boldsymbol{S}_{\text{tot}}[b] \leftarrow \boldsymbol{S}_{\text{sum}}[b] + d\,\varepsilon & \forall\, b & B & B & \cdot \\
+ & \textit{--- the rsqrt and its windows ---} &  &  &  &  \\
+& \textit{the rsqrt scalars} & & & & \\
+\texttt{decl} & \boldsymbol{y} & \forall\, b & B & \cdot & \cdot \\
+\texttt{lin} & \boldsymbol{y}_{m1}[b] \leftarrow \boldsymbol{y}[b] - 1 & \forall\, b & B & B & \cdot \\
+& \textit{window words of } \boldsymbol{y} - 1 & & & & \\
+\texttt{decl} & \boldsymbol{y}_{w0},\; \boldsymbol{y}_{w1} & \forall\, b & 2B & \cdot & \cdot \\
+\texttt{range} & \boldsymbol{y}_{w0}[b] \sqsubseteq \mathrm{range}_{16}, \quad \boldsymbol{y}_{w1}[b] \sqsubseteq \mathrm{range}_{5} & \forall\, b & 2B & \cdot & 2B \\
+\texttt{lin} & \boldsymbol{y}_{m1}[b] == \boldsymbol{y}_{w0}[b] + 2^{16} \boldsymbol{y}_{w1}[b] & \forall\, b & \cdot & B & \cdot \\
+& \textit{limbs of } \boldsymbol{S}_{\text{tot}} & & & & \\
+\texttt{decl} & \boldsymbol{S}_0,\; \boldsymbol{S}_1,\; \boldsymbol{S}_2 & \forall\, b & 3B & \cdot & \cdot \\
+\texttt{range} & \boldsymbol{S}_{\ell}[b] \sqsubseteq \mathrm{range}_{18} & \forall\, b,\; \ell \in \{0,1,2\} & 3B & \cdot & 3B \\
+\texttt{lin} & \boldsymbol{S}_{\text{tot}}[b] == \boldsymbol{S}_0[b] + 2^{18} \boldsymbol{S}_1[b] + 2^{36} \boldsymbol{S}_2[b] & \forall\, b & \cdot & B & \cdot \\
+\texttt{quad} & \boldsymbol{q}_1[b] \leftarrow \boldsymbol{y}[b]^2 & \forall\, b & B & \cdot & B \\
+\texttt{quad} & \boldsymbol{q}_2[b] \leftarrow \boldsymbol{y}_{m1}[b]^2 & \forall\, b & B & \cdot & B \\
+\texttt{quad} & \boldsymbol{H}_{\ell}[b] \leftarrow \boldsymbol{q}[b]\, \boldsymbol{S}_{\ell}[b] & \forall\, b,\; \ell;\; \text{per chain } \boldsymbol{q} \in \{\boldsymbol{q}_1, \boldsymbol{q}_2\} & 6B & \cdot & 6B \\
+ & \textit{--- carry chain, per chain ---} &  &  &  &  \\
+& \textit{carry high parts} & & & & \\
+\texttt{decl} & \boldsymbol{g}_{0h} \text{ (chunks } 16,16,10), \;\; \boldsymbol{g}_{1h} \text{ (chunks } 16,16,11) & \forall\, b & 24B & \cdot & 12B \\
+\texttt{lin} & \boldsymbol{g}_{0l}[b] \leftarrow \boldsymbol{H}_0[b] - 2^{18}\, \boldsymbol{g}_{0h}[b] & \forall\, b & 2B & 2B & \cdot \\
+\texttt{lin} & \boldsymbol{g}_{1l}[b] \leftarrow \boldsymbol{H}_1[b] + \boldsymbol{g}_{0h}[b] - 2^{18}\, \boldsymbol{g}_{1h}[b] & \forall\, b & 2B & 2B & \cdot \\
+\texttt{range} & \boldsymbol{g}_{0l}[b] \sqsubseteq \mathrm{range}_{18}, \quad \boldsymbol{g}_{1l}[b] \sqsubseteq \mathrm{range}_{18} & \forall\, b & 4B & \cdot & 4B \\
+& \textit{top accumulator} & & & & \\
+\texttt{decl} & \boldsymbol{G}_2 \text{ (chunks } 16, 9) & \forall\, b & 8B & \cdot & 4B \\
+\texttt{lin} & \boldsymbol{H}_2[b] + \boldsymbol{g}_{1h}[b] == \boldsymbol{G}_2[b] & \forall\, b & \cdot & 2B & \cdot \\
+ & \textit{--- bracket pins ---} &  &  &  &  \\
+& \textit{bracket slacks} & & & & \\
+\texttt{decl} & \boldsymbol{s}_{\text{lo}},\; \boldsymbol{s}_{\text{hi}} & \forall\, b & 2B & \cdot & \cdot \\
+& \textit{slack words} & & & & \\
+\texttt{decl} & \boldsymbol{w}_{\text{lo}},\; \boldsymbol{w}_{\text{hi}} & \forall\, b,\; n \in [4] & 8B & \cdot & \cdot \\
+\texttt{range} & \boldsymbol{w}_{\text{lo}}[b,n] \sqsubseteq \mathrm{range}_{16}, \quad \boldsymbol{w}_{\text{hi}}[b,n] \sqsubseteq \mathrm{range}_{16} & \forall\, b,\; n \le 2 & 6B & \cdot & 6B \\
+\texttt{range} & \boldsymbol{w}_{\text{lo}}[b,3] \sqsubseteq \mathrm{range}_{11}, \quad \boldsymbol{w}_{\text{hi}}[b,3] \sqsubseteq \mathrm{range}_{11} & \forall\, b & 2B & \cdot & 2B \\
+\texttt{lin} & \boldsymbol{s}_{\text{lo}}[b] == \textstyle\sum_{n \in [4]} 2^{16n}\, \boldsymbol{w}_{\text{lo}}[b,n] & \forall\, b & \cdot & B & \cdot \\
+\texttt{lin} & \boldsymbol{s}_{\text{hi}}[b] == \textstyle\sum_{n \in [4]} 2^{16n}\, \boldsymbol{w}_{\text{hi}}[b,n] & \forall\, b & \cdot & B & \cdot \\
+\texttt{lin} & 2^{36} \boldsymbol{G}_2[b] + 2^{18} \boldsymbol{g}_{1l}[b] + \boldsymbol{g}_{0l}[b] - \boldsymbol{s}_{\text{lo}}[b] == \mathrm{magic} & \forall\, b,\; \text{chain } \boldsymbol{q}_1 & \cdot & B & \cdot \\
+\texttt{lin} & 2^{36} \boldsymbol{G}_2[b] + 2^{18} \boldsymbol{g}_{1l}[b] + \boldsymbol{g}_{0l}[b] + \boldsymbol{s}_{\text{hi}}[b] == \mathrm{magic} - 1 & \forall\, b,\; \text{chain } \boldsymbol{q}_2 & \cdot & B & \cdot \\
+& \textit{broadcast product at } \mathrm{S}^2 & & & & \\
+\texttt{decl} & \boldsymbol{out}_{\text{full}} & \forall\, b, i & Bd & \cdot & \cdot \\
+\texttt{rescale} & \boldsymbol{out}[b,i] \leftarrow \texttt{rescale}(\boldsymbol{out}_{\text{full}}[b,i]) & \forall\, b, i & 5Bd & 2Bd & 2Bd \\
 \hline
-\texttt{chal} & \uprho & \forall\, i & \\
+\texttt{chal} & \rho & \forall\, i & \cdot & \cdot & \cdot \\
 \hline
-\texttt{lin} & u[b] \leftarrow \textstyle\sum_{i \in [d]} \uprho[i]\, x[b,i] & \forall\, b & \\
-\texttt{lin} & p[b] \leftarrow \textstyle\sum_{i \in [d]} \uprho[i]\, \text{out}_{\text{full}}[b,i] & \forall\, b & \\
-\texttt{quad} & y[b]\, u[b] == p[b] & \forall\, b & \\
+\texttt{lin} & \boldsymbol{u}[b] \leftarrow \textstyle\sum_{i \in [d]} \rho[i]\, \boldsymbol{x}[b,i] & \forall\, b & B & B & \cdot \\
+\texttt{lin} & \boldsymbol{p}[b] \leftarrow \textstyle\sum_{i \in [d]} \rho[i]\, \boldsymbol{out}_{\text{full}}[b,i] & \forall\, b & B & B & \cdot \\
+\texttt{quad} & \boldsymbol{y}[b]\, \boldsymbol{u}[b] == \boldsymbol{p}[b] & \forall\, b & \cdot & \cdot & B \\
+\textit{totals} &  &  & 7Bd + 82B & 2Bd + 17B & 3Bd + 42B \\
 \end{array}
 $$
 
-The carry-chain block runs once per chain $q \in \{q_1, q_2\}$, so its footprints count twice per row. The per-cell broadcast products $x[b,i]\,y[b]$ appear in no line and are never committed: the quad pin compares projections, which is what collapses $Bd$ Hadamard slots to $B$.
+The carry-chain and bracket-pin blocks are written once and run once per chain $\boldsymbol{q} \in \{\boldsymbol{q}_1, \boldsymbol{q}_2\}$; their count cells already include both chains. The per-cell broadcast products $\boldsymbol{x}[b,i]\,\boldsymbol{y}[b]$ appear in no line and are never committed: the quad pin compares projections, which is what collapses $Bd$ Hadamard slots to $B$.
 
-**Counts, read off the listing.** Per cell: $X_{\text{sq}}$ ($1$ slot, $1$ quad), $\text{out}_{\text{full}}$ ($1$ slot), the rescale gadget ($5$ slots, $2$ lin, $2$ quad): $W = 7$, $L = 2$, $Q = 3$. Per row: $S_{\text{sum}}, S_{\text{tot}}$ ($2$ slots, $2$ lin); $y$ ($1$); $y_{m1}$ ($1$ slot, $1$ lin) and its $2$-word gadget ($4$ slots, $1$ lin, $2$ quad); the limb gadget ($6$ slots, $1$ lin, $3$ quad); $q_1, q_2$ ($2$ slots, $2$ quad); the six $H_{\ell}$ ($6$ slots, $6$ quad); per chain, twice: the two chunked declarations ($12$ slots, $6$ quad), the two low arrows with their ranges ($4$ slots, $2$ lin, $2$ quad), $G_2$ ($4$ slots, $2$ quad) and its `==` ($1$ lin); the slacks ($2$ slots) and their $4$-word gadgets ($16$ slots, $2$ lin, $8$ quad); the two bracket pins ($2$ lin); $u, p$ ($2$ slots, $2$ lin); the quad pin ($1$ quad). $W = 82$, $L = 17$, $Q = 42$ per row. Totals $W = 7Bd + 82B$, $L = 2Bd + 17B$, $Q = 3Bd + 42B$. Deviation, stated in place: A.1's per-row constants ($26B$, $7B$, $13B$) predate the wrap-free bracket and understate it; the per-cell terms, which carry the cost, are unchanged, and the difference is far below the resolution of A.2's validation.
+The totals row matches A.1's RMSNorm row. (A.1's per-row constants were updated together with this listing: the wrap-free bracket raised them from the original construction's $26B$, $7B$, $13B$ to $82B$, $17B$, $42B$, a shift far below the resolution of A.2's validation; the per-cell terms, which carry the cost, never changed.)
 
-**Soundness (Lemma B.4).** The declarations are $y$, the carry highs, $G_2$, the slacks, and $\text{out}_{\text{full}}$. The $y_{m1}$ gadget bounds $y \in [1, 2^{21}]$, so $q_1, q_2 \le 2^{42}$; the limb gadget bounds each $S_{\ell} \lt 2^{18}$ and $S_{\text{tot}} \lt 2^{54}$, so every $H_{\ell} \lt 2^{60} \lt P$. Each carry step is then a Lemma B.1a instance on a committed value: $H_0$ decomposes uniquely into $(g_{0l}, g_{0h})$, windows $(18;\, 42)$ tiling $[0, 2^{60})$; $H_1 + g_{0h}$ into $(g_{1l}, g_{1h})$, windows $(18;\, 43)$; and the `==` pins $H_2 + g_{1h}$ to the $25$-bit $G_2$, whose tight window is what keeps $2^{36} G_2$ wrap-free in the pins. The chain telescopes to $q\,S_{\text{tot}} = 2^{36} G_2 + 2^{18} g_{1l} + g_{0l}$ exactly, so the two pins read $y^2 S_{\text{tot}} \ge \mathrm{magic}$ and $(y-1)^2 S_{\text{tot}} \le \mathrm{magic} - 1$ as integer inequalities, not congruences. Since $q \mapsto q\,S_{\text{tot}}$ is strictly increasing in $y \ge 1$, exactly one integer $y$ satisfies both, and the slacks are then fixed by their pins (their $59$-bit window is sized to the largest honest bracket step, with the width condition $\mathrm{magic} + 2^{59} \lt P$). Given $y$, the projection arrows and the quad pin force $\text{out}_{\text{full}} = x \odot y$ row by row except with probability $1/\vert F \vert$ per row over $\uprho$, drawn after everything above is committed. Overflow is the rejecting case of §4.2 throughout the bracket: an $S_{\text{tot}}$ with no limb representation below $2^{54}$, or a carry value outside its window, has no satisfying assignment and the proof rejects (the honest completeness cap is a row RMS of about 460 at the demonstrated scales).
+**Soundness (Lemma B.4).** The declarations are $\boldsymbol{y}$, the window words and limbs, the carry highs, $\boldsymbol{G}_2$, the slacks with their words, and $\boldsymbol{out}_{\text{full}}$. The word declarations discharge together with their ties as Lemma B.1a instances: the $\boldsymbol{y} - 1$ split bounds $\boldsymbol{y} \in [1, 2^{21}]$, so $\boldsymbol{q}_1, \boldsymbol{q}_2 \le 2^{42}$, and the limb split bounds each $\boldsymbol{S}_{\ell} \lt 2^{18}$ and $\boldsymbol{S}_{\text{tot}} \lt 2^{54}$, so every $\boldsymbol{H}_{\ell} \lt 2^{60} \lt P$. Each carry step is then itself a Lemma B.1a instance on a committed value: $\boldsymbol{H}_0$ decomposes uniquely into $(\boldsymbol{g}_{0l}, \boldsymbol{g}_{0h})$, windows $(18;\, 42)$ tiling $[0, 2^{60})$; $\boldsymbol{H}_1 + \boldsymbol{g}_{0h}$ into $(\boldsymbol{g}_{1l}, \boldsymbol{g}_{1h})$, windows $(18;\, 43)$; and the `==` pins $\boldsymbol{H}_2 + \boldsymbol{g}_{1h}$ to the $25$-bit $\boldsymbol{G}_2$, whose tight window is what keeps $2^{36} \boldsymbol{G}_2$ wrap-free in the pins. The chain telescopes to $\boldsymbol{q}\,\boldsymbol{S}_{\text{tot}} = 2^{36} \boldsymbol{G}_2 + 2^{18} \boldsymbol{g}_{1l} + \boldsymbol{g}_{0l}$ exactly, so the two pins read $\boldsymbol{y}^2 \boldsymbol{S}_{\text{tot}} \ge \mathrm{magic}$ and $(\boldsymbol{y}-1)^2 \boldsymbol{S}_{\text{tot}} \le \mathrm{magic} - 1$ as integer inequalities, not congruences. Since $\boldsymbol{q} \mapsto \boldsymbol{q}\,\boldsymbol{S}_{\text{tot}}$ is strictly increasing in $\boldsymbol{y} \ge 1$, exactly one integer $\boldsymbol{y}$ satisfies both, and the slacks are then fixed by their pins, their $59$-bit window sized to the largest honest bracket step with the width condition $\mathrm{magic} + 2^{59} \lt P$. Given $\boldsymbol{y}$, the projection arrows and the quad pin force $\boldsymbol{out}_{\text{full}} = \boldsymbol{x} \odot \boldsymbol{y}$ row by row except with probability $1/\vert F \vert$ per row over $\rho$, drawn after everything above is committed. Overflow is the rejecting case of the number-format section throughout the bracket: an $\boldsymbol{S}_{\text{tot}}$ with no limb representation below $2^{54}$, or a carry value outside its window, has no satisfying assignment, and the proof rejects; the honest completeness cap is a row RMS of about 460 at the demonstrated scales.
 
 **Generalization.** The elementwise gain multiply that follows the normalization in the transformer block is a separate Hadamard claim (B.8). The pre-fix bracket, which range-checked the slacks in a window wide enough to admit every field element, is unsound and documented in the negative test suite; the listing above is the repaired construction the demonstrated runs used.
 
+[Cross-reference pass: the lemma's overflow citation reads §4.2 in the agent's source and is written out above pending the new numbering.]
+
 ### B.5 SiLU
 
-SiLU proves $\text{out} = x\,\sigma(x)$, saturating to $x$ for large positive $x$ and to $0$ for large negative $x$: a sign split, a magnitude decomposition, a paired lookup, and a saturation mux. The $\mathrm{silu}$ table rides the registry (bin width $\mathrm{w_{bin}} = 4$, half-length $2^{14}$ per branch); the magnitude words $a_0, \dots, a_4$ have widths $2$, $14$ (the table index), $16$, $16$, $14$ at strides $1, \mathrm{w_{bin}}, 2^{16}, 2^{32}, 2^{48}$.
+SiLU proves $\boldsymbol{out} = \boldsymbol{x}\,\sigma(\boldsymbol{x})$, saturating to $\boldsymbol{x}$ for large positive $\boldsymbol{x}$ and to $0$ for large negative $\boldsymbol{x}$. The construction is a sign split, a magnitude decomposition whose low words index a table and whose high words detect saturation, a paired lookup, and a mux that swaps in the saturated value when the high words are live. The $\mathrm{silu}$ table is specified in the registry (bin width $\mathrm{w_{bin}} = 4$, half-length $2^{14}$ per branch); the magnitude words $\boldsymbol{a}_0, \dots, \boldsymbol{a}_4$ have widths $2$, $14$ (the table index), $16$, $16$, $14$ at strides $1, \mathrm{w_{bin}}, 2^{16}, 2^{32}, 2^{48}$.
 
 $$
-\begin{array}{llll}
-\texttt{input} & x & \forall\, n \in [N] & \\
+\begin{array}{lll|ccc}
+ &  &  & W & L & Q \\
+\texttt{input} & \boldsymbol{x} & \forall\, n \in [N] & \cdot & \cdot & \cdot \\
 \hline
-& \textit{--- sign split ---} & & \\
-\texttt{decl} & \mathit{sign} & \forall\, n & \text{sign bit} \\
-\texttt{quad} & \mathit{sign}[n]^2 == \mathit{sign}[n] & \forall\, n & \\
-\texttt{quad} & C[n] \leftarrow \mathit{sign}[n] \cdot x[n] & \forall\, n & \\
-\texttt{lin} & \mathit{mag}[n] \leftarrow x[n] - 2\,C[n] & \forall\, n & \\
-& \textit{--- magnitude words ---} & & \\
-\texttt{decl} & a_0,\; a_1,\; a_2,\; a_3,\; a_4 & \forall\, n & \text{magnitude words} \\
-\texttt{range} & a_0[n] \sqsubseteq \mathrm{range}_{2} & \forall\, n & \\
-\texttt{range} & a_2[n] \sqsubseteq \mathrm{range}_{16} & \forall\, n & \\
-\texttt{range} & a_3[n] \sqsubseteq \mathrm{range}_{16} & \forall\, n & \\
-\texttt{range} & a_4[n] \sqsubseteq \mathrm{range}_{14} & \forall\, n & \\
-\texttt{lin} & \mathit{mag}[n] == a_0[n] + \mathrm{w_{bin}}\, a_1[n] + 2^{16} a_2[n] + 2^{32} a_3[n] + 2^{48} a_4[n] & \forall\, n & \\
-& \textit{--- saturation flag ---} & & \\
-\texttt{lin} & g[n] \leftarrow 2^{16} a_2[n] + 2^{32} a_3[n] + 2^{48} a_4[n] & \forall\, n & \\
-\texttt{decl} & \mathit{inv} & \forall\, n & \text{free at } g = 0 \text{; value-neutral} \\
-\texttt{quad} & t[n] \leftarrow g[n] \cdot \mathit{inv}[n] & \forall\, n & \\
-\texttt{quad} & t[n] \cdot g[n] == g[n] & \forall\, n & \\
-\texttt{quad} & t[n]^2 == t[n] & \forall\, n & \\
-& \textit{--- lookup and mux ---} & & \\
-\texttt{lin} & \mathit{key}[n] \leftarrow 2^{14}\, \mathit{sign}[n] + a_1[n] & \forall\, n & \\
-\texttt{lin} & \mathit{sat}[n] \leftarrow x[n] - C[n] & \forall\, n & \\
-\texttt{lookup} & y[n] \leftarrow \mathrm{silu}[\mathit{key}[n]] & \forall\, n & \\
-\texttt{quad} & \mathit{mux}_a[n] \leftarrow t[n] \cdot y[n] & \forall\, n & \\
-\texttt{quad} & \mathit{mux}_b[n] \leftarrow t[n] \cdot \mathit{sat}[n] & \forall\, n & \\
-\texttt{lin} & \text{out}[n] \leftarrow y[n] - \mathit{mux}_a[n] + \mathit{mux}_b[n] & \forall\, n & \\
+ & \textit{--- sign split ---} &  &  &  &  \\
+& \textit{sign bit} & & & & \\
+\texttt{decl} & \boldsymbol{sign} & \forall\, n & N & \cdot & \cdot \\
+\texttt{quad} & \boldsymbol{sign}[n]^2 == \boldsymbol{sign}[n] & \forall\, n & \cdot & \cdot & N \\
+\texttt{quad} & \boldsymbol{C}[n] \leftarrow \boldsymbol{sign}[n] \cdot \boldsymbol{x}[n] & \forall\, n & N & \cdot & N \\
+\texttt{lin} & \boldsymbol{mag}[n] \leftarrow \boldsymbol{x}[n] - 2\,\boldsymbol{C}[n] & \forall\, n & N & N & \cdot \\
+ & \textit{--- magnitude words ---} &  &  &  &  \\
+& \textit{magnitude words} & & & & \\
+\texttt{decl} & \boldsymbol{a}_0,\; \boldsymbol{a}_1,\; \boldsymbol{a}_2,\; \boldsymbol{a}_3,\; \boldsymbol{a}_4 & \forall\, n & 5N & \cdot & \cdot \\
+\texttt{range} & \boldsymbol{a}_0[n] \sqsubseteq \mathrm{range}_{2}, \quad \boldsymbol{a}_2[n] \sqsubseteq \mathrm{range}_{16}, \quad \boldsymbol{a}_3[n] \sqsubseteq \mathrm{range}_{16}, \quad \boldsymbol{a}_4[n] \sqsubseteq \mathrm{range}_{14} & \forall\, n & 4N & \cdot & 4N \\
+\texttt{lin} & \boldsymbol{mag}[n] == \boldsymbol{a}_0[n] + \mathrm{w_{bin}}\, \boldsymbol{a}_1[n] + 2^{16} \boldsymbol{a}_2[n] + 2^{32} \boldsymbol{a}_3[n] + 2^{48} \boldsymbol{a}_4[n] & \forall\, n & \cdot & N & \cdot \\
+ & \textit{--- saturation flag ---} &  &  &  &  \\
+\texttt{lin} & \boldsymbol{g}[n] \leftarrow 2^{16} \boldsymbol{a}_2[n] + 2^{32} \boldsymbol{a}_3[n] + 2^{48} \boldsymbol{a}_4[n] & \forall\, n & N & N & \cdot \\
+& \textit{free at } \boldsymbol{g} = 0 \textit{; value-neutral} & & & & \\
+\texttt{decl} & \boldsymbol{inv} & \forall\, n & N & \cdot & \cdot \\
+\texttt{quad} & \boldsymbol{t}[n] \leftarrow \boldsymbol{g}[n] \cdot \boldsymbol{inv}[n] & \forall\, n & N & \cdot & N \\
+\texttt{quad} & \boldsymbol{t}[n] \cdot \boldsymbol{g}[n] == \boldsymbol{g}[n] & \forall\, n & \cdot & \cdot & N \\
+\texttt{quad} & \boldsymbol{t}[n]^2 == \boldsymbol{t}[n] & \forall\, n & \cdot & \cdot & N \\
+ & \textit{--- lookup and mux ---} &  &  &  &  \\
+\texttt{lin} & \boldsymbol{key}[n] \leftarrow 2^{14}\, \boldsymbol{sign}[n] + \boldsymbol{a}_1[n] & \forall\, n & N & N & \cdot \\
+\texttt{lin} & \boldsymbol{sat}[n] \leftarrow \boldsymbol{x}[n] - \boldsymbol{C}[n] & \forall\, n & N & N & \cdot \\
+\texttt{lookup} & \boldsymbol{y}[n] \leftarrow \mathrm{silu}[\boldsymbol{key}[n]] & \forall\, n & 3N & N & N \\
+\texttt{quad} & \boldsymbol{mux}_a[n] \leftarrow \boldsymbol{t}[n] \cdot \boldsymbol{y}[n] & \forall\, n & N & \cdot & N \\
+\texttt{quad} & \boldsymbol{mux}_b[n] \leftarrow \boldsymbol{t}[n] \cdot \boldsymbol{sat}[n] & \forall\, n & N & \cdot & N \\
+\texttt{lin} & \boldsymbol{out}[n] \leftarrow \boldsymbol{y}[n] - \boldsymbol{mux}_a[n] + \boldsymbol{mux}_b[n] & \forall\, n & N & N & \cdot \\
+\textit{totals} &  &  & 23N & 7N & 12N \\
 \end{array}
 $$
 
-**Counts, read off the listing.** Per element: $\mathit{sign}$ ($1$ slot) and its booleanity ($1$ quad); $C$ ($1$ slot, $1$ quad); $\mathit{mag}$ ($1$ slot, $1$ lin); the five words ($5$ slots) with four ranges ($4$ slots, $4$ quad) and the decomposition `==` ($1$ lin); $g$ ($1$ slot, $1$ lin); $\mathit{inv}$ ($1$); the flag $t$ ($1$ slot, $1$ quad) and its two `==` quads; $\mathit{key}$ and $\mathit{sat}$ ($2$ slots, $2$ lin); the lookup ($3$ slots, $1$ lin, $1$ quad); the two muxes ($2$ slots, $2$ quad); $\text{out}$ ($1$ slot, $1$ lin). $W = 23$, $L = 7$, $Q = 12$, matching A.1's SiLU row exactly.
+The totals row matches A.1's SiLU row exactly.
 
-**Soundness (Lemma B.5).** The declarations are $\mathit{sign}$, the words, and $\mathit{inv}$. The words are pinned by the decomposition `==` with Lemma B.1a, the lookup bounding $a_1$; the maximum recomposable magnitude is exactly $2^{62} - 1$ (widths $2, 14, 16, 16, 14$ at strides $1, 4, 2^{16}, 2^{32}, 2^{48}$). With $\mathit{sign}$ boolean and $C = \mathit{sign}\cdot x$, the two candidate $(\mathit{sign}, \mathit{mag})$ pairs for a given $x$ are $(0, x)$ and $(1, P - x)$; since $x + (P - x) = P \gt 2\,(2^{62} - 1)$, at most one representative fits the bound, so the sign is unique. $\mathit{inv}$: at $g \neq 0$ the flag constraints force $t = 1$ and $\mathit{inv} = 1/g$, unique; at $g = 0$ they force $t = 0$ and leave $\mathit{inv}$ free, value-neutral. Everything else is an arrow: the flag, the mux, and the output follow linearly. Overflow: the decomposition is the rejecting case of §4.2; the saturated path returns $x$ or $0$ exactly.
+**Soundness (Lemma B.5).** The declarations are $\boldsymbol{sign}$, the words, and $\boldsymbol{inv}$. The words are pinned by the tie with Lemma B.1a, the lookup bounding $\boldsymbol{a}_1$; the maximum recomposable magnitude is exactly $2^{62} - 1$ (widths $2, 14, 16, 16, 14$ at strides $1, 4, 2^{16}, 2^{32}, 2^{48}$). With $\boldsymbol{sign}$ boolean and $\boldsymbol{C} = \boldsymbol{sign}\cdot \boldsymbol{x}$, the two candidate $(\boldsymbol{sign}, \boldsymbol{mag})$ pairs for a given $\boldsymbol{x}$ are $(0, \boldsymbol{x})$ and $(1, P - \boldsymbol{x})$; since $\boldsymbol{x} + (P - \boldsymbol{x}) = P \gt 2\,(2^{62} - 1)$, at most one representative fits the bound, so the sign is unique. $\boldsymbol{inv}$: at $\boldsymbol{g} \neq 0$ the flag constraints force $\boldsymbol{t} = 1$ and $\boldsymbol{inv} = 1/\boldsymbol{g}$, unique; at $\boldsymbol{g} = 0$ they force $\boldsymbol{t} = 0$ and leave $\boldsymbol{inv}$ free, value-neutral. Everything else is an arrow: the flag, the mux, and the output follow linearly. Overflow: the decomposition is the rejecting case of the number-format section; the saturated path returns $\boldsymbol{x}$ or $0$ exactly.
+
+[Cross-reference pass: the lemma's overflow citation reads §4.2 in the agent's source and is written out above pending the new numbering.]
 
 ### B.6 Mixture-of-experts routing and combine
 
-Routing pins a one-hot mask $m \in \{0,1\}^{T \times E}$ to the argmax of committed router logits $r$, tiebroken by expert index; the combine forms $y[t,:] = \sum_e m[t,e]\, X_e[t,:]$ over the $E$ committed expert streams without committing the $E\,T\,F$ masked products. Public constants: the tiebreak stride $2^{L}$ with $L = \lceil \log_2 E \rceil$, and the gap window $\mathrm{w_r} + L$ with $\mathrm{w_r}$ the router-logit width (demonstrated: $E = 128$, $L = 7$, $\mathrm{w_r} = 26$, three $11$-bit words covering the $33$-bit window).
+Routing pins a one-hot mask $\boldsymbol{m} \in \{0,1\}^{T \times E}$ to the argmax of committed router logits $\boldsymbol{r}$, tiebroken by expert index; the combine forms $\boldsymbol{y}[t,:] = \sum_e \boldsymbol{m}[t,e]\, \boldsymbol{X}_e[t,:]$ over the $E$ committed expert streams without committing the $E\,T\,F$ masked products. Public constants: the tiebreak stride $2^{L}$ with $L = \lceil \log_2 E \rceil$, and the gap window $\mathrm{w_r} + L$ with $\mathrm{w_r}$ the router-logit width (demonstrated: $E = 128$, $L = 7$, $\mathrm{w_r} = 26$, three $11$-bit words covering the $33$-bit window).
 
 $$
-\begin{array}{llll}
-\texttt{input} & r & \forall\, t \in [T],\; e \in [E] & \\
-\texttt{input} & X_e & \forall\, e,\; t,\; f \in [F] & \\
+\begin{array}{lll|ccc}
+ &  &  & W & L & Q \\
+\texttt{input} & \boldsymbol{r} & \forall\, t \in [T],\; e \in [E] & \cdot & \cdot & \cdot \\
+\texttt{input} & \boldsymbol{X}_e & \forall\, e,\; t,\; f \in [F] & \cdot & \cdot & \cdot \\
 \hline
-& \textit{--- routing ---} & & \\
-\texttt{decl} & m & \forall\, t, e & \text{the mask} \\
-\texttt{quad} & m[t,e]^2 == m[t,e] & \forall\, t, e & \\
-\texttt{lin} & \mathit{rt}[t,e] \leftarrow 2^{L}\, r[t,e] + (E{-}1{-}e) & \forall\, t, e & \\
-\texttt{quad} & \mathit{mrt}[t,e] \leftarrow m[t,e] \cdot \mathit{rt}[t,e] & \forall\, t, e & \\
-\texttt{lin} & \textstyle\sum_{e} m[t,e] == 1 & \forall\, t & \\
-\texttt{lin} & r^{\ast}[t] \leftarrow \textstyle\sum_{e} \mathit{mrt}[t,e] & \forall\, t & \\
-\texttt{lin} & \mathit{gap}[t,e] \leftarrow r^{\ast}[t] - \mathit{rt}[t,e] & \forall\, t, e & \\
-\texttt{gadget} & \mathit{gap}[t,e] \sqsubseteq \text{words}(11, 11, 11) & \forall\, t, e & \\
-\texttt{lin} & r_{\text{chosen}}[t] \leftarrow 2^{-L}\big(r^{\ast}[t] - \textstyle\sum_{e} (E{-}1{-}e)\, m[t,e]\big) & \forall\, t & \\
+ & \textit{--- routing ---} &  &  &  &  \\
+& \textit{the mask} & & & & \\
+\texttt{decl} & \boldsymbol{m} & \forall\, t, e & TE & \cdot & \cdot \\
+\texttt{quad} & \boldsymbol{m}[t,e]^2 == \boldsymbol{m}[t,e] & \forall\, t, e & \cdot & \cdot & TE \\
+\texttt{lin} & \boldsymbol{rt}[t,e] \leftarrow 2^{L}\, \boldsymbol{r}[t,e] + (E{-}1{-}e) & \forall\, t, e & TE & TE & \cdot \\
+\texttt{quad} & \boldsymbol{mrt}[t,e] \leftarrow \boldsymbol{m}[t,e] \cdot \boldsymbol{rt}[t,e] & \forall\, t, e & TE & \cdot & TE \\
+\texttt{lin} & \textstyle\sum_{e} \boldsymbol{m}[t,e] == 1 & \forall\, t & \cdot & T & \cdot \\
+\texttt{lin} & \boldsymbol{r}^{\ast}[t] \leftarrow \textstyle\sum_{e} \boldsymbol{mrt}[t,e] & \forall\, t & T & T & \cdot \\
+\texttt{lin} & \boldsymbol{gap}[t,e] \leftarrow \boldsymbol{r}^{\ast}[t] - \boldsymbol{rt}[t,e] & \forall\, t, e & TE & TE & \cdot \\
+& \textit{gap words} & & & & \\
+\texttt{decl} & \boldsymbol{w}_g & \forall\, t, e,\; n \in [3] & 3TE & \cdot & \cdot \\
+\texttt{range} & \boldsymbol{w}_g[t,e,n] \sqsubseteq \mathrm{range}_{11} & \forall\, t, e, n & 3TE & \cdot & 3TE \\
+\texttt{lin} & \boldsymbol{gap}[t,e] == \textstyle\sum_{n \in [3]} 2^{11n}\, \boldsymbol{w}_g[t,e,n] & \forall\, t, e & \cdot & TE & \cdot \\
+\texttt{lin} & \boldsymbol{r}_{\text{chosen}}[t] \leftarrow 2^{-L}\big(\boldsymbol{r}^{\ast}[t] - \textstyle\sum_{e} (E{-}1{-}e)\, \boldsymbol{m}[t,e]\big) & \forall\, t & T & T & \cdot \\
+\textit{routing totals} &  &  & 10TE + 2T & 3TE + 3T & 5TE \\
 \hline
-\texttt{chal} & \uprho & \forall\, f & \\
-& \textit{--- combine ---} & & \\
-\texttt{decl} & y & \forall\, t, f & \text{the combined output} \\
-\texttt{lin} & m_{\text{em}}[e,t] \leftarrow m[t,e] & \forall\, e, t & \\
-\texttt{lin} & s[e,t] \leftarrow \textstyle\sum_{f} X_e[t,f]\, \uprho[f] & \forall\, e, t & \\
-\texttt{quad} & \mathit{ms}[e,t] \leftarrow m_{\text{em}}[e,t] \cdot s[e,t] & \forall\, e, t & \\
-\texttt{lin} & \mathit{ms}_{\text{tm}}[t,e] \leftarrow \mathit{ms}[e,t] & \forall\, t, e & \\
-\texttt{lin} & y_{\uprho}[t] \leftarrow \textstyle\sum_{f} \uprho[f]\, y[t,f] & \forall\, t & \\
-\texttt{lin} & \textstyle\sum_{e} \mathit{ms}_{\text{tm}}[t,e] == y_{\uprho}[t] & \forall\, t & \\
+\texttt{chal} & \rho & \forall\, f & \cdot & \cdot & \cdot \\
+ & \textit{--- combine ---} &  &  &  &  \\
+& \textit{the combined output} & & & & \\
+\texttt{decl} & \boldsymbol{y} & \forall\, t, f & TF & \cdot & \cdot \\
+\texttt{lin} & \boldsymbol{m}_{\text{em}}[e,t] \leftarrow \boldsymbol{m}[t,e] & \forall\, e, t & ET & ET & \cdot \\
+\texttt{lin} & \boldsymbol{s}[e,t] \leftarrow \textstyle\sum_{f} \boldsymbol{X}_e[t,f]\, \rho[f] & \forall\, e, t & ET & ET & \cdot \\
+\texttt{quad} & \boldsymbol{ms}[e,t] \leftarrow \boldsymbol{m}_{\text{em}}[e,t] \cdot \boldsymbol{s}[e,t] & \forall\, e, t & ET & \cdot & ET \\
+\texttt{lin} & \boldsymbol{ms}_{\text{tm}}[t,e] \leftarrow \boldsymbol{ms}[e,t] & \forall\, t, e & ET & ET & \cdot \\
+\texttt{lin} & \boldsymbol{y}_{\rho}[t] \leftarrow \textstyle\sum_{f} \rho[f]\, \boldsymbol{y}[t,f] & \forall\, t & T & T & \cdot \\
+\texttt{lin} & \textstyle\sum_{e} \boldsymbol{ms}_{\text{tm}}[t,e] == \boldsymbol{y}_{\rho}[t] & \forall\, t & \cdot & T & \cdot \\
+\textit{combine totals} &  &  & TF + 4ET + T & 3ET + 2T & ET \\
 \end{array}
 $$
 
-**Counts, read off the listing.** Routing, per $(t,e)$ cell: $m$ ($1$ slot), booleanity ($1$ quad), $\mathit{rt}$ and $\mathit{mrt}$ ($2$ slots, $1$ lin, $1$ quad), $\mathit{gap}$ ($1$ slot, $1$ lin), its $3$-word gadget ($6$ slots, $1$ lin, $3$ quad); per token: $r^{\ast}$, $r_{\text{chosen}}$ ($2$ slots, $2$ lin), the cardinality `==` ($1$ lin). $W = 10TE + 2T$, $L = 3TE + 3T$, $Q = 5TE$. Combine: $y$ ($TF$ slots); $m_{\text{em}}$, $s$, $\mathit{ms}$, $\mathit{ms}_{\text{tm}}$ ($4ET$ slots, $3ET$ lin, $ET$ quad); $y_{\uprho}$ ($T$ slots, $T$ lin); the seam `==` ($T$ lin). $W = TF + 4ET + T$, $L = 3ET + 2T$, $Q = ET$. Both match A.1's rows. The $4ET$ includes genuinely duplicated committed rows: expert-major and token-major copies of the mask and of the masked products, bound to each other by the exact re-indexing arrows. The duplication is a layout necessity, not slack: the pointwise quadratic and the row-sum families each need their operands in one flat layout, and the expert streams are absorbed expert-major as their matmuls retire in the streaming fold while the mask and output are token-major, so the mask crosses to expert-major for the product and the products cross back for the per-token sum.
+The two totals rows match A.1's routing and freivalds-combine rows. The combine's $4ET$ includes genuinely duplicated committed rows: expert-major and token-major copies of the mask and of the masked products, bound to each other by the exact re-indexing arrows. The duplication is a layout necessity, not slack: the pointwise quadratic and the row-sum families each need their operands in one flat layout, and the expert streams are absorbed expert-major as their matmuls retire in the streaming fold while the mask and output are token-major, so the mask crosses to expert-major for the product and the products cross back for the per-token sum.
 
-**Soundness (Lemma B.6).** Routing's declaration is $m$. The tiebreak makes all $\mathit{rt}$ in a row distinct, booleanity and cardinality force $m$ one-hot, and $r^{\ast}$ is then the selected tiebroken logit. If the selection were not the argmax, some $\mathit{gap}[t,e]$ would be a negative field element near $P$, which the $3 \times 11$-bit decomposition cannot recompose (width condition: $2^{33} \ll P$, given that $r$ is bounded to $\pm 2^{\mathrm{w_r}-1}$ by its producing matmul's rescale, $\mathrm{w_r} = 26$); so $m$ is the unique argmax mask and $r_{\text{chosen}}$ follows linearly. The combine's declaration is $y$: for each token, $\sum_e m[t,e]\,s[e,t]$ equals the projection of $\sum_e m[t,e] X_e[t,:]$ by the one-hotness of $m$, so the pin forces $y[t,:]\cdot\uprho$ to match the combined stream's projection, and a false $y$ row survives with probability $1/\vert F \vert$ over $\uprho$, drawn after $y$ and the streams are committed. Overflow: the gap gadget is the rejecting case of §4.2; the projections are the accepting case.
+**Soundness (Lemma B.6).** Routing's declarations are $\boldsymbol{m}$ and the gap words, the words discharging with their tie as a Lemma B.1a instance. The tiebreak makes all $\boldsymbol{rt}$ in a row distinct, booleanity and cardinality force $\boldsymbol{m}$ one-hot, and $\boldsymbol{r}^{\ast}$ is then the selected tiebroken logit. If the selection were not the argmax, some $\boldsymbol{gap}[t,e]$ would be a negative field element near $P$, which the $3 \times 11$-bit decomposition cannot recompose (width condition: $2^{33} \ll P$, given that $\boldsymbol{r}$ is bounded to $\pm 2^{\mathrm{w_r}-1}$ by its producing matmul's rescale, $\mathrm{w_r} = 26$); so $\boldsymbol{m}$ is the unique argmax mask and $\boldsymbol{r}_{\text{chosen}}$ follows linearly. The combine's declaration is $\boldsymbol{y}$: for each token, $\sum_e \boldsymbol{m}[t,e]\,\boldsymbol{s}[e,t]$ equals the projection of $\sum_e \boldsymbol{m}[t,e] \boldsymbol{X}_e[t,:]$ by the one-hotness of $\boldsymbol{m}$, so the pin forces $\boldsymbol{y}[t,:]\cdot\rho$ to match the combined stream's projection, and a false $\boldsymbol{y}$ row survives with probability $1/\vert F \vert$ over $\rho$, drawn after $\boldsymbol{y}$ and the streams are committed. Overflow: the gap decomposition is the rejecting case of the number-format section; the projections are the accepting case.
 
-**Generalization.** All $E$ expert streams are committed even though one fires, a hiding requirement (§4.5), and the elementwise nonlinearity is applied once after the combine in the top-1 form. The routing weight applied to the chosen expert is a paired lookup against the registry's sigmoid table on $r_{\text{chosen}}$ (B.8). A sibling of this gadget, at $E = V$ but without the tiebreak and with the gap bound carried by a table lookup rather than a word decomposition, is the argmax and hidden-select machinery of the surprisal claims (B.7).
+**Generalization.** All $E$ expert streams are committed even though one fires, a hiding requirement of the claims section's mixture-of-experts subsection, and the elementwise nonlinearity is applied once after the combine in the top-1 form. The routing weight applied to the chosen expert is a paired lookup against the registry's sigmoid table on $\boldsymbol{r}_{\text{chosen}}$ (B.8). A sibling of this claim, at $E = V$ but without the tiebreak and with the gap bound carried by a table lookup rather than a word decomposition, is the argmax and hidden-select machinery of the surprisal claims (B.7).
+
+[Cross-reference pass: the lemma's overflow citation reads §4.2 and the generalization's hiding requirement §4.5 in the agent's source; both are written out above pending the new numbering.]
 
 ### B.7 The unexplained-information bound
 
-The bound of §2.1 is computed from the LM-head logits by a short chain of claims per output position, reusing a sibling of the routing gap gadget (B.6), the paired lookup (B.1), and the elementwise claims; Appendix E binds the same committed tokens to the digests recorded at generation time (§2.4). Its soundness property is the weaker downstream one of §2.2: the witness is deliberately not unique, and instead every prover freedom provably inflates the reported value. Tables $\mathrm{EXP}$ and $\mathrm{POW}$ and their scales ride the registry; the ceiling divisor $\mathrm{k} = \mathrm{s_c}/\mathrm{s_b} = 2^{16}$ is a power of two, and the slack $d$ decomposes into four $12$-bit words against $d_{\max} = V \mathrm{s_y}$. All in-circuit arithmetic is in nats at scale $\mathrm{s_b}$; the public value is the revealed sum $S_z$, and the conversion to bits, $U(o) = S_z / (\mathrm{s_b} \ln 2)$ rounded up, happens outside the proof.
+The bound of the unexplained-information section is computed from the LM-head logits by a short chain of claims per output position, reusing a sibling of the routing gap machinery (B.6), the paired lookup (B.1), and the elementwise claims; Appendix E binds the same committed tokens to the digests recorded at generation time (the transcript-anchoring section). Its soundness property is the weaker downstream one of the soundness-requirements section: the witness is deliberately not unique, and instead every prover freedom provably inflates the reported value. The tables $\mathrm{EXP}$ and $\mathrm{POW}$ and their scales are specified in the registry (B.1.0); the ceiling divisor $\mathrm{k} = \mathrm{s_c}/\mathrm{s_b} = 2^{16}$ is a power of two, and the slack $\boldsymbol{d}$ decomposes into four $12$-bit words against $d_{\max} = V \mathrm{s_y}$. All in-circuit arithmetic is in nats at scale $\mathrm{s_b}$; the public value is the revealed sum $\boldsymbol{S}_z$, and the conversion to bits, $U(o) = \boldsymbol{S}_z / (\mathrm{s_b} \ln 2)$ rounded up, happens outside the proof.
 
-Per position $t$, with $\ell$ the logit row and $\mathit{tok}$ the committed token stream:
+Per position $t$, with $\boldsymbol{\ell}$ the logit row and $\boldsymbol{tok}$ the committed token stream:
 
 $$
-\begin{array}{llll}
-\texttt{input} & \ell & \forall\, i \in [V] & \\
-\texttt{input} & \mathit{tok}[t] & & \\
+\begin{array}{lll|ccc}
+ &  &  & W & L & Q \\
+\texttt{input} & \boldsymbol{\ell} & \forall\, i \in [V] & \cdot & \cdot & \cdot \\
+\texttt{input} & \boldsymbol{tok}[t] &  & \cdot & \cdot & \cdot \\
 \hline
-& \textit{--- argmax and output select ---} & & \\
-\texttt{decl} & A,\; O & \forall\, i & \text{argmax and output-select one-hots} \\
-\texttt{quad} & A[i]^2 == A[i] & \forall\, i & \\
-\texttt{quad} & O[i]^2 == O[i] & \forall\, i & \\
-\texttt{lin} & \textstyle\sum_i A[i] == 1 & & \\
-\texttt{lin} & \textstyle\sum_i O[i] == 1 & & \\
-\texttt{lin} & \textstyle\sum_i i\,O[i] == \mathit{tok}[t] & & \\
-\texttt{quad} & A\ell[i] \leftarrow A[i] \cdot \ell[i] & \forall\, i & \\
-\texttt{lin} & v^{\ast} \leftarrow \textstyle\sum_i A\ell[i] & & \\
-\texttt{lin} & \mathit{gap}[i] \leftarrow v^{\ast} - \ell[i] & \forall\, i & \\
-\texttt{range} & \mathit{gap}[i] \sqsubseteq \mathrm{range}_{20} & \forall\, i & \\
-\texttt{quad} & O\mathit{gap}[i] \leftarrow O[i] \cdot \mathit{gap}[i] & \forall\, i & \\
-\texttt{lin} & \mathit{gap}_o \leftarrow \textstyle\sum_i O\mathit{gap}[i] & & \\
-& \textit{--- kernel and log pin ---} & & \\
-\texttt{lookup} & e[i] \leftarrow \mathrm{EXP}[\mathit{gap}[i]] & \forall\, i & \\
-\texttt{quad} & g_2 \leftarrow \mathit{gap}_o \cdot \mathit{gap}_o & & \\
-\texttt{lin} & a \leftarrow \textstyle\sum_i e[i] & & \\
-\texttt{decl} & b & & \text{the log-pin index} \\
-\texttt{lookup} & \mathit{pw} \leftarrow \mathrm{POW}[b] & & \\
-\texttt{decl} & d & & \text{log-pin slack} \\
-\texttt{gadget} & d \sqsubseteq \text{words}(12, 12, 12, 12) & & \\
-\texttt{lin}\,\le & a + d == \mathit{pw} & & \\
-\texttt{decl} & \mathit{rem} & & \text{ceiling remainder} \\
-\texttt{range} & \mathit{rem} \sqsubseteq \mathrm{range}_{16} & & \\
-\texttt{lin} & z_o \leftarrow \mathrm{k}^{-1}(g_2 + \mathit{rem}) & & \\
-\texttt{lin} & \mathit{surprisal}[t] \leftarrow z_o + b & & \\
+ & \textit{--- argmax and output select ---} &  &  &  &  \\
+& \textit{argmax and output-select one-hots} & & & & \\
+\texttt{decl} & \boldsymbol{A},\; \boldsymbol{O} & \forall\, i & 2V & \cdot & \cdot \\
+\texttt{quad} & \boldsymbol{A}[i]^2 == \boldsymbol{A}[i] & \forall\, i & \cdot & \cdot & V \\
+\texttt{quad} & \boldsymbol{O}[i]^2 == \boldsymbol{O}[i] & \forall\, i & \cdot & \cdot & V \\
+\texttt{lin} & \textstyle\sum_i \boldsymbol{A}[i] == 1 &  & \cdot & 1 & \cdot \\
+\texttt{lin} & \textstyle\sum_i \boldsymbol{O}[i] == 1 &  & \cdot & 1 & \cdot \\
+\texttt{lin} & \textstyle\sum_i i\,\boldsymbol{O}[i] == \boldsymbol{tok}[t] &  & \cdot & 1 & \cdot \\
+\texttt{quad} & \boldsymbol{A\ell}[i] \leftarrow \boldsymbol{A}[i] \cdot \boldsymbol{\ell}[i] & \forall\, i & V & \cdot & V \\
+\texttt{lin} & \boldsymbol{v}^{\ast} \leftarrow \textstyle\sum_i \boldsymbol{A\ell}[i] &  & 1 & 1 & \cdot \\
+\texttt{lin} & \boldsymbol{gap}[i] \leftarrow \boldsymbol{v}^{\ast} - \boldsymbol{\ell}[i] & \forall\, i & V & V & \cdot \\
+\texttt{range} & \boldsymbol{gap}[i] \sqsubseteq \mathrm{range}_{20} & \forall\, i & V & \cdot & V \\
+\texttt{quad} & \boldsymbol{Ogap}[i] \leftarrow \boldsymbol{O}[i] \cdot \boldsymbol{gap}[i] & \forall\, i & V & \cdot & V \\
+\texttt{lin} & \boldsymbol{gap}_o \leftarrow \textstyle\sum_i \boldsymbol{Ogap}[i] &  & 1 & 1 & \cdot \\
+ & \textit{--- kernel and log pin ---} &  &  &  &  \\
+\texttt{lookup} & \boldsymbol{e}[i] \leftarrow \mathrm{EXP}[\boldsymbol{gap}[i]] & \forall\, i & 3V & V & V \\
+\texttt{quad} & \boldsymbol{g}_2 \leftarrow \boldsymbol{gap}_o \cdot \boldsymbol{gap}_o &  & 1 & \cdot & 1 \\
+\texttt{lin} & \boldsymbol{a} \leftarrow \textstyle\sum_i \boldsymbol{e}[i] &  & 1 & 1 & \cdot \\
+& \textit{the log-pin index} & & & & \\
+\texttt{decl} & \boldsymbol{b} &  & 1 & \cdot & \cdot \\
+\texttt{lookup} & \boldsymbol{pw} \leftarrow \mathrm{POW}[\boldsymbol{b}] &  & 3 & 1 & 1 \\
+& \textit{log-pin slack} & & & & \\
+\texttt{decl} & \boldsymbol{d} &  & 1 & \cdot & \cdot \\
+& \textit{slack words} & & & & \\
+\texttt{decl} & \boldsymbol{d}_w & \forall\, n \in [4] & 4 & \cdot & \cdot \\
+\texttt{range} & \boldsymbol{d}_w[n] \sqsubseteq \mathrm{range}_{12} & \forall\, n & 4 & \cdot & 4 \\
+\texttt{lin} & \boldsymbol{d} == \textstyle\sum_{n \in [4]} 2^{12n}\, \boldsymbol{d}_w[n] &  & \cdot & 1 & \cdot \\
+\texttt{lin}\,\le & \boldsymbol{a} + \boldsymbol{d} == \boldsymbol{pw} &  & \cdot & 1 & \cdot \\
+& \textit{ceiling remainder} & & & & \\
+\texttt{decl} & \boldsymbol{rem} &  & 1 & \cdot & \cdot \\
+\texttt{range} & \boldsymbol{rem} \sqsubseteq \mathrm{range}_{16} &  & 1 & \cdot & 1 \\
+\texttt{lin} & \boldsymbol{z}_o \leftarrow \mathrm{k}^{-1}(\boldsymbol{g}_2 + \boldsymbol{rem}) &  & 1 & 1 & \cdot \\
+\texttt{lin} & \boldsymbol{surprisal}[t] \leftarrow \boldsymbol{z}_o + \boldsymbol{b} &  & 1 & 1 & \cdot \\
 \hline
-& \textit{--- across positions ---} & & \\
-\texttt{lin} & S_z \leftarrow \textstyle\sum_{t \in \text{scored}} \mathit{surprisal}[t] & & \\
-\texttt{lin} & S_z == \text{the revealed public value} & & \\
+ & \textit{--- across positions ---} &  &  &  &  \\
+\texttt{lin} & \boldsymbol{S}_z \leftarrow \textstyle\sum_{t \in \text{scored}} \boldsymbol{surprisal}[t] &  & 1 & 1 & \cdot \\
+\texttt{lin} & \boldsymbol{S}_z == \text{the revealed public value} &  & \cdot & 1 & \cdot \\
+\textit{totals per position} &  &  & 9V + 22 & 2V + 13 & 6V + 7 \\
 \end{array}
 $$
 
-The output tokens enter only as the committed stream $\mathit{tok}$ consumed by the select pins; they never appear in the public claim list, and the indicator rows $O$ are shared with the input selection (Appendix E.4), so the scored tokens are the tokens the model consumed. The cross-position sum is realized as chained adds over the scored positions, and $S_z$ stays private until the final pin reveals it.
+The output tokens enter only as the committed stream $\boldsymbol{tok}$ consumed by the select pins; they never appear in the public claim list, and the indicator rows $\boldsymbol{O}$ are shared with the input selection (Appendix E.4), so the scored tokens are the tokens the model consumed. The cross-position sum is realized as chained adds over the scored positions, and $\boldsymbol{S}_z$ stays private until the final pin reveals it.
 
-**Counts.** Per position the $V$-length families dominate: $A$, $A\ell$, $O$, $O\mathit{gap}$, $\mathit{gap}$ and its range inverse, and the $\mathrm{EXP}$ lookup's three slots, roughly $9V$ slots with $O(1)$ scalars (the finalize's $a$, $b$, $\mathit{pw}$, $d$ and its four words and inverses, $z_o$, $\mathit{rem}$, and the surprisal). These claims are excluded from the cost model by construction (A.6); they are about 0.1% of the per-token witness.
+The totals row sums the listing per position; the $V$-length families dominate at $9V$ slots. The implementation additionally carries a negated copy of the gap family ($V$ slots and $V$ linears) and realizes the cross-position sum as chained adds over the scored positions. All of this machinery is excluded from the cost model by construction (A.6); it is about 0.1% of the per-token witness.
 
-**Soundness (Lemma B.7, one-sided).** The declarations are $A$, $O$, $b$, $d$, and $\mathit{rem}$. $O$ is pinned uniquely by booleanity, cardinality, and the index binding: a one-hot vector with $\sum_i i\,O[i] = \mathit{tok}[t]$ is exactly the indicator of $\mathit{tok}[t]$. $A$ with the gap non-negativity forces $v^{\ast} = \max_i \ell[i]$: any non-maximal selection makes some $\mathit{gap}[i]$ negative, which the gap range and the $\mathrm{EXP}$ lookup's key range both exclude. $A$ itself is not unique when maximal logits tie, and no tiebreak is imposed; the freedom is value-neutral, since every valid selection yields the same $v^{\ast}$, hence the same gaps, the same $e$, and the same reported value, so it is a permitted downstream freedom under §2.2's one-sided requirement (it neither inflates nor deflates). The remaining freedom is $b$, and every free direction inflates. Each table entry $e[i]$ rounds the true exponential up and is floored at one, so $a$ over-counts the true normalizer; $\mathrm{POW}$ rounds down, so the one-sided pin $a \le \mathrm{POW}[b]$ forces $b \ge \mathrm{s_b} \ln(a/\mathrm{s_y})$ with no fractional escape, and choosing $b$ above the least valid index only raises the reported value; $z_o$ is a ceiling, its slack $d$ fixed by the pin once $a$ and $\mathit{pw}$ are and non-negative by its decomposition. With $Q_t(o) = e_o/a$, a genuine distribution since $a$ normalizes the committed table values exactly, $z_o + b \ge \mathrm{s_b}(-\ln Q_t(o))$ follows term by term, so $S_z$ upper-bounds the true surprisal sum and a poor witness penalizes only the prover. Two freedoms need field arguments rather than integer ones. The word decomposition of $d$ is safe by width: at four $12$-bit words against $d_{\max} = V \mathrm{s_y}$ the maximum recomposable value lies far below the modulus, so no wrapped negative $d$ has a valid decomposition (Lemma B.1a). The ceiling arrow is subtler: over the integers $z_o$ is unique given $g_2$, but over the field every range-valid remainder admits a solution $z_o = \mathrm{k}^{-1}(g_2 + \mathit{rem}) \bmod P$, and $z_o$ carries no range check. The reachable perturbations of the public sum are $S_z' = S_z + \mathrm{k}^{-1} s \bmod P$ for integer $s \in [0, T\mathrm{k})$; deflating by any amount requires $s = P - \mathrm{k}\Delta$, on the order of $2^{64}$ and unreachable by roughly twenty orders of magnitude, while every reachable perturbation either inflates the bound by less than $T$ scaled-nat units, i.e. $T/\mathrm{s_b}$ nats (at $\mathrm{s_b} = 2^{12}$ over the demonstrated 500 scored positions, about 0.12 nats or 0.18 bits, the safe direction) or lands $S_z$ near the modulus, an absurd self-reported bound useless to a deflating prover. The claim is sound by exclusion rather than by uniqueness; this is the one place in the construction where that argument is load-bearing.
+**Soundness (Lemma B.7, one-sided).** The declarations are $\boldsymbol{A}$, $\boldsymbol{O}$, $\boldsymbol{b}$, $\boldsymbol{d}$ with its words, and $\boldsymbol{rem}$. $\boldsymbol{O}$ is pinned uniquely by booleanity, cardinality, and the index binding: a one-hot vector with $\sum_i i\,\boldsymbol{O}[i] = \boldsymbol{tok}[t]$ is exactly the indicator of $\boldsymbol{tok}[t]$. $\boldsymbol{A}$ with the gap non-negativity forces $\boldsymbol{v}^{\ast} = \max_i \boldsymbol{\ell}[i]$: any non-maximal selection makes some $\boldsymbol{gap}[i]$ negative, which the gap range and the $\mathrm{EXP}$ lookup's key range both exclude. $\boldsymbol{A}$ itself is not unique when maximal logits tie, and no tiebreak is imposed; the freedom is value-neutral, since every valid selection yields the same $\boldsymbol{v}^{\ast}$, hence the same gaps, the same $\boldsymbol{e}$, and the same reported value, so it is a permitted downstream freedom under the soundness-requirements section's one-sided rule (it neither inflates nor deflates). The remaining freedom is $\boldsymbol{b}$, and every free direction inflates. Each table entry $\boldsymbol{e}[i]$ rounds the true exponential up and is floored at one, so $\boldsymbol{a}$ over-counts the true normalizer; $\mathrm{POW}$ rounds down, so the one-sided pin $\boldsymbol{a} \le \mathrm{POW}[\boldsymbol{b}]$ forces $\boldsymbol{b} \ge \mathrm{s_b} \ln(\boldsymbol{a}/\mathrm{s_y})$ with no fractional escape, and choosing $\boldsymbol{b}$ above the least valid index only raises the reported value; $\boldsymbol{z}_o$ is a ceiling, its slack $\boldsymbol{d}$ fixed by the pin once $\boldsymbol{a}$ and $\boldsymbol{pw}$ are and non-negative by its decomposition. With $Q_t(o) = \boldsymbol{e}_o/\boldsymbol{a}$, a genuine distribution since $\boldsymbol{a}$ normalizes the committed table values exactly, $\boldsymbol{z}_o + \boldsymbol{b} \ge \mathrm{s_b}(-\ln Q_t(o))$ follows term by term, so $\boldsymbol{S}_z$ upper-bounds the true surprisal sum and a poor witness penalizes only the prover. Two freedoms need field arguments rather than integer ones. The word decomposition of $\boldsymbol{d}$ is safe by width: at four $12$-bit words against $d_{\max} = V \mathrm{s_y}$ the maximum recomposable value lies far below the modulus, so no wrapped negative $\boldsymbol{d}$ has a valid decomposition (Lemma B.1a). The ceiling arrow is subtler: over the integers $\boldsymbol{z}_o$ is unique given $\boldsymbol{g}_2$, but over the field every range-valid remainder admits a solution $\boldsymbol{z}_o = \mathrm{k}^{-1}(\boldsymbol{g}_2 + \boldsymbol{rem}) \bmod P$, and $\boldsymbol{z}_o$ carries no range check. The reachable perturbations of the public sum are $\boldsymbol{S}_z' = \boldsymbol{S}_z + \mathrm{k}^{-1} s \bmod P$ for integer $s \in [0, T\mathrm{k})$; deflating by any amount requires $s = P - \mathrm{k}\Delta$, on the order of $2^{64}$ and unreachable by roughly twenty orders of magnitude, while every reachable perturbation either inflates the bound by less than $T$ scaled-nat units, i.e. $T/\mathrm{s_b}$ nats (at $\mathrm{s_b} = 2^{12}$ over the demonstrated 500 scored positions, about 0.12 nats or 0.18 bits, the safe direction) or lands $\boldsymbol{S}_z$ near the modulus, an absurd self-reported bound useless to a deflating prover. The claim is sound by exclusion rather than by uniqueness; this is the one place in the construction where that argument is load-bearing.
 
-**Generalization.** Normalization is where the asymmetry between §2.2's two requirements pays: softmax pins its shift exactly because upstream slack is unanalyzable, while the bound replaces normalization with the one-sided logarithm pin because downstream slack provably only inflates. Summing over a subset of positions bounds the unexplained information of just those outputs; the demonstrated runs score the 500-token continuation.
+**Generalization.** Normalization is where the asymmetry between the soundness-requirements section's two rules pays: softmax pins its shift exactly because upstream slack is unanalyzable, while the bound replaces normalization with the one-sided logarithm pin because downstream slack provably only inflates. Summing over a subset of positions bounds the unexplained information of just those outputs; the demonstrated runs score the 500-token continuation.
+
+[Cross-reference pass: the header's citations read §2.1, §2.4, and §2.2 in the agent's source, and the lemma's and generalization's one-sided-rule citations §2.2; all are written out above pending the new numbering.]
 
 ### B.8 Remaining claims
 
-The remaining claim types are compositions of B.1 gadgets with no soundness argument beyond Lemma B.1a and the arrow rule; their listings are omitted and their counts, matching A.1, are:
+The remaining claim types are compositions of B.1 machinery with no soundness argument beyond Lemma B.1a and the arrow rule; their listings are omitted and their counts, matching A.1, are:
 
-| claim | gadgets | $W$ | $L$ | $Q$ |
+| claim | built from | $W$ | $L$ | $Q$ |
 |---|---|---|---|---|
-| add $(N)$ | none | $N$ | $N$ | $0$ |
+| add $(N)$ | nothing shared | $N$ | $N$ | $0$ |
 | hadamard $(N)$ ⓡ | rescale | $6N$ | $2N$ | $3N$ |
 | rope $(N)$ ⓡ | rescale; public cos/sin coefficients | $6N$ | $3N$ | $2N$ |
 | paired lookup $(N)$ | paired lookup | $3N$ | $N$ | $N$ |
 | word extraction $(N, t)$ | word decomposition | $2tN$ | $N$ | $tN$ |
-| embedding select $(T, V)$ | routing gadget at $E = V$ (B.6) for one-hot validity; scale-free Freivalds matmul against the embedding matrix | $O(TV)$ | $O(TV)$ | $O(TV)$ |
+| embedding select $(T, V)$ | routing claim at $E = V$ (B.6) for one-hot validity; scale-free Freivalds matmul against the embedding matrix | $O(TV)$ | $O(TV)$ | $O(TV)$ |
 | masked combine $(T,E,F)$ | committed products form | $2ETF + TF$ | $ETF + TF$ | $ETF$ |
 
 The sigmoid routing weight of the MoE layers is a paired-lookup instance against the registry's sigmoid table, one query per token per MoE layer. The masked combine is the committed-products alternative the demonstrated runs replace with B.6's projected form. The token-binding circuits (AES, SHA-256) are specified in Appendix E at their own granularity.
