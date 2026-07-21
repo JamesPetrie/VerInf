@@ -1,10 +1,12 @@
 # Automated Uniqueness Verification for Untrusted Claim Types
 
 **Status:** strategy document — nothing implemented yet.
-**Goal:** an automated check that a proposed claim type pins its outputs uniquely, so that new claims (written by untrusted authors, human or agent) need no per-claim hand proof.
+**Goal:** an automated check that a proposed claim type pins its outputs uniquely — and preserves causality (§6) — so that new claims (written by untrusted authors, human or agent) need no per-claim hand proof.
 **Out of scope for now:** the one-sided surprisal claims (B.7). Their property is "every free direction inflates the reported bound," not uniqueness; the pipeline below can be extended to it later (encode "a satisfying witness reports less than the honest value" and prove UNSAT), but we defer it.
 
-This document records the strategy discussed on 2026-07-21: what the property is, why naive approaches fail, the symbolic-challenge reduction that makes automation possible, how it stays sound when dimensions are parameters, and the concrete components to build.
+This document records the strategy discussed on 2026-07-21: what the property is, why naive approaches fail, the symbolic-challenge reduction that makes automation possible, how it stays sound when dimensions are parameters, how the same machinery checks causality (later tokens must not influence earlier logits — §6), and the concrete components to build.
+
+The protocol is interactive: challenges are fresh verifier randomness drawn after the relevant commitments, not Fiat–Shamir-derived from the transcript.
 
 ## 1. The property, split three ways
 
@@ -99,18 +101,44 @@ What parameterizes cleanly vs. not:
 
 Note: the field cannot be shrunk to ease solving — every exclusion argument leans on the ~2^64 headroom of Goldilocks, so the formal model must keep the real P.
 
-## 6. Architecture: six components
+## 6. Causality: prefix-determinism
+
+The second §2.2-adjacent obligation — later tokens must not influence earlier positions' logits — is a *generalization of the uniqueness query*, not a new kind of analysis. The paper sketches the argument shape in Lemma B.3 ("causality holds globally by induction: attention carries the filter, everything else is position-local"); this section makes it a machine check.
+
+**Formal statement.** Uniqueness says: two satisfying witnesses that agree on all inputs agree on the outputs. Causality is the same statement with a weaker agreement precondition:
+
+> Two satisfying witnesses that agree on inputs at positions ≤ q (but may differ arbitrarily at positions above q) agree on all outputs at positions ≤ q.
+
+Same two-witness UNSAT encoding, same solver back-end — the only change is which variables the "agree" clause covers. A SAT result is a concrete witness pair demonstrating a future token influencing an earlier logit: the right rejection artifact.
+
+**Why a semantic query, not taint tracking.** The tempting cheap approach is syntactic information-flow labeling: give every variable a position, check definitions only flow forward. Softmax's masked cells show why that fails. The masked `z[h,q,i]` for `i` above `q` is a free declaration, and a malicious prover *can* set those cells to functions of future tokens — nothing stops them. Taint analysis flags a violation; there is none, because the doubled table forces `e1 = e2 = 0` on masked cells regardless of the key, so the freedom never *influences* anything (the value-neutrality of Lemma B.3). The property is not "no dependence exists in the witness" but "no dependence propagates to outputs," which is inherently semantic. The prefix-determinism query handles it natively: the two witnesses may differ wildly on masked cells, and the check passes exactly when those differences cannot reach the row-q outputs. The same query correctly *fails* on a tolerance-band softmax, where slack in the normalization can be steered.
+
+Because the protocol is interactive, challenge values are fresh verifier randomness independent of the witness, so masked-cell freedom offers no side channel through challenges; and the logits are committed before any challenge is drawn regardless, per the turn discipline the linter already enforces.
+
+**Reuse from the pipeline.** Almost everything:
+
+- *Separability along the position index is position-locality.* Component 2's separability analysis already computes which extent indices a claim's constraint graph is disjoint over. A claim separable in the sequence-position index (RMSNorm, SiLU, elementwise, hidden-dimension matmuls, routing, embedding select) is prefix-deterministic for free, as a corollary of its ordinary uniqueness. No new solving.
+- *Only position-coupled claims need the prefix query* — in the current claim set, the attention-shaped ones (scores matmul, softmax, AV matmul), which mix positions and are supposed to mix them only backwards. They run the prefix query after challenge elimination, so the Freivalds pins are already collapsed to the honest relations.
+- *One new trusted lemma: DAG composition.* If every claim is prefix-preserving and the claim graph is acyclic with inputs wired from upstream outputs or committed weights, the logits at position q depend only on tokens ≤ q. A three-line induction over the graph — the smallest lemma in the trusted base.
+
+**Format addition.** Each tensor needs an annotation for which extent index is the sequence position (softmax's `q` and `i` both are; RMSNorm's row index is; hidden-dimension indices are not). Without it the linter cannot know which axis causality is about; it is also the natural place to declare intended exceptions such as a sliding-window predicate (which preserves causality — the upper edge is unchanged).
+
+**Failure mode.** A claim that smuggles in position coupling — a "sequence-level normalization" dividing each position by a whole-sequence sum, a cross-position statistic feeding back into a layer — fails separability along the position index, carries no recognized causal filter, and is routed to the prefix query, which returns SAT with a witness pair showing position 0's output moving when a later position's input changes. Rejected with evidence; the check is on what the constraints entail, not what the claim is named.
+
+**Parametric status.** Position-local claims: fully parametric via the separability lift, unchanged. Attention claims: the prefix query at small S (2, 3, 4 — enough for masked cells, a nonempty prefix, and a nontrivial suffix) is strong evidence; the ∀S statement is one induction over row length, essentially the same induction as the bracket lemma, so the Lean cost is shared. No new probabilistic content: causality is exact conditional on the pins holding, whose error the uniqueness budget already counts — the causality check adds no `1/|F|` terms.
+
+## 7. Architecture: six components
 
 **End state.** A claim author submits (a) a machine-readable listing and (b) an implementation. `claim-lint` outputs **PASS** with an error budget and checked width VCs, or **FAIL** with a named rule violation or a concrete two-witness counterexample.
 
-1. **Machine-readable claim format.** A schema capturing what an Appendix B listing already contains: line kinds (`input`/`decl`/`chal`/`lin`/`quad`/`==`/`range`/`lookup`/`rescale`), expressions with symbolic index variables, extents with filters, turn boundaries, declared outputs. Plus the table registry (B.1.0) as data: generating rule, width, length per table. This is the load-bearing artifact — the grammar exists; it currently lives in LaTeX instead of a parseable format.
+1. **Machine-readable claim format.** A schema capturing what an Appendix B listing already contains: line kinds (`input`/`decl`/`chal`/`lin`/`quad`/`==`/`range`/`lookup`/`rescale`), expressions with symbolic index variables, extents with filters, turn boundaries, declared outputs, and a per-tensor annotation of which extent index is the sequence position (§6). Plus the table registry (B.1.0) as data: generating rule, width, length per table. This is the load-bearing artifact — the grammar exists; it currently lives in LaTeX instead of a parseable format.
 2. **Structural checks** (syntactic, all sizes): well-formedness, turn discipline, challenge freshness (one independent challenge per extent element — flags the ρ-reuse bug before any solving), separability classification (cell-local vs. coupled).
 3. **Challenge elimination:** substitute post-challenge arrow variables, expand pins in challenge monomials with extent indices kept symbolic, output a challenge-free system plus a degree per pin. Rejects pins that are not polynomial in the challenges or that weigh a late-committed `decl`. Needs a small computer-algebra layer (polynomial expansion, summation reindexing).
 4. **Lookup idealization + width VC emission:** replace lookup lines with ideal relations, charge LogUp error terms, emit every decomposition/bracket/exclusion width inequality and evaluate it at deployment parameters.
-5. **Uniqueness solver:** for each cell-local component, instantiate one cell at real bit-widths, run the two-witness UNSAT query (cvc5-ff / Picus) on declared outputs; SAT prints the counterexample pair. Coupled components run at small S (evidence, honestly labeled) pending their Lean lemmas.
+5. **Uniqueness solver:** for each cell-local component, instantiate one cell at real bit-widths, run the two-witness UNSAT query (cvc5-ff / Picus) on declared outputs; SAT prints the counterexample pair. The query takes an **agreement-set parameter**: all inputs for the uniqueness check, prefix inputs for the causality check (§6). Coupled components run at small S (evidence, honestly labeled) pending their Lean lemmas.
 6. **Conformance check:** instantiate the listing at a small shape and seed; run `compile_claims` (`verifier/src/handlers.rs`) at the same shape and seed; diff the constraint systems entry-by-entry (the difftest infrastructure is most of this). Ties "the listing is sound" to "the code emits the listing," so an author cannot pass the linter with one system and ship another.
 
-## 7. Trusted base
+## 8. Trusted base
 
 Proven by hand once, ever (candidates for later Lean mechanization):
 
@@ -118,23 +146,24 @@ Proven by hand once, ever (candidates for later Lean mechanization):
 2. The substitution metatheorem for post-challenge arrow-defined variables.
 3. The LogUp multiset lemma (licenses lookup idealization).
 4. The separability lift (licenses the one-cell reduction).
+5. The DAG composition lemma (prefix-preserving claims over an acyclic graph compose to global causality; §6).
 
-Plus, over time, the 2–3 inductive lemmas for the coupled cores (softmax bracket, RMSNorm carries), and — unavoidably — the linter's own implementation. Protocol-level facts (Fiat–Shamir, round composition) are handled once in the paper's soundness section, not per claim. Everything a claim author writes is untrusted and machine-checked.
+Plus, over time, the 2–3 inductive lemmas for the coupled cores (softmax bracket, RMSNorm carries), and — unavoidably — the linter's own implementation. Protocol-level facts (interactive round composition, commitment binding) are handled once in the paper's soundness section, not per claim. Everything a claim author writes is untrusted and machine-checked.
 
-## 8. Milestones
+## 9. Milestones
 
 1. **M1 — skeleton:** format schema + matmul listing transcribed + components 2, 3, 5. Acceptance: matmul PASSes with budget `2/|F|`; the challenge-reuse variant FAILs with the row-sum counterexample. Also tells us early whether cvc5-ff handles the cell queries comfortably or Picus-style propagation is needed.
 2. **M2 — lookups:** registry as data + component 4; matmul *with rescale* passes end-to-end; width VCs appear.
 3. **M3 — easy sweep:** SiLU, elementwise, routing (mostly cell-local; should pass or expose transcription drift between paper and code).
-4. **M4 — coupled path:** softmax and RMSNorm at small S; honest-caveat reporting; enumerate the residual induction lemmas.
+4. **M4 — coupled path:** softmax and RMSNorm at small S; honest-caveat reporting; enumerate the residual induction lemmas. This is also where causality lands: the prefix-determinism query on the attention-shaped claims, the position-axis annotations, and the claim-graph composition check (§6).
 5. **M5 — conformance:** diff instantiated listings against `compile_claims` output.
 
 ### Extraction note for M5 and beyond
 
 `compile_op` bakes challenges in as `u64`s, so recovering polynomial structure from the compiler has three options, cheapest first: (a) run `compile_claims` under several seeds and interpolate — challenge polynomials are low degree (the `λ[a]ρ[b]` pins are degree 2), so a handful of evaluations recovers coefficients exactly, and coefficients constant across seeds are challenge-free; (b) make `Build`'s coefficient type generic over `u64` vs. a symbolic tag (cleaner, modest refactor); (c) do extraction on the Python prover side and difftest against the Rust. Start with (a) to validate the pipeline, then decide whether (b) is worth it.
 
-## 9. Relation to the paper
+## 10. Relation to the paper
 
-- §2.2 states the two-sided requirement this pipeline discharges the first half of; §9 (future work) already names formal verification of exactly these properties.
+- §2.2 states the two-sided requirement this pipeline discharges the first half of; the paper's future-work section names formal verification of exactly these properties — both the unique-witness property and the causal-mask property, the latter now covered by §6's prefix-determinism check.
 - The pipeline mechanically reproduces the structure of the Appendix B lemmas: challenge elimination re-derives Lemma B.2's coefficient argument; the width-VC split mirrors Lemma B.1a; lookup idealization is the factoring rule ("soundness-inert expansions") made executable.
 - The claim-graph obligations remain: per-claim uniqueness composes only over an acyclic wiring where each claim's inputs are upstream outputs or committed weights, and cross-claim width dependencies (e.g. B.6's gap exclusion relying on B.2's rescale bound) should become explicit magnitude contracts — each claim's verified statement carries "outputs in [−2^25, 2^25)" as a postcondition consumed as a precondition downstream — so the §2.2 audit becomes contract-checking.
