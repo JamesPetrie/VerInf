@@ -197,3 +197,92 @@ Plus, over time, the 2–3 inductive lemmas for the coupled cores (softmax brack
 - §2.2 states the two-sided requirement this pipeline discharges the first half of; the paper's future-work section names formal verification of exactly these properties — both the unique-witness property and the causal-mask property, the latter now covered by §6's prefix-determinism check.
 - The pipeline mechanically reproduces the structure of the Appendix B lemmas: challenge elimination re-derives Lemma B.2's coefficient argument; the width-VC split mirrors Lemma B.1a; lookup idealization is the factoring rule ("soundness-inert expansions") made executable.
 - The claim-graph obligations remain: per-claim uniqueness composes only over an acyclic wiring where each claim's inputs are upstream outputs or committed weights, and cross-claim width dependencies (e.g. B.6's gap exclusion relying on B.2's rescale bound) should become explicit magnitude contracts — each claim's verified statement carries "outputs in [−2^25, 2^25)" as a postcondition consumed as a precondition downstream — so the §2.2 audit becomes contract-checking.
+
+---
+
+## 12. Architecture options and how the design evolved
+
+Sections 1–11 describe the **first** design considered: a bespoke checker (the "linter") that runs symbolic-challenge elimination and an SMT uniqueness query. That reasoning is all still valid and reused, but subsequent analysis moved the recommended endpoint. This section records the option space and the current recommendation; §§1–11 remain the detailed treatment of the machinery the later options also depend on.
+
+### 12.1 Two structural simplifications that survive every option
+
+**Freivalds and LogUp are one pattern.** Both are *random-point equality testing of committed algebraic fingerprints*: encode a big object as a (multi)linear or rational function, commit it before a random point is drawn, check the fingerprint identity at that point, and conclude by Schwartz–Zippel plus a per-encoding **injectivity lemma** (bilinear-form-vanishes ⟹ matrix zero, for Freivalds; equal rational fingerprints ⟹ equal multisets, for LogUp). Consequence for the checker: the matmul pin, the RMSNorm broadcast/projection pin (B.4's ρ-projection, degree 1, one constraint per free row), the MoE combine pin, and per-head batching are all instances of **one** `contract_pin` composite — an equality of multilinear expressions in committed tensors with a declared set of challenge-contracted indices, error `(#contracted challenge vectors)/|F|` per free-index constraint. So the challenge surface is exactly two composites: `contract_pin` and the lookup family.
+
+**Challenge-by-construction.** The Rust already draws challenges internally (`op_vec` in `handlers.rs`); no one writes raw challenge constraints today. Make that explicit: the contestant-visible grammar has **no `chal` line and no challenge symbols at all**. Composites (`contract_pin`, `lookup`/`range`/`rescale`) are compiler-owned expansions that draw fresh challenges, keyed by (claim, line, label), at a turn placed after their operands' commitment. Then turn-order and freshness hold *by construction* rather than being checked — the ρ-reuse bug and the commit-after-challenge bug become **inexpressible** rather than detectable, and the entire symbolic-elimination pass (§3, component 3) drops out of the per-claim path.
+
+Under both simplifications the checker's job reduces to: consume each composite's *conclusion* as an ideal fact (`contract_pin` → "the tensor identity holds exactly, + degree/|F|"; `lookup` → "(key, value) ∈ T, + registry term") and then verify the *deterministic* remainder pins every output.
+
+### 12.2 The options for the deterministic remainder
+
+The remaining question is how the deterministic part (decompositions, carry chains, brackets, gap exclusions) is verified. Four options, in the order they were considered:
+
+- **(A) SMT uniqueness query** (§§1–11). A two-witness UNSAT query per cell-local component, small-S for coupled ones. *Risk:* finite-field/range encoding feasibility of cvc5-ff is unproven; solver timeouts make gate verdicts non-deterministic; needs a computer-algebra layer for the symbolic pass. Good as a **development aid** (counterexample finding); shaky as a competition admission gate.
+- **(B) Composite library with per-pattern lemmas.** ~7 composites (contraction pin, lookup/range/rescale, word split, exact product, monotone bracket, gap exclusion), each a compiler expansion with one hand-proven soundness lemma; claims are data composing them; a deterministic checker consumes their conclusions. *Risk:* contestants want composites we didn't ship — a fixed ceiling, organizer-in-the-loop for anything new.
+- **(C) Generic rule kernel.** Replace per-pattern lemmas with ~6 generic inference rules (interval propagation, wrap-lifting, tiling determination, lifted linear consequence, a monotonicity calculus, reachability); each `decl` carries a checkable `pinned_by:` derivation hint that the sugar generates automatically. Absorbs most unforeseen *patterns* (they re-derive from the rules); only a new *reasoning principle* needs a new rule. *Risk:* the kernel (interval arithmetic + exact linear algebra + monotonicity calculus) is subtle to implement and maintain, and its correctness joins the trusted base.
+- **(D) Proof-carrying claims (recommended).** The contestant submits the claim listing **plus a machine-checkable Lean proof** of its uniqueness/causality goals; the gate compiles the proof and checks (via `#print axioms`) that only two sanctioned axioms — the `contract_pin`/Freivalds fact and the LogUp fact — appear, with no `sorry`. Generality is maximal: anything provable is admissible, so a novel gadget's inventor proves it themselves with **no organizer in the loop**. The bespoke reasoning engine of (A)/(C) disappears — the checking engine is the Lean kernel, and Mathlib's `omega`/`nlinarith`/`decide` do what the rule kernel would have. Composite libraries (B) and rule lemmas (C) survive as a **convenience library** of Lean lemmas/tactics so tier-A claims discharge in a line or two, with the sugar functions emitting the proof so those contestants never open Lean.
+
+### 12.3 The recommended layering
+
+The options are not exclusive; the recommended system layers them by contestant population:
+
+1. **DSL fast path** — architecture-search contestants write a forward pass in a small functional DSL; a compiler emits listing + auto-generated proof; zero proof burden. Most submissions live here.
+2. **Schema path** — contestants writing raw listings from existing mechanisms get auto-generated certificates/proofs from the convenience library.
+3. **Kernel path** — gadget inventors submit a novel primitive *with its Lean proof*; once checked, it joins the DSL primitive set and the library, so the trusted vocabulary is **extensible by proof-carrying submission**, benefiting every later contestant.
+
+This resolves the "N composites is too many, and contestants will want more" problem structurally: the gate has no fixed ceiling and no human-in-the-loop even for novel techniques, while the common case stays turnkey. Trust decision unchanged from §7: Ligero, commitment binding, and the verifier implementation are assumed; the two composite facts are named axioms justified by their papers and Appendix B.
+
+### 12.4 Trusted base under proof-carrying
+
+Kernel (standard) + the two sanctioned axioms (`contract_pin`/Freivalds, LogUp) + the **translator** (listing JSON → Lean goal statements — the one load-bearing new piece, kept small, golden-tested, and difftested against `compile_claims`) + the axiom-guard script + an organizer lemma library (the lift family, tiling/B.1a, the monotone-threshold schema). Smaller than the rule-kernel base and strictly more general. The generic verifier compiler (the untrusted-listing interpreter) is a separate concern; see §14.
+
+### 12.5 Table discharge as a pluggable backend
+
+Claim proofs should consume the tables only through a **property interface** (monotone, zero-tail, pair-shift relation, bounds) — never mentioning `exp`. Two backends discharge that interface: **data** (`native_decide`/scan over the concrete array — cheap, robust, non-parametric; the gate's default) and **analytic** (prove the properties from the generating equation — more work, parametric in the scales, and a prerequisite only for the harness-side B.7 "true bound in nats" statement, which genuinely compares table entries to real exponentials). Building data-discharge first unblocks every claim proof; the certified-evaluation layer waits for B.7. A concrete side-benefit of the analytic route: it audits the deployed float64-generated tables for near-tie rounding disagreements the Python generator has never been checked for.
+
+## 13. The generic verifier compiler (untrusted-listing interpreter)
+
+Independent of the gate: the *verifier* must compile an arbitrary contestant listing to constraints, since it cannot run contestant code. Today `handlers.rs` compiles known claim types as monolithic handlers over a fixed `Expander` vocabulary (`Weighted`, `Rowsum`, `CausalId`, `FreivaldsB/C`, `Embed`, `RopeX`, …). Findings:
+
+- **Arbitrary listings do not map onto the current expanders as-is** — the vocabulary is ten hand-compiled special cases.
+- **But all ten are specializations of one pattern:** decompose the flat slot into a mixed-radix multi-index; the constraint id is an affine function of the components (a dropped axis = a reduction), possibly filtered by a fixed predicate; the coefficient is a product of per-axis factors (constant, public vector, public gather, or — inside `pin` only — a challenge vector). A single `AffineMap` family subsumes the lot. The **listing's index expressions are the interface**: the compiler lowers each line to `AffineMap` parameters; contestants never name an expander. The admission rule is then a grammar rule — index arithmetic affine in the extent indices, filters from the fixed set, coefficients of the allowed kinds — enforced at submission, and it doubles as the discipline the causality/separability analyses want.
+- **Deliberately out of scope** (rejected at submission, correctly): witness-dependent indexing (that is what lookups are for), ragged/dynamic extents (use masks, as routing does), and author-supplied mask *semantics* (fixed predicate set only). Misaligned quads and per-slot quad coefficients are handled by a `lin`-copy into alignment — a witness cost, not an expressiveness limit.
+- **The real risk is performance, not correctness** (see §15): the generic `AffineMap::emit` must match the hand-tuned expanders' streaming throughput at Maverick scale, or keep them as fast paths.
+
+## 14. Findings from the softmax-bracket Lean spike
+
+Run on branch `lean-bracket-spike` (`lean/BracketSpike/`, see `lean/FINDINGS.md` there). Target: prove the softmax shift `c` is uniquely pinned at S = 2, **saturation included**, through the honest field→integer lift — the "hardest consumer" for the lift library, chosen to de-risk the bracket formalization before committing to option (D).
+
+**Result — the mathematical core is proven with no `sorry`** (every theorem depends only on `propext`, `Classical.choice`, `Quot.sound`, confirmed by `#print axioms`):
+
+- `lift_cell` — field recomposition + range bounds + width condition ⟹ the genuine **integer** identity. This is the reusable lift library primitive (Lemma B.1a), amortized across RMSNorm carries and every `range`/`rescale`.
+- `cell_value_neutral` — *any* saturation witness emits output `= g(c − x)`; full case split (below Zmax forces `zhigh = 0`; at/above Zmax the table is already 0). This is the clause of Lemma B.3 whose prose is most compressed.
+- `threshold_unique` — a non-increasing integer function is pinned by a two-sided adjacent bracket. The reusable monotone-pin schema, shared with RMSNorm's rsqrt.
+- `shift_unique_S2` — assembled: two satisfying witnesses at S = 2 share the same `c`.
+
+**Key reads:**
+
+- **No mathematical surprise.** The three most-uncertain pieces (lift, saturation value-neutrality, monotone threshold) went through as the paper argues. All friction was Lean *plumbing* (`omega` needing explicit `norm_num` numeric facts to chain a variable bound into `< P`; the `ZMod.val_*` API), none of it mathematical. The largest fear — that the bracket hides an unstated side condition — did not materialize at S = 2.
+- **New concrete finding for the plan:** deriving the boolean saturation flag from its `t² = t` quadratic needs `ZMod P` to be an integral domain — i.e. it **pulls in a Goldilocks-primality proof**, which the lift itself avoids. Budget a one-time `native_decide`/Pratt-certificate primality proof; the bracket-flag step forces it, the lift does not.
+- **Timeline:** the two-week estimate for a full `sorry`-free S = 2 bracket looks credible, arguably conservative — the hard core took a fraction of a session. Remaining work is mechanical/one-time, not research.
+
+**Honest limits of the spike** (assumed via the model, not yet derived): the table is abstracted by a property certificate (data-discharge not run); the δ-shift step `s2(c) = s1(c−1)` is baked into the model rather than derived from the `T_B[k] = T_A[k−δ]` pair; the boolean flag is taken as given rather than derived from its quadratics (see primality finding); the end-to-end "raw ZMod constraints ⟹ unique `c`" composition is not assembled; masked cells (`i > q`) are not modelled. **Not exercised at all:** the parametric-in-`S` induction — this spike is fixed S = 2, so the ∀S estimate remains the open one.
+
+## 15. Launch inventory and risk
+
+**Ownership recap:** the B.7 scoring harness and token binding are organizer-owned and fixed; contestants modify only the forward-pass claim list and may rewrite the prover arbitrarily (soundness never depends on prover code). Note a likely simplification: because the organizer publishes the evaluation tokens, Appendix E transcript binding is probably out of scope — the anti-cheat need reduces to the commit-before-reveal ceremony.
+
+**Workstreams to a launchable gate (~3–4 months focused; de-scope levers below):**
+- **A. Generic verifier compiler** (§13) — the biggest hidden item; `AffineMap` lowering + difftest against existing handlers.
+- **B. The gate** — prelude, translator (JSON→Lean), lemma library, guards (pinned toolchain, axiom check, statement-integrity, sandboxed builds), structural checks.
+- **C. Incumbent claims through their own gate** — the baseline must pass the gate it is judged by; dominated by the softmax and RMSNorm bracket proofs (the §14 spike is the first slice).
+- **D. Scoring harness + outer protocol** — B.7 one-sidedness in Lean, the commit-reveal ceremony, ε attached to every score.
+- **E. Ops** — rules doc, SDK + worked example, leaderboard, submission archiving, disclosure-reward policy, local gate distribution.
+
+**Launch bar:** baseline passes end-to-end (listings → kernel-checked proofs → generic verifier accepts a real run → score + ε); scoring one-sidedness proven; an internal **red-team round** against your own gate; a second machine reproduces a verdict from archived artifacts.
+
+**De-scope levers:** round 1 = SDK-only (no contestant Lean); smaller baseline model; attention claim fixed as harness-owned in round 1 (removes the hardest contestant-facing proof). With all three, a credible round-1 launch is ~6–8 weeks.
+
+### 15.1 Riskiest parts
+
+- **Soundness-critical (silent-failure) risk:** the generic verifier compiler (§13) upholding, for *every* adversarial listing, the by-construction side conditions the Lean layer takes as granted facts (turn order, challenge freshness, correct expansion). A miss here makes a kernel-checked proof true of a statement that is false of the running system — PASS with a fake score, below the specification boundary where more Lean cannot reach. *Mitigation:* enforce the invariants as protocol-driver runtime assertions and compile-time challenge-tuple uniqueness (not compiler intentions); adversarially fuzz the compiler; aim the red-team round here; keep the grammar minimal.
+- **Timeline (harder-than-expected) risk, ranked:** (1) the bracket formalizations + the lift library API — highest variance, though §14 retired the *mathematical* surprise and the lift is now built; (2) the generic compiler's **performance** at frontier scale (correctness is ordinary; the streaming-throughput match to hand-tuned expanders is the open question — one benchmarking spike settles it); (3) **discovery risk** — formalization or the B.7 pass surfacing a genuine soundness gap that cascades through paper/Rust/Python (precedent: the pre-fix RMSNorm bracket). Sequence the discovery-prone items (softmax bracket — started; B.7 rounding directions) early so any redesign lands before the launch machinery is built on the current construction.
