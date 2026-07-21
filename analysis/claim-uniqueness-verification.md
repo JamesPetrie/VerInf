@@ -1,10 +1,13 @@
 # Automated Uniqueness Verification for Untrusted Claim Types
 
 **Status:** strategy document — nothing implemented yet.
-**Goal:** an automated check that a proposed claim type pins its outputs uniquely — and preserves causality (§6) — so that new claims (written by untrusted authors, human or agent) need no per-claim hand proof.
-**Out of scope for now:** the one-sided surprisal claims (B.7). Their property is "every free direction inflates the reported bound," not uniqueness; the pipeline below can be extended to it later (encode "a satisfying witness reports less than the honest value" and prove UNSAT), but we defer it.
+**Goal:** an automated admission gate for **untrusted claim lists**: a check that a submitted claim type pins its outputs uniquely and preserves causality (§6), so that new claims — including contestant submissions in the prediction competition (§7) — need no per-claim hand proof or human review.
+**Setting:** a competition to improve the efficiency and explained information of a ZKP predicting an LLM's output tokens. Contestants submit their own claim lists; the claim list *is* the predictor. There is therefore no reference architecture to check submissions against, and no "is this the right model" obligation — the integrity properties (uniqueness, causality, one-sided scoring) are the entire spec.
+**Scoring path (B.7):** the one-sided surprisal claims are *not* verified by the uniqueness pipeline (their property is "every free direction inflates the reported bound," an inequality, not uniqueness). They are **harness-owned**: contestants do not submit scoring claims. Their one-sidedness check (encode "a satisfying witness reports less than the honest value," prove UNSAT) uses the same solver back-end and must land before submissions open, since the scoring arithmetic is precisely where a rational contestant attacks.
 
-This document records the strategy discussed on 2026-07-21: what the property is, why naive approaches fail, the symbolic-challenge reduction that makes automation possible, how it stays sound when dimensions are parameters, how the same machinery checks causality (later tokens must not influence earlier logits — §6), and the concrete components to build.
+**Trust boundary (deliberate):** Ligero soundness, commitment binding, and the Rust verifier implementation are *assumed* for now, as named hypotheses of every statement below. The formal effort concentrates on the claim layer, because that is the only layer untrusted content flows through. The competition itself doubles as a red team for the trusted layers: an exploited vulnerability is a welcome submission. One caveat to keep in view: soundness is exactly the property that makes "strong predictor" and "silent exploit" indistinguishable from an accepted proof alone, so this dynamic works only if disclosed breaks are rewarded at least as well as high scores, and submissions are archived (claim list, commitments, transcript) so a suspect score can be audited after the fact.
+
+This document records the strategy discussed on 2026-07-21: what the property is, why naive approaches fail, the symbolic-challenge reduction that makes automation possible, how it stays sound when dimensions are parameters, how the same machinery checks causality (later tokens must not influence earlier logits — §6), the competition anti-cheat surface (§7), and the concrete components to build.
 
 The protocol is interactive: challenges are fresh verifier randomness drawn after the relevant commitments, not Fiat–Shamir-derived from the transcript.
 
@@ -14,7 +17,7 @@ The protocol is interactive: challenges are fresh verifier randomness drawn afte
 
 1. **Deterministic gadgets** — decompositions/rescale (B.1), the softmax bracket (B.3), RMSNorm carry chains (B.4), SiLU (B.5), routing (B.6). Property: given the inputs and the ideal lookup relations, the constraints admit exactly one witness, up to declared value-neutral freedom (masked `z`, `inv` at zero). Machine-checkable as a uniqueness (UNSAT) query.
 2. **Probabilistic pins** — the Freivalds/matmul pins (B.2) and anything challenge-weighted. These are *not* deterministic for a fixed challenge: for any fixed (ρ, λ), many false `C_full` satisfy the pin. The true statement is Schwartz–Zippel-shaped: a false value committed *before* the challenge survives with probability at most `d/|F|`. Handled by the symbolic reduction of §3.
-3. **One-sided freedom** — B.7 surprisal. Deferred (see scope note above).
+3. **One-sided freedom** — B.7 surprisal. Held constant as part of the fixed scoring harness (§7): contestants cannot modify it, and it is verified once, with an inequality query rather than a uniqueness query, before submissions open.
 
 The LogUp layer itself (challenges, folded keys, inverses, settlements) is also probabilistic. It is *not* fed to the automated checker; it is axiomatized as an ideal relation (§4) whose soundness is a hand-proven lemma.
 
@@ -127,18 +130,44 @@ Because the protocol is interactive, challenge values are fresh verifier randomn
 
 **Parametric status.** Position-local claims: fully parametric via the separability lift, unchanged. Attention claims: the prefix query at small S (2, 3, 4 — enough for masked cells, a nonempty prefix, and a nontrivial suffix) is strong evidence; the ∀S statement is one induction over row length, essentially the same induction as the bracket lemma, so the Lean cost is shared. No new probabilistic content: causality is exact conditional on the pins holding, whose error the uniqueness budget already counts — the causality check adds no `1/|F|` terms.
 
-## 7. Architecture: six components
+## 7. The competition setting and anti-cheat surface
+
+### Ownership split
+
+- **Fixed harness (organizer-owned, verified once):** the surprisal/scoring claims (B.7) and their tables, token binding (Appendix E), and the logits-to-score interface — including the position pairing: logits at position q are scored against token q+1. Contestants cannot modify any of it.
+- **Contestant-owned (untrusted, linter-gated):** the forward-pass claim list — everything from token embeddings to the committed logits. This is the only layer untrusted content flows through, and the linter is its admission gate.
+- **Prover implementation: arbitrary.** Soundness holds against any prover by construction — nothing in any statement here depends on prover code — so contestants may rewrite the prover freely for efficiency, with no verification obligation attached.
+
+In this setting **causality is co-equal with uniqueness**, not a secondary property. The competition thesis — that a low unexplained-information score requires something functionally equivalent to an LLM — holds only if prediction is genuinely from the strict past. Uniqueness without causality is worthless (a unique function that peeks still cheats); causality without uniqueness likewise (witness freedom deflates the score directly).
+
+### Anti-cheat enumeration
+
+1. **Uniqueness upstream of logits** — linter (§§2–5).
+2. **Causality** — linter (§6).
+3. **Scoring pairing** — fixed harness. The q-versus-(q+1) pairing lives in the harness, not in submissions; the linter checks only that a contestant graph's declared logit outputs plug into the harness interface with the declared position indexing. (If the pairing were submission-controlled, a claim list could score logits at q against token q — causal, and trivially perfect.)
+4. **Input provenance** — linter. Source nodes of a contestant claim graph may only be: pre-committed parameters, prefix token embeddings, and public constants. No auxiliary committed input streams — an "advice" input is a channel for smuggled answers.
+5. **Parameters committed before the evaluation sample is revealed** — protocol/harness; an outer-level turn check, or the tokens get encoded into the "weights." Distinguishing memorization of public data from generalization is then competition design (fresh, wide samples), not a proof-system property.
+6. **Token binding** — fixed harness (Appendix E); the committed stream must be the real transcript, or contestants predict tokens of their own choosing.
+7. **One-sidedness of the scoring path** — fixed harness, verified once before launch (§1, class 3).
+
+### The theorem the gate certifies
+
+> For **every** contestant claim list that passes the linter: an accepting transcript implies, except with probability ε (the computed error budget), that the committed logits are the unique causal function of the committed prefix determined by that claim list, and that the reported unexplained information is a true upper bound for the committed token stream. Hypotheses: Ligero soundness, commitment binding, verifier-implementation correctness, and uniform verifier randomness (the trust boundary above).
+
+The universal quantifier over submissions is the point: it is what permits admitting claim lists nobody has reviewed. Published scores should carry their ε.
+
+## 8. Architecture: six components
 
 **End state.** A claim author submits (a) a machine-readable listing and (b) an implementation. `claim-lint` outputs **PASS** with an error budget and checked width VCs, or **FAIL** with a named rule violation or a concrete two-witness counterexample.
 
 1. **Machine-readable claim format.** A schema capturing what an Appendix B listing already contains: line kinds (`input`/`decl`/`chal`/`lin`/`quad`/`==`/`range`/`lookup`/`rescale`), expressions with symbolic index variables, extents with filters, turn boundaries, declared outputs, and a per-tensor annotation of which extent index is the sequence position (§6). Plus the table registry (B.1.0) as data: generating rule, width, length per table. This is the load-bearing artifact — the grammar exists; it currently lives in LaTeX instead of a parseable format.
-2. **Structural checks** (syntactic, all sizes): well-formedness, turn discipline, challenge freshness (one independent challenge per extent element — flags the ρ-reuse bug before any solving), separability classification (cell-local vs. coupled).
+2. **Structural checks** (syntactic, all sizes): well-formedness, turn discipline, challenge freshness (one independent challenge per extent element — flags the ρ-reuse bug before any solving), separability classification (cell-local vs. coupled), input-provenance typing (source nodes limited to pre-committed parameters, prefix token embeddings, and public constants — §7 item 4), and the harness-interface check (declared logit outputs wired to the fixed scoring harness with the declared position indexing — §7 item 3).
 3. **Challenge elimination:** substitute post-challenge arrow variables, expand pins in challenge monomials with extent indices kept symbolic, output a challenge-free system plus a degree per pin. Rejects pins that are not polynomial in the challenges or that weigh a late-committed `decl`. Needs a small computer-algebra layer (polynomial expansion, summation reindexing).
 4. **Lookup idealization + width VC emission:** replace lookup lines with ideal relations, charge LogUp error terms, emit every decomposition/bracket/exclusion width inequality and evaluate it at deployment parameters.
 5. **Uniqueness solver:** for each cell-local component, instantiate one cell at real bit-widths, run the two-witness UNSAT query (cvc5-ff / Picus) on declared outputs; SAT prints the counterexample pair. The query takes an **agreement-set parameter**: all inputs for the uniqueness check, prefix inputs for the causality check (§6). Coupled components run at small S (evidence, honestly labeled) pending their Lean lemmas.
 6. **Conformance check:** instantiate the listing at a small shape and seed; run `compile_claims` (`verifier/src/handlers.rs`) at the same shape and seed; diff the constraint systems entry-by-entry (the difftest infrastructure is most of this). Ties "the listing is sound" to "the code emits the listing," so an author cannot pass the linter with one system and ship another.
 
-## 8. Trusted base
+## 9. Trusted base
 
 Proven by hand once, ever (candidates for later Lean mechanization):
 
@@ -148,21 +177,22 @@ Proven by hand once, ever (candidates for later Lean mechanization):
 4. The separability lift (licenses the one-cell reduction).
 5. The DAG composition lemma (prefix-preserving claims over an acyclic graph compose to global causality; §6).
 
-Plus, over time, the 2–3 inductive lemmas for the coupled cores (softmax bracket, RMSNorm carries), and — unavoidably — the linter's own implementation. Protocol-level facts (interactive round composition, commitment binding) are handled once in the paper's soundness section, not per claim. Everything a claim author writes is untrusted and machine-checked.
+Plus, over time, the 2–3 inductive lemmas for the coupled cores (softmax bracket, RMSNorm carries), and — unavoidably — the linter's own implementation. By the trust decision of §7, Ligero soundness, commitment binding, and the Rust verifier implementation are **named hypotheses**, not proof obligations; protocol-level facts (interactive round composition) are handled once in the paper's soundness section, not per claim. Everything a claim author writes is untrusted and machine-checked.
 
-## 9. Milestones
+## 10. Milestones
 
 1. **M1 — skeleton:** format schema + matmul listing transcribed + components 2, 3, 5. Acceptance: matmul PASSes with budget `2/|F|`; the challenge-reuse variant FAILs with the row-sum counterexample. Also tells us early whether cvc5-ff handles the cell queries comfortably or Picus-style propagation is needed.
 2. **M2 — lookups:** registry as data + component 4; matmul *with rescale* passes end-to-end; width VCs appear.
 3. **M3 — easy sweep:** SiLU, elementwise, routing (mostly cell-local; should pass or expose transcription drift between paper and code).
 4. **M4 — coupled path:** softmax and RMSNorm at small S; honest-caveat reporting; enumerate the residual induction lemmas. This is also where causality lands: the prefix-determinism query on the attention-shaped claims, the position-axis annotations, and the claim-graph composition check (§6).
 5. **M5 — conformance:** diff instantiated listings against `compile_claims` output.
+6. **M6 — scoring harness (pre-launch gate):** one-sidedness of the fixed B.7 claims via the inequality query, plus the outer-level checks (parameters-before-sample ordering, token binding wired in). Required before contestant submissions open; the competition cannot soundly launch on M1–M5 alone.
 
 ### Extraction note for M5 and beyond
 
 `compile_op` bakes challenges in as `u64`s, so recovering polynomial structure from the compiler has three options, cheapest first: (a) run `compile_claims` under several seeds and interpolate — challenge polynomials are low degree (the `λ[a]ρ[b]` pins are degree 2), so a handful of evaluations recovers coefficients exactly, and coefficients constant across seeds are challenge-free; (b) make `Build`'s coefficient type generic over `u64` vs. a symbolic tag (cleaner, modest refactor); (c) do extraction on the Python prover side and difftest against the Rust. Start with (a) to validate the pipeline, then decide whether (b) is worth it.
 
-## 10. Relation to the paper
+## 11. Relation to the paper
 
 - §2.2 states the two-sided requirement this pipeline discharges the first half of; the paper's future-work section names formal verification of exactly these properties — both the unique-witness property and the causal-mask property, the latter now covered by §6's prefix-determinism check.
 - The pipeline mechanically reproduces the structure of the Appendix B lemmas: challenge elimination re-derives Lemma B.2's coefficient argument; the width-VC split mirrors Lemma B.1a; lookup idealization is the factoring rule ("soundness-inert expansions") made executable.
