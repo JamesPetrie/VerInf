@@ -167,9 +167,25 @@ Each has an existing scar or writeup:
    designing any new bracket.
 3. **Distribution-dependent exactness** (§2 gap 1) — could invalidate the trusted
    K range itself.
-4. **Nondeterministic kernels** (§2 gap 3) — if the serving kernel uses atomics,
-   there is nothing to emulate exactly; the deployment must pin deterministic
-   kernels.
+4. **Batch-variant or nondeterministic kernels** (§2 gap 3). Exact emulation
+   requires the deployment's computation to be a fixed function of the request:
+   **batch-invariant** kernels (a request's results must not depend on which
+   other requests happen to be batched alongside it) and a deterministic
+   reduction order (split-K with atomics varies run to run — nothing to emulate).
+   Neither holds universally in serving stacks; both are deployment-controlled.
+
+**Deployment co-design is in scope as an ask, not a blocker.** The project should
+assume a cooperating deployment (the verification setting already implies one)
+and treat cheap, performance-neutral stack modifications as negotiable
+requirements: enabling batch-invariant kernel modes, pinning kernel selection in
+the exact regime, and potentially rounding intermediate results slightly onto
+coarser grids so reduction-order noise is absorbed before it can flip an output
+code — the same mechanism by which the coarse FP4 output grid absorbed
+accumulator deviations in the measurements (§2). The limiting case of this ask is
+known to be achievable: [`paper.md`](../../paper.md) §9 notes bitwise-reproducible
+inference has been demonstrated across GPU variants (Cankaya 2026). Part of work
+item 2 (§6) is finding out how large the asks actually need to be for a given
+serving stack.
 
 **The standing discipline** (design doc §4): exact-emulation differential tests
 against real hardware first, then prove→ACCEPT, then a U measurement. Exactness is
@@ -186,7 +202,9 @@ Roughly in dependency order; items 1–3 need Blackwell hardware (see §8), item
    distributions; sweep M/N/K shapes. Either exactness survives — a much stronger
    claim — or it breaks, and the design needs the true accumulator semantics.
 2. **Characterize a serving kernel, not just torch's** (gap 3). Same differential
-   harness against TRT-LLM/cutlass NVFP4 paths; check run-to-run determinism.
+   harness against TRT-LLM/cutlass NVFP4 paths; check run-to-run determinism and
+   batch invariance (does a request's output change with co-batched requests?),
+   and scope what deployment-side modifications (§5) would cost if either fails.
 3. **Requantization-recipe characterization** (failure mode 1). Pin down one
    deployment's exact recipe, including tie behavior, empirically.
 4. **The format-pin gadget** (design §2.2) — the smaller of the two new claims;
