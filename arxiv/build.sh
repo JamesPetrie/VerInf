@@ -3,7 +3,7 @@
 # repo-root paper.pdf (the file the paper.md banner links to).
 set -e
 cd "$(dirname "$0")"
-pandoc -f markdown-markdown_in_html_blocks ../paper.md --no-highlight -o paper-body.tex
+pandoc -f markdown-markdown_in_html_blocks ../paper.md --highlight-style=tango -o paper-body.tex
 python3 convert.py
 pdflatex -interaction=nonstopmode paper-arxiv.tex > build.log 2>&1 || { grep -m5 "^!" build.log; exit 1; }
 pdflatex -interaction=nonstopmode paper-arxiv.tex >> build.log 2>&1

@@ -104,7 +104,11 @@ The certified quantity measures how well the declared computation explains the o
 
 $$U \ \le\ \mathbb{E}\left[-\textstyle\sum_{t} \log_2 Q\left(\boldsymbol{o}_t \mid D(\boldsymbol{x}),\ \boldsymbol{o}_{\lt t}\right)\right].$$
 
-Here $Q$ is any fixed conditional distribution predicting each output token from $D(\boldsymbol{x})$ and the earlier tokens, with the position dependence entering only through the arguments; $\boldsymbol{o}$ denotes the output stream, the expectation is over the outputs the hardware can produce, and the measured output is the realization the proof scores. The proof reports $\hat{U}$: the same surprisal sum, evaluated on the measured output inside the proof with every rounding pushed upward, and published through a fixed public conversion to bits (B.7). By construction $\hat{U}$ is at least the realized sum (§7.2), and it is the proof's only public output; the weights, inputs, and output tokens stay hidden. In the setting of §1 the bound is what caps covert bandwidth: a payload must hide in the unexplained bits, so the less the output leaves unexplained, the less room remains. The derivation, the extension to non-zero-temperature sampling, and the security analysis are in the companion paper.
+Here $Q$ is any fixed conditional distribution predicting each output token from $D(\boldsymbol{x})$ and the earlier tokens, with the position dependence entering only through the arguments; $\boldsymbol{o}$ denotes the output stream, the expectation is over the outputs the hardware can produce, and the measured output is the realization the proof scores. The proof reports $\hat{U}$: the same surprisal sum, evaluated on the measured output inside the proof with every rounding pushed upward, and published through a fixed public conversion to bits (B.7), so that
+
+$$-\textstyle\sum_{t} \log_2 Q\left(\boldsymbol{o}_t \mid D(\boldsymbol{x}),\ \boldsymbol{o}_{\lt t}\right) \ \le\ \hat{U}.$$
+
+The inequality holds by construction for the realization actually produced (§7.2), and $\hat{U}$ is the proof's only public output; the weights, inputs, and output tokens stay hidden. In the setting of §1 the bound is what caps covert bandwidth: a payload must hide in the unexplained bits, so the less the output leaves unexplained, the less room remains. The derivation, the extension to non-zero-temperature sampling, and the security analysis are in the companion paper.
 
 The design of $Q$ is left to the prover: any $Q$ gives a valid bound, and a poor one inflates only the prover's own reported number. The predictor is committed before any challenge is drawn, and the proof certifies that the reported value is at least the surprisal under it (B.7). Our prototype models hardware nondeterminism as Gaussian noise on the logits, $Q(\boldsymbol{o}_t \mid \boldsymbol{\ell}_t) \propto \exp(-(v^{*} - \boldsymbol{\ell}_t[\boldsymbol{o}_t])^2/\sigma^2)$, with $\boldsymbol{\ell}_t$ the logit row at position $t$, $v^{*}$ its maximum, and $\sigma$ calibrated empirically. Every approximation, from the integer model to the noise parameters, is priced the same way: a worse predictor of the deployment's tokens reports a larger $\hat{U}$, so tightening the bound is an engineering trade, not a soundness question (§10).
 
@@ -152,7 +156,7 @@ Zero knowledge rests on two mechanisms. The random padding makes the values reve
 The checks of §3.2 to §3.5 use challenges of their own, drawn only after the initial commitments: the Freivalds projections after the matrices and their product are committed, the lookup challenges after the queries and multiplicities. Each check then commits new values built from its challenges (the projections, masked products, and lookup inverses). VerInf therefore inserts a commitment round between these challenges and the test challenges, so that the new values are fixed before the tests that fold them are drawn and cannot be fitted to a fold the prover has seen. This gives four rounds:
 
 | Round | Prover sends | Verifier replies |
-|---|---|---|
+|--|---------------|---------------|
 | 1 | Commitments to the first-phase blocks: forward-pass witness (activations, routing masks, normalization auxiliaries, lookup multiplicities), weights (or a reference to a standing weight commitment, plus the refreshed block during a refresh, §6.4), and blinding randomness (§6.1) | Challenge seed $s_{\text{op}}$, from which the Freivalds projections $\rho, \lambda$ and lookup challenges $\alpha, \beta$ derive |
 | 2 | Commitment to the challenge-dependent auxiliaries (Freivalds projections, lookup inverses) | Test-challenge seed $s_{\text{comb}}$ |
 | 3 | Folded test results: linear, Hadamard, and a commitment-consistency test (§6.1) | Audit seed $s_{\text{col}}$, sent after first checking the parts of the test results that need no audit |
@@ -192,7 +196,7 @@ This division of labor follows the trust model of §7.1: only the verifier requi
 
 The two parties want different guarantees. The prover wants confidentiality: the model weights, the activations, and the input and output token streams must not leak. The verifier wants soundness: the reported $\hat{U}$ must be a genuine upper bound for the committed tokens under the committed weights. Their interface is the public claim list, a statement of what kind of computation was performed (§3); it reveals the model architecture, though not the weights, and hiding the architecture as well is future work (§10). The proof reveals nothing beyond $\hat{U}$ and the claim list, so a dishonest verifier learns nothing more, and a dishonest prover cannot produce an accepting proof for a deflated bound except with the error bound of §7.3. Each side trusts only its own code: the verifier's trusted base is short (§6.5), and a fault anywhere on the prover's side can only cause a proof to fail, never to falsely verify.
 
-### 7.2 The certified statement, in three parts
+### 7.2 The certified statement
 
 What the proof certifies is a single statement over the committed witness, a conjunction of three parts:
 
