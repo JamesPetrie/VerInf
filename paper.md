@@ -1,6 +1,6 @@
 # VerInf: Zero-Knowledge Proofs of Inference for Frontier-Scale Models on a Single Machine
 
-<p><b>📄 <a href="paper.pdf">Read the PDF</a></b> — GitHub's markdown viewer cannot faithfully render this paper's math (notably the Appendix B claim listings). The PDF is regenerated from this file on substantive changes: <code>pandoc -f markdown-markdown_in_html_blocks paper.md -H pdf-header.tex -V geometry:margin=1in -o paper.pdf</code></p>
+<p><b>📄 <a href="paper.pdf">Read the PDF</a></b> — GitHub's markdown viewer cannot faithfully render this paper's math (notably the Appendix B claim listings). The PDF is regenerated from this file on substantive changes: <code>arxiv/build.sh</code></p>
 
 James Petrie
 

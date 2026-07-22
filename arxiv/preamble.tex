@@ -1,0 +1,70 @@
+\documentclass{article}
+
+\usepackage{PRIMEarxiv}
+
+\usepackage[utf8]{inputenc} % allow utf-8 input
+\usepackage[T1]{fontenc}    % use 8-bit T1 fonts
+\usepackage{hyperref}       % hyperlinks
+\usepackage{url}            % simple URL typesetting
+\usepackage{booktabs}       % professional-quality tables
+\usepackage{longtable}      % multi-page tables
+\usepackage{array}          % >{...} column specs in pandoc tables
+\usepackage{amsfonts}       % blackboard math symbols
+\usepackage{nicefrac}       % compact symbols for 1/2, etc.
+\usepackage{microtype}      % microtypography
+\usepackage{fancyhdr}       % header
+\usepackage{graphicx}       % graphics
+\usepackage{appendix}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{calc}
+
+\providecommand{\tightlist}{\setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+
+% ---- Shims for the GitHub-flavored markdown source ----
+% \lt / \gt are the MathJax spellings used so bare < > survive GitHub's HTML pass.
+\newcommand{\lt}{<}
+\newcommand{\gt}{>}
+\usepackage{newunicodechar}
+\newunicodechar{ⓡ}{\textcircled{\scriptsize r}}
+\newunicodechar{×}{\ensuremath{\times}}
+\newunicodechar{½}{\ensuremath{\tfrac{1}{2}}}
+% The Appendix B claim-listing arrays are wider than the text block: scale
+% array environments down. Safe: the source has no matrix/cases environments,
+% which call \array internally — only the six claim listings.
+\usepackage{environ}
+\let\oldarray\array
+\let\endoldarray\endarray
+\RenewEnviron{array}[1]{\scalebox{0.78}{$\begin{oldarray}{#1}\BODY\end{oldarray}$}}
+% RenewEnviron clobbers \endarray, which array.sty's \endtabular calls
+% internally (and \maketitle's author block is a tabular): point tabular
+% back at the original.
+\makeatletter
+\def\endtabular{\endoldarray $\egroup}
+\expandafter\let\csname endtabular*\endcsname\endtabular
+\makeatother
+\setlength{\arraycolsep}{3pt}
+% Section numbers are hardcoded in the source headings ("1. Introduction",
+% "Appendix E" with no D), so LaTeX must not add its own.
+\setcounter{secnumdepth}{0}
+% -------------------------------------------------------
+
+%Header
+\pagestyle{fancy}
+\thispagestyle{empty}
+\rhead{ \textit{ }}
+
+%% Title
+\title{__TITLE__}
+
+\author{
+  James Petrie  \thanks{james.petrie@protonmail.com} \\
+  \\
+}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+__ABSTRACT__
+\end{abstract}
