@@ -41,7 +41,7 @@ The exact-circuit systems also leave the prover freedom in the witness. zkLLM co
 
 VerInf is built on the Ligero zero-knowledge argument system (Ames et al. 2017), which supports commitments, linear tests, and Hadamard tests, all in zero knowledge, with security resting only on the collision resistance of a hash function. This section describes these tools (§3.1); how matrix multiplication (§3.2), mixture-of-experts routing (§3.3), table lookups (§3.4), and softmax (§3.5) are proven with them; and rescaling and overflow handling (§3.6). Every claim's full listing and soundness lemma is in Appendix B.
 
-### 3.1 Argument interface
+### 4.1 Ligero overview
 
 Ligero provides three tools, and everything in the paper is built from them:
 
@@ -53,7 +53,7 @@ The base Ligero protocol runs in three rounds: (1) the prover commits; (2) the v
 
 Every committed value is a 64-bit fixed-point integer at the working scale $\mathrm{S} = 2^{12}$, in the Goldilocks field $|F| = 2^{64} - 2^{32} + 1$; the lookups and brackets of the checks below need integer keys and integer comparisons, and fixed point provides them. Products of fixed-point values arrive at a higher scale and are returned to the working scale by a rescaling operation (§3.6).
 
-### 3.2 Matrix multiplication via Freivalds
+### 3.2 Matrix multiplication
 
 Consider a committed product $\boldsymbol{C} = \boldsymbol{A}\boldsymbol{B}$ of shapes $(m, k)$ and $(k, n)$. Checking it entrywise would need $mnk$ Hadamard constraints. VerInf instead checks the random projection
 
@@ -111,7 +111,7 @@ The soundness property here is the weaker downstream one of §7.1: the witness i
 
 The output tokens enter only as committed witness, never the public claim list, and their indicator rows are shared with the input selection, so the scored tokens are, by shared committed variable, the tokens the model consumed (B.7). Because the bound folds onto logits already inside the proof, certifying it adds about 0.1% to the per-token witness (Appendix A). Binding the committed streams to digests recorded at generation time is §7.4 and Appendix E.
 
-## 5. Claim format
+## 5. Claim language
 
 A model is written as ordinary tensor code against a tape, in the style of PyTorch. Each `tape.<op>` call records one claim, a public statement of what was computed, and returns a handle; handles overload the usual `@`, `*`, and `+`. A few lines of an attention block read:
 
@@ -144,7 +144,7 @@ The folded test results of §6.2 are three short polynomials. The linear test ag
 
 Zero knowledge rests on two mechanisms. The random padding makes the values revealed at audited columns uniform conditioned on the message, provided the number of distinct columns ever audited against a commitment stays below $\kappa - \mu$; per-proof blocks refresh their padding every proof, and the persistent weight block's budget is managed in §6.4. Each test polynomial additionally mixes in a blinding row that leaves the verifier's checks unaffected while hiding its witness-derived part. Challenges are never materialized: each is a value of a hash PRF on (seed, index, label), derivable in $O(1)$ by both sides, with labels separating the challenge families.
 
-### 6.2 Protocol rounds
+### 6.2 Four round protocol
 
 The checks of §3.2 to §3.5 use challenges of their own, drawn only after the initial commitments: the Freivalds projections after the matrices and their product are committed, the lookup challenges after the queries and multiplicities. Each check then commits new values built from its challenges (the projections, masked products, and lookup inverses). VerInf therefore inserts a commitment round between these challenges and the test challenges, so that the new values are fixed before the tests that fold them are drawn and cannot be fitted to a fold the prover has seen. This gives four rounds:
 
@@ -165,7 +165,7 @@ At frontier scale the committed witness is far larger than any single machine's 
 
 Peak memory is set by the largest single working set. At long context that is softmax's: its witness grows quadratically with context length, and the implementation proves each softmax over its full score matrix at once. This is a choice rather than a necessity, since the rows could be split into chunks and proven piece by piece, capping the working set at the chunk size (§10). One small piece of state persists across the whole proof: the lookup multiplicities of §3.4, kept as one resident histogram per table and fixed in size by the tables. Appendix C specifies how the constraint system is regenerated and evaluated against the streamed witness during the test folds; the resulting cost profile is analyzed in §8.
 
-### 6.4 Persistent weight commitment
+### 6.4 Weight commitment and refresh
 
 The weights are committed once, and later proofs reference the standing root $R_W$ rather than re-hashing the weight block, which removes the largest per-proof commitment cost at small context (§8).
 
@@ -323,7 +323,7 @@ The matmul claims dominate the linear ($S$) coefficient of all three: the QKVO p
 
 The totals are validated at full scale by the demonstrated runs. The verifier's independent compile of the 1093-token proof reports 115,235,029 witness rows and 23,554,246 quadratic rows; at $\mu = 8192$ slots per row that is $W = 9.44{\times}10^{11}$ and $Q = 1.93{\times}10^{11}$, within 1% of the model's $W(1093) = 9.38{\times}10^{11}$ and $Q(1093) = 1.91{\times}10^{11}$. The 1000-token all-hidden run of §9 checks the same way: 109,267,016 witness rows and 21,370,360 quadratic rows, $W = 8.95{\times}10^{11}$ and $Q = 1.75{\times}10^{11}$ against $W(1000) = 8.88{\times}10^{11}$ and $Q(1000) = 1.73{\times}10^{11}$, again within about 1% (the hidden-token indicator claims it adds sit below the percent level). The $S^2$ coefficient is separately anchored by measurement: single-block runs across context lengths fit 840 committed slots per block per $S^2$, identical at $E = 8$ and $E = 128$ (confirming the quadratic term is attention alone), and $840 \times 48 = 40320$.
 
-### A.3 The leading terms, exactly
+### A.3 Leading terms
 
 Both leading coefficients have closed forms, so the cost can be understood from two claim types.
 
@@ -455,7 +455,7 @@ A count cell is its line's footprint times its extent. A filtered extent counts 
 
 Three composites recur across the claims as their own line kinds, the range check, the paired lookup, and the rescale, and one shared pattern, the word decomposition, recurs written out inline. The LogUp lookup is the mechanism underlying the first two, and the decomposition and rescale build on the range check, so each entry below depends only on entries above it. All of them query public tables, and every table lives in one registry, given first.
 
-#### B.1.0 The table registry
+#### B.1.0 Table registry
 
 Each row records one public table: its contents, length, which claims query it, the query volume $M(S)$ summed over the Maverick claim list as a polynomial in the context length $S$ (48 layers, $n_q = 40$, $E = 128$, $V = 202{,}048$; §A.2), and the per-table LogUp soundness term $(M + T_{\text{len}} + 1)/\vert F \vert$, with $T_{\text{len}}$ the table length, evaluated in the error column at $\vert F \vert \approx 2^{64}$ and the demonstrated $S = 1000$. In the sharers column, $N$, $B$, $T$, $E$ are the invoking claim's size parameters.
 
@@ -748,7 +748,7 @@ The two totals rows match A.1's routing and freivalds-combine rows. The combine'
 
 **Generalization.** All $E$ expert streams are committed even though one fires, a hiding requirement of §3.3, and the elementwise nonlinearity is applied once after the combine in the top-1 form. The routing weight applied to the chosen expert is a paired lookup against the registry's sigmoid table on $\boldsymbol{r}_{\text{chosen}}$ (B.8). A sibling of this claim, at $E = V$ but without the tiebreak and with the gap bound carried by a table lookup rather than a word decomposition, is the argmax and hidden-select machinery of the surprisal claims (B.7).
 
-### B.7 The unexplained-information bound
+### B.7 Surprisal claims
 
 The bound of §4 is computed from the LM-head logits by a short chain of claims per output position, reusing a sibling of the routing gap machinery (B.6), the paired lookup (B.1), and the elementwise claims; Appendix E binds the same committed tokens to the digests recorded at generation time (§7.4). Its soundness property is the weaker downstream one of §7.1: the witness is deliberately not unique, and instead every prover freedom provably inflates the reported value. The tables $\mathrm{Exp}$ and $\mathrm{Pow}$ and their scales are specified in the registry (B.1.0); the ceiling divisor $\mathrm{k} = \mathrm{s_c}/\mathrm{s_b} = 2^{16}$ is a power of two, and the slack $\boldsymbol{d}$ decomposes into four $12$-bit words against $d_{\max} = V \mathrm{s_y}$. All in-circuit arithmetic is in nats at scale $\mathrm{s_b}$; the public value is the revealed sum $\boldsymbol{S}_z$, and the conversion to bits, $U(o) = \boldsymbol{S}_z / (\mathrm{s_b} \ln 2)$ rounded up, happens outside the proof.
 
@@ -829,7 +829,7 @@ The sigmoid routing weight of the MoE layers is a paired-lookup instance against
 
 This appendix specifies how the flat constraint system of §3 is represented and evaluated: the generative constraint level shared by the prover and the verifier, the run structure both evaluation loops exploit, the challenge-access discipline, and the two folds themselves. The governing constraint is scale. The linear system has $\Theta(\text{nnz})$ nonzeros with $\text{nnz} \approx 2\text{–}4\,W$, tens of terabytes at the scale of §9, so no materialized form of the constraints ever exists on either side. Everything below is regenerated on demand from descriptors whose total size is $O(\#\text{claims})$, a few tens of megabytes at 400B scale.
 
-### C.1 The constraint level: bands and quadratic descriptors
+### C.1 Constraint level: bands and quadratic descriptors
 
 Each claim compiles, independently on each side (the verifier recompiles from the public claim list and never reads prover-supplied constraints, §6.5), into three kinds of object:
 
@@ -852,7 +852,7 @@ A band's slot-to-(id, coefficient) map decomposes into maximal homogeneous runs 
 
 Row sums and the Freivalds $B$/$C$ sides are repeats; the Freivalds $A$ side is the strided repeat, whose ids have no contiguous runs but span only $k \le H\cdot K$ ids ($\le 128$ KB preloaded; the prover caches these buffers for the whole proof, across all chunks and layers, since $s_{\text{comb}}$ is fixed once per round). Identity pins and lookups are one-to-one, where one hash per distinct id is the floor; broadcasts are fans, where only the range *sum* is needed, so the range is never buffered. The effect is that challenge hashing costs $O(\text{distinct ids})$ on the duplication-heavy bands rather than $O(\text{nnz})$: a weight matmul's $B$-side reuses each id $n$ times, an expert matmul's $A$-side $m$ times.
 
-### C.3 The prover's fold (round 3)
+### C.3 Prover fold (round 3)
 
 The linear test polynomial is $q_{\text{lin}} = \sum_i R_i \cdot p_i$, where $p_i$ is row $i$'s committed codeword polynomial and $R_i$ interpolates row $i$'s slice of $r_{\text{lin}}^{\top} A$. The prover computes it during the same tape-order sweep that regenerates the witness (§6.3), in two stages per 256-row chunk:
 
@@ -861,7 +861,7 @@ The linear test polynomial is $q_{\text{lin}} = \sum_i R_i \cdot p_i$, where $p_
 
 Quadratic descriptors fire at their declaring claim, where the sweep's value liveness guarantees all three operands are resident: their rows are re-encoded on demand (exact, because the zero-knowledge padding of §6.1 is generated by a PRG seeded with the absolute row index, so re-encoding reproduces the committed polynomial bit for bit), and the pointwise products fold into $p_0$ under the positionally indexed combiners.
 
-### C.4 The verifier's evaluation
+### C.4 Verifier evaluation
 
 The verifier recompiles the same bands and quadratic descriptors from the public claim list, then evaluates them at the opened columns rather than over full polynomials. The linear sum check needs no witness at all: $\sum_c q_{\text{lin}}(\zeta_c)$ is compared against the right-hand-side runs, each run one PRF range sum. The linear column check reconstructs, for every opened point $\eta_j$, each row's $R_i(\eta_j)$ through the closed form for a message slot's contribution to a codeword value (no NTT), as one generic fold over the runs: a repeat run takes one challenge and a prefix-summed-Lagrange difference (constant coefficients) or a coefficient dot (vector coefficients, with the Freivalds $\lambda$ factored out per run); strided repeats read the band's preload; a fan takes one challenge range sum shared across all $\tau$ opened points. The quadratic column check walks the quadratic descriptors' rows with their positional combiners.
 
@@ -875,7 +875,7 @@ Every representation change above (per-row structures to bands and descriptors, 
 
 The bound of §4 is conditioned on the input tokens and scored on the output tokens, so it certifies the real run only if the committed streams are the streams the run actually used (§7.4). Inside the proof they are ordinary hidden witness: the claims force the output tokens to be *some* valid selections, not the ones the deployment emitted, and a prover could commit a lower-surprisal transcript and deflate the bound, or condition on a fabricated prompt and certify nothing. This appendix gives the construction that closes the gap by binding both committed streams to a commitment recorded independently at generation time, outside the proof.
 
-### E.1 The recorded commitment
+### E.1 Recorded commitment
 
 At generation time, an independent recording process computes, for each request/response exchange,
 
@@ -899,7 +899,7 @@ Token streams are low-entropy, about 18 bits per token against a 202,048-token v
 
 The committed token integer $t_i$ is the single interface between the model side and the wire side of the proof, and every connection is a copy constraint on shared witness slots. On the input side, a select claim commits an indicator row $M_i$ over the vocabulary with booleanity $M_i \circ M_i = M_i$, cardinality $\sum_j M_{ij} = 1$, and the index binding $t_i = \sum_j j \cdot M_{ij}$ (the three together pin $M_i$ uniquely as the indicator of $t_i$), and the embedded stream is $x = M E$ by a Freivalds matmul against the embedding matrix, which is a committed model weight in any case. On the output side, the argmax claim's select gadget (B.7) carries the same index binding, so the observed-token gap that feeds the surprisal is evaluated at $t_i$ by construction. On the wire side, a word decomposition splits each $t_i$ into a fixed serialization of four little-endian bytes, which feed the cipher. Each of these links is load-bearing: without any one of them, the binding would attest to a different token set than the one the bound is computed over.
 
-### E.5 The cipher and hash in constraints
+### E.5 Cipher and hash in constraints
 
 Both primitives are lookup arguments over the existing table machinery, and all values stay below $2^{32}$, so the width argument of B.1 rules out field wraparound throughout. AES-128-CTR costs, per 16-byte block: sixteen S-box paired lookups per round against a 256-entry table; MixColumns as an *xtime* lookup plus linear constraints (doubling in $\mathrm{GF}(2^8)$); AddRoundKey and all other XORs against a $2^{16}$-entry byte-pair table; ShiftRows as wiring. The key schedule reuses the S-box table and is proven once per key. SHA-256 costs, per 64-byte block: the $\sigma$/$\Sigma$/Ch/Maj functions on 16-bit-limb XOR and AND tables, rotations as decomposition rewiring, and mod-$2^{32}$ additions with one range-checked carry word each; message padding is public structure compiled into the constraints.
 
