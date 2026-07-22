@@ -22,6 +22,7 @@ A model is written as ordinary tensor code against a tape, in the style of PyTor
 The demonstrated system has two main limitations. The committed integer model leaves 0.880 bits per token unexplained, explaining about 95% of the information a token from the 202,048-token vocabulary can carry; future work can tighten this by modeling the deployment's floating-point computation more closely. And the public claim list reveals the model architecture, though not the weights; a second proof stage, showing that the verifier's own architecture checks ran and accepted, could hide it (§10).
 
 Our contributions are:
+
 * A proof design that leaves the prover no freedom to deflate the reported bound, with a unique witness pinned at every step of the forward pass.
 * A complete implementation on a hash-based proof system (Ligero), with no trusted setup: a streaming prover whose peak memory tracks one operation rather than the witness, and a verifier that recompiles every constraint from the public claim list.
 * A demonstration at frontier scale: a proof of a 1000-token forward pass of a 400-billion-parameter mixture of experts, generated in 14.3 hours on a single consumer machine by streaming the 7.2-terabyte witness at a working set of 83.9 GB, and accepted by an independently implemented verifier.
@@ -272,20 +273,24 @@ The cost model of §8 was fitted to measured hardware primitives and checked aga
 VerInf is a research prototype and has not had a security review. The demonstrated system has four main caveats. The proofs are large, gigabytes at full model scale (§9). The demonstrated run leaves 0.880 bits per token unexplained, which may not suffice for every application. The soundness of a demonstrated configuration is a per-challenge bound (§7.3), adequate in the setting of §1 but a deployment choice rather than a fixed property. And the public claim list reveals the model architecture (§7.1). The main directions for future work are:
 
 **Tightening the bound.**
+
 - Commit the low-precision floating-point intermediates directly, rather than an Int64 approximation, and prove a similarity claim per operation, so quantization error does not propagate through the proof; proving exact low-precision integer inference is a natural first step. Where a deployment runs deterministic kernels, modeling them exactly in the proof is the limiting case of the same direction, driving the bound toward zero; bitwise-reproducible inference has been demonstrated across GPU variants (Cankaya 2026), and a deployment that adopts it needs only this limiting case.
 - Tune the quantization scales, table sizes, and noise-model parameters, which trade unexplained information against proving time; §4 prices every such choice through the bound.
 
 **Prover cost.**
+
 - Reduce the committed intermediates that set the leading cost (§8): the quadratic attention witness and the mixture-of-experts commitment.
 - Chunk the softmax witness to remove the one large residency (§6.3), decoupling peak memory from context length.
 - Prove claims one at a time rather than in four passes, worth roughly a third of the cost floor (Appendix A.5), and parallelize the prover across GPUs along the row structure of §6.3.
 
 **Proof size and verification.**
+
 - Port the verifier's column checks to a GPU, keeping the CPU version as the bit-exact reference; verification runtime is the measured cost of higher soundness levels (§9).
 - Reduce proof size with a wider column format, and grow the polynomial degree with the witness so that proof size and verifier work scale as the square root of the witness, as Ligero permits; the demonstrated runs hold the degree fixed, which is simpler but makes the proof grow linearly.
 - A budget ledger for the persistent weight commitment: the refresh, and the linear proof linking an old commitment to its replacement, are implemented and tested (§6.4); the remaining piece is the prover-side bookkeeping that tracks the opened-column budget and triggers the refresh.
 
 **Assurance.**
+
 - Formally verify the two properties of §7.2: that the forward-pass claims admit unique witnesses, including a systematic magnitude and width audit of every bracket and exclusion operand (§3.6), with the surprisal claims of Appendix B.7 first; and that the causal mask prevents a later token from influencing an earlier one.
 - Replace the manual audit of the claim graph with automated analysis, for example confirming that each weight is read only in a forward pass so that no gradient step is hidden in the computation.
 - Hide the model architecture with a second proof stage showing that the verifier's own check ran and accepted (§7.1), so architecture-dependent conditions never surface.
