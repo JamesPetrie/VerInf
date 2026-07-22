@@ -1,0 +1,17 @@
+% LaTeX shims for the GitHub-flavored markdown source (see CLAUDE.md math rules):
+% \lt is the MathJax/KaTeX spelling of < used to survive GitHub's HTML pass.
+\newcommand{\lt}{<}
+\newcommand{\gt}{>}
+% Unicode used in the source that pdflatex lacks:
+\usepackage{newunicodechar}
+\newunicodechar{ⓡ}{\textcircled{\scriptsize r}}
+\newunicodechar{×}{\ensuremath{\times}}
+\newunicodechar{½}{\ensuremath{\tfrac{1}{2}}}
+% The Appendix B claim-listing arrays are wider than the text block:
+% scale array environments down. Safe here: the source has no matrix/cases
+% environments (which call \array internally) — only the six listings.
+\usepackage{environ,graphicx}
+\let\oldarray\array
+\let\endoldarray\endarray
+\RenewEnviron{array}[1]{\scalebox{0.78}{$\begin{oldarray}{#1}\BODY\end{oldarray}$}}
+\setlength{\arraycolsep}{3pt}

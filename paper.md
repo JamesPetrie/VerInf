@@ -1,5 +1,7 @@
 # VerInf: Zero-Knowledge Proofs of Inference for Frontier-Scale Models on a Single Machine
 
+<p><b>📄 <a href="paper.pdf">Read the PDF</a></b> — GitHub's markdown viewer cannot faithfully render this paper's math (notably the Appendix B claim listings). The PDF is regenerated from this file on substantive changes: <code>pandoc paper.md -H pdf-header.tex -V geometry:margin=1in -o paper.pdf</code></p>
+
 James Petrie
 
 ---
@@ -660,7 +662,7 @@ $$
 \end{array}
 $$
 
-The carry-chain and bracket-pin blocks are written once and run once per chain $\boldsymbol{q} \in \lbrace \boldsymbol{q}_1, \boldsymbol{q}_2\rbrace $; their count cells already include both chains. The per-cell broadcast products $\boldsymbol{x}[b,i]\ \boldsymbol{y}[b]$ appear in no line and are never committed: the quad pin compares projections, which is what collapses $Bd$ Hadamard slots to $B$.
+The carry-chain and bracket-pin blocks are written once and run once per chain $\boldsymbol{q} \in \lbrace \boldsymbol{q}_1, \boldsymbol{q}_2\rbrace$; their count cells already include both chains. The per-cell broadcast products $\boldsymbol{x}[b,i]\ \boldsymbol{y}[b]$ appear in no line and are never committed: the quad pin compares projections, which is what collapses $Bd$ Hadamard slots to $B$.
 
 The totals row matches A.1's RMSNorm row. (A.1's per-row constants were updated together with this listing: the wrap-free bracket raised them from the original construction's $26B$, $7B$, $13B$ to $82B$, $17B$, $42B$, a shift far below the resolution of A.2's validation; the per-cell terms, which carry the cost, never changed.)
 
