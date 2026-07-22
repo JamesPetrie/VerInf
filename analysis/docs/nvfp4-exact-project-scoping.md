@@ -11,8 +11,10 @@ with the codebase; §3 defines the project-specific vocabulary.
 
 VerInf produces zero-knowledge proofs of LLM inference ([`README.md`](../../README.md),
 [`paper.md`](../../paper.md)). The proof works over a finite field, but real inference
-runs in floating point and is nondeterministic (summation order alone changes
-results), so VerInf does not demand bit-exact reproduction. Instead it proves the
+runs in floating point, whose arithmetic is non-associative: results depend on
+summation order, and in deployments whose kernels are not batch-invariant, on
+which other requests happen to be batched alongside a given one. So VerInf does
+not demand bit-exact reproduction. Instead it proves the
 committed outputs are *well explained* by a committed finite-field computation and
 certifies a bound on the **unexplained information U** — the output bits per token
 the computation does not account for. Lower U = stronger guarantee; U is the
