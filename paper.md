@@ -6,6 +6,11 @@ James Petrie
 
 ---
 
+## Abstract
+
+We present a hash-based zero-knowledge argument whose streaming implementation lets us prove a 400-billion-parameter model on a consumer device. The argument bounds the unexplained information in an observed output stream, certifying it against a committed integer model without simulating floating point. The construction uniquely pins every witness upstream of the logits and makes each downstream freedom provably inflate the report, so the certified bound cannot be deflated by the prover. We demonstrate a proof of a 1000-token forward pass of Llama-4-Maverick, a mixture-of-experts model, generated in 14.3 hours on a single NVIDIA DGX Spark and accepted by an independently implemented verifier. The prover streams a 7.2-terabyte witness at an 83.9 GB working set; at 400 billion parameters, the proof is roughly thirty times larger than prior published zero-knowledge inference. A cost model calibrated against measured hardware performance projects that a million-token context with dense attention in every layer could be proven in days on an NVL72-class cluster. Together these make the argument a candidate primitive for high-stakes agreements about AI between well-resourced parties who do not trust each other's hardware, a setting that also makes an interactive protocol natural and large proofs and slow verification acceptable.
+
+
 ## 1. Introduction
 VerInf verifies how much of the information in a token stream is explained by inference of a committed large language model, in zero knowledge. Its one public quantity is a bound on the unexplained information in the output, the bits that a permitted computation on the measured inputs does not account for. The committed witness at frontier scale exceeds any single machine's memory, so our implementation streams it operation by operation. This is what makes massive proofs feasible on small hardware: VerInf produced a proof of a 1000-token forward pass of Llama-4-Maverick, a 400-billion-parameter mixture of experts with all 128 experts committed per layer, in 14.3 hours on a single consumer NVIDIA DGX Spark, streaming a 7.2-terabyte witness at a peak working set of 83.9 GB. Prior published zero-knowledge inference work reaches models of about 13 billion parameters (Sun, Li, and Zhang 2024), roughly thirty times smaller.
 

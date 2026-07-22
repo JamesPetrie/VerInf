@@ -47,11 +47,20 @@ body = re.sub(r"\\subsubsection\{", r"__TMP_SUBSEC__{", body)
 body = re.sub(r"\\subsection\{", r"\\section{", body)
 body = re.sub(r"__TMP_SUBSEC__\{", r"\\subsection{", body)
 
-# Provisional abstract: the introduction's first paragraph, duplicated.
-intro_match = re.search(
-    r"\\section\{1\. Introduction\}\s*\n\n?(.*?)(?=\n\n)", body, re.DOTALL
+# Abstract: the markdown Abstract section, extracted and removed from the
+# body (the abstract environment in the preamble replaces it). Fallback:
+# the introduction's first paragraph, duplicated.
+abs_match = re.search(
+    r"\\section\{Abstract\}\s*\n(.*?)(?=\n\\section\{)", body, re.DOTALL
 )
-abstract = intro_match.group(1).strip() if intro_match else "TODO: abstract"
+if abs_match:
+    abstract = abs_match.group(1).strip()
+    body = body[: abs_match.start()] + body[abs_match.end():]
+else:
+    intro_match = re.search(
+        r"\\section\{1\. Introduction\}\s*\n\n?(.*?)(?=\n\n)", body, re.DOTALL
+    )
+    abstract = intro_match.group(1).strip() if intro_match else "TODO: abstract"
 
 # Figures: strip pandoc's height cap and the "Figure N:" caption prefix,
 # and point paths at the repo's analysis/figures/.
