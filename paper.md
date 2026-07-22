@@ -530,8 +530,8 @@ $$
 \texttt{input} & \boldsymbol{B} & \forall\, j,\; b \in [n] & \cdot & \cdot & \cdot \\
 \hline
 & \textit{raw product at } s_a s_b & & & & \\
-\texttt{decl} & \boldsymbol{C}_{\text{full}} & \forall\, a, b & mn & \cdot & \cdot \\
-\texttt{rescale} & \boldsymbol{C}[a,b] \leftarrow \texttt{rescale}(\boldsymbol{C}_{\text{full}}[a,b]) & \forall\, a, b & 5mn & 2mn & 2mn \\
+\texttt{decl} & \boldsymbol{C}_ {\text{full}} & \forall\, a, b & mn & \cdot & \cdot \\
+\texttt{rescale} & \boldsymbol{C}[a,b] \leftarrow \texttt{rescale}(\boldsymbol{C}_ {\text{full}}[a,b]) & \forall\, a, b & 5mn & 2mn & 2mn \\
 \hline
 \texttt{chal} & \rho & \forall\, b & \cdot & \cdot & \cdot \\
 \texttt{chal} & \lambda & \forall\, a & \cdot & \cdot & \cdot \\
@@ -539,7 +539,7 @@ $$
 \texttt{lin} & \boldsymbol{y}[j] \leftarrow \textstyle\sum_{b \in [n]} \boldsymbol{B}[j,b]\,\rho[b] & \forall\, j & k & k & \cdot \\
 \texttt{lin} & \boldsymbol{u}[j] \leftarrow \textstyle\sum_{a \in [m]} \lambda[a]\,\boldsymbol{A}[a,j] & \forall\, j & k & k & \cdot \\
 \texttt{quad} & \boldsymbol{p}[j] \leftarrow \boldsymbol{u}[j]\,\boldsymbol{y}[j] & \forall\, j & k & \cdot & k \\
-\texttt{lin} & \textstyle\sum_{a, b} \lambda[a]\,\rho[b]\,\boldsymbol{C}_{\text{full}}[a,b] == \textstyle\sum_{j} \boldsymbol{p}[j] &  & \cdot & 1 & \cdot \\
+\texttt{lin} & \textstyle\sum_{a, b} \lambda[a]\,\rho[b]\,\boldsymbol{C}_ {\text{full}}[a,b] == \textstyle\sum_{j} \boldsymbol{p}[j] &  & \cdot & 1 & \cdot \\
 \textit{totals} &  &  & 6mn + 3k & 2mn + 2k + 1 & 2mn + k \\
 \end{array}
 $$
@@ -562,33 +562,33 @@ $$
  & \textit{--- shift and exponentiate ---} &  &  &  &  \\
 & \textit{per-row shift} & & & & \\
 \texttt{decl} & \boldsymbol{c} & \forall\, h, q & n_q S & \cdot & \cdot \\
-\texttt{range} & \boldsymbol{c}[h,q] \sqsubseteq \pm\mathrm{range}_{24} & \forall\, h, q & 2 n_q S & n_q S & n_q S \\
+\texttt{range} & \boldsymbol{c}[h,q] \sqsubseteq \pm\mathrm{range}_ {24} & \forall\, h, q & 2 n_q S & n_q S & n_q S \\
 & \textit{saturation words} & & & & \\
-\texttt{decl} & \boldsymbol{z}_{\text{high}} & \forall\, h, q, i & n_q S^2 & \cdot & \cdot \\
-\texttt{range} & \boldsymbol{z}_{\text{high}}[h,q,i] \sqsubseteq \mathrm{range}_{16} & \forall\, h, q, i & n_q S^2 & \cdot & n_q S^2 \\
-\texttt{lin} & \boldsymbol{z}[h,q,i] \leftarrow \boldsymbol{c}[h,q] - \boldsymbol{x}[h,q,i] - \mathrm{Z_{max}}\, \boldsymbol{z}_{\text{high}}[h,q,i] & \forall\, h, q,\; i \le q & \tfrac12 n_q S(S{+}1) & \tfrac12 n_q S(S{+}1) & \cdot \\
+\texttt{decl} & \boldsymbol{z}_ {\text{high}} & \forall\, h, q, i & n_q S^2 & \cdot & \cdot \\
+\texttt{range} & \boldsymbol{z}_ {\text{high}}[h,q,i] \sqsubseteq \mathrm{range}_ {16} & \forall\, h, q, i & n_q S^2 & \cdot & n_q S^2 \\
+\texttt{lin} & \boldsymbol{z}[h,q,i] \leftarrow \boldsymbol{c}[h,q] - \boldsymbol{x}[h,q,i] - \mathrm{Z_{max}}\, \boldsymbol{z}_ {\text{high}}[h,q,i] & \forall\, h, q,\; i \le q & \tfrac12 n_q S(S{+}1) & \tfrac12 n_q S(S{+}1) & \cdot \\
 & \textit{free in key range; value-neutral} & & & & \\
 \texttt{decl} & \boldsymbol{z}[h,q,i] & \forall\, h, q,\; i > q & \tfrac12 n_q S(S{-}1) & \cdot & \cdot \\
-\texttt{lookup} & \boldsymbol{e}_1[h,q,i] \leftarrow \mathrm{T_A}\big[\, \boldsymbol{z}[h,q,i] + \mathrm{Z_{max}} \cdot [\![\, i > q \,]\!] \,\big] & \forall\, h, q, i & 3 n_q S^2 & n_q S^2 & n_q S^2 \\
-\texttt{lookup} & \boldsymbol{e}_2[h,q,i] \leftarrow \mathrm{T_B}\big[\, \boldsymbol{z}[h,q,i] + \mathrm{Z_{max}} \cdot [\![\, i > q \,]\!] \,\big] & \forall\, h, q, i & 3 n_q S^2 & n_q S^2 & n_q S^2 \\
+\texttt{lookup} & \boldsymbol{e}_ 1[h,q,i] \leftarrow \mathrm{T_A}\big[\, \boldsymbol{z}[h,q,i] + \mathrm{Z_{max}} \cdot [\![\, i > q \,]\!] \,\big] & \forall\, h, q, i & 3 n_q S^2 & n_q S^2 & n_q S^2 \\
+\texttt{lookup} & \boldsymbol{e}_ 2[h,q,i] \leftarrow \mathrm{T_B}\big[\, \boldsymbol{z}[h,q,i] + \mathrm{Z_{max}} \cdot [\![\, i > q \,]\!] \,\big] & \forall\, h, q, i & 3 n_q S^2 & n_q S^2 & n_q S^2 \\
  & \textit{--- saturate the tail ---} &  &  &  &  \\
-& \textit{free at } \boldsymbol{z}_{\text{high}} = 0 \textit{; value-neutral} & & & & \\
+& \textit{free at } \boldsymbol{z}_ {\text{high}} = 0 \textit{; value-neutral} & & & & \\
 \texttt{decl} & \boldsymbol{inv} & \forall\, h, q, i & n_q S^2 & \cdot & \cdot \\
-\texttt{quad} & \boldsymbol{t}[h,q,i] \leftarrow \boldsymbol{z}_{\text{high}}[h,q,i] \cdot \boldsymbol{inv}[h,q,i] & \forall\, h, q, i & n_q S^2 & \cdot & n_q S^2 \\
-\texttt{quad} & \boldsymbol{t}[h,q,i] \cdot \boldsymbol{z}_{\text{high}}[h,q,i] == \boldsymbol{z}_{\text{high}}[h,q,i] & \forall\, h, q, i & \cdot & \cdot & n_q S^2 \\
+\texttt{quad} & \boldsymbol{t}[h,q,i] \leftarrow \boldsymbol{z}_ {\text{high}}[h,q,i] \cdot \boldsymbol{inv}[h,q,i] & \forall\, h, q, i & n_q S^2 & \cdot & n_q S^2 \\
+\texttt{quad} & \boldsymbol{t}[h,q,i] \cdot \boldsymbol{z}_ {\text{high}}[h,q,i] == \boldsymbol{z}_ {\text{high}}[h,q,i] & \forall\, h, q, i & \cdot & \cdot & n_q S^2 \\
 \texttt{quad} & \boldsymbol{t}[h,q,i]^2 == \boldsymbol{t}[h,q,i] & \forall\, h, q, i & \cdot & \cdot & n_q S^2 \\
-\texttt{quad} & \boldsymbol{mux}_1[h,q,i] \leftarrow \boldsymbol{t}[h,q,i] \cdot \boldsymbol{e}_1[h,q,i] & \forall\, h, q, i & n_q S^2 & \cdot & n_q S^2 \\
-\texttt{quad} & \boldsymbol{mux}_2[h,q,i] \leftarrow \boldsymbol{t}[h,q,i] \cdot \boldsymbol{e}_2[h,q,i] & \forall\, h, q, i & n_q S^2 & \cdot & n_q S^2 \\
-\texttt{lin} & \boldsymbol{y}_1[h,q,i] \leftarrow \boldsymbol{e}_1[h,q,i] - \boldsymbol{mux}_1[h,q,i] & \forall\, h, q, i & n_q S^2 & n_q S^2 & \cdot \\
-\texttt{lin} & \boldsymbol{y}_2[h,q,i] \leftarrow \boldsymbol{e}_2[h,q,i] - \boldsymbol{mux}_2[h,q,i] & \forall\, h, q, i & n_q S^2 & n_q S^2 & \cdot \\
+\texttt{quad} & \boldsymbol{mux}_ 1[h,q,i] \leftarrow \boldsymbol{t}[h,q,i] \cdot \boldsymbol{e}_ 1[h,q,i] & \forall\, h, q, i & n_q S^2 & \cdot & n_q S^2 \\
+\texttt{quad} & \boldsymbol{mux}_ 2[h,q,i] \leftarrow \boldsymbol{t}[h,q,i] \cdot \boldsymbol{e}_ 2[h,q,i] & \forall\, h, q, i & n_q S^2 & \cdot & n_q S^2 \\
+\texttt{lin} & \boldsymbol{y}_ 1[h,q,i] \leftarrow \boldsymbol{e}_ 1[h,q,i] - \boldsymbol{mux}_ 1[h,q,i] & \forall\, h, q, i & n_q S^2 & n_q S^2 & \cdot \\
+\texttt{lin} & \boldsymbol{y}_ 2[h,q,i] \leftarrow \boldsymbol{e}_ 2[h,q,i] - \boldsymbol{mux}_ 2[h,q,i] & \forall\, h, q, i & n_q S^2 & n_q S^2 & \cdot \\
  & \textit{--- bracket the shift ---} &  &  &  &  \\
-\texttt{lin} & \boldsymbol{s}_1[h,q] \leftarrow \textstyle\sum_{i \in [S]} \boldsymbol{y}_1[h,q,i] & \forall\, h, q & n_q S & n_q S & \cdot \\
-\texttt{lin} & \boldsymbol{s}_2[h,q] \leftarrow \textstyle\sum_{i \in [S]} \boldsymbol{y}_2[h,q,i] & \forall\, h, q & n_q S & n_q S & \cdot \\
+\texttt{lin} & \boldsymbol{s}_ 1[h,q] \leftarrow \textstyle\sum_{i \in [S]} \boldsymbol{y}_ 1[h,q,i] & \forall\, h, q & n_q S & n_q S & \cdot \\
+\texttt{lin} & \boldsymbol{s}_ 2[h,q] \leftarrow \textstyle\sum_{i \in [S]} \boldsymbol{y}_ 2[h,q,i] & \forall\, h, q & n_q S & n_q S & \cdot \\
 & \textit{bracket slacks} & & & & \\
-\texttt{decl} & \boldsymbol{r}_{\text{lo}},\; \boldsymbol{r}_{\text{hi}} & \forall\, h, q & 2 n_q S & \cdot & \cdot \\
-\texttt{range} & \boldsymbol{r}_{\text{lo}}[h,q] \sqsubseteq \mathrm{range}_{24}, \quad \boldsymbol{r}_{\text{hi}}[h,q] \sqsubseteq \mathrm{range}_{24} & \forall\, h, q & 2 n_q S & \cdot & 2 n_q S \\
-\texttt{lin} & \boldsymbol{s}_1[h,q] + \boldsymbol{r}_{\text{lo}}[h,q] == \mathrm{s_y} & \forall\, h, q & \cdot & n_q S & \cdot \\
-\texttt{lin} & \boldsymbol{r}_{\text{hi}}[h,q] - \boldsymbol{s}_2[h,q] == -(\mathrm{s_y} + 1) & \forall\, h, q & \cdot & n_q S & \cdot \\
+\texttt{decl} & \boldsymbol{r}_ {\text{lo}},\; \boldsymbol{r}_ {\text{hi}} & \forall\, h, q & 2 n_q S & \cdot & \cdot \\
+\texttt{range} & \boldsymbol{r}_ {\text{lo}}[h,q] \sqsubseteq \mathrm{range}_ {24}, \quad \boldsymbol{r}_ {\text{hi}}[h,q] \sqsubseteq \mathrm{range}_ {24} & \forall\, h, q & 2 n_q S & \cdot & 2 n_q S \\
+\texttt{lin} & \boldsymbol{s}_ 1[h,q] + \boldsymbol{r}_ {\text{lo}}[h,q] == \mathrm{s_y} & \forall\, h, q & \cdot & n_q S & \cdot \\
+\texttt{lin} & \boldsymbol{r}_ {\text{hi}}[h,q] - \boldsymbol{s}_ 2[h,q] == -(\mathrm{s_y} + 1) & \forall\, h, q & \cdot & n_q S & \cdot \\
 \textit{totals} &  &  & 15\, n_q S^2 + 9\, n_q S & \tfrac12 n_q S(S{+}1) + 4\, n_q S^2 + 5\, n_q S & 8\, n_q S^2 + 3\, n_q S \\
 \end{array}
 $$
@@ -609,52 +609,52 @@ $$
 \texttt{input} & \boldsymbol{x} & \forall\, b \in [B],\; i \in [d] & \cdot & \cdot & \cdot \\
 \hline
  & \textit{--- row energy ---} &  &  &  &  \\
-\texttt{quad} & \boldsymbol{X}_{\text{sq}}[b,i] \leftarrow \boldsymbol{x}[b,i]^2 & \forall\, b, i & Bd & \cdot & Bd \\
-\texttt{lin} & \boldsymbol{S}_{\text{sum}}[b] \leftarrow \textstyle\sum_{i \in [d]} \boldsymbol{X}_{\text{sq}}[b,i] & \forall\, b & B & B & \cdot \\
-\texttt{lin} & \boldsymbol{S}_{\text{tot}}[b] \leftarrow \boldsymbol{S}_{\text{sum}}[b] + d\,\varepsilon & \forall\, b & B & B & \cdot \\
+\texttt{quad} & \boldsymbol{X}_ {\text{sq}}[b,i] \leftarrow \boldsymbol{x}[b,i]^2 & \forall\, b, i & Bd & \cdot & Bd \\
+\texttt{lin} & \boldsymbol{S}_ {\text{sum}}[b] \leftarrow \textstyle\sum_{i \in [d]} \boldsymbol{X}_ {\text{sq}}[b,i] & \forall\, b & B & B & \cdot \\
+\texttt{lin} & \boldsymbol{S}_ {\text{tot}}[b] \leftarrow \boldsymbol{S}_ {\text{sum}}[b] + d\,\varepsilon & \forall\, b & B & B & \cdot \\
  & \textit{--- the rsqrt and its windows ---} &  &  &  &  \\
 & \textit{the rsqrt scalars} & & & & \\
 \texttt{decl} & \boldsymbol{y} & \forall\, b & B & \cdot & \cdot \\
-\texttt{lin} & \boldsymbol{y}_{m1}[b] \leftarrow \boldsymbol{y}[b] - 1 & \forall\, b & B & B & \cdot \\
+\texttt{lin} & \boldsymbol{y}_ {m1}[b] \leftarrow \boldsymbol{y}[b] - 1 & \forall\, b & B & B & \cdot \\
 & \textit{window words of } \boldsymbol{y} - 1 & & & & \\
-\texttt{decl} & \boldsymbol{y}_{w0},\; \boldsymbol{y}_{w1} & \forall\, b & 2B & \cdot & \cdot \\
-\texttt{range} & \boldsymbol{y}_{w0}[b] \sqsubseteq \mathrm{range}_{16}, \quad \boldsymbol{y}_{w1}[b] \sqsubseteq \mathrm{range}_{5} & \forall\, b & 2B & \cdot & 2B \\
-\texttt{lin} & \boldsymbol{y}_{m1}[b] == \boldsymbol{y}_{w0}[b] + 2^{16} \boldsymbol{y}_{w1}[b] & \forall\, b & \cdot & B & \cdot \\
-& \textit{limbs of } \boldsymbol{S}_{\text{tot}} & & & & \\
-\texttt{decl} & \boldsymbol{S}_0,\; \boldsymbol{S}_1,\; \boldsymbol{S}_2 & \forall\, b & 3B & \cdot & \cdot \\
-\texttt{range} & \boldsymbol{S}_{\ell}[b] \sqsubseteq \mathrm{range}_{18} & \forall\, b,\; \ell \in \{0,1,2\} & 3B & \cdot & 3B \\
-\texttt{lin} & \boldsymbol{S}_{\text{tot}}[b] == \boldsymbol{S}_0[b] + 2^{18} \boldsymbol{S}_1[b] + 2^{36} \boldsymbol{S}_2[b] & \forall\, b & \cdot & B & \cdot \\
-\texttt{quad} & \boldsymbol{q}_1[b] \leftarrow \boldsymbol{y}[b]^2 & \forall\, b & B & \cdot & B \\
-\texttt{quad} & \boldsymbol{q}_2[b] \leftarrow \boldsymbol{y}_{m1}[b]^2 & \forall\, b & B & \cdot & B \\
-\texttt{quad} & \boldsymbol{H}_{\ell}[b] \leftarrow \boldsymbol{q}[b]\, \boldsymbol{S}_{\ell}[b] & \forall\, b,\; \ell;\; \text{per chain } \boldsymbol{q} \in \{\boldsymbol{q}_1, \boldsymbol{q}_2\} & 6B & \cdot & 6B \\
+\texttt{decl} & \boldsymbol{y}_ {w0},\; \boldsymbol{y}_ {w1} & \forall\, b & 2B & \cdot & \cdot \\
+\texttt{range} & \boldsymbol{y}_ {w0}[b] \sqsubseteq \mathrm{range}_ {16}, \quad \boldsymbol{y}_ {w1}[b] \sqsubseteq \mathrm{range}_ {5} & \forall\, b & 2B & \cdot & 2B \\
+\texttt{lin} & \boldsymbol{y}_ {m1}[b] == \boldsymbol{y}_ {w0}[b] + 2^{16} \boldsymbol{y}_ {w1}[b] & \forall\, b & \cdot & B & \cdot \\
+& \textit{limbs of } \boldsymbol{S}_ {\text{tot}} & & & & \\
+\texttt{decl} & \boldsymbol{S}_ 0,\; \boldsymbol{S}_ 1,\; \boldsymbol{S}_ 2 & \forall\, b & 3B & \cdot & \cdot \\
+\texttt{range} & \boldsymbol{S}_ {\ell}[b] \sqsubseteq \mathrm{range}_ {18} & \forall\, b,\; \ell \in \{0,1,2\} & 3B & \cdot & 3B \\
+\texttt{lin} & \boldsymbol{S}_ {\text{tot}}[b] == \boldsymbol{S}_ 0[b] + 2^{18} \boldsymbol{S}_ 1[b] + 2^{36} \boldsymbol{S}_ 2[b] & \forall\, b & \cdot & B & \cdot \\
+\texttt{quad} & \boldsymbol{q}_ 1[b] \leftarrow \boldsymbol{y}[b]^2 & \forall\, b & B & \cdot & B \\
+\texttt{quad} & \boldsymbol{q}_ 2[b] \leftarrow \boldsymbol{y}_ {m1}[b]^2 & \forall\, b & B & \cdot & B \\
+\texttt{quad} & \boldsymbol{H}_ {\ell}[b] \leftarrow \boldsymbol{q}[b]\, \boldsymbol{S}_ {\ell}[b] & \forall\, b,\; \ell;\; \text{per chain } \boldsymbol{q} \in \{\boldsymbol{q}_ 1, \boldsymbol{q}_ 2\} & 6B & \cdot & 6B \\
  & \textit{--- carry chain, per chain ---} &  &  &  &  \\
 & \textit{carry high parts} & & & & \\
-\texttt{decl} & \boldsymbol{g}_{0h} \text{ (chunks } 16,16,10), \;\; \boldsymbol{g}_{1h} \text{ (chunks } 16,16,11) & \forall\, b & 24B & \cdot & 12B \\
-\texttt{lin} & \boldsymbol{g}_{0l}[b] \leftarrow \boldsymbol{H}_0[b] - 2^{18}\, \boldsymbol{g}_{0h}[b] & \forall\, b & 2B & 2B & \cdot \\
-\texttt{lin} & \boldsymbol{g}_{1l}[b] \leftarrow \boldsymbol{H}_1[b] + \boldsymbol{g}_{0h}[b] - 2^{18}\, \boldsymbol{g}_{1h}[b] & \forall\, b & 2B & 2B & \cdot \\
-\texttt{range} & \boldsymbol{g}_{0l}[b] \sqsubseteq \mathrm{range}_{18}, \quad \boldsymbol{g}_{1l}[b] \sqsubseteq \mathrm{range}_{18} & \forall\, b & 4B & \cdot & 4B \\
+\texttt{decl} & \boldsymbol{g}_ {0h} \text{ (chunks } 16,16,10), \;\; \boldsymbol{g}_ {1h} \text{ (chunks } 16,16,11) & \forall\, b & 24B & \cdot & 12B \\
+\texttt{lin} & \boldsymbol{g}_ {0l}[b] \leftarrow \boldsymbol{H}_ 0[b] - 2^{18}\, \boldsymbol{g}_ {0h}[b] & \forall\, b & 2B & 2B & \cdot \\
+\texttt{lin} & \boldsymbol{g}_ {1l}[b] \leftarrow \boldsymbol{H}_ 1[b] + \boldsymbol{g}_ {0h}[b] - 2^{18}\, \boldsymbol{g}_ {1h}[b] & \forall\, b & 2B & 2B & \cdot \\
+\texttt{range} & \boldsymbol{g}_ {0l}[b] \sqsubseteq \mathrm{range}_ {18}, \quad \boldsymbol{g}_ {1l}[b] \sqsubseteq \mathrm{range}_ {18} & \forall\, b & 4B & \cdot & 4B \\
 & \textit{top accumulator} & & & & \\
-\texttt{decl} & \boldsymbol{G}_2 \text{ (chunks } 16, 9) & \forall\, b & 8B & \cdot & 4B \\
-\texttt{lin} & \boldsymbol{H}_2[b] + \boldsymbol{g}_{1h}[b] == \boldsymbol{G}_2[b] & \forall\, b & \cdot & 2B & \cdot \\
+\texttt{decl} & \boldsymbol{G}_ 2 \text{ (chunks } 16, 9) & \forall\, b & 8B & \cdot & 4B \\
+\texttt{lin} & \boldsymbol{H}_ 2[b] + \boldsymbol{g}_ {1h}[b] == \boldsymbol{G}_ 2[b] & \forall\, b & \cdot & 2B & \cdot \\
  & \textit{--- bracket pins ---} &  &  &  &  \\
 & \textit{bracket slacks} & & & & \\
-\texttt{decl} & \boldsymbol{s}_{\text{lo}},\; \boldsymbol{s}_{\text{hi}} & \forall\, b & 2B & \cdot & \cdot \\
+\texttt{decl} & \boldsymbol{s}_ {\text{lo}},\; \boldsymbol{s}_ {\text{hi}} & \forall\, b & 2B & \cdot & \cdot \\
 & \textit{slack words} & & & & \\
-\texttt{decl} & \boldsymbol{w}_{\text{lo}},\; \boldsymbol{w}_{\text{hi}} & \forall\, b,\; n \in [4] & 8B & \cdot & \cdot \\
-\texttt{range} & \boldsymbol{w}_{\text{lo}}[b,n] \sqsubseteq \mathrm{range}_{16}, \quad \boldsymbol{w}_{\text{hi}}[b,n] \sqsubseteq \mathrm{range}_{16} & \forall\, b,\; n \le 2 & 6B & \cdot & 6B \\
-\texttt{range} & \boldsymbol{w}_{\text{lo}}[b,3] \sqsubseteq \mathrm{range}_{11}, \quad \boldsymbol{w}_{\text{hi}}[b,3] \sqsubseteq \mathrm{range}_{11} & \forall\, b & 2B & \cdot & 2B \\
-\texttt{lin} & \boldsymbol{s}_{\text{lo}}[b] == \textstyle\sum_{n \in [4]} 2^{16n}\, \boldsymbol{w}_{\text{lo}}[b,n] & \forall\, b & \cdot & B & \cdot \\
-\texttt{lin} & \boldsymbol{s}_{\text{hi}}[b] == \textstyle\sum_{n \in [4]} 2^{16n}\, \boldsymbol{w}_{\text{hi}}[b,n] & \forall\, b & \cdot & B & \cdot \\
-\texttt{lin} & 2^{36} \boldsymbol{G}_2[b] + 2^{18} \boldsymbol{g}_{1l}[b] + \boldsymbol{g}_{0l}[b] - \boldsymbol{s}_{\text{lo}}[b] == \mathrm{magic} & \forall\, b,\; \text{chain } \boldsymbol{q}_1 & \cdot & B & \cdot \\
-\texttt{lin} & 2^{36} \boldsymbol{G}_2[b] + 2^{18} \boldsymbol{g}_{1l}[b] + \boldsymbol{g}_{0l}[b] + \boldsymbol{s}_{\text{hi}}[b] == \mathrm{magic} - 1 & \forall\, b,\; \text{chain } \boldsymbol{q}_2 & \cdot & B & \cdot \\
+\texttt{decl} & \boldsymbol{w}_ {\text{lo}},\; \boldsymbol{w}_ {\text{hi}} & \forall\, b,\; n \in [4] & 8B & \cdot & \cdot \\
+\texttt{range} & \boldsymbol{w}_ {\text{lo}}[b,n] \sqsubseteq \mathrm{range}_ {16}, \quad \boldsymbol{w}_ {\text{hi}}[b,n] \sqsubseteq \mathrm{range}_ {16} & \forall\, b,\; n \le 2 & 6B & \cdot & 6B \\
+\texttt{range} & \boldsymbol{w}_ {\text{lo}}[b,3] \sqsubseteq \mathrm{range}_ {11}, \quad \boldsymbol{w}_ {\text{hi}}[b,3] \sqsubseteq \mathrm{range}_ {11} & \forall\, b & 2B & \cdot & 2B \\
+\texttt{lin} & \boldsymbol{s}_ {\text{lo}}[b] == \textstyle\sum_{n \in [4]} 2^{16n}\, \boldsymbol{w}_ {\text{lo}}[b,n] & \forall\, b & \cdot & B & \cdot \\
+\texttt{lin} & \boldsymbol{s}_ {\text{hi}}[b] == \textstyle\sum_{n \in [4]} 2^{16n}\, \boldsymbol{w}_ {\text{hi}}[b,n] & \forall\, b & \cdot & B & \cdot \\
+\texttt{lin} & 2^{36} \boldsymbol{G}_ 2[b] + 2^{18} \boldsymbol{g}_ {1l}[b] + \boldsymbol{g}_ {0l}[b] - \boldsymbol{s}_ {\text{lo}}[b] == \mathrm{magic} & \forall\, b,\; \text{chain } \boldsymbol{q}_ 1 & \cdot & B & \cdot \\
+\texttt{lin} & 2^{36} \boldsymbol{G}_ 2[b] + 2^{18} \boldsymbol{g}_ {1l}[b] + \boldsymbol{g}_ {0l}[b] + \boldsymbol{s}_ {\text{hi}}[b] == \mathrm{magic} - 1 & \forall\, b,\; \text{chain } \boldsymbol{q}_ 2 & \cdot & B & \cdot \\
 & \textit{broadcast product at } \mathrm{S}^2 & & & & \\
-\texttt{decl} & \boldsymbol{out}_{\text{full}} & \forall\, b, i & Bd & \cdot & \cdot \\
-\texttt{rescale} & \boldsymbol{out}[b,i] \leftarrow \texttt{rescale}(\boldsymbol{out}_{\text{full}}[b,i]) & \forall\, b, i & 5Bd & 2Bd & 2Bd \\
+\texttt{decl} & \boldsymbol{out}_ {\text{full}} & \forall\, b, i & Bd & \cdot & \cdot \\
+\texttt{rescale} & \boldsymbol{out}[b,i] \leftarrow \texttt{rescale}(\boldsymbol{out}_ {\text{full}}[b,i]) & \forall\, b, i & 5Bd & 2Bd & 2Bd \\
 \hline
 \texttt{chal} & \rho & \forall\, i & \cdot & \cdot & \cdot \\
 \hline
 \texttt{lin} & \boldsymbol{u}[b] \leftarrow \textstyle\sum_{i \in [d]} \rho[i]\, \boldsymbol{x}[b,i] & \forall\, b & B & B & \cdot \\
-\texttt{lin} & \boldsymbol{p}[b] \leftarrow \textstyle\sum_{i \in [d]} \rho[i]\, \boldsymbol{out}_{\text{full}}[b,i] & \forall\, b & B & B & \cdot \\
+\texttt{lin} & \boldsymbol{p}[b] \leftarrow \textstyle\sum_{i \in [d]} \rho[i]\, \boldsymbol{out}_ {\text{full}}[b,i] & \forall\, b & B & B & \cdot \\
 \texttt{quad} & \boldsymbol{y}[b]\, \boldsymbol{u}[b] == \boldsymbol{p}[b] & \forall\, b & \cdot & \cdot & B \\
 \textit{totals} &  &  & 7Bd + 82B & 2Bd + 17B & 3Bd + 42B \\
 \end{array}
@@ -685,23 +685,23 @@ $$
 \texttt{lin} & \boldsymbol{mag}[n] \leftarrow \boldsymbol{x}[n] - 2\,\boldsymbol{C}[n] & \forall\, n & N & N & \cdot \\
  & \textit{--- magnitude words ---} &  &  &  &  \\
 & \textit{magnitude words} & & & & \\
-\texttt{decl} & \boldsymbol{a}_0,\; \boldsymbol{a}_1,\; \boldsymbol{a}_2,\; \boldsymbol{a}_3,\; \boldsymbol{a}_4 & \forall\, n & 5N & \cdot & \cdot \\
-\texttt{range} & \boldsymbol{a}_0[n] \sqsubseteq \mathrm{range}_{2}, \quad \boldsymbol{a}_2[n] \sqsubseteq \mathrm{range}_{16}, \quad \boldsymbol{a}_3[n] \sqsubseteq \mathrm{range}_{16}, \quad \boldsymbol{a}_4[n] \sqsubseteq \mathrm{range}_{14} & \forall\, n & 4N & \cdot & 4N \\
-\texttt{lin} & \boldsymbol{mag}[n] == \boldsymbol{a}_0[n] + \mathrm{w_{bin}}\, \boldsymbol{a}_1[n] + 2^{16} \boldsymbol{a}_2[n] + 2^{32} \boldsymbol{a}_3[n] + 2^{48} \boldsymbol{a}_4[n] & \forall\, n & \cdot & N & \cdot \\
+\texttt{decl} & \boldsymbol{a}_ 0,\; \boldsymbol{a}_ 1,\; \boldsymbol{a}_ 2,\; \boldsymbol{a}_ 3,\; \boldsymbol{a}_ 4 & \forall\, n & 5N & \cdot & \cdot \\
+\texttt{range} & \boldsymbol{a}_ 0[n] \sqsubseteq \mathrm{range}_ {2}, \quad \boldsymbol{a}_ 2[n] \sqsubseteq \mathrm{range}_ {16}, \quad \boldsymbol{a}_ 3[n] \sqsubseteq \mathrm{range}_ {16}, \quad \boldsymbol{a}_ 4[n] \sqsubseteq \mathrm{range}_ {14} & \forall\, n & 4N & \cdot & 4N \\
+\texttt{lin} & \boldsymbol{mag}[n] == \boldsymbol{a}_ 0[n] + \mathrm{w_{bin}}\, \boldsymbol{a}_ 1[n] + 2^{16} \boldsymbol{a}_ 2[n] + 2^{32} \boldsymbol{a}_ 3[n] + 2^{48} \boldsymbol{a}_ 4[n] & \forall\, n & \cdot & N & \cdot \\
  & \textit{--- saturation flag ---} &  &  &  &  \\
-\texttt{lin} & \boldsymbol{g}[n] \leftarrow 2^{16} \boldsymbol{a}_2[n] + 2^{32} \boldsymbol{a}_3[n] + 2^{48} \boldsymbol{a}_4[n] & \forall\, n & N & N & \cdot \\
+\texttt{lin} & \boldsymbol{g}[n] \leftarrow 2^{16} \boldsymbol{a}_ 2[n] + 2^{32} \boldsymbol{a}_ 3[n] + 2^{48} \boldsymbol{a}_ 4[n] & \forall\, n & N & N & \cdot \\
 & \textit{free at } \boldsymbol{g} = 0 \textit{; value-neutral} & & & & \\
 \texttt{decl} & \boldsymbol{inv} & \forall\, n & N & \cdot & \cdot \\
 \texttt{quad} & \boldsymbol{t}[n] \leftarrow \boldsymbol{g}[n] \cdot \boldsymbol{inv}[n] & \forall\, n & N & \cdot & N \\
 \texttt{quad} & \boldsymbol{t}[n] \cdot \boldsymbol{g}[n] == \boldsymbol{g}[n] & \forall\, n & \cdot & \cdot & N \\
 \texttt{quad} & \boldsymbol{t}[n]^2 == \boldsymbol{t}[n] & \forall\, n & \cdot & \cdot & N \\
  & \textit{--- lookup and mux ---} &  &  &  &  \\
-\texttt{lin} & \boldsymbol{key}[n] \leftarrow 2^{14}\, \boldsymbol{sign}[n] + \boldsymbol{a}_1[n] & \forall\, n & N & N & \cdot \\
+\texttt{lin} & \boldsymbol{key}[n] \leftarrow 2^{14}\, \boldsymbol{sign}[n] + \boldsymbol{a}_ 1[n] & \forall\, n & N & N & \cdot \\
 \texttt{lin} & \boldsymbol{sat}[n] \leftarrow \boldsymbol{x}[n] - \boldsymbol{C}[n] & \forall\, n & N & N & \cdot \\
 \texttt{lookup} & \boldsymbol{y}[n] \leftarrow \mathrm{silu}[\boldsymbol{key}[n]] & \forall\, n & 3N & N & N \\
-\texttt{quad} & \boldsymbol{mux}_a[n] \leftarrow \boldsymbol{t}[n] \cdot \boldsymbol{y}[n] & \forall\, n & N & \cdot & N \\
-\texttt{quad} & \boldsymbol{mux}_b[n] \leftarrow \boldsymbol{t}[n] \cdot \boldsymbol{sat}[n] & \forall\, n & N & \cdot & N \\
-\texttt{lin} & \boldsymbol{out}[n] \leftarrow \boldsymbol{y}[n] - \boldsymbol{mux}_a[n] + \boldsymbol{mux}_b[n] & \forall\, n & N & N & \cdot \\
+\texttt{quad} & \boldsymbol{mux}_ a[n] \leftarrow \boldsymbol{t}[n] \cdot \boldsymbol{y}[n] & \forall\, n & N & \cdot & N \\
+\texttt{quad} & \boldsymbol{mux}_ b[n] \leftarrow \boldsymbol{t}[n] \cdot \boldsymbol{sat}[n] & \forall\, n & N & \cdot & N \\
+\texttt{lin} & \boldsymbol{out}[n] \leftarrow \boldsymbol{y}[n] - \boldsymbol{mux}_ a[n] + \boldsymbol{mux}_ b[n] & \forall\, n & N & N & \cdot \\
 \textit{totals} &  &  & 23N & 7N & 12N \\
 \end{array}
 $$
@@ -718,7 +718,7 @@ $$
 \begin{array}{lll|ccc}
  &  &  & W & L & Q \\
 \texttt{input} & \boldsymbol{r} & \forall\, t \in [T],\; e \in [E] & \cdot & \cdot & \cdot \\
-\texttt{input} & \boldsymbol{X}_e & \forall\, e,\; t,\; f \in [F] & \cdot & \cdot & \cdot \\
+\texttt{input} & \boldsymbol{X}_ e & \forall\, e,\; t,\; f \in [F] & \cdot & \cdot & \cdot \\
 \hline
  & \textit{--- routing ---} &  &  &  &  \\
 & \textit{the mask} & & & & \\
@@ -730,22 +730,22 @@ $$
 \texttt{lin} & \boldsymbol{r}^{\ast}[t] \leftarrow \textstyle\sum_{e} \boldsymbol{mrt}[t,e] & \forall\, t & T & T & \cdot \\
 \texttt{lin} & \boldsymbol{gap}[t,e] \leftarrow \boldsymbol{r}^{\ast}[t] - \boldsymbol{rt}[t,e] & \forall\, t, e & TE & TE & \cdot \\
 & \textit{gap words} & & & & \\
-\texttt{decl} & \boldsymbol{w}_g & \forall\, t, e,\; n \in [3] & 3TE & \cdot & \cdot \\
-\texttt{range} & \boldsymbol{w}_g[t,e,n] \sqsubseteq \mathrm{range}_{11} & \forall\, t, e, n & 3TE & \cdot & 3TE \\
-\texttt{lin} & \boldsymbol{gap}[t,e] == \textstyle\sum_{n \in [3]} 2^{11n}\, \boldsymbol{w}_g[t,e,n] & \forall\, t, e & \cdot & TE & \cdot \\
-\texttt{lin} & \boldsymbol{r}_{\text{chosen}}[t] \leftarrow 2^{-L}\big(\boldsymbol{r}^{\ast}[t] - \textstyle\sum_{e} (E{-}1{-}e)\, \boldsymbol{m}[t,e]\big) & \forall\, t & T & T & \cdot \\
+\texttt{decl} & \boldsymbol{w}_ g & \forall\, t, e,\; n \in [3] & 3TE & \cdot & \cdot \\
+\texttt{range} & \boldsymbol{w}_ g[t,e,n] \sqsubseteq \mathrm{range}_ {11} & \forall\, t, e, n & 3TE & \cdot & 3TE \\
+\texttt{lin} & \boldsymbol{gap}[t,e] == \textstyle\sum_{n \in [3]} 2^{11n}\, \boldsymbol{w}_ g[t,e,n] & \forall\, t, e & \cdot & TE & \cdot \\
+\texttt{lin} & \boldsymbol{r}_ {\text{chosen}}[t] \leftarrow 2^{-L}\big(\boldsymbol{r}^{\ast}[t] - \textstyle\sum_{e} (E{-}1{-}e)\, \boldsymbol{m}[t,e]\big) & \forall\, t & T & T & \cdot \\
 \textit{routing totals} &  &  & 10TE + 2T & 3TE + 3T & 5TE \\
 \hline
 \texttt{chal} & \rho & \forall\, f & \cdot & \cdot & \cdot \\
  & \textit{--- combine ---} &  &  &  &  \\
 & \textit{the combined output} & & & & \\
 \texttt{decl} & \boldsymbol{y} & \forall\, t, f & TF & \cdot & \cdot \\
-\texttt{lin} & \boldsymbol{m}_{\text{em}}[e,t] \leftarrow \boldsymbol{m}[t,e] & \forall\, e, t & ET & ET & \cdot \\
-\texttt{lin} & \boldsymbol{s}[e,t] \leftarrow \textstyle\sum_{f} \boldsymbol{X}_e[t,f]\, \rho[f] & \forall\, e, t & ET & ET & \cdot \\
-\texttt{quad} & \boldsymbol{ms}[e,t] \leftarrow \boldsymbol{m}_{\text{em}}[e,t] \cdot \boldsymbol{s}[e,t] & \forall\, e, t & ET & \cdot & ET \\
-\texttt{lin} & \boldsymbol{ms}_{\text{tm}}[t,e] \leftarrow \boldsymbol{ms}[e,t] & \forall\, t, e & ET & ET & \cdot \\
-\texttt{lin} & \boldsymbol{y}_{\rho}[t] \leftarrow \textstyle\sum_{f} \rho[f]\, \boldsymbol{y}[t,f] & \forall\, t & T & T & \cdot \\
-\texttt{lin} & \textstyle\sum_{e} \boldsymbol{ms}_{\text{tm}}[t,e] == \boldsymbol{y}_{\rho}[t] & \forall\, t & \cdot & T & \cdot \\
+\texttt{lin} & \boldsymbol{m}_ {\text{em}}[e,t] \leftarrow \boldsymbol{m}[t,e] & \forall\, e, t & ET & ET & \cdot \\
+\texttt{lin} & \boldsymbol{s}[e,t] \leftarrow \textstyle\sum_{f} \boldsymbol{X}_ e[t,f]\, \rho[f] & \forall\, e, t & ET & ET & \cdot \\
+\texttt{quad} & \boldsymbol{ms}[e,t] \leftarrow \boldsymbol{m}_ {\text{em}}[e,t] \cdot \boldsymbol{s}[e,t] & \forall\, e, t & ET & \cdot & ET \\
+\texttt{lin} & \boldsymbol{ms}_ {\text{tm}}[t,e] \leftarrow \boldsymbol{ms}[e,t] & \forall\, t, e & ET & ET & \cdot \\
+\texttt{lin} & \boldsymbol{y}_ {\rho}[t] \leftarrow \textstyle\sum_{f} \rho[f]\, \boldsymbol{y}[t,f] & \forall\, t & T & T & \cdot \\
+\texttt{lin} & \textstyle\sum_{e} \boldsymbol{ms}_ {\text{tm}}[t,e] == \boldsymbol{y}_ {\rho}[t] & \forall\, t & \cdot & T & \cdot \\
 \textit{combine totals} &  &  & TF + 4ET + T & 3ET + 2T & ET \\
 \end{array}
 $$
@@ -779,12 +779,12 @@ $$
 \texttt{quad} & \boldsymbol{A\ell}[i] \leftarrow \boldsymbol{A}[i] \cdot \boldsymbol{\ell}[i] & \forall\, i & V & \cdot & V \\
 \texttt{lin} & \boldsymbol{v}^{\ast} \leftarrow \textstyle\sum_i \boldsymbol{A\ell}[i] &  & 1 & 1 & \cdot \\
 \texttt{lin} & \boldsymbol{gap}[i] \leftarrow \boldsymbol{v}^{\ast} - \boldsymbol{\ell}[i] & \forall\, i & V & V & \cdot \\
-\texttt{range} & \boldsymbol{gap}[i] \sqsubseteq \mathrm{range}_{20} & \forall\, i & V & \cdot & V \\
+\texttt{range} & \boldsymbol{gap}[i] \sqsubseteq \mathrm{range}_ {20} & \forall\, i & V & \cdot & V \\
 \texttt{quad} & \boldsymbol{Ogap}[i] \leftarrow \boldsymbol{O}[i] \cdot \boldsymbol{gap}[i] & \forall\, i & V & \cdot & V \\
-\texttt{lin} & \boldsymbol{gap}_o \leftarrow \textstyle\sum_i \boldsymbol{Ogap}[i] &  & 1 & 1 & \cdot \\
+\texttt{lin} & \boldsymbol{gap}_ o \leftarrow \textstyle\sum_i \boldsymbol{Ogap}[i] &  & 1 & 1 & \cdot \\
  & \textit{--- kernel and log pin ---} &  &  &  &  \\
 \texttt{lookup} & \boldsymbol{e}[i] \leftarrow \mathrm{Exp}[\boldsymbol{gap}[i]] & \forall\, i & 3V & V & V \\
-\texttt{quad} & \boldsymbol{g}_2 \leftarrow \boldsymbol{gap}_o \cdot \boldsymbol{gap}_o &  & 1 & \cdot & 1 \\
+\texttt{quad} & \boldsymbol{g}_ 2 \leftarrow \boldsymbol{gap}_ o \cdot \boldsymbol{gap}_ o &  & 1 & \cdot & 1 \\
 \texttt{lin} & \boldsymbol{a} \leftarrow \textstyle\sum_i \boldsymbol{e}[i] &  & 1 & 1 & \cdot \\
 & \textit{the log-pin index} & & & & \\
 \texttt{decl} & \boldsymbol{b} &  & 1 & \cdot & \cdot \\
@@ -792,19 +792,19 @@ $$
 & \textit{log-pin slack} & & & & \\
 \texttt{decl} & \boldsymbol{d} &  & 1 & \cdot & \cdot \\
 & \textit{slack words} & & & & \\
-\texttt{decl} & \boldsymbol{d}_w & \forall\, n \in [4] & 4 & \cdot & \cdot \\
-\texttt{range} & \boldsymbol{d}_w[n] \sqsubseteq \mathrm{range}_{12} & \forall\, n & 4 & \cdot & 4 \\
-\texttt{lin} & \boldsymbol{d} == \textstyle\sum_{n \in [4]} 2^{12n}\, \boldsymbol{d}_w[n] &  & \cdot & 1 & \cdot \\
+\texttt{decl} & \boldsymbol{d}_ w & \forall\, n \in [4] & 4 & \cdot & \cdot \\
+\texttt{range} & \boldsymbol{d}_ w[n] \sqsubseteq \mathrm{range}_ {12} & \forall\, n & 4 & \cdot & 4 \\
+\texttt{lin} & \boldsymbol{d} == \textstyle\sum_{n \in [4]} 2^{12n}\, \boldsymbol{d}_ w[n] &  & \cdot & 1 & \cdot \\
 \texttt{lin}\,\le & \boldsymbol{a} + \boldsymbol{d} == \boldsymbol{pw} &  & \cdot & 1 & \cdot \\
 & \textit{ceiling remainder} & & & & \\
 \texttt{decl} & \boldsymbol{rem} &  & 1 & \cdot & \cdot \\
-\texttt{range} & \boldsymbol{rem} \sqsubseteq \mathrm{range}_{16} &  & 1 & \cdot & 1 \\
-\texttt{lin} & \boldsymbol{z}_o \leftarrow \mathrm{k}^{-1}(\boldsymbol{g}_2 + \boldsymbol{rem}) &  & 1 & 1 & \cdot \\
-\texttt{lin} & \boldsymbol{surprisal}[t] \leftarrow \boldsymbol{z}_o + \boldsymbol{b} &  & 1 & 1 & \cdot \\
+\texttt{range} & \boldsymbol{rem} \sqsubseteq \mathrm{range}_ {16} &  & 1 & \cdot & 1 \\
+\texttt{lin} & \boldsymbol{z}_ o \leftarrow \mathrm{k}^{-1}(\boldsymbol{g}_ 2 + \boldsymbol{rem}) &  & 1 & 1 & \cdot \\
+\texttt{lin} & \boldsymbol{surprisal}[t] \leftarrow \boldsymbol{z}_ o + \boldsymbol{b} &  & 1 & 1 & \cdot \\
 \hline
  & \textit{--- across positions ---} &  &  &  &  \\
-\texttt{lin} & \boldsymbol{S}_z \leftarrow \textstyle\sum_{t \in \text{scored}} \boldsymbol{surprisal}[t] &  & 1 & 1 & \cdot \\
-\texttt{lin} & \boldsymbol{S}_z == \text{the revealed public value} &  & \cdot & 1 & \cdot \\
+\texttt{lin} & \boldsymbol{S}_ z \leftarrow \textstyle\sum_{t \in \text{scored}} \boldsymbol{surprisal}[t] &  & 1 & 1 & \cdot \\
+\texttt{lin} & \boldsymbol{S}_ z == \text{the revealed public value} &  & \cdot & 1 & \cdot \\
 \textit{totals per position} &  &  & 9V + 22 & 2V + 13 & 6V + 7 \\
 \end{array}
 $$
