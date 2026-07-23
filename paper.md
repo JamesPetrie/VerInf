@@ -535,7 +535,7 @@ $$
 \texttt{input} & \boldsymbol{A} & \forall\ a \in [m],\ j \in [k] & \cdot & \cdot & \cdot \\
 \texttt{input} & \boldsymbol{B} & \forall\ j,\ b \in [n] & \cdot & \cdot & \cdot \\
 \hline
-& \textit{raw product at } s_a s_b & & & & \\
+{} & \textit{raw product at } s_a s_b & & & & \\
 \texttt{decl} & \boldsymbol{C}_ {\text{full}} & \forall\ a, b & mn & \cdot & \cdot \\
 \texttt{rescale} & \boldsymbol{C}[a,b] \leftarrow \texttt{rescale}(\boldsymbol{C}_ {\text{full}}[a,b]) & \forall\ a, b & 5mn & 2mn & 2mn \\
 \hline
@@ -565,7 +565,7 @@ $$
  & & & W & L & Q \\
 \texttt{input} & \boldsymbol{x} & \forall\ h \in [n_q],\ q \in [S],\ i \in [S] & \cdot & \cdot & \cdot \\
 \hline
- & \textit{--- shift and exponentiate ---} & & & & \\
+{} & \textit{--- shift and exponentiate ---} & & & & \\
 & \textit{per-row shift} & & & & \\
 \texttt{decl} & \boldsymbol{c} & \forall\ h, q & n_q S & \cdot & \cdot \\
 \texttt{range} & \boldsymbol{c}[h,q] \sqsubseteq \pm\mathrm{range}_ {24} & \forall\ h, q & 2 n_q S & n_q S & n_q S \\
@@ -614,7 +614,7 @@ $$
  & & & W & L & Q \\
 \texttt{input} & \boldsymbol{x} & \forall\ b \in [B],\ i \in [d] & \cdot & \cdot & \cdot \\
 \hline
- & \textit{--- row energy ---} & & & & \\
+{} & \textit{--- row energy ---} & & & & \\
 \texttt{quad} & \boldsymbol{X}_ {\text{sq}}[b,i] \leftarrow \boldsymbol{x}[b,i]^2 & \forall\ b, i & Bd & \cdot & Bd \\
 \texttt{lin} & \boldsymbol{S}_ {\text{sum}}[b] \leftarrow \textstyle\sum_{i \in [d]} \boldsymbol{X}_ {\text{sq}}[b,i] & \forall\ b & B & B & \cdot \\
 \texttt{lin} & \boldsymbol{S}_ {\text{tot}}[b] \leftarrow \boldsymbol{S}_ {\text{sum}}[b] + d\ \varepsilon & \forall\ b & B & B & \cdot \\
@@ -683,7 +683,7 @@ $$
  & & & W & L & Q \\
 \texttt{input} & \boldsymbol{x} & \forall\ n \in [N] & \cdot & \cdot & \cdot \\
 \hline
- & \textit{--- sign split ---} & & & & \\
+{} & \textit{--- sign split ---} & & & & \\
 & \textit{sign bit} & & & & \\
 \texttt{decl} & \boldsymbol{sign} & \forall\ n & N & \cdot & \cdot \\
 \texttt{quad} & \boldsymbol{sign}[n]^2 == \boldsymbol{sign}[n] & \forall\ n & \cdot & \cdot & N \\
@@ -726,7 +726,7 @@ $$
 \texttt{input} & \boldsymbol{r} & \forall\ t \in [T],\ e \in [E] & \cdot & \cdot & \cdot \\
 \texttt{input} & \boldsymbol{X}_ e & \forall\ e,\ t,\ f \in [F] & \cdot & \cdot & \cdot \\
 \hline
- & \textit{--- routing ---} & & & & \\
+{} & \textit{--- routing ---} & & & & \\
 & \textit{the mask} & & & & \\
 \texttt{decl} & \boldsymbol{m} & \forall\ t, e & TE & \cdot & \cdot \\
 \texttt{quad} & \boldsymbol{m}[t,e]^2 == \boldsymbol{m}[t,e] & \forall\ t, e & \cdot & \cdot & TE \\
@@ -774,7 +774,7 @@ $$
 \texttt{input} & \boldsymbol{\ell} & \forall\ i \in [V] & \cdot & \cdot & \cdot \\
 \texttt{input} & \boldsymbol{o}[t] & & \cdot & \cdot & \cdot \\
 \hline
- & \textit{--- argmax and output select ---} & & & & \\
+{} & \textit{--- argmax and output select ---} & & & & \\
 & \textit{argmax and output-select one-hots} & & & & \\
 \texttt{decl} & \boldsymbol{A},\ \boldsymbol{O} & \forall\ i & 2V & \cdot & \cdot \\
 \texttt{quad} & \boldsymbol{A}[i]^2 == \boldsymbol{A}[i] & \forall\ i & \cdot & \cdot & V \\
@@ -808,7 +808,7 @@ $$
 \texttt{lin} & \boldsymbol{z}_ o \leftarrow \mathrm{k}^{-1}(\boldsymbol{g}_ 2 + \boldsymbol{rem}) & & 1 & 1 & \cdot \\
 \texttt{lin} & \boldsymbol{surprisal}[t] \leftarrow \boldsymbol{z}_ o + \boldsymbol{b} & & 1 & 1 & \cdot \\
 \hline
- & \textit{--- across positions ---} & & & & \\
+{} & \textit{--- across positions ---} & & & & \\
 \texttt{lin} & \boldsymbol{S}_ z \leftarrow \textstyle\sum_{t \in \text{scored}} \boldsymbol{surprisal}[t] & & 1 & 1 & \cdot \\
 \texttt{lin} & \boldsymbol{S}_ z == \text{the revealed public value} & & \cdot & 1 & \cdot \\
 \textit{totals per position} & & & 9V + 22 & 2V + 13 & 6V + 7 \\
