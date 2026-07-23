@@ -4,9 +4,9 @@ VerInf produces zero-knowledge proofs of large-language-model inference. It has 
 
 VerInf certifies an observed output stream against a committed integer model and bounds the *unexplained information*: the output bits that computation does not account for. Proving similarity rather than exact reproduction is what lets it target a real, already-trained model whose inference runs in floating point. The proof reveals nothing beyond this bound and the public claim list, which discloses the model architecture but not the weights, activations, or hidden tokens.
 
-This can verify high-stakes AI compute agreements between parties who do not trust each other's hardware, and unilaterally detect model-weight exfiltration, audit that a deployed model matches an approved version, or check inference for bugs or tampering.
+The intended use cases are high-stakes settings where inference must be checked without revealing the model: verifying AI compute agreements between mutually distrustful parties, detecting model-weight exfiltration, auditing a deployed model against an approved version, or checking inference for bugs or tampering.
 
-The formulation, the construction, the soundness analysis, and the cost model are in the paper ([PDF](paper.pdf), generated from [`paper.md`](paper.md)); this README covers what the system does and how to run it.
+The formulation, the construction, the soundness analysis, and the cost model are in the draft paper ([PDF](paper.pdf)); this README covers what the system does and how to run it.
 
 ## Status
 
