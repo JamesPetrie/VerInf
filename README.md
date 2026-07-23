@@ -83,4 +83,4 @@ The same claim list drives witness generation, the constraint compile, and verif
 
 ## Further reading
 
-- **Paper ([PDF](paper.pdf), this repository)** -- the formulation, the construction, the soundness analysis, and the cost model.
+- **Draft Paper: [PDF](paper.pdf)**
