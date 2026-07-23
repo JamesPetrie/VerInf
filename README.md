@@ -84,7 +84,3 @@ The same claim list drives witness generation, the constraint compile, and verif
 ## Further reading
 
 - **Paper ([PDF](paper.pdf), this repository)** -- the formulation, the construction, the soundness analysis, and the cost model.
-- [`analysis/design-feasibility.md`](analysis/design-feasibility.md) -- the full specification and cost model, including the mixture-of-experts routing and Llama 4 Maverick analysis.
-- [`analysis/full-model-hidden-run-archive.md`](analysis/full-model-hidden-run-archive.md) -- every metric of the all-hidden full-model run.
-- [`analysis/docs/nvfp4-exact-path.md`](analysis/docs/nvfp4-exact-path.md) -- the NVFP4-exact claim design and the ranked levers on the bound.
-- [`analysis/prover-optimization-investigation.md`](analysis/prover-optimization-investigation.md) -- the measured prover-time breakdown and optimization options.
