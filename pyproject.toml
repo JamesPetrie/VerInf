@@ -1,0 +1,41 @@
+[project]
+name = "verinf"
+version = "0.1.0"
+description = "Ligero zero-knowledge proofs of LLM inference"
+requires-python = ">=3.11"
+dependencies = [
+    "torch",
+    "transformers",
+    "numpy",
+    "safetensors",
+    "blake3",
+    "ninja",
+]
+
+[dependency-groups]
+dev = [
+    "ruff",
+    "ty",
+    "pytest",
+]
+
+# Default torch wheels (cu13x) dropped sm_70 kernels; the local GPU is a
+# V100 (CC 7.0), so pin torch to the last CUDA build that still ships them.
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu126" }
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+# sys.path is extended to reach prover/ and demo/ before the local imports
+# that depend on it — the E402 the ordering triggers is intentional.
+"demo/demo_toy_transformer.py" = ["E402"]

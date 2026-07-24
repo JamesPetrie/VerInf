@@ -30,7 +30,7 @@ import secrets
 import time
 import warnings
 from dataclasses import dataclass, field, fields
-from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple, Type, Union
 
 import numpy as np
 import os
@@ -391,37 +391,57 @@ def _iter_message_chunks(vars_list: List[Variable],
     (vars_list packed row by row into ELL-wide rows from row_offset_start).
 
     Replaces the full (m_total, ELL) matrix allocation with chunk-by-chunk
-    iteration. chunk_tensor is freshly allocated each iter (small enough
-    that torch's caching allocator reuses memory cheaply), so consumers
-    may freely hold or drop without affecting later chunks.
+    iteration. chunk_tensor is freshly allocated (cloned) per yield, so
+    consumers may freely hold or drop without affecting later chunks.
+
+    Each variable is padded/reshaped into its own (v_rows, ELL) tensor in
+    one vectorized op (pad tail with zeros, then .view) instead of a
+    Python loop over rows -- v_rows can be in the hundreds of thousands
+    for a single lookup-table variable, and a per-row torch.Tensor
+    __setitem__ pays ~10-20us of dispatch overhead regardless of how
+    little data it moves (see analysis/ in the "toy transformer" formula-
+    vs-reality investigation: this loop was ~69% of prove() wall-clock on
+    a small witness, dwarfing the actual NTT/hash kernels it feeds). A
+    `carry` buffer holds any rows left over after slicing off whole
+    chunk_size pieces, so chunk boundaries are identical to the old
+    per-row version even when a variable's row count doesn't align to
+    chunk_size, or a chunk is filled by the tail of one variable plus the
+    head of the next -- this does NOT materialize the full (m_total, ELL)
+    matrix; peak extra memory is one variable's own rows plus one chunk.
 
     Last chunk may have fewer rows. abs_row_offset is row_offset_start +
     cumulative-rows-yielded-so-far."""
     if not vars_list:
         return
-    chunk = torch.zeros((chunk_size, cfg.ELL), dtype=torch.uint64, device="cuda")
-    chunk_row = 0
+    ELL = cfg.ELL
+    carry = None                          # (k, ELL) leftover rows, k < chunk_size, or None
     abs_offset = row_offset_start
     for v in vars_list:
         data = _to_device_u64(_fetch(inputs, v)).reshape(-1)
         v_len = data.numel()
         assert v_len == v.length, (
             f"variable '{v.name}' length {v.length} != input numel {v_len}")
-        v_rows = v.n_rows(cfg.ELL)
-        for r in range(v_rows):
-            lo = r * cfg.ELL
-            hi = min(lo + cfg.ELL, v_len)
-            chunk[chunk_row, :hi - lo] = data[lo:hi]
-            if hi - lo < cfg.ELL:
-                chunk[chunk_row, hi - lo:].zero_()
-            chunk_row += 1
-            if chunk_row == chunk_size:
-                yield abs_offset, chunk
-                chunk = torch.zeros((chunk_size, cfg.ELL), dtype=torch.uint64, device="cuda")
-                chunk_row = 0
-                abs_offset += chunk_size
-    if chunk_row > 0:
-        yield abs_offset, chunk[:chunk_row]
+        v_rows = v.n_rows(ELL)
+        pad_len = v_rows * ELL - v_len
+        if pad_len:
+            padded = torch.zeros(v_rows * ELL, dtype=torch.uint64, device="cuda")
+            padded[:v_len] = data
+            rows_v = padded.view(v_rows, ELL)
+        else:
+            rows_v = data.view(v_rows, ELL)
+        if carry is not None:
+            rows_v = torch.cat([carry, rows_v], dim=0)
+            carry = None
+        n = rows_v.shape[0]
+        pos = 0
+        while n - pos >= chunk_size:
+            yield abs_offset, rows_v[pos:pos + chunk_size].clone()
+            abs_offset += chunk_size
+            pos += chunk_size
+        if pos < n:
+            carry = rows_v[pos:]
+    if carry is not None and carry.shape[0] > 0:
+        yield abs_offset, carry.clone()
 
 
 # ============================================================
@@ -648,6 +668,42 @@ def _coset_powers(n: int, gamma: int) -> torch.Tensor:
     return tensor
 
 
+# --- coset-NTT encode mode (autoresearch: encode is ~32% of the 400B prove) ---
+# The notebook's coset_ntt=True: evaluate at the N=rho*K coset by doing rho
+# separate length-K NTTs instead of one length-N NTT. Byte-identical to the
+# single-N path (validated bit-exact at K=64..16384 in
+# analysis/bench/coset_ntt_bench.py + a byte-identical PROOF + Rust ACCEPT in
+# validate_coset_ntt.py). The isolated NTT primitive is ~1.2x faster at
+# K >= 2^16 (coset_ntt_ab.py), BUT an in-situ prove A/B at K=2^16 on a small
+# model (ab_coset_insitu.py) showed NO encode-time win and +1.4GB peak memory
+# — at that scale encode isn't NTT-bound, so the microbenchmark overstated the
+# in-prove benefit. Its production benefit (huge witness at K>=2^18) is a
+# cost-model PREDICTION, not a measured fact. So this is OPT-IN ONLY (default
+# off): a validated-correct lever to A/B at true production scale, never
+# auto-enabled (it costs memory for unconfirmed benefit). LIGERO_COSET_NTT=on.
+_COSET_NTT_MODE = os.environ.get("LIGERO_COSET_NTT", "off")   # off | on | auto
+_COSET_NTT_MIN_K = 1 << 16
+
+
+def _coset_encode_via_coset_ntt(coeffs: torch.Tensor, cfg: 'LigeroConfig') -> torch.Tensor:
+    """rho length-K coset NTTs, interleaved -> (m, N_LIG) codeword. Peak memory
+    = out (m*N) + one length-K transform (m*K), same as the single-N path (no
+    3x expand); the rho=N/K cosets run as a small Python loop. Bit-exact
+    equivalent of the single-N encode below."""
+    m, K, N = coeffs.size(0), cfg.K_DEG, cfg.N_LIG
+    rho = N // K
+    out = torch.empty((m, N), dtype=torch.uint64, device="cuda")
+    for t in range(rho):
+        gamma_t = (cfg.coset_shift * pow(cfg.W_N, t, P)) % P
+        gp = _coset_powers(K, gamma_t)                             # (K,), cached
+        twisted = gl_mul(coeffs, gp.unsqueeze(0).expand(m, K).contiguous())
+        ntt_forward_batched(twisted)                               # in-place length-K
+        # codeword[row, i*rho + t] = coset_t_result[row, i]; strided write via the
+        # int64 view (pure data movement -> bit-identical, dodges the uint64 gap).
+        out.view(torch.int64)[:, t::rho] = twisted.view(torch.int64)
+    return out
+
+
 def _coset_encode_codewords(coeffs: torch.Tensor,
                               cfg: 'LigeroConfig') -> torch.Tensor:
     """Evaluate (m, K_DEG) polynomials (coefficient form, degree < K_DEG)
@@ -659,6 +715,10 @@ def _coset_encode_codewords(coeffs: torch.Tensor,
     m = coeffs.size(0)
     if m == 0:
         return torch.empty((0, cfg.N_LIG), dtype=torch.uint64, device="cuda")
+    use_coset = (_COSET_NTT_MODE == "on"
+                 or (_COSET_NTT_MODE == "auto" and cfg.K_DEG >= _COSET_NTT_MIN_K))
+    if use_coset and cfg.N_LIG > cfg.K_DEG:
+        return _coset_encode_via_coset_ntt(coeffs, cfg)
     g_powers = _coset_powers_k(cfg)                                # (K_DEG,)
     # gl_mul requires same shapes; broadcast g_powers to (m, K_DEG).
     g_powers_2d = g_powers.unsqueeze(0).expand(m, cfg.K_DEG).contiguous()
@@ -1077,6 +1137,35 @@ class QIrsAccumulator:
         return self.q
 
 
+class _PktRange(NamedTuple):
+    """O(1) alternative to emitting one (row, pkt) tuple per row: a
+    compile_fn that knows its packet is IDENTICAL across a whole
+    row range (the common case -- see _index_bands's docstring: "All rows
+    of a (variable, family) share an identical template; only the row
+    range varies") can return one of these instead of row_end - row_start
+    separate tuples. _index_bands folds it into a band in O(1); the eager
+    (non-streaming) compile path expands it back to per-row tuples via
+    _expand_row_pkts, since that path's per_row list genuinely needs one
+    entry per row."""
+    pkt: object
+    row_start: int
+    row_end: int   # exclusive
+
+
+def _expand_row_pkts(row_pkts):
+    """Normalize row_pkts entries to a flat (row, pkt) iterator, expanding
+    any _PktRange entries. O(rows) -- for the eager compile path
+    (_compile_with_chs), which needs a genuine per-row list; the streaming
+    path (_StreamingPackets._index_bands) consumes _PktRange directly in
+    O(1) instead and should not go through this."""
+    for item in row_pkts:
+        if isinstance(item, _PktRange):
+            for r in range(item.row_start, item.row_end):
+                yield r, item.pkt
+        else:
+            yield item
+
+
 class _StreamingPackets:
     """Lazy per-claim compile for the streaming prover.
 
@@ -1138,17 +1227,26 @@ class _StreamingPackets:
 
     def _index_bands(self, row_pkts):
         """Dedup a claim's per-row packets into band records. All rows of a
-        (variable, family) share an identical template; only the row range varies."""
-        for r, pkt in row_pkts:
+        (variable, family) share an identical template; only the row range
+        varies -- a compile_fn that already knows its whole range shares one
+        packet can hand it over as a _PktRange and skip the O(rows) walk
+        entirely (folded in O(1) below); anything still emitting bare
+        (row, pkt) tuples is handled exactly as before, one row at a time."""
+        for item in row_pkts:
+            if isinstance(item, _PktRange):
+                pkt, rs, re = item.pkt, item.row_start, item.row_end
+            else:
+                r, pkt = item
+                rs, re = r, r + 1
             key = _band_key(pkt)
             idx = self._band_seen.get(key)
             if idx is None:
                 self._band_seen[key] = len(self.bands)
-                self.bands.append([pkt, r, r + 1])
+                self.bands.append([pkt, rs, re])
             else:
                 b = self.bands[idx]
-                if r < b[1]: b[1] = r
-                if r + 1 > b[2]: b[2] = r + 1
+                if rs < b[1]: b[1] = rs
+                if re > b[2]: b[2] = re
 
     def _build_row_lookup(self):
         """Group bands by their row range (disjoint across variables -- each
@@ -1326,16 +1424,36 @@ class ChalSource:
             self.cache[(lo, hi)] = buf
         return lo, buf
 
+_ROW_START_FIELD_NAME_CACHE: Dict[type, Optional[str]] = {}
+_NO_ROW_START_FIELD = object()   # sentinel: "checked, this type has no *row_start field"
+
+
+def _row_start_field_name(pkt_type: type) -> Optional[str]:
+    """The field name ending in 'row_start' for a packet dataclass TYPE,
+    memoized -- dataclasses.fields() is the same for every instance of a
+    type, so re-deriving it per packet (this is called once per witness
+    row during the one-time band-index pass -- hundreds of thousands of
+    times on a real run) was pure repeated reflection overhead."""
+    name = _ROW_START_FIELD_NAME_CACHE.get(pkt_type, _NO_ROW_START_FIELD)
+    if name is not _NO_ROW_START_FIELD:
+        return name
+    name = None
+    for f in fields(pkt_type):
+        if f.name.endswith("row_start"):
+            name = f.name
+            break
+    _ROW_START_FIELD_NAME_CACHE[pkt_type] = name
+    return name
+
+
 def _band_key(pkt):
     """A (variable, family) band identity from a packet's scalar fields. Any valid
     partition keeps the decomposition bit-exact (gl_add is linear); this keys on
     (kind, base, *_row_start) so it mirrors the real (variable, family) bands."""
-    rs = None
-    for f in fields(pkt):
-        if f.name.endswith("row_start"):
-            rs = getattr(pkt, f.name)
-            break
-    return (type(pkt), getattr(pkt, "base", None), rs)
+    pkt_type = type(pkt)
+    name = _row_start_field_name(pkt_type)
+    rs = getattr(pkt, name) if name is not None else None
+    return (pkt_type, getattr(pkt, "base", None), rs)
 
 
 # --- Phase 4: descriptor-interpreter kernels (linear-fold-unification.md) ---
@@ -1569,18 +1687,42 @@ def _encode_rows_indexed(msgs: torch.Tensor, abs_row_indices: List[int],
     return polys
 
 
+class _RowMap:
+    """abs_row -> (Variable, local_row), same lookup contract as the plain
+    dict _build_row_map used to return (`row_map[abs_row]`, KeyError if out
+    of range), but built from O(n_vars) sorted ranges instead of one dict
+    entry per row -- same restructure _build_row_lookup/bands_overlapping
+    already applies to the band index, applied here too since a variable
+    list can be hundreds of thousands of rows."""
+    __slots__ = ("_starts", "_ends", "_vars")
+
+    def __init__(self, starts: List[int], ends: List[int], vars_: List[Variable]):
+        self._starts, self._ends, self._vars = starts, ends, vars_
+
+    def __getitem__(self, abs_row: int) -> Tuple[Variable, int]:
+        i = bisect.bisect_right(self._starts, abs_row) - 1
+        if i < 0 or abs_row >= self._ends[i]:
+            raise KeyError(abs_row)
+        return self._vars[i], abs_row - self._starts[i]
+
+
 def _build_row_map(vars_list: List[Variable], cfg: LigeroConfig,
-                    row_offset_start: int) -> Dict[int, Tuple[Variable, int]]:
-    """Build {abs_row → (Variable, local_row)} for the given var list,
-    walking vars in declaration order."""
-    row_map: Dict[int, Tuple[Variable, int]] = {}
+                    row_offset_start: int) -> '_RowMap':
+    """Build abs_row → (Variable, local_row) for the given var list, walking
+    vars in declaration order (one range per variable, not one entry per row)."""
+    starts: List[int] = []
+    ends: List[int] = []
+    vars_: List[Variable] = []
     abs_offset = row_offset_start
     for v in vars_list:
         n = v.n_rows(cfg.ELL)
-        for r in range(n):
-            row_map[abs_offset] = (v, r)
-            abs_offset += 1
-    return row_map
+        if n == 0:
+            continue
+        starts.append(abs_offset)
+        ends.append(abs_offset + n)
+        vars_.append(v)
+        abs_offset += n
+    return _RowMap(starts, ends, vars_)
 
 
 def _gather_rows(inputs: Dict[Variable, InputVal],
@@ -1589,8 +1731,16 @@ def _gather_rows(inputs: Dict[Variable, InputVal],
                   needed_abs_rows: List[int]) -> torch.Tensor:
     """Return a (len(needed_abs_rows), ELL) tensor of message rows at the
     requested absolute indices. `row_map` is pre-built by `_build_row_map`
-    so callers in a loop don't pay the build cost per call."""
-    out = torch.zeros((len(needed_abs_rows), cfg.ELL), dtype=torch.uint64, device="cuda")
+    so callers in a loop don't pay the build cost per call.
+
+    Per-variable, the needed rows are gathered with one index_select instead
+    of a Python loop doing one __setitem__ per row -- found via profiling a
+    medium-scale (SEQ=384, 4 layers) run, where this was ~17% of prove()
+    wall-clock (the Freivalds-style spot-checks in compute_p_0_streaming
+    call this often, with growing needed_abs_rows lists as SEQ grows), the
+    same pattern as _iter_message_chunks (see that function's docstring)."""
+    ELL = cfg.ELL
+    out = torch.zeros((len(needed_abs_rows), ELL), dtype=torch.uint64, device="cuda")
     # Group needed rows by Variable so each weight loads once even if
     # multiple rows are needed from it (matters under lazy loaders).
     by_var: Dict[Variable, List[Tuple[int, int]]] = {}  # var → [(out_i, local_row)]
@@ -1600,10 +1750,21 @@ def _gather_rows(inputs: Dict[Variable, InputVal],
     for v, items in by_var.items():
         data = _to_device_u64(_fetch(inputs, v)).reshape(-1)
         v_len = data.numel()
-        for i, r in items:
-            lo = r * cfg.ELL
-            hi = min(lo + cfg.ELL, v_len)
-            out[i, :hi - lo] = data[lo:hi]
+        v_rows = v.n_rows(ELL)
+        pad_len = v_rows * ELL - v_len
+        if pad_len:
+            padded = torch.zeros(v_rows * ELL, dtype=torch.uint64, device="cuda")
+            padded[:v_len] = data
+            rows_v = padded.view(v_rows, ELL)
+        else:
+            rows_v = data.view(v_rows, ELL)
+        out_idx = torch.tensor([i for i, _ in items], dtype=torch.long, device="cuda")
+        row_idx = torch.tensor([r for _, r in items], dtype=torch.long, device="cuda")
+        gathered = rows_v.index_select(0, row_idx)
+        # index_copy_ isn't in _uint64_compat's patched op list (index_select
+        # is); pure data movement (row copy, sign never inspected), so the
+        # int64 view is bit-identical -- same rule _uint64_compat itself uses.
+        out.view(torch.int64).index_copy_(0, out_idx, gathered.view(torch.int64))
         del data
     return out
 
@@ -1885,7 +2046,7 @@ def _compile_with_chs(claims: List, chs_per_claim: List, cfg: LigeroConfig,
             _a[1] = max(_a[1], _mp - _b)                     # transient above baseline
             _a[2] += 1
             if _mp > _gpeak: _gpeak = _mp; _gtype = _tn
-        for r, pkt in row_pkts:
+        for r, pkt in _expand_row_pkts(row_pkts):
             per_row[r].append(pkt)
         for fam in quads:                        # quad lift: families -> per-row
             quadratic_all.extend(fam.expand())
@@ -1999,38 +2160,44 @@ def table_settlement_compile(c: TableSettlement, _ch, cfg: LigeroConfig,
 
     sum_cid = base + T_LEN
 
-    row_pkts: List[Tuple[int, object]] = []
+    # Every packet below is IDENTICAL across its whole row range (only the
+    # row_off used to vary was never actually read by the packet fields --
+    # var_row_start is the VARIABLE's start, not the row's own index), so
+    # each is handed to _index_bands as one O(1) _PktRange instead of
+    # row_end - row_start separate (row, pkt) tuples. table.w_var alone can
+    # be a lookup-table-sized variable (hundreds of thousands of rows), so
+    # this is the difference between one range object and one Python object
+    # + list-append per row. The eager (non-streaming) compile path expands
+    # these back to per-row tuples via _expand_row_pkts, unchanged for it.
+    w_rows = table.w_var.n_rows(ell)
+    mult_rows = table.mult_var.n_rows(ell)
 
-    # Per-row product constraints (IDs [base, base + T_LEN)).
-    for row_off in range(table.w_var.n_rows(ell)):
-        row_pkts.append((table.w_var.row_start + row_off,
-                          L2_PerSlotVector(base=base,
-                                            var_row_start=table.w_var.row_start,
-                                            L=T_LEN,
-                                            coef_vec=w_coef_vec)))
-    for row_off in range(table.mult_var.n_rows(ell)):
-        row_pkts.append((table.mult_var.row_start + row_off,
-                          L2_IdentityScalar(base=base,
-                                             var_row_start=table.mult_var.row_start,
-                                             L=T_LEN, coef=neg1)))
-
-    # Sum identity (single constraint at sum_cid).
-    # Stride = variable's own length → all slots collapse onto base + 0 = sum_cid.
+    row_pkts: List[object] = [
+        _PktRange(
+            L2_PerSlotVector(base=base, var_row_start=table.w_var.row_start,
+                              L=T_LEN, coef_vec=w_coef_vec),
+            table.w_var.row_start, table.w_var.row_start + w_rows),
+        _PktRange(
+            L2_IdentityScalar(base=base, var_row_start=table.mult_var.row_start,
+                               L=T_LEN, coef=neg1),
+            table.mult_var.row_start, table.mult_var.row_start + mult_rows),
+    ]
+    # Sum identity (single constraint at sum_cid). Stride = full var length
+    # → every slot of that variable collapses onto base + 0 = sum_cid, so
+    # this is still one range per z / for w_var. Order matches the old
+    # per-row emission exactly (z_vars, THEN w_var's own sum term) --
+    # per_row[r] for a w_var row accumulates both its L2_PerSlotVector and
+    # this term, and the eager path's per-row list order is observable.
     for z in table.z_vars:
-        for row_off in range(z.n_rows(ell)):
-            row_pkts.append((z.row_start + row_off,
-                              L2_StrideManyToOneScalar(base=sum_cid,
-                                                        var_row_start=z.row_start,
-                                                        L=z.length,
-                                                        stride=z.length,
-                                                        coef=1)))
-    for row_off in range(table.w_var.n_rows(ell)):
-        row_pkts.append((table.w_var.row_start + row_off,
-                          L2_StrideManyToOneScalar(base=sum_cid,
-                                                    var_row_start=table.w_var.row_start,
-                                                    L=T_LEN,
-                                                    stride=T_LEN,
-                                                    coef=neg1)))
+        z_rows = z.n_rows(ell)
+        row_pkts.append(_PktRange(
+            L2_StrideManyToOneScalar(base=sum_cid, var_row_start=z.row_start,
+                                      L=z.length, stride=z.length, coef=1),
+            z.row_start, z.row_start + z_rows))
+    row_pkts.append(_PktRange(
+        L2_StrideManyToOneScalar(base=sum_cid, var_row_start=table.w_var.row_start,
+                                  L=T_LEN, stride=T_LEN, coef=neg1),
+        table.w_var.row_start, table.w_var.row_start + w_rows))
 
     return row_pkts, [], T_LEN + 1, None
 
@@ -2176,13 +2343,104 @@ def _claim_var_groups(claims, cfg):
     return groups
 
 
+# --- Witness cache (autoresearch iter 2) --------------------------------------
+# The sound prover re-runs the witness forward pass once per Fiat-Shamir sweep
+# (4x). Each compute_fn output is a DETERMINISTIC function of committed inputs,
+# so it is byte-identical on every sweep; caching it across sweeps yields a
+# byte-identical witness -> byte-identical proof -> ACCEPT unchanged (the whole
+# point of the 4 rounds — fixing each commitment before the next challenge — is
+# preserved: we recompute nothing challenge-dependent, only reuse deterministic
+# values). We cache ONLY the expensive-to-recompute, small-in-memory ops
+# (softmax's s1_at CPU binary search; silu's numpy decomposition), NEVER the
+# aux/Freivalds witnesses (those depend on the round's challenges and are the
+# `aux` phase, not touched here). A cumulative-element cap bounds memory at
+# large scale and degrades gracefully to recompute. LIGERO_WITNESS_CACHE=0 off.
+_WITNESS_CACHE_ON = os.environ.get("LIGERO_WITNESS_CACHE", "1") != "0"
+_WITNESS_CACHE_TYPES = frozenset({"SoftmaxClaim", "SiluClaim"})
+# Memory budget for the cache. The old fixed 2e8-element (~1.6GB) cap was far
+# too tight: at seq1024 it engaged partway through sweep 1 and gated most
+# caching out, dropping the win from ~50% to 10.8% while peak mem was only
+# 5.7GB / 32GB (iter3 sweep, measured). We now size the budget to a fraction of
+# the *actually free* GPU memory at cache-init, so it auto-scales to the card
+# and still degrades to recompute only when memory is genuinely tight. Which ops
+# get cached may thus vary with free memory, but cached and recomputed outputs
+# are byte-identical (validated), so this affects ONLY timing, never the proof.
+# LIGERO_WITNESS_CACHE_MEM_FRACTION overrides the fraction; the legacy
+# LIGERO_WITNESS_CACHE_MAX_ELEMS still applies as an optional hard ceiling.
+_WITNESS_CACHE_MEM_FRACTION = float(
+    os.environ.get("LIGERO_WITNESS_CACHE_MEM_FRACTION", "0.25"))
+_WITNESS_CACHE_MAX_ELEMS = int(
+    os.environ.get("LIGERO_WITNESS_CACHE_MAX_ELEMS", "0")) or None  # None = no hard cap
+
+
+def _witness_cache_budget_bytes():
+    """Bytes the cache may use: a fraction of currently-free GPU memory, leaving
+    the rest for prove()'s later working set (encode/merkle/etc.). Returns 0 if
+    memory can't be queried, which degrades the cache to a no-op (safe)."""
+    try:
+        free, _total = torch.cuda.mem_get_info()
+    except Exception:
+        return 0
+    return int(free * _WITNESS_CACHE_MEM_FRACTION)
+
+
+# --- Witness SPILL: store-once, re-read (host memory) instead of recompute. ---
+# Same soundness argument as the GPU witness cache (only deterministic,
+# challenge-INDEPENDENT compute_fn outputs are reused; nothing challenge-derived
+# is touched, so commit-before-challenge is untouched). The difference is WHERE
+# the reused witness lives: pinned HOST memory instead of scarce GPU memory, so
+# it holds far more than the card and covers the regime "witness > GPU but the
+# forward-pass recompute is slower than a host->device re-read" (measured on this
+# box: recompute ~8 GB/s vs H2D ~11 GB/s -> re-read wins narrowly). Whether it
+# wins depends on the deployment (recompute throughput vs storage bandwidth), so
+# it is OPT-IN (LIGERO_WITNESS_SPILL=1) and validated byte-identical.
+_WITNESS_SPILL_ON = os.environ.get("LIGERO_WITNESS_SPILL", "0") != "0"
+_WITNESS_SPILL_MEM_FRACTION = float(
+    os.environ.get("LIGERO_WITNESS_SPILL_MEM_FRACTION", "0.5"))
+
+
+def _host_spill_budget_bytes():
+    """Bytes the host spill may use: a fraction of available host RAM (from
+    /proc/meminfo MemAvailable). Returns 0 if unqueryable -> spill degrades to
+    recompute (safe)."""
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    avail = int(line.split()[1]) * 1024
+                    return int(avail * _WITNESS_SPILL_MEM_FRACTION)
+    except Exception:
+        pass
+    return 0
+
+
+def _spill_store(t):
+    """Copy a witness tensor to pinned host memory for later re-read. The int64
+    view sidesteps uint64 CUDA/pin gaps; the bit pattern (hence field value) is
+    identical, so re-reading is byte-for-byte the same as recomputing."""
+    src = t.contiguous()
+    src_i = src.view(torch.int64) if src.dtype == torch.uint64 else src
+    host = torch.empty(src_i.shape, dtype=src_i.dtype, pin_memory=True)
+    host.copy_(src_i)
+    return (host, t.dtype)
+
+
+def _spill_load(entry):
+    """Re-read a spilled witness tensor back onto the GPU (fresh, independent
+    tensor -> no clone needed)."""
+    host, dt = entry
+    dev = host.to("cuda", non_blocking=True)
+    return dev.view(dt) if dt == torch.uint64 else dev
+
+
 def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p1_rows,
                   tables, ch0, *, want_aux, merkle_p1=None, merkle_p2=None, merkle_w=None,
                   merkle_wnew=None, merkle_blind=None, q_irs=None, q_lin=None,
                   col_p1=None, col_p2=None,
                   col_w=None, col_wnew=None, col_blind=None, p_0=None,
                   w_pad=None, wnew_pad=None,
-                  stream_pk=None, r_quad=None, p_maps=None, Q_cols=None, p1_prefix=None):
+                  stream_pk=None, r_quad=None, p_maps=None, Q_cols=None, p1_prefix=None,
+                  witness_cache=None):
     """One op-order streaming pass: regenerate the witness, encode each op's rows
     into whichever accumulators are non-None, fire its quads into p_0 (if given)
     from `live`, freeing per op. want_aux=False does phase-1 only (the commit
@@ -2279,8 +2537,36 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
                     outs = fold.finalize(claim, live)
             else:
                 input_data = {v: fetch(v) for v in input_vars}
-                with _phase('witness'):
-                    outs = _cf.COMPUTE_FNS[type(claim)](claim, input_data)
+                _cacheable = (witness_cache is not None
+                              and type(claim).__name__ in _WITNESS_CACHE_TYPES)
+                _spill = witness_cache.get('_spill') if witness_cache else False
+                if _cacheable and i in witness_cache:
+                    # Reuse the deterministic compute_fn output from sweep 1.
+                    # GPU cache: clone so consumers can't mutate the cached copy.
+                    # Spill: _spill_load returns a fresh device tensor (from the
+                    # host copy) each time -> already independent, no clone.
+                    if _spill:
+                        outs = {v: _spill_load(e) for v, e in witness_cache[i].items()}
+                    else:
+                        outs = {v: t.clone() for v, t in witness_cache[i].items()}
+                else:
+                    with _phase('witness'):
+                        outs = _cf.COMPUTE_FNS[type(claim)](claim, input_data)
+                    if _cacheable:
+                        _nb = sum(t.numel() * t.element_size() for t in outs.values())
+                        _ne = sum(t.numel() for t in outs.values())
+                        _budget = witness_cache.get('_budget_bytes', 0)
+                        _under_bytes = witness_cache.get('_bytes', 0) + _nb <= _budget
+                        _under_elems = (_WITNESS_CACHE_MAX_ELEMS is None
+                                        or witness_cache.get('_elems', 0) + _ne
+                                        <= _WITNESS_CACHE_MAX_ELEMS)
+                        if _under_bytes and _under_elems:
+                            if _spill:
+                                witness_cache[i] = {v: _spill_store(t) for v, t in outs.items()}
+                            else:
+                                witness_cache[i] = {v: t.clone() for v, t in outs.items()}
+                            witness_cache['_bytes'] = witness_cache.get('_bytes', 0) + _nb
+                            witness_cache['_elems'] = witness_cache.get('_elems', 0) + _ne
             for v, t in outs.items():
                 live[v] = t
             if side_effects is not None:
@@ -2516,10 +2802,24 @@ def prove_streaming(tape, cfg, seed, weight_commitment=None, wnew_seed=None):
     w_pad = None      # (pad_seed_t, logical_offset, block_phys_start) for the W /
     wnew_pad = None   # Wnew block — set below (P5 refresh / linking support).
 
+    # Witness cache shared across the 4 sweeps: populated on sweep 1, reused on
+    # sweeps 2-4 for the deterministic softmax/silu compute_fn outputs. None
+    # disables (LIGERO_WITNESS_CACHE=0). Fresh per prove call -> no staleness.
+    # Two backing stores, same soundness: default caches in GPU memory; opt-in
+    # LIGERO_WITNESS_SPILL=1 caches in pinned HOST memory (larger budget, covers
+    # witness > GPU) and re-reads over PCIe instead of recomputing.
+    if _WITNESS_SPILL_ON:
+        witness_cache = {'_budget_bytes': _host_spill_budget_bytes(), '_spill': True}
+    elif _WITNESS_CACHE_ON:
+        witness_cache = {'_budget_bytes': _witness_cache_budget_bytes()}
+    else:
+        witness_cache = None
+
     def sweep(**kw):
         return _stream_sweep(tape, cfg, s['master_seed_t'], s['groups'], s['n_ops'],
                              s['p1_vars'], s['p2_vars'], s['m_p1_rows'], s['tables'],
-                             s['ch0'], w_pad=w_pad, wnew_pad=wnew_pad, **kw)
+                             s['ch0'], w_pad=w_pad, wnew_pad=wnew_pad,
+                             witness_cache=witness_cache, **kw)
 
     def _p0_zero():
         return torch.zeros(2 * cfg.K_DEG - 1, dtype=torch.uint64, device="cuda")

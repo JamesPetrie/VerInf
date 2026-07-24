@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+.venv/
 
 # Rust verifier build output (Cargo.lock IS committed — do not ignore it)
 verifier/target/

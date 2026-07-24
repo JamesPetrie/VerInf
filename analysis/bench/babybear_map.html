@@ -1,0 +1,252 @@
+<title>Карта поля: можно ли уйти в BabyBear?</title>
+<style>
+  :root {
+    --bg:#f4f6f8; --surface:#ffffff; --surface-2:#eaeef2; --border:#d9dee5;
+    --text:#0f151b; --text-2:#48535f; --muted:#7a8592;
+    --grid:#c4ccd5; --edge:#9aa4af;
+    --bb:#16915a; --bb-soft:#16915a22;      /* BabyBear feasible (target/good) */
+    --gold:#0d78ab;                          /* Goldilocks regime */
+    --over:#c0504d;                          /* overflow */
+    --accent:#0d78ab;
+  }
+  @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+    --bg:#0c1015; --surface:#141a21; --surface-2:#1a222b; --border:#28313b;
+    --text:#eef2f6; --text-2:#a9b5c0; --muted:#7a8692;
+    --grid:#2b343e; --edge:#48535f;
+    --bb:#3fc086; --bb-soft:#3fc08622; --gold:#37a9df; --over:#dd8785; --accent:#37a9df;
+  }}
+  :root[data-theme="dark"]{
+    --bg:#0c1015; --surface:#141a21; --surface-2:#1a222b; --border:#28313b;
+    --text:#eef2f6; --text-2:#a9b5c0; --muted:#7a8692;
+    --grid:#2b343e; --edge:#48535f;
+    --bb:#3fc086; --bb-soft:#3fc08622; --gold:#37a9df; --over:#dd8785; --accent:#37a9df;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:system-ui,-apple-system,"Segoe UI",sans-serif;line-height:1.5;-webkit-font-smoothing:antialiased;}
+  .mono{font-family:ui-monospace,"SF Mono",Menlo,monospace;}
+  .wrap{max-width:900px;margin:0 auto;padding:2.4rem 1.3rem 4rem;}
+  h1{font-size:1.5rem;font-weight:680;letter-spacing:-.01em;margin:0 0 .3rem;text-wrap:balance;}
+  .lede{color:var(--text-2);font-size:.95rem;max-width:64ch;margin:.2rem 0 1.8rem;}
+  h2{font-size:.8rem;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);font-weight:620;margin:2.2rem 0 .8rem;}
+  .formula{display:inline-block;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:8px;padding:.5rem .8rem;font-size:.92rem;}
+
+  /* bit budget */
+  .budget{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:1.1rem 1.2rem;}
+  .bbar{display:flex;height:34px;border-radius:7px;overflow:hidden;margin:.2rem 0 .5rem;border:1px solid var(--border);}
+  .bbar > span{display:flex;align-items:center;justify-content:center;color:#fff;font-size:.72rem;font-weight:600;white-space:nowrap;}
+  .thresh{position:relative;height:16px;margin-top:2px;}
+  .thresh i{position:absolute;top:0;width:1px;height:10px;background:var(--edge);}
+  .thresh i span{position:absolute;top:9px;left:50%;transform:translateX(-50%);font-size:.66rem;color:var(--muted);white-space:nowrap;}
+
+  .stage{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:1rem;
+    display:grid;grid-template-columns:1fr;gap:1rem;}
+  canvas{width:100%;height:auto;display:block;border-radius:10px;background:
+    linear-gradient(180deg,var(--surface-2),var(--surface));touch-action:none;cursor:grab;}
+  canvas:active{cursor:grabbing;}
+  .panel{display:flex;flex-direction:column;gap:.75rem;}
+  .verdict{display:flex;align-items:center;gap:.7rem;flex-wrap:wrap;}
+  .verdict .b{font-size:1.9rem;font-weight:680;letter-spacing:-.02em;}
+  .pill{font-size:.72rem;font-weight:680;text-transform:uppercase;letter-spacing:.04em;padding:.2rem .6rem;border-radius:999px;}
+  .pill.bb{color:#fff;background:var(--bb);} .pill.gold{color:#fff;background:var(--gold);} .pill.over{color:#fff;background:var(--over);}
+  .decomp{font-size:.8rem;color:var(--text-2);}
+  .ctrl{display:grid;grid-template-columns:auto 1fr auto;gap:.5rem .8rem;align-items:center;font-size:.85rem;}
+  .ctrl label{color:var(--text-2);white-space:nowrap;}
+  .ctrl output{min-width:5.5ch;text-align:right;color:var(--text);font-weight:600;}
+  input[type=range]{width:100%;accent-color:var(--accent);}
+  .legend{display:flex;flex-wrap:wrap;gap:.5rem 1.1rem;font-size:.8rem;color:var(--text-2);margin-top:.3rem;}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:.35rem;vertical-align:baseline;}
+  .presets{display:flex;flex-wrap:wrap;gap:.4rem;}
+  .presets button{font:inherit;font-size:.78rem;padding:.3rem .6rem;border-radius:7px;cursor:pointer;
+    border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);}
+  .presets button:hover{color:var(--text);border-color:var(--edge);}
+  .presets button:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}
+
+  .note{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:1rem 1.2rem;}
+  .note p{margin:.4rem 0;font-size:.88rem;color:var(--text-2);} .note b{color:var(--text);}
+  .note code{font-family:ui-monospace,Menlo,monospace;font-size:.84em;background:var(--surface-2);padding:.06rem .32rem;border-radius:5px;}
+  footer{margin-top:2.4rem;padding-top:1rem;border-top:1px solid var(--border);font-size:.78rem;color:var(--muted);}
+  @media(min-width:680px){ .stage{grid-template-columns:1.15fr .85fr;align-items:start;} }
+  @media(prefers-reduced-motion:reduce){ *{transition:none!important;} }
+</style>
+
+<div class="wrap">
+  <h1>Карта поля: можно ли уйти в BabyBear?</h1>
+  <p class="lede">Ширина поля, нужная чтобы дот-произведение не «переехало» за модуль, линейна в логарифмах —
+    значит граница BabyBear это <b>плоскость</b> в пространстве (k, s, R). Вопрос не «можно ли», а «в какой комбинации».
+    Крутите куб мышью; двигайте ползунки — точка ниже плоскости = BabyBear достижим.</p>
+  <div class="formula mono">b = log₂k + 2·log₂s + 2·log₂R + 1</div>
+
+  <h2>Бюджет битов: куда уходят текущие 46</h2>
+  <div class="budget">
+    <div class="bbar mono">
+      <span style="width:26.1%;background:#6b74c0" title="log2(k)=12">log₂k = 12</span>
+      <span style="width:52.2%;background:var(--gold)" title="2·log2(s)=24">2·log₂s = 24</span>
+      <span style="width:19.6%;background:#c98a12" title="2·log2(R)=9">2·log₂R = 9</span>
+      <span style="width:2.1%;background:var(--muted)" title="знак">±</span>
+    </div>
+    <div class="thresh">
+      <i style="left:67.4%"><span>BabyBear — 31 бит</span></i>
+      <i style="left:100%"><span style="left:auto;right:0;transform:none">Goldilocks — 64</span></i>
+    </div>
+    <p style="font-size:.82rem;color:var(--text-2);margin:.9rem 0 0">
+      Масштаб <code class="mono">s</code> съедает 24 из 46 бит — самый жирный член. Урезать <code class="mono">s</code> с 2¹² до 2⁶
+      снимает −12 бит (b: 46→34). До BabyBear (30) остаётся −4: их даёт либо нормировка <code class="mono">R</code> в ~4×,
+      либо чанк-аккумуляция <code class="mono">k</code>→256.</p>
+  </div>
+
+  <h2>3D-карта достижимости</h2>
+  <div class="stage">
+    <canvas id="cv" width="640" height="560" aria-label="Трёхмерная карта: оси log2 k, log2 s, log2 R; зелёная плоскость — граница BabyBear"></canvas>
+    <div class="panel">
+      <div class="verdict">
+        <span class="b mono" id="bval">46.0</span>
+        <span class="mono" style="color:var(--muted);font-size:.85rem">бит</span>
+        <span class="pill" id="vpill">Goldilocks</span>
+      </div>
+      <div class="decomp mono" id="decomp"></div>
+      <div class="ctrl">
+        <label>log₂k</label><input type="range" id="sk" min="4" max="14" step="0.5" value="12"><output id="ok"></output>
+        <label>log₂s</label><input type="range" id="ss" min="4" max="14" step="0.5" value="12"><output id="os"></output>
+        <label>log₂R</label><input type="range" id="sr" min="-2" max="8" step="0.5" value="4.5"><output id="or"></output>
+      </div>
+      <div class="presets" id="presets"></div>
+      <div class="legend">
+        <span><span class="dot" style="background:var(--bb)"></span>BabyBear (b&lt;31)</span>
+        <span><span class="dot" style="background:var(--gold)"></span>Goldilocks (31–63)</span>
+        <span><span class="dot" style="background:var(--over)"></span>переполнение</span>
+        <span><span class="dot" style="background:var(--edge)"></span>ваша точка</span>
+      </div>
+    </div>
+  </div>
+
+  <h2>Честный вывод</h2>
+  <div class="note">
+    <p><b>BabyBear НЕ невозможен математически</b> — моё раннее «запаяно» было слишком сильным. Он достижим при
+      <code>b≤30</code>: <code>s→2⁶</code> (−12 бит) плюс один из — нормировать активации в ~4× (<code>R</code>), либо
+      чанк-аккумуляция матмула до <code>k≤256</code> (−4 бита каждый).</p>
+    <p><b>Приз огромный:</b> 31-битное поле ≈ <b>~2× по ВСЕЙ крипте</b> — NTT, хеш, память масштабируются с шириной
+      элемента поля. Это больше любого другого рычага в реестре.</p>
+    <p><b>Но барьер — цена срезов, а не математика:</b> (1) <code>s→2⁶</code> роняет точность (в блокноте top-1 выходит
+      на плато на 2¹², ниже падает); (2) нормировка <code>R</code> упирается в «массивные» активационные выбросы
+      трансформера — их трудно ужать без потери качества; (3) чанк-аккумуляция добавляет rescale-claim'ы, то есть
+      лишнюю работу прувера, которая может съесть выигрыш от меньшего поля.</p>
+    <p>Итог: это <b>настоящее открытое направление</b> (перемерить точность при s=2⁶ + нормировке, посчитать оверхед
+      чанков против ×2 от поля), а не тупик. Спасибо — вы были правы, что стоит нарисовать границу, а не утверждать.</p>
+  </div>
+
+  <footer class="mono">analysis/bench/babybear_map.html · формула — §1 блокнота verification-parameter-analysis.ipynb · BabyBear p=2³¹−2²⁷+1, Goldilocks p=2⁶⁴−2³²+1</footer>
+</div>
+
+<script>
+(function(){
+  const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+  const RANGES = { k:[4,14], s:[4,14], r:[-2,8] };
+  const css = k => getComputedStyle(document.documentElement).getPropertyValue(k).trim();
+  let yaw = -0.7, pitch = 0.5, DPR = Math.min(2, window.devicePixelRatio||1);
+
+  function resize(){
+    const w = cv.clientWidth || 640; cv.width = w*DPR; cv.height = 560*DPR;
+    ctx.setTransform(DPR,0,0,DPR,0,0); draw();
+  }
+  const norm = (v, r) => (v - r[0])/(r[1]-r[0])*2 - 1;    // -> [-1,1]
+  function P(lk, ls, lr){ return { x:norm(lk,RANGES.k), y:norm(ls,RANGES.s), z:norm(lr,RANGES.r) }; }
+  function rot(p){
+    const cy=Math.cos(yaw), sy=Math.sin(yaw), cp=Math.cos(pitch), sp=Math.sin(pitch);
+    const x1 = p.x*cy - p.z*sy, z1 = p.x*sy + p.z*cy;
+    const y2 = p.y*cp - z1*sp, z2 = p.y*sp + z1*cp;
+    return {x:x1, y:y2, z:z2};
+  }
+  function proj(p){
+    const r = rot(p), d = 3.4, f = d/(d - r.z);
+    const W = cv.clientWidth||640, S = Math.min(W,560)*0.34;
+    return { X: W/2 + r.x*f*S, Y: 300 - r.y*f*S, z:r.z };
+  }
+  const bOf = (lk,ls,lr) => lk + 2*ls + 2*lr + 1;
+  const colorFor = b => b<31 ? css('--bb') : (b<64 ? css('--gold') : css('--over'));
+
+  const CUBE = [[-1,-1,-1],[1,-1,-1],[1,1,-1],[-1,1,-1],[-1,-1,1],[1,-1,1],[1,1,1],[-1,1,1]];
+  const EDGES = [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];
+
+  function draw(){
+    const W = cv.clientWidth||640; ctx.clearRect(0,0,W,560);
+    // cube edges
+    ctx.strokeStyle = css('--edge'); ctx.lineWidth = 1; ctx.globalAlpha = .5;
+    const cp = CUBE.map(c => proj({x:c[0],y:c[1],z:c[2]}));
+    EDGES.forEach(([a,b])=>{ ctx.beginPath(); ctx.moveTo(cp[a].X,cp[a].Y); ctx.lineTo(cp[b].X,cp[b].Y); ctx.stroke(); });
+    ctx.globalAlpha = 1;
+
+    // BabyBear boundary plane b=31 -> lk = 30 - 2ls - 2lr, drawn as a mesh
+    const gs = 11, mesh = [];
+    for(let i=0;i<gs;i++){ const row=[];
+      for(let j=0;j<gs;j++){
+        const ls = RANGES.s[0] + (RANGES.s[1]-RANGES.s[0])*i/(gs-1);
+        const lr = RANGES.r[0] + (RANGES.r[1]-RANGES.r[0])*j/(gs-1);
+        const lk = 30 - 2*ls - 2*lr;
+        row.push((lk>=RANGES.k[0]&&lk<=RANGES.k[1]) ? proj(P(lk,ls,lr)) : null);
+      } mesh.push(row);
+    }
+    ctx.fillStyle = css('--bb-soft'); ctx.strokeStyle = css('--bb'); ctx.globalAlpha=.9; ctx.lineWidth=1;
+    for(let i=0;i<gs-1;i++) for(let j=0;j<gs-1;j++){
+      const a=mesh[i][j],b=mesh[i+1][j],c=mesh[i+1][j+1],d=mesh[i][j+1];
+      if(a&&b&&c&&d){ ctx.beginPath(); ctx.moveTo(a.X,a.Y);ctx.lineTo(b.X,b.Y);ctx.lineTo(c.X,c.Y);ctx.lineTo(d.X,d.Y);ctx.closePath();
+        ctx.fill(); ctx.globalAlpha=.35; ctx.stroke(); ctx.globalAlpha=.9; }
+    }
+    ctx.globalAlpha=1;
+
+    // axis labels
+    ctx.fillStyle = css('--muted'); ctx.font='600 12px ui-monospace,Menlo,monospace';
+    const put=(lk,ls,lr,t)=>{ const q=proj(P(lk,ls,lr)); ctx.fillText(t,q.X,q.Y); };
+    put(14,4,-2,'k↑'); put(4,14,-2,'s↑'); put(4,4,8,'R↑');
+
+    // operating points + movable point, depth-sorted
+    const pts = PRESETS.map(p=>({...p, ...proj(P(p.lk,p.ls,p.lr)), b:bOf(p.lk,p.ls,p.lr)}));
+    const mv = {lk:+sk.value, ls:+ss.value, lr:+sr.value};
+    pts.push({name:'вы', ...proj(P(mv.lk,mv.ls,mv.lr)), b:bOf(mv.lk,mv.ls,mv.lr), you:true});
+    pts.sort((a,b)=>a.z-b.z);
+    pts.forEach(p=>{
+      ctx.beginPath(); ctx.arc(p.X,p.Y, p.you?7:5, 0, 7);
+      ctx.fillStyle = p.you ? css('--edge') : colorFor(p.b);
+      ctx.globalAlpha = p.you?1:.92; ctx.fill();
+      ctx.lineWidth=1.5; ctx.strokeStyle= css('--surface'); ctx.stroke(); ctx.globalAlpha=1;
+    });
+  }
+
+  const PRESETS = [
+    {name:'Сейчас', lk:12, ls:12, lr:4.5},
+    {name:'s→2⁶', lk:12, ls:6, lr:4.5},
+    {name:'s→2⁶ + норм.R', lk:12, ls:6, lr:2.5},
+    {name:'s→2⁶ + чанк k=256', lk:8, ls:6, lr:4.5},
+  ];
+  const sk=document.getElementById('sk'), ss=document.getElementById('ss'), sr=document.getElementById('sr');
+  const ok=document.getElementById('ok'), os=document.getElementById('os'), or=document.getElementById('or');
+  const bval=document.getElementById('bval'), vpill=document.getElementById('vpill'), decomp=document.getElementById('decomp');
+  function fmtPow(l){ const v=Math.pow(2,l); return v>=1 ? '2^'+l.toFixed(l%1?1:0) : v.toFixed(2); }
+  function update(){
+    const lk=+sk.value, ls=+ss.value, lr=+sr.value, b=bOf(lk,ls,lr);
+    ok.textContent = fmtPow(lk); os.textContent = fmtPow(ls); or.textContent = fmtPow(lr);
+    bval.textContent = b.toFixed(1);
+    const v = b<31 ? ['BabyBear','bb'] : (b<64 ? ['Goldilocks','gold'] : ['переполнение','over']);
+    vpill.textContent = v[0]; vpill.className = 'pill '+v[1];
+    decomp.innerHTML = `log₂k <b>${lk.toFixed(1)}</b> + 2·log₂s <b>${(2*ls).toFixed(1)}</b> + 2·log₂R <b>${(2*lr).toFixed(1)}</b> + 1 = <b>${b.toFixed(1)}</b> бит &nbsp;(бюджет BabyBear 30)`;
+    draw();
+  }
+  [sk,ss,sr].forEach(el=>el.addEventListener('input',update));
+
+  const pc = document.getElementById('presets');
+  PRESETS.forEach(p=>{ const btn=document.createElement('button'); btn.textContent=p.name;
+    btn.onclick=()=>{ sk.value=p.lk; ss.value=p.ls; sr.value=p.lr; update(); }; pc.appendChild(btn); });
+
+  // drag-rotate
+  let drag=false, px=0, py=0;
+  cv.addEventListener('pointerdown', e=>{ drag=true; px=e.clientX; py=e.clientY; cv.setPointerCapture(e.pointerId); });
+  cv.addEventListener('pointermove', e=>{ if(!drag)return; yaw += (e.clientX-px)*0.01; pitch += (e.clientY-py)*0.01;
+    pitch=Math.max(-1.4,Math.min(1.4,pitch)); px=e.clientX; py=e.clientY; draw(); });
+  cv.addEventListener('pointerup', ()=>drag=false);
+  window.addEventListener('resize', resize);
+  const mq = window.matchMedia('(prefers-color-scheme: dark)'); mq.addEventListener?.('change', draw);
+  new MutationObserver(draw).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
+  resize(); update();
+})();
+</script>

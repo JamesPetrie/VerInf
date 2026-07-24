@@ -18,6 +18,7 @@ from typing import Any, Callable, Dict
 import torch
 
 import math
+import os
 
 from cuda_primitives import P, gl_add, gl_matmul, gl_mul, gl_sub, gl_inv, gl_inv_batched
 from claims import (
@@ -272,29 +273,50 @@ def silu_compute(claim: SiluClaim, live):
     # per-cell Python list-comps over SEQ*d_ff cells (the dominant witness-
     # compute cost, esp. at long context). All ops are uint64; every constant
     # is wrapped in np.uint64 to avoid numpy's uint64+int -> float64 promotion.
-    x_np = x_data.cpu().numpy()
-    P_np, Ph_np = np.uint64(P), np.uint64(P_half)
-    b_np, TL_np = np.uint64(b), np.uint64(T_LEN)
-    b2_np, b3_np, b4_np = np.uint64(b_2), np.uint64(b_3), np.uint64(b_4)
-    w2_np, w3_np, w4_np = np.uint64(w2_mod), np.uint64(w3_mod), np.uint64(w4_mod)
-    sign_np = (x_np > Ph_np)
-    mag_np  = np.where(sign_np, (P_np - x_np) % P_np, x_np)
-    a0_np = mag_np % b_np
-    a1_np = (mag_np // b_np)  % TL_np
-    a2_np = (mag_np // b2_np) % w2_np
-    a3_np = (mag_np // b3_np) % w3_np
-    a4_np = (mag_np // b4_np) % w4_np
-    g_np  = b2_np * a2_np + b3_np * a3_np + b4_np * a4_np
-    sign_u = sign_np.astype(np.uint64)
-    key_np = sign_u * TL_np + a1_np
-    is_high_np = (g_np != 0).astype(np.uint64)
+    if _GPU_SILU_ON:
+        # GPU int64 decomposition (no CPU round-trip). signed(x) fits int64;
+        # mag = |signed| is small; every chunk is a positive int64 whose field
+        # rep is itself (.view(uint64)). Matches the numpy block below bit-for-bit.
+        signed = _to_signed_gpu(x_data)                 # int64 = signed(x)
+        mag_i = torch.abs(signed)                        # int64, small positive
+        a0_i = mag_i % b
+        a1_i = (mag_i // b) % T_LEN
+        a2_i = (mag_i // b_2) % w2_mod
+        a3_i = (mag_i // b_3) % w3_mod
+        a4_i = (mag_i // b_4) % w4_mod
+        g_i = b_2 * a2_i + b_3 * a3_i + b_4 * a4_i
+        sign_ii = (signed < 0).to(torch.int64)
+        key_i = sign_ii * T_LEN + a1_i
+        is_high_i = (g_i != 0).to(torch.int64)
+        vu = lambda t: t.contiguous().view(torch.uint64)
+        sign_d, mag_d = vu(sign_ii), vu(mag_i)
+        a0_d, a1_d = vu(a0_i), vu(a1_i)
+        a2_d, a3_d, a4_d = vu(a2_i), vu(a3_i), vu(a4_i)
+        g_d, key_d, is_high_d = vu(g_i), vu(key_i), vu(is_high_i)
+    else:
+        x_np = x_data.cpu().numpy()
+        P_np, Ph_np = np.uint64(P), np.uint64(P_half)
+        b_np, TL_np = np.uint64(b), np.uint64(T_LEN)
+        b2_np, b3_np, b4_np = np.uint64(b_2), np.uint64(b_3), np.uint64(b_4)
+        w2_np, w3_np, w4_np = np.uint64(w2_mod), np.uint64(w3_mod), np.uint64(w4_mod)
+        sign_np = (x_np > Ph_np)
+        mag_np  = np.where(sign_np, (P_np - x_np) % P_np, x_np)
+        a0_np = mag_np % b_np
+        a1_np = (mag_np // b_np)  % TL_np
+        a2_np = (mag_np // b2_np) % w2_np
+        a3_np = (mag_np // b3_np) % w3_np
+        a4_np = (mag_np // b4_np) % w4_np
+        g_np  = b2_np * a2_np + b3_np * a3_np + b4_np * a4_np
+        sign_u = sign_np.astype(np.uint64)
+        key_np = sign_u * TL_np + a1_np
+        is_high_np = (g_np != 0).astype(np.uint64)
 
-    def _t(arr):
-        return torch.from_numpy(np.ascontiguousarray(arr)).to("cuda")
-    sign_d, mag_d = _t(sign_u), _t(mag_np)
-    a0_d, a1_d = _t(a0_np), _t(a1_np)
-    a2_d, a3_d, a4_d = _t(a2_np), _t(a3_np), _t(a4_np)
-    g_d, key_d, is_high_d = _t(g_np), _t(key_np), _t(is_high_np)
+        def _t(arr):
+            return torch.from_numpy(np.ascontiguousarray(arr)).to("cuda")
+        sign_d, mag_d = _t(sign_u), _t(mag_np)
+        a0_d, a1_d = _t(a0_np), _t(a1_np)
+        a2_d, a3_d, a4_d = _t(a2_np), _t(a3_np), _t(a4_np)
+        g_d, key_d, is_high_d = _t(g_np), _t(key_np), _t(is_high_np)
     C_d = gl_mul(sign_d, x_data)
     inv_g_d = gl_inv(g_d)
     output_sat_d = gl_sub(x_data, C_d)
@@ -430,6 +452,136 @@ def rmsnorm_compute(claim: RmsNormClaim, live):
 COMPUTE_FNS[RmsNormClaim] = rmsnorm_compute
 
 
+# GPU port of _softmax_witness_vec (tape.py). The numpy path runs on CPU and
+# dominated prove time at large SEQ (softmax O(SEQ^2), the single biggest witness
+# term after the cache work). This does the identical computation in torch int64
+# on CUDA — BIT-EXACT to numpy (validated: gpu_softmax_ab.py + the byte-identical
+# proof gate). Goldilocks P = 2^64-2^32+1 > int64 max, so the field<->signed
+# conversions replicate _to_signed_np/_to_field_np exactly via order-preserving
+# int64 tricks; table entries (<2^62) and activations stay in int64.
+# LIGERO_GPU_SOFTMAX=0 falls back to the numpy path.
+_GPU_SOFTMAX_ON = os.environ.get("LIGERO_GPU_SOFTMAX", "1") != "0"
+# Same idea for silu's sign-magnitude + 5-chunk decomposition: do it on GPU in
+# int64 instead of round-tripping x to CPU numpy. Safe because the magnitude is
+# small (bounded by the activation range check, << 2^62), so every intermediate
+# fits int64; the witness values (sign/mag/a0..a4/g/key/is_high) are small
+# non-negative -> their field-rep is the value itself (.view(uint64)). Bit-exact
+# to the numpy path (validated). LIGERO_GPU_SILU=0 falls back to numpy.
+_GPU_SILU_ON = os.environ.get("LIGERO_GPU_SILU", "1") != "0"
+_SM_P_HALF = (P - 1) // 2
+_SM_FIELD_GAP = (1 << 64) - P            # 2^32 - 1
+_SM_INT64_MIN = -(1 << 63)
+
+
+def _to_signed_gpu(u_u64):
+    """uint64 cuda tensor (values in [0,P)) -> signed int64 cuda tensor. Exact
+    replica of _to_signed_np: where(u <= P_HALF, u, u-P).view(int64)."""
+    ui = u_u64.view(torch.int64)
+    key_u = ui ^ _SM_INT64_MIN            # order-preserving uint64 compare
+    key_h = torch.tensor(_SM_P_HALF, dtype=torch.uint64,
+                         device=u_u64.device).view(torch.int64) ^ _SM_INT64_MIN
+    le = key_u <= key_h
+    return torch.where(le, ui, ui + _SM_FIELD_GAP)
+
+
+def _to_field_gpu(s_i64):
+    """signed int64 cuda tensor -> uint64 field-rep. Replica of _to_field_np."""
+    return torch.where(s_i64 >= 0, s_i64, s_i64 - _SM_FIELD_GAP).view(torch.uint64)
+
+
+def _softmax_witness_gpu(x_in_u64, *, B, M, s_x, s_c, s_y, T_A_gpu, T_B_gpu, Z_max,
+                         aux_chunk_width, saturate, Z_high_width, causal, heads,
+                         round_up=False):
+    dev = x_in_u64.device
+    x_signed = _to_signed_gpu(x_in_u64).reshape(B, M)
+    if causal:
+        i_qry = (torch.arange(B, device=dev) // heads).unsqueeze(1)
+        j_idx = torch.arange(M, device=dev).unsqueeze(0)
+        mask_2d = j_idx > i_qry
+    else:
+        mask_2d = torch.zeros((B, M), dtype=torch.bool, device=dev)
+    unmasked = ~mask_2d
+    imin = torch.iinfo(torch.int64).min
+    imax = torch.iinfo(torch.int64).max
+    max_x = torch.where(unmasked, x_signed, torch.full_like(x_signed, imin)).amax(dim=1)
+    min_x = torch.where(unmasked, x_signed, torch.full_like(x_signed, imax)).amin(dim=1)
+    Zt = int(Z_max)
+
+    def s1_at(c2_b):
+        z = c2_b.unsqueeze(1) - x_signed
+        in_range = (z >= 0) & (z < Zt) & unmasked
+        z_cl = torch.where(in_range, z, torch.zeros_like(z))
+        s = torch.where(in_range, T_A_gpu[z_cl], torch.zeros_like(z))
+        if round_up:
+            s = s + (unmasked & (z >= Zt)).to(torch.int64)
+        return s.sum(dim=1)
+
+    c2_lo = max_x.clone()
+    c2_hi = (max_x + Zt) if saturate else (min_x + Zt - 1)
+    skip = s1_at(c2_lo) <= s_y
+    n_iter = max(1, (Zt - 1).bit_length()) + 2
+    for _ in range(n_iter):
+        active = (c2_lo + 1 < c2_hi) & ~skip
+        if not bool(active.any()):
+            break
+        c2_mid = (c2_lo + c2_hi) // 2
+        s1_mid = s1_at(c2_mid)
+        up_hi = (s1_mid <= s_y) & active
+        up_lo = (~(s1_mid <= s_y)) & active
+        c2_hi = torch.where(up_hi, c2_mid, c2_hi)
+        c2_lo = torch.where(up_lo, c2_mid, c2_lo)
+    c2 = torch.where(skip, c2_lo, c2_hi)
+    s1 = s1_at(c2)
+
+    z_2d = c2.unsqueeze(1) - x_signed
+    in_range_2d = (z_2d >= 0) & (z_2d < Zt) & unmasked
+    z_cl2 = torch.where(in_range_2d, z_2d, torch.zeros_like(z_2d))
+    z0 = torch.zeros_like(z_2d)
+    y_A_2d = torch.where(in_range_2d, T_A_gpu[z_cl2], z0)
+    y_B_2d = torch.where(in_range_2d, T_B_gpu[z_cl2], z0)
+    if round_up:
+        far = unmasked & (z_2d >= Zt)
+        one = torch.ones_like(z_2d)
+        y_A_2d = torch.where(far, one, y_A_2d)
+        y_B_2d = torch.where(far, one, y_B_2d)
+    s2 = y_B_2d.sum(dim=1)
+    r_lo = s_y - s1
+    r_hi = s2 - s_y - 1
+
+    out = {
+        "c2": _to_field_gpu(c2),
+        "c2_shifted": _to_field_gpu(c2 + (1 << (aux_chunk_width - 1))),
+        "z": None,
+        "y_A": _to_field_gpu(y_A_2d.reshape(-1)),
+        "y_B": _to_field_gpu(y_B_2d.reshape(-1)),
+        "s1": _to_field_gpu(s1), "s2": _to_field_gpu(s2),
+        "r_lo": _to_field_gpu(r_lo), "r_hi": _to_field_gpu(r_hi),
+    }
+    if saturate:
+        z_low_un = torch.remainder(z_2d, Zt)
+        z_high_un = torch.div(z_2d, Zt, rounding_mode='floor')
+        if causal:
+            z_low = torch.where(mask_2d, z0, z_low_un)
+            z_high = torch.where(mask_2d, z0, z_high_un)
+        else:
+            z_low, z_high = z_low_un, z_high_un
+        is_high = (z_high != 0).to(torch.int64)
+        zl_cl = torch.where(mask_2d, z0, z_low)
+        yA_raw = torch.where(mask_2d, z0, T_A_gpu[zl_cl])
+        yB_raw = torch.where(mask_2d, z0, T_B_gpu[zl_cl])
+        is_high_b = is_high.to(torch.bool)
+        out["z"] = z_low.reshape(-1).view(torch.uint64)
+        out["z_high"] = z_high.reshape(-1).view(torch.uint64)
+        out["is_high"] = is_high.reshape(-1).view(torch.uint64)
+        out["y_A_raw"] = yA_raw.reshape(-1).view(torch.uint64)
+        out["y_B_raw"] = yB_raw.reshape(-1).view(torch.uint64)
+        out["mux_y_A"] = torch.where(is_high_b, yA_raw, z0).reshape(-1).view(torch.uint64)
+        out["mux_y_B"] = torch.where(is_high_b, yB_raw, z0).reshape(-1).view(torch.uint64)
+    else:
+        out["z"] = _to_field_gpu(z_2d.reshape(-1))
+    return out
+
+
 def softmax_compute(claim: SoftmaxClaim, live):
     """Compute all phase-1 softmax witnesses via the vectorized helper
     `_softmax_witness_vec` (works for both no-rescale and rescale paths;
@@ -463,15 +615,28 @@ def softmax_compute(claim: SoftmaxClaim, live):
     T_A_data, T_B_data = _softmax_exp_tables(sc)   # already np.uint64 arrays
     T_A_np = np.asarray(T_A_data, dtype=np.uint64)
     T_B_np = np.asarray(T_B_data, dtype=np.uint64)
-    x_in_np = x_for_bracket.detach().cpu().numpy().astype(np.uint64)
-    sm = _softmax_witness_vec(
-        x_in_np, B=B, M=M, s_x=sc.s_x, s_c=sc.s_c, s_y=sc.s_y,
-        T_A_np=T_A_np, T_B_np=T_B_np, Z_max=sc.Z_max,
-        aux_chunk_width=sc.aux_chunk_width,
-        saturate=sc.saturate, Z_high_width=sc.Z_high_width,
-        causal=sc.causal, heads=sc.heads, round_up=getattr(sc, "round_up", False))
+    if _GPU_SOFTMAX_ON:
+        # GPU path: keep x on device (no .cpu() round-trip), returns cuda tensors
+        # directly. Bit-exact to the numpy path (validated).
+        T_A_g = torch.from_numpy(T_A_np.astype(np.int64)).to("cuda")
+        T_B_g = torch.from_numpy(T_B_np.astype(np.int64)).to("cuda")
+        sm = _softmax_witness_gpu(
+            x_for_bracket, B=B, M=M, s_x=sc.s_x, s_c=sc.s_c, s_y=sc.s_y,
+            T_A_gpu=T_A_g, T_B_gpu=T_B_g, Z_max=sc.Z_max,
+            aux_chunk_width=sc.aux_chunk_width,
+            saturate=sc.saturate, Z_high_width=sc.Z_high_width,
+            causal=sc.causal, heads=sc.heads, round_up=getattr(sc, "round_up", False))
+        _u64 = lambda t: t                       # already cuda uint64 tensors
+    else:
+        x_in_np = x_for_bracket.detach().cpu().numpy().astype(np.uint64)
+        sm = _softmax_witness_vec(
+            x_in_np, B=B, M=M, s_x=sc.s_x, s_c=sc.s_c, s_y=sc.s_y,
+            T_A_np=T_A_np, T_B_np=T_B_np, Z_max=sc.Z_max,
+            aux_chunk_width=sc.aux_chunk_width,
+            saturate=sc.saturate, Z_high_width=sc.Z_high_width,
+            causal=sc.causal, heads=sc.heads, round_up=getattr(sc, "round_up", False))
+        _u64 = lambda arr: torch.from_numpy(arr).to("cuda")
 
-    def _u64(arr): return torch.from_numpy(arr).to("cuda")
     out[claim.c2]         = _u64(sm["c2"])
     out[claim.c2_shifted] = _u64(sm["c2_shifted"])
     out[claim.z]          = _u64(sm["z"])

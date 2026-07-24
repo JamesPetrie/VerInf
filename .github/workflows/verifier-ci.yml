@@ -1,0 +1,50 @@
+name: verifier CI
+
+# Lint (clippy), build, and test the standalone Rust verifier crate.
+# Path-scoped like toy-demo-ci.yml: this crate is pure-CPU (no CUDA), so it's
+# the one part of the repo that runs unmodified on a GitHub-hosted runner —
+# the prover (prover/) needs a real GPU and isn't covered here.
+#
+# No `cargo fmt --check` gate: all 14 files use one consistent dense style
+# throughout (matches the terser style used across the Python side too) that
+# isn't rustfmt-default — reformatting the whole crate to add this gate would
+# rewrite every file for a style nobody asked to change. clippy runs without
+# `-D warnings` for the same reason: a couple of pre-existing warnings
+# shouldn't gate on a style change out of scope here.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "verifier/**"
+      - ".github/workflows/verifier-ci.yml"
+  pull_request:
+    paths:
+      - "verifier/**"
+      - ".github/workflows/verifier-ci.yml"
+
+concurrency:
+  group: verifier-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: verifier
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: verifier
+
+      - name: Lint (cargo clippy)
+        run: cargo clippy --release --all-targets
+
+      - name: Tests (cargo test)
+        run: cargo test --release
