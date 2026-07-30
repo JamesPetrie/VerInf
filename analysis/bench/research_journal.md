@@ -534,3 +534,40 @@ accuracy question (the true next experiment). Even granting it, the mixed payoff
 is modest (~7%) because attention scores (act·act, O(seq^2)) can't leave
 Goldilocks. Recorded as a decision tool + honest projection; execution blocked on
 the field backend port.
+
+---
+## iter11 — PHONE-model validation campaign (local V100, remote_suite.py)
+
+First real (non-toy) validation: Qwen2.5-0.5B (d896,L24) and Llama-3.2-1B
+(d2048,L16) SHAPES with random weights (no download), seq256, real vocab. Ran
+via analysis/bench/remote_suite.py --matrix phone --reps 2 on the dev V100.
+
+Structural fix found (only surfaces on real d): embedding_lookup requires
+ELL >= d. Default ELL=512 fails at d=896/2048. Fixed: ELL=next_pow2(d),
+K_DEG=2*ELL, N_LIG=8*ELL (wired via AB_ELL; remote_suite computes it per config).
+
+SOUNDNESS GATES: all 4 PASS at phone scale (byte-identical GPU softmax/silu/spill
++ Rust ACCEPT). Optimizations remain sound.
+
+MEASURED (prove off->on, V100):
+  GPU softmax (transferable win):
+    Qwen-0.5B : 118.06 -> 97.43s  = 17.5% faster; witness 26.74->5.97s; peak 16.7GB
+    Llama-1B  : 185.81 ->114.47s  = 38.4% faster; witness 80.23->10.08s; peak 21.6GB
+    -> the win GROWS with model size (17.5%->38.4%); prod_lens +44.1%/+49.7%.
+       This is the demonstrated transferable optimization, now confirmed at
+       phone scale, not just toy.
+  witness spill:
+    Qwen-0.5B : recompute 98.80 / gpu-cache 96.94 (+1.9%) / host-spill 105.44 (-6.7%)
+    Llama-1B  : OOM (CUDA OOM at d2048: prove ~30GB baseline, the gpu-cache 25%
+                budget + host-spill pinning tip it over 32GB).
+    -> spill net-negative at phone scale (as modeled; wins only at 400B where
+       recompute >> storage-BW). OOM is a VRAM finding, not a spill-quality one.
+
+VRAM (rental sizing, MEASURED): Qwen softmax 16.7GB, Llama softmax 21.6GB (fit
+V100 32GB), Llama SPILL A/B OOM >32GB. -> a 48GB card (A6000) comfortably fits
+Llama-1B incl. the memory-hungry cache/spill modes. Confirms the A6000-48GB
+rental recommendation with real numbers.
+
+Outcome: campaign tooling works end-to-end; GPU softmax validated as a real,
+growing win at phone scale; spill confirmed net-negative below 400B; Llama-1B
+needs >32GB for the spill A/B -> motivates the rented 48GB card. ACCEPT held.

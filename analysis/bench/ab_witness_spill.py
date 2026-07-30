@@ -20,8 +20,11 @@ from tape import Tape
 from run_log import log_run
 import prod_lens
 
-CFG = LigeroConfig(ELL=512, K_DEG=1024, N_LIG=4096, T_QUERIES=16)
-D, DFF, DH = 512, 1536, 64
+_ELL = int(os.environ.get("AB_ELL", "512"))  # must be >= d (embedding lookup); pow2
+CFG = LigeroConfig(ELL=_ELL, K_DEG=2 * _ELL, N_LIG=8 * _ELL, T_QUERIES=16)
+D = int(os.environ.get("AB_D", "512"))
+DFF = int(os.environ.get("AB_DFF", str(3 * D)))
+DH = int(os.environ.get("AB_DH", "64"))
 SEQ = int(os.environ.get("AB_SEQ", "512"))
 NL = int(os.environ.get("AB_NL", "4"))
 dt.d, dt.d_ff, dt.d_h, dt.SEQ = D, DFF, DH, SEQ
@@ -36,7 +39,7 @@ def build():
     for L in range(NL):
         w = dt._commit_weights_random(tape, layer_idx=L)
         resid = dt._run_block(tape, resid, w, H=H)
-    vocab = 64
+    vocab = int(os.environ.get("AB_VOCAB", "64"))
     fn = torch.full((D,), dt.S, dtype=torch.uint64, device="cuda")
     lm = dt._rand_signed(D * vocab, half=dt.HALF)
     fnw = tape.commit("final_norm_w", fn, (D,))
