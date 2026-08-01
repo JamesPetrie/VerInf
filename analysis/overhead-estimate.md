@@ -19,8 +19,6 @@ the measured runs of paper §9 and the cost identity of Appendix A.5.
   **≈ 1×10⁵** on the NVL72 floor. High because every score cell carries **~20
   committed intermediates** (21: mostly the softmax lookup machinery, which has
   no inner dimension to amortize over) against a few hundred inference FLOPs.
-- Fixed cost: weight commitment, **5.4 h measured**, amortizing to minutes per
-  proof over the ~100-proof refresh cycle.
 - Floor under everything: the 4 witness passes, **≈ 4×10⁴**; a large dense
   model (no MoE route-hiding, bigger inner dims) would sit near **≈ 10³**.
 
