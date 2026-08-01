@@ -19,8 +19,10 @@ the measured runs of paper §9 and the cost identity of Appendix A.5.
   **≈ 1×10⁵** on the NVL72 floor. High because every score cell carries **~20
   committed intermediates** (21: mostly the softmax lookup machinery, which has
   no inner dimension to amortize over) against a few hundred inference FLOPs.
-- Floor under everything: the 4 witness passes, **≈ 4×10⁴**; a large dense
-  model (no MoE route-hiding, bigger inner dims) would sit near **≈ 10³**.
+- Lower bound: even if committing were free, the prover recomputes the integer
+  forward pass once per round (4 passes, int64 vs fp8 tensor cores) —
+  **≈ 4×10⁴** for Maverick; a large dense model (no route-hiding, larger inner
+  dims) would sit near **≈ 10³**.
 
 ## Definition and convention
 
