@@ -47,6 +47,20 @@ overhead(S)  =  [ W(S) / F(S) ]      ×      [ c_slot / c_flop ]
   piecewise-constant — one value per regime of paper §A.4 — and the whole
   estimate is three coefficient comparisons.
 
+**`c_slot` is an all-in rate, not a commitment rate.** It is total wall-clock
+over witness slots, so constraint cost is inside it: the linear fold where the
+constraint system is evaluated (transforms plus constraint-coefficient work),
+the quadratic fold over the Hadamard products, and the per-constraint challenge
+hashes, alongside the commit encode, column hashing, and the four witness
+passes. By the instrumented bucket shares of A.5, the constraint-side work is
+roughly 30–40% of proving time. The per-slot normalization assumes `Q ∝ W`;
+that ratio shifts from ≈ 0.20 at S=1000 (where the rate was measured) to
+19200/40320 ≈ 0.48 in the pure attention regime, so the Regime-2 overhead is
+understated by ~10% — inside the error bars, and carried explicitly (the
+`15 ns × Q` line) in the NVL72 floor below. Excluded from the overhead
+entirely: verifier time (17.7 h for the demonstrated run), proof
+storage/transmission, and the amortized weight commitment.
+
 `F(S) ≈ 2·N_active·S + 2·d·n_layers·S²` with `N_active = 17×10⁹`, i.e.
 `3.4×10¹⁰·S + 4.9×10⁵·S²` FLOP (causal attention).
 
