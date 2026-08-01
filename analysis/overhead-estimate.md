@@ -7,6 +7,20 @@ final numbers without derivation. Companion to `maverick-cost-model.md`, which
 supplies the witness polynomials `W(S), #cids(S), Q(S)`; wall-clock anchors are
 the measured runs of paper §9 and the cost identity of Appendix A.5.
 
+**Takeaway numbers** (derived below; against fp8 flash-attention inference at
+40% MFU on the same hardware, weight commitment amortized):
+
+- **Headline: overhead ≈ 10⁵, within a factor of a few**, across both regimes
+  and both machines (Spark measured, NVL72 floor).
+- Expert-dominated regime (900 ≲ S ≲ 11k): **≈ 1×10⁵** (34 s of proving per
+  token vs 0.34 ms of inference, measured).
+- Attention-dominated regime (S ≳ 11k): **≈ 5×10⁵** on the Spark measured,
+  **≈ 1×10⁵** on the NVL72 floor.
+- Fixed cost: weight commitment, **5.4 h measured**, amortizing to minutes per
+  proof over the ~100-proof refresh cycle.
+- Floor under everything: the 4 witness passes, **≈ 4×10⁴**; a large dense
+  model (no MoE route-hiding, bigger inner dims) would sit near **≈ 10³**.
+
 ## Definition and convention
 
 ```
