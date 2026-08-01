@@ -13,9 +13,12 @@ the measured runs of paper §9 and the cost identity of Appendix A.5.
 - **Headline: overhead ≈ 10⁵, within a factor of a few**, across both regimes
   and both machines (Spark measured, NVL72 floor).
 - Expert-dominated regime (900 ≲ S ≲ 11k): **≈ 1×10⁵** (34 s of proving per
-  token vs 0.34 ms of inference, measured).
+  token vs 0.34 ms of inference, measured). High because hiding the route means
+  committing **all 128 experts per MoE layer** while inference computes one.
 - Attention-dominated regime (S ≳ 11k): **≈ 5×10⁵** on the Spark measured,
-  **≈ 1×10⁵** on the NVL72 floor.
+  **≈ 1×10⁵** on the NVL72 floor. High because every score cell carries **~20
+  committed intermediates** (21: mostly the softmax lookup machinery, which has
+  no inner dimension to amortize over) against a few hundred inference FLOPs.
 - Fixed cost: weight commitment, **5.4 h measured**, amortizing to minutes per
   proof over the ~100-proof refresh cycle.
 - Floor under everything: the 4 witness passes, **≈ 4×10⁴**; a large dense
