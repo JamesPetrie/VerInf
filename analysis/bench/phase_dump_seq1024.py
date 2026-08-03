@@ -3,7 +3,7 @@ so iter9 attacks the CURRENT top bucket (witness is now ~6%, the old shares are
 stale)."""
 import sys, os
 from pathlib import Path
-R = Path("/home/riftuser/VerInf")
+R = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(R / "prover")); sys.path.insert(0, str(R / "demo"))
 os.environ["LIGERO_PHASE_TIMING"] = "1"
 import _uint64_compat  # noqa

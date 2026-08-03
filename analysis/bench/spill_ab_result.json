@@ -1,0 +1,11 @@
+{
+  "D": 1024,
+  "SEQ": 2048,
+  "NL": 4,
+  "DFF": 3072,
+  "spilldir": "/home/riftuser/VerInf/analysis/bench/_spill_tmp",
+  "gpu": "Tesla V100-SXM3-32GB",
+  "bw_cache_dropped": false,
+  "disk_write_GBps": 0.69,
+  "disk_read_GBps": 5.25
+}

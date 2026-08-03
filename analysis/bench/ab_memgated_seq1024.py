@@ -3,7 +3,7 @@ recovers the full seq1024 win that the old fixed 2e8 cap blocked. Same-process
 OFF vs ON, fixed seed, CUDA-synced prove wall-clock + witness phase + peak mem."""
 import sys, time, os, gc
 from pathlib import Path
-R = Path("/home/riftuser/VerInf")
+R = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(R / "prover")); sys.path.insert(0, str(R / "demo"))
 sys.path.insert(0, str(R / "analysis/bench"))
 os.environ["LIGERO_PHASE_TIMING"] = "1"

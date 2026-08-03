@@ -1,0 +1,21 @@
+{
+  "D": 512,
+  "SEQ": 1024,
+  "NL": 4,
+  "DFF": 1536,
+  "spilldir": "/workspace/spill",
+  "gpu": "Quadro RTX 8000",
+  "bw_cache_dropped": true,
+  "disk_write_GBps": 1.3,
+  "disk_read_GBps": 1.92,
+  "noSpill_s": 250.23,
+  "noSpill_peak": 24.593,
+  "hostSpill_s": 278.43,
+  "hostSpill_peak": 15.845,
+  "diskSpill_s": 665.79,
+  "diskSpill_peak": 15.844,
+  "actual_fastest": "no-spill",
+  "disk_spill_vs_recompute_%": 166.1,
+  "host_spill_vs_recompute_%": 11.3,
+  "disk_spill_accept": true
+}

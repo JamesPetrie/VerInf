@@ -2397,6 +2397,21 @@ def _witness_cache_budget_bytes():
 _WITNESS_SPILL_ON = os.environ.get("LIGERO_WITNESS_SPILL", "0") != "0"
 _WITNESS_SPILL_MEM_FRACTION = float(
     os.environ.get("LIGERO_WITNESS_SPILL_MEM_FRACTION", "0.5"))
+# DISK-backed spill: for the production case where the witness (7.5 TB at 400B)
+# exceeds host RAM, so it must land on disk, not pinned host memory. Same
+# soundness as host spill (identical int64 bit pattern re-read), but covers the
+# FULL witness (every claim type, not just softmax/silu) and its budget is disk
+# free space. Re-reads over storage BW instead of recomputing. LIGERO_WITNESS_
+# SPILL_DISK=1 + LIGERO_WITNESS_SPILL_DIR=/path (a big/fast filesystem).
+_WITNESS_SPILL_DISK = os.environ.get("LIGERO_WITNESS_SPILL_DISK", "0") != "0"
+_WITNESS_SPILL_DIR = os.environ.get("LIGERO_WITNESS_SPILL_DIR", "/tmp")
+# BENCHMARK-ONLY, default OFF: evict each spilled range from the page cache
+# (fdatasync + posix_fadvise DONTNEED) so re-reads hit the DISK, not RAM. Lets a
+# small model measure true disk-spill I/O without needing witness > RAM. Changes
+# ONLY timing -- the bytes read back are identical -> proof byte-for-byte unchanged.
+# NEVER engages unless LIGERO_SPILL_FADVISE=1 AND disk-spill is on, so it cannot
+# affect any run that does not explicitly ask for it.
+_SPILL_FADVISE = os.environ.get("LIGERO_SPILL_FADVISE", "0") != "0"
 
 
 def _host_spill_budget_bytes():
@@ -2431,6 +2446,65 @@ def _spill_load(entry):
     host, dt = entry
     dev = host.to("cuda", non_blocking=True)
     return dev.view(dt) if dt == torch.uint64 else dev
+
+
+def _disk_spill_open(wc):
+    """Open a per-proof append-only spill file on disk; budget = free space on
+    the spill dir's filesystem (the 7.5 TB witness cannot fit host RAM)."""
+    import tempfile, shutil
+    os.makedirs(_WITNESS_SPILL_DIR, exist_ok=True)
+    fd, path = tempfile.mkstemp(prefix="ligero_wspill_", dir=_WITNESS_SPILL_DIR)
+    wc['_disk_fd'], wc['_disk_path'], wc['_disk_off'] = fd, path, 0
+    wc['_budget_bytes'] = int(shutil.disk_usage(_WITNESS_SPILL_DIR).free * 0.9)
+    return wc
+
+
+def _disk_spill_store(t, wc):
+    """Append a witness tensor's int64 bytes to the disk file; return an
+    (offset, nbytes, shape, dtype) handle. The bit pattern is identical to
+    recompute, so re-reading is byte-for-byte the same -> proof unchanged."""
+    src = t.contiguous()
+    src_i = src.view(torch.int64) if src.dtype == torch.uint64 else src
+    buf = src_i.cpu().numpy().tobytes()
+    off = wc['_disk_off']; n = 0
+    while n < len(buf):
+        n += os.pwrite(wc['_disk_fd'], buf[n:], off + n)
+    if _SPILL_FADVISE:                     # bench-only: flush + drop from cache -> cold reads
+        try:
+            os.fdatasync(wc['_disk_fd'])
+            os.posix_fadvise(wc['_disk_fd'], off, len(buf), os.POSIX_FADV_DONTNEED)
+        except (OSError, AttributeError):
+            pass
+    wc['_disk_off'] = off + len(buf)
+    return (off, len(buf), tuple(src_i.shape), t.dtype)
+
+
+def _disk_spill_load(entry, wc):
+    """Read a spilled tensor back from disk onto the GPU (fresh, independent)."""
+    import numpy as _np
+    off, nb, shape, dt = entry
+    buf = bytearray(nb); got = 0
+    while got < nb:
+        chunk = os.pread(wc['_disk_fd'], nb - got, off + got)
+        if not chunk:
+            raise IOError("disk-spill short read")
+        buf[got:got + len(chunk)] = chunk; got += len(chunk)
+    if _SPILL_FADVISE:                     # bench-only: drop the just-read pages -> next re-read also cold
+        try: os.posix_fadvise(wc['_disk_fd'], off, nb, os.POSIX_FADV_DONTNEED)
+        except (OSError, AttributeError): pass
+    arr = _np.frombuffer(bytes(buf), dtype=_np.int64).reshape(shape)
+    dev = torch.from_numpy(arr.copy()).to("cuda", non_blocking=True)
+    return dev.view(dt) if dt == torch.uint64 else dev
+
+
+def _disk_spill_close(wc):
+    """Close and delete the per-proof spill file."""
+    if wc and wc.get('_disk_fd') is not None:
+        try: os.close(wc['_disk_fd'])
+        except Exception: pass
+        try: os.remove(wc['_disk_path'])
+        except Exception: pass
+        wc['_disk_fd'] = None
 
 
 def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p1_rows,
@@ -2537,15 +2611,20 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
                     outs = fold.finalize(claim, live)
             else:
                 input_data = {v: fetch(v) for v in input_vars}
-                _cacheable = (witness_cache is not None
-                              and type(claim).__name__ in _WITNESS_CACHE_TYPES)
                 _spill = witness_cache.get('_spill') if witness_cache else False
+                _disk = witness_cache.get('_disk') if witness_cache else False
+                # disk-spill covers the FULL witness (every compute claim); host
+                # spill / GPU cache cover only the expensive softmax/silu ops.
+                _cacheable = (witness_cache is not None
+                              and (_disk or type(claim).__name__ in _WITNESS_CACHE_TYPES))
                 if _cacheable and i in witness_cache:
                     # Reuse the deterministic compute_fn output from sweep 1.
                     # GPU cache: clone so consumers can't mutate the cached copy.
                     # Spill: _spill_load returns a fresh device tensor (from the
                     # host copy) each time -> already independent, no clone.
-                    if _spill:
+                    if _disk:
+                        outs = {v: _disk_spill_load(e, witness_cache) for v, e in witness_cache[i].items()}
+                    elif _spill:
                         outs = {v: _spill_load(e) for v, e in witness_cache[i].items()}
                     else:
                         outs = {v: t.clone() for v, t in witness_cache[i].items()}
@@ -2561,7 +2640,9 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
                                         or witness_cache.get('_elems', 0) + _ne
                                         <= _WITNESS_CACHE_MAX_ELEMS)
                         if _under_bytes and _under_elems:
-                            if _spill:
+                            if _disk:
+                                witness_cache[i] = {v: _disk_spill_store(t, witness_cache) for v, t in outs.items()}
+                            elif _spill:
                                 witness_cache[i] = {v: _spill_store(t) for v, t in outs.items()}
                             else:
                                 witness_cache[i] = {v: t.clone() for v, t in outs.items()}
@@ -2808,7 +2889,9 @@ def prove_streaming(tape, cfg, seed, weight_commitment=None, wnew_seed=None):
     # Two backing stores, same soundness: default caches in GPU memory; opt-in
     # LIGERO_WITNESS_SPILL=1 caches in pinned HOST memory (larger budget, covers
     # witness > GPU) and re-reads over PCIe instead of recomputing.
-    if _WITNESS_SPILL_ON:
+    if _WITNESS_SPILL_DISK:
+        witness_cache = _disk_spill_open({'_spill': True, '_disk': True})
+    elif _WITNESS_SPILL_ON:
         witness_cache = {'_budget_bytes': _host_spill_budget_bytes(), '_spill': True}
     elif _WITNESS_CACHE_ON:
         witness_cache = {'_budget_bytes': _witness_cache_budget_bytes()}
@@ -2951,6 +3034,7 @@ def prove_streaming(tape, cfg, seed, weight_commitment=None, wnew_seed=None):
     # DOES need the public RHS — e.g. the reveal pin) recompiles it. Leaking
     # True here silently zeroed every nonzero-RHS constraint in verify.
     globals()['_SKIP_B_CHUNK'] = False
+    _disk_spill_close(witness_cache)          # delete the per-proof disk-spill file
     blocks = (["blind"] + (["w"] if has_w else []) + (["wnew"] if has_wnew else [])
               + ["p1", "p2"])
     return Proof(

@@ -3,7 +3,7 @@
 ON, and verify with the standalone Rust verifier. Must print ACCEPT."""
 import sys
 from pathlib import Path
-R = Path("/home/riftuser/VerInf")
+R = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(R / "prover")); sys.path.insert(0, str(R / "prover/tests"))
 sys.path.insert(0, str(R / "demo"))
 import _uint64_compat  # noqa

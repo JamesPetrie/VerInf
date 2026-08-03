@@ -53,7 +53,9 @@ from claims import SiluConfig
 from routing_claim import route_top1, freivalds_combine
 from cuda_primitives import gl_sub
 
-CFG = LigeroConfig(ELL=8192, K_DEG=16384, N_LIG=65536,
+CFG = LigeroConfig(ELL=int(os.environ.get("LIGERO_ELL", "8192")),
+                   K_DEG=int(os.environ.get("LIGERO_K_DEG", "16384")),
+                   N_LIG=int(os.environ.get("LIGERO_N_LIG", "65536")),  # rho=N_LIG/K_DEG; 32768 -> rho=2
                    T_QUERIES=int(os.environ.get("LIGERO_T_QUERIES", "80")))
 SEED = b"maverick-moe-demo"
 

@@ -6,7 +6,7 @@ should show up in-prove as a lower `encode` bucket. Confirms ACCEPT on the
 coset-on proof too."""
 import sys, time, os
 from pathlib import Path
-R = Path("/home/riftuser/VerInf")
+R = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(R / "prover")); sys.path.insert(0, str(R / "demo"))
 sys.path.insert(0, str(R / "analysis/bench"))
 os.environ["LIGERO_PHASE_TIMING"] = "1"

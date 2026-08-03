@@ -23,7 +23,7 @@ from __future__ import annotations
 import argparse, json, os, platform, socket, subprocess, sys, time
 from pathlib import Path
 
-ROOT = Path("/home/riftuser/VerInf")
+ROOT = Path(os.environ.get("VERINF_ROOT", "/home/riftuser/VerInf"))  # /workspace/VerInf on rented box
 BENCH = ROOT / "analysis" / "bench"
 # how to invoke python in the VerInf env (uv on both dev box and rented box)
 PYRUN = os.environ.get("VERINF_PYRUN", f"uv run --project {ROOT} python3").split()

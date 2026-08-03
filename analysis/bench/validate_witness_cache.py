@@ -6,7 +6,7 @@ cache. Also runs the Rust verifier on the cache-on proof for the end-to-end
 ACCEPT gate (done separately in the shell step)."""
 import sys
 from pathlib import Path
-R = Path("/home/riftuser/VerInf")
+R = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(R / "prover")); sys.path.insert(0, str(R / "demo"))
 import _uint64_compat  # noqa
 import torch

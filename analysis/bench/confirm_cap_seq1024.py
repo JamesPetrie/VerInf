@@ -5,7 +5,7 @@ peak GPU mem stays well under 32GB, the cap is the culprit and is too tight.
 Also prints the cumulative cached-element count to show where the cap bites."""
 import sys, time, os, gc
 from pathlib import Path
-R = Path("/home/riftuser/VerInf")
+R = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(R / "prover")); sys.path.insert(0, str(R / "demo"))
 sys.path.insert(0, str(R / "analysis/bench"))
 os.environ["LIGERO_PHASE_TIMING"] = "1"

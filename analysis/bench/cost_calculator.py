@@ -67,6 +67,16 @@ WITNESS_RECOMPUTE_VALID_M_TOTAL = (604_267, 2_747_117)  # fit range; extrapolate
 TOY_SCALE_FIXED_FLOOR_S = 3.9
 TOY_SCALE_M_TOTAL_CEILING = 500_000
 
+# Per-row OVERHEAD (Python dispatch + kernel launch per committed row), the term
+# the asymptotic c(n)*size floor omits. It DOMINATES at small scale (2-6x of the
+# measured floor at toy) and saturates once the GPU is full, so it stays
+# negligible at 400B. Fit against 39 saved runs (toy d16-512 through phone
+# d896/d2048): floor+overhead lands within +-30% of measured floor across the
+# whole range, vs 0.15-0.47x for the bare asymptotic floor. Replaces the old
+# crude TOY_SCALE_FIXED_FLOOR hack with a term that scales correctly.
+OVERHEAD_NS_PER_ROW = 22_000        # ~22 us per committed row (measured constant)
+OVERHEAD_SAT_ROWS = 5_000_000       # saturates here (GPU full) -> flat above
+
 
 @dataclass(frozen=True)
 class Config:
@@ -193,9 +203,12 @@ def predict(cfg: Config, *, W: Optional[float] = None, Q: Optional[float] = None
     floor = identity_floor_s(cfg, W=W, Q=Q, L=L, W_weights=W_weights)
     witness = witness_recompute_s(cfg, m_total=m_total, mode=witness_mode)
 
+    # per-row overhead (dispatch + kernel launch), saturating once the GPU fills.
+    # This is the term the asymptotic floor omits; it dominates at toy scale and
+    # is negligible at 400B. Replaces the old fixed-floor toy hack.
+    overhead_s = OVERHEAD_NS_PER_ROW * min(m_total, OVERHEAD_SAT_ROWS) / 1e9
     small_scale = m_total < TOY_SCALE_M_TOTAL_CEILING
-    predicted_total = (TOY_SCALE_FIXED_FLOOR_S if small_scale
-                        else floor["floor_s"] + witness["witness_recompute_s"])
+    predicted_total = floor["floor_s"] + witness["witness_recompute_s"] + overhead_s
 
     field = FIELD_P * 2.0 ** (cfg.field_bits - 64)
     proof_bytes = cfg.T_queries * floor["rows"] * lpd.FIELD_BYTES + \
@@ -209,6 +222,7 @@ def predict(cfg: Config, *, W: Optional[float] = None, Q: Optional[float] = None
         witness_recompute_s=witness["witness_recompute_s"],
         witness_mode=witness["mode"], witness_out_of_range=witness["out_of_range"],
         small_scale_regime=small_scale,
+        overhead_s=overhead_s,
         predicted_total_s=predicted_total,
         proof_GB=proof_bytes / 1e9, verify_s=verify_s,
     )
@@ -222,20 +236,16 @@ def _print_report(cfg: Config, r: dict) -> None:
     print(f"  W={r['W']:,.0f}  Q={r['Q']:,.0f}  L={r['L']:,.0f}  m_total={r['m_total']:,.0f}")
     print()
     print(f"=== Prediction ===")
-    if r["small_scale_regime"]:
-        print(f"  m_total < {TOY_SCALE_M_TOTAL_CEILING:,}: fixed-process floor dominates, "
-              f"neither term below is a reliable predictor")
-        print(f"  predicted total (fixed floor)     : {r['predicted_total_s']:.2f}s "
-              f"(measured mean 3.9s, std 1.5s at this scale)")
-    else:
-        print(f"  identity floor (NTT/hash/quad/lin): {r['identity_floor_s']:.3f}s"
-              + ("  <-- K/N/2K fell outside lpd.c()'s calibrated 2^12-2^24 range; "
-                 "clamped to the nearest endpoint, not a reliable number" if r["c_out_of_range"] else ""))
-        print(f"  witness_recompute ({r['witness_mode']:>8s})      : {r['witness_recompute_s']:.3f}s"
-              + ("  <-- outside the fitted m_total range, extrapolated" if r["witness_out_of_range"] else ""))
-        print(f"  predicted total (floor+witness)   : {r['predicted_total_s']:.2f}s")
-        print(f"  (measured residual beyond this was 22-47% of total across the fitted range, "
-              f"shrinking as m_total grows -- see analysis/toy-transformer-prove-time-formula.md)")
+    print(f"  identity floor (NTT/hash/quad/lin): {r['identity_floor_s']:.3f}s"
+          + ("  <-- K/N/2K fell outside lpd.c()'s calibrated 2^12-2^24 range; "
+             "clamped to the nearest endpoint, not a reliable number" if r["c_out_of_range"] else ""))
+    print(f"  per-row overhead (dispatch/launch): {r['overhead_s']:.3f}s"
+          + ("  <-- saturated (GPU full); negligible at this scale" if r["m_total"] >= OVERHEAD_SAT_ROWS else "  <-- dominates the floor at this scale"))
+    print(f"  witness_recompute ({r['witness_mode']:>8s})      : {r['witness_recompute_s']:.3f}s"
+          + ("  <-- outside the fitted m_total range, extrapolated" if r["witness_out_of_range"] else ""))
+    print(f"  predicted total (floor+ovh+witness): {r['predicted_total_s']:.2f}s")
+    print(f"  (floor+overhead lands within +-30% of the measured floor across 39 saved "
+          f"runs, toy d16 through phone d2048; see research_journal.md iter13)")
     print()
     print(f"=== Proof / verify (geometry only, same as notebook) ===")
     print(f"  proof size  : {r['proof_GB']:.2f} GB")

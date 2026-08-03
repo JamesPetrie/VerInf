@@ -571,3 +571,264 @@ rental recommendation with real numbers.
 Outcome: campaign tooling works end-to-end; GPU softmax validated as a real,
 growing win at phone scale; spill confirmed net-negative below 400B; Llama-1B
 needs >32GB for the spill A/B -> motivates the rented 48GB card. ACCEPT held.
+
+---
+## iter12 — FIRST rented-GPU validation (A100 80GB, vast.ai, phone models)
+
+Ran remote_suite.py --matrix phone --reps 1 on a rented A100 80GB PCIe ($0.563/h)
+via InitBench/vast_run_verinf.py. Bootstrap was only 32s (fast box), not the 18min
+estimate. Three real bugs found+fixed en route: (1) raw nvidia/cuda image has no
+python -> vast can't start jupyter (Offline) -> use pytorch-devel image; (2)
+remote_suite ROOT + all bench scripts hardcoded /home/riftuser/VerInf but the box
+uses /workspace/VerInf -> exit2 -> fixed via Path(__file__).parents[2] + VERINF_ROOT
+env. Cost incl. 2 failed attempts + debug ~ $0.5.
+
+SOUNDNESS GATES on A100: all 4 PASS (byte-identical softmax/silu/spill + Rust ACCEPT).
+
+MEASURED (A100, reps=1 — single-sample, noisier than V100 reps=2):
+  GPU softmax (off->on prove):
+    Qwen-0.5B : 89.0 -> 81.5s = 8.4% ; witness 12.0->4.7 ; peak 16.7GB ; lens +34.6%
+    Llama-1B  : 105.2->96.5s = 8.3% ; witness 17.0->8.0 ; peak 24.2GB ; lens +30.1%
+    -> KEY: the win is SMALLER on A100 (~8%) than V100 (17-38%). The CPU-numpy
+       softmax is less of a bottleneck on the faster A100 box, so the GPU port
+       saves less. The "transferable win" is itself hardware-dependent: bigger on
+       slow GPUs, smaller on fast ones. (Still net-positive + sound everywhere.)
+  witness spill (recompute / gpu-cache / host-spill):
+    Qwen-0.5B : 81.75 / 81.24 (+0.6%) / 86.89 (-6.3%)
+    Llama-1B  : 98.93 / 97.96 (+1.0%) / 102.76 (-3.9%)
+    -> spill net-negative on A100 too (2nd GPU type) — consistent with the model
+       that it only wins at 400B (recompute >> storage BW). Now confirmed on BOTH
+       V100 and A100 below production. gpu-cache ~flat small win.
+
+VRAM: Qwen 16.7GB, Llama 24.2GB — both fit A100 80GB easily. Llama-1B spill A/B,
+which OOM'd on V100 32GB (iter11), ran fine on A100 -> confirms the >=48GB card
+recommendation; the OOM was V100-specific, not a spill flaw.
+
+Outcome: remote pipeline works end-to-end on rented hardware (gates + both A/Bs +
+prod_lens + download + auto-destroy). Two honest findings: GPU softmax's win
+shrinks on faster GPUs; spill is net-negative on a 2nd GPU type (as modeled).
+Next: reps=3 for clean medians; a cheaper/slower 2nd card would extend the spill
+hardware curve; disk-backed full-witness spill is still the only path to the
+modeled +13-34% (needs prod scale).
+
+## iter12b — theory-vs-run check (did the A100 runs match the cost model?)
+
+Fed the phone shapes into cost_calculator (measured witness mode) and compared to
+the A100/V100 measured recompute prove. Result: model predicted 10-18× TOO HIGH
+(Qwen 1090s vs 99s meas; Llama 3310s vs 186s). Root cause = a BUG in the artifact's
+shape-mode Q estimate: it counted quadratic constraints as matmul FLOPs (~m·n·k
+≈ 1e11), but VerInf's Freivalds check emits only ~k per matmul (Q ≈ 3.5e5, ~10^6×
+less). Fixed Q = L·(7d + d_ff + H·seq) in the artifact. After fix: pred 29s(Qwen)/
+45s(Llama) — right order of magnitude, but the model still UNDERpredicts phone
+scale by ~2-4× (un-modeled overhead: Python dispatch, kernel launches, fixed
+setup; shrinks with scale). Verdict: soundness + structure agree; absolute cost
+agrees only to order-of-magnitude at phone scale (that's why we validate
+empirically). The 400B Llama-S mode uses lpd's real calibrated Q and is unaffected.
+
+## iter12c — RETRACTION + verified root cause (I was wrong in 12b)
+
+iter12b claimed the cost-model TERM STRUCTURE is wrong and "witness 57% is
+suspect". That was an OVER-REACTION from a garbage input, not the model. Root
+cause, verified by building the real Qwen tape and reading _layout:
+  REAL m_total = 2,981,351 ; my shape estimator gave 848,384 -> 3.5x TOO LOW.
+My estimator counted only primary activations+weights, missing the committed
+gadget witness (aux Freivalds y/u/p, word decompositions for range checks, LogUp
+inverses, softmax/silu tables). Both my Q "fixes" were also wrong: FLOP-based Q
+was ~10^6x too high; Freivalds-only ~k was ~10^4x too low. The real ratio is
+Q/W≈0.204, L/W≈0.190 (from Q_RUN/W_RUN, L_RUN/W_RUN of the 400B run).
+
+Term-by-term vs measured A100 Qwen, with the REAL W (=3.05e9):
+  streaming  model 28.3s  vs meas 29.8s  -> MATCHES (5%). Model is CORRECT.
+  quad       model  6.4s  vs meas 18.8s  -> 3x under
+  lin        model  0.4s  vs meas 16.2s  -> 40x under
+  compile+aux+cols  un-modeled           -> 6.3s
+The quad/lin gaps are SMALL-SCALE OVERHEAD (many tiny polynomial ops at K=2048,
+each with a fixed kernel-launch/dispatch cost the asymptotic c(n)*size formula
+omits). They vanish at 400B (K=16384) where the formulas were calibrated. So the
+model is an ASYMPTOTIC model, correct at its 400B calibration, blind to per-op
+overhead at small scale (already documented as the shrinking residual).
+
+CORRECTED VERDICT: the 400B numbers/shares (witness 57%) are NOT undermined;
+iter12b's alarm is retracted. Runs agree with theory in soundness + structure +
+the dominant streaming term (once fed real W). The shape estimator (my addition)
+was the bug; fixed with W×3.5 + Q=0.204W + L=0.190W and an honest small-scale
+caveat. Lesson: verify the INPUTS (m_total from the real tape) before blaming the
+model.
+
+---
+
+## iter13 — overhead-член: cost-модель стала «нормальной» на toy-масштабе
+
+**Проблема (из iter12b карты доверия).** Асимптотический floor (c(n)·размер)
+недооценивал замеренный floor (prove−witness) в 2–6× на toy/phone: ratio
+pred/meas был 0.19 (d512 seq256) … 0.47 (d2048), сходясь к 1 только на 400B.
+Причина — формула не содержит фиксированной цены на операцию/строку (диспетч
+Python + запуск ядра), которая на маленькой модели доминирует.
+
+**Вывод члена (из 39 сохранённых прогонов).** Посчитал gap = meas_floor −
+pred_floor и OVH/m_total (нс/строку):
+
+    d512 K1024:  15 700 … 22 700 ns/строку  (seq 256→1024, L2/L4)
+    d896 K2048:  23 800
+    d2048 K4096: 27 400
+
+OVH/m_total ≈ КОНСТАНТА ~20 мкс/строку по всему d512→d2048 (НЕ ∝1/K — значит это
+реальный per-row диспетч, а не ошибка калибровки c(n) ниже 2^12). Деление на
+√(2^14/K) только УХУДШАЛО разброс — форму «√K» отверг.
+
+**Форма члена (насыщающаяся).** Постоянный per-row overhead 20 мкс сломал бы 400B
+(115M строк × 20мкс = 2300 s, +8%). Но на большом масштабе строки батчатся —
+overhead/строку падает. Модель: `overhead = 22 мкс × min(m_total, 5·10⁶)`
+(линейно до заполнения GPU ~5M строк, дальше плато). Физика: фиксированное число
+«волн» на насыщенном GPU.
+
+**Валидация (floor+overhead vs meas_floor).** ratio по всем прогонам:
+
+    d512 seq256   0.98    d512 seq512  1.18    d512 seq1024  1.30
+    d512 s256 L2  0.76    d896 (Qwen)  0.95    d2048 (Llama) 0.90
+
+Все в ±30% (было 0.15–0.47). 400B: overhead = 22мкс×5M = 110 s = 0.4% (насыщен,
+пренебрежимо; демонстрированный floor+witness 28 668 → prove ≈ 28 778 s). Член
+НЕ байт-зависимый → BabyBear его не делит на 2.
+
+**Куда внесено.**
+- `cost_calculator.py`: константы `OVERHEAD_NS_PER_ROW=22000`,
+  `OVERHEAD_SAT_ROWS=5e6`; в `predict()` `overhead_s` заменил старый крудовый
+  `TOY_SCALE_FIXED_FLOOR_S=3.9` хак; отдельная строка в отчёте.
+- Артефакт `cost_graph.html`: 5-й терм OVERHEAD везде — узел графа (M→OVH→TOT),
+  строка в ручке (цвет --ovh плюм), 5-й член в мастер-формуле + eval, словарь,
+  футер. Нарратив сшит: 4 асимптотических терма = физика, 5-й = реальность
+  малого масштаба; overhead — единственный член, чья доля УБЫВАЕТ с ростом
+  модели (доминирует floor на toy, 0.4% на 400B).
+
+**Честная граница.** Член — это ФИТ (2 параметра: 22мкс, 5M строк) из данных,
+как и witness measured-mode, не первопринципный вывод. Но он единственный и
+физически мотивирован (per-launch диспетч, батч-насыщение), воспроизводит весь
+диапазон toy d16 → phone d2048 в ±30% и не ломает 400B-якорь.
+
+---
+
+## iter14 — ρ=2 optimization validated end-to-end on vast.ai (A100)
+
+**Question (from the 400B time-optimization):** the ~4.4h optimum rests on ρ=2,
+T=17. §5.4 writes soundness as (1−1/ρ)^T and only ever uses ρ=4 — so does ρ=2
+even produce a proof the Rust verifier ACCEPTs? Ran it.
+
+**Setup.** New `optrun_rho.py` + `optrun_remote.sh`, `--optrun` flag in
+vast_run_verinf.py. One phone model, proved under BASELINE (ρ=4, T=40, N_LIG=4·K)
+vs OPTIMIZED (ρ=2, T=17, N_LIG=2·K), same seed/model, each Rust-verified.
+Qwen-0.5B (d=896, ELL=1024, K=2048) and Llama-1B (d=2048, ELL=2048, K=4096).
+A100 PCIe 80GB, ~27 min, ~$0.25. Instance auto-destroyed.
+
+**Result — both ACCEPT, optimized faster:**
+
+    Qwen-0.5B:  base ρ4/T40 85.3s (17.3GB)  →  opt ρ2/T17 78.5s (16.8GB)  −8.0%
+    Llama-1B:   base ρ4/T40 99.4s (24.6GB)  →  opt ρ2/T17 89.2s (24.1GB)  −10.3%
+    campaign_results.json = {"qwen_exit":0,"llama_exit":0}  (exit 0 ⟺ all 4 ACCEPT)
+
+**Takeaways.**
+1. **ρ=2, T=17 is mechanically legal** — prover builds it and the standalone Rust
+   verifier ACCEPTs, both models. Removes the "does ρ=2 even run/verify" doubt.
+2. **Optimized config measurably faster (−8…−10%)**, in the model-predicted
+   direction (floor ↓ with ρ4→2, T40→17).
+
+**Honest bounds.** ACCEPT ≠ proof of the soundness BOUND: one accepted proof shows
+ρ=2 isn't mechanically broken, NOT that (1−1/ρ)^T is tight at rate 1/2 — still a
+§5.4 theorem question. And −8…−10% is phone-scale; the 400B floor-win magnitude
+differs (witness dominates differently). Direction + mechanism validated, not the
+400B wall-clock.
+
+**Bug (minor):** optrun_remote.sh cp looked for optrun_results.json in
+analysis/bench/ but optrun_rho.py writes it to CWD (/workspace/VerInf), so the
+per-model JSON didn't download — exit codes + phase log covered it. Fix the cp
+path (or write absolute) before the next optrun.
+
+---
+
+## iter15 — optimization validated on the REAL Maverick MoE architecture (local V100, free)
+
+Pivot: after the phone dense-transformer validation (iter14), ran the optimization
+against the ACTUAL 400B claim types via `demo_maverick_moe.py` (real Maverick MoE
+layer: router/RoutingClaim, top-1 mask, sigmoid lookup, per-expert gate/up/down
+MatmulClaims, FreivaldsCombine x3, shared SwiGLU, AddClaim) — SYNTHETIC random
+weights, NO gguf. New driver `analysis/bench/optrun_moe.py`. Ran on the LOCAL
+Tesla V100-SXM3-32GB — no rental, $0. Real 400B Ligero geometry (ELL=8192,
+K_DEG=16384). BASELINE rho=4/T=40 vs OPTIMIZED rho=2/T=17 + witness SPILL, each
+Rust-verified (rust_verify_tape; verifier cargo-built locally on first call).
+
+**Real Maverick MoE layer width (d=5120, d_ff=8192, E=8, seq=4), 44 claims:**
+
+    BASELINE  rho4/T40        prove 23.0s  verify 670.8s  peak 13.75GB  ACCEPT
+    OPTIMIZED rho2/T17 +SPILL  prove 19.5s  verify 314.3s  peak 12.45GB  ACCEPT
+    prove -15% · verify -53% · both ACCEPT
+
+Also smoke (E=4,d=256): both ACCEPT, prove ~5s.
+
+**What this establishes.** rho=2/T=17 + witness spill produces a proof the
+standalone Rust verifier ACCEPTs on the REAL Maverick MoE claim types at the real
+per-layer width — not a dense toy. The two assumptions that were "maybe broken"
+(rho=2 legality, spill on the real architecture) are now both empirically verified.
+prove -15% (bigger than phone's -8-10%, because the real 400B Ligero geometry makes
+the floor matter more); verify -53% from T=40->17.
+
+**What it does NOT establish.** Not the full 48-layer / 128-expert / 7.5TB / S=1093
+400B run: E=128 (~128GB field) won't fit a 32GB V100, and full-witness DISK spill
+(the ~4h enabler) is still unwritten (host-memory spill only, and 7.5TB > any single
+box RAM). The per-layer building block is proven; full-400B wall-clock still follows
+from the cost model, not a measured run. The literal 4.4h needs the disk-spill build
++ big hardware; those remain the two real open items (engineering, not soundness).
+
+---
+
+## iter16 — DISK-backed full-witness spill BUILT and validated (byte-identical + ACCEPT)
+
+The ~4h projection's missing piece: full-witness spill to DISK (7.5TB > any host
+RAM). Built it in prover/core.py:
+- `_disk_spill_open/store/load/close`: per-proof append-only file; witness rows
+  written as their int64 bytes (identical bit pattern -> re-read == recompute),
+  budget = filesystem free space. Env: LIGERO_WITNESS_SPILL_DISK=1 +
+  LIGERO_WITNESS_SPILL_DIR=/path; file auto-deleted after prove.
+- Coverage widened: disk mode spills the FULL witness (every compute claim),
+  vs host-spill's softmax/silu-only.
+
+Gate `validate_disk_spill.py` (local V100): prove one toy model recompute vs
+disk-spill -> **byte-for-byte identical** (root_p1/p2, q_irs, q_lin, p_0,
+opened_p1/p2 all identical) AND disk-spilled proof **Rust ACCEPT**. Byte-identity
+is scale-free, so the mechanism is sound at any size.
+
+Significance: this is the piece the registry/paper listed as unbuilt ("disk I/O
+plumbing + widening coverage, not soundness"). Now built + validated. Combined
+with disk-spill removing the witness-memory ceiling, larger runs (E=128 real
+expert count) become feasible on a single 80GB card + big disk.
+
+---
+
+## iter17 — REAL card + real expert count: E=64 Maverick MoE + disk-spill + opt, ACCEPT
+
+Ran the full optimized stack on rented A100 80GB (vast.ai, --optrun): Maverick MoE
+layer E=64 (real-ish expert count; E=128 eager synthetic weights = ~129GB won't fit
+80GB, E=64 = ~65GB fits), d=5120 real width, DISK-backed full-witness spill,
+rho=2/T=17. Verify only the optimized run (cost control).
+
+    OPTIMIZED rho=2/T=17 + DISK-spill : 212 claims, PROVE 101.9s, peak 65.07 GB
+    spill=disk (full witness through disk file), e64_exit=0 (no REJECT; opt verify
+    ran ~460s -> ACCEPT). Instance auto-destroyed. total 1184s, ~$0.18.
+
+The explicit ACCEPT string scrolled past the poller's 120s tail and suite.log died
+with the box, but exit 0 + the ~460s verify duration confirm ACCEPT (REJECT -> exit 1).
+
+**Cumulative status of the 400B optimization (iter13-17):**
+- rho=2/T=17 legal + measurably faster: validated phone (iter14) AND real Maverick
+  MoE claims at real width (iter15) — Rust ACCEPT.
+- disk-backed full-witness spill: BUILT (core.py) + byte-identical + ACCEPT gate
+  (iter16), and ACCEPT on real MoE + real card at E=64 (iter17).
+- So both pieces the "4.4h" rested on — rho=2 soundness-mechanism and disk-spill —
+  are now built and verified on real hardware.
+
+**Still not measured (honest):** the disk-spill TIME WIN is a 400B-scale property
+(re-read beats recompute only when the forward pass is huge/slow: 7.5TB @ 1.9 GB/s).
+At small seq recompute is fast, so spill is time-neutral/negative here — correctness
+is proven, the speedup is not (and won't be at any rentable scale). Measuring the
+actual 4.4h needs the real 400B run: the ~200GB GGUF checkpoint (no synthetic-weight
+loader for the full model) + a box with >=7.5TB disk + ~$15/~10h. Everything up to
+that — the optimization and the mechanism — is now real, not modeled.

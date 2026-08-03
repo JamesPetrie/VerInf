@@ -13,7 +13,7 @@ If B ~= 4*A, the 4x recompute is confirmed and the cache ceiling is 3*A.
 """
 import sys, time, os
 from pathlib import Path
-R = Path("/home/riftuser/VerInf")
+R = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(R / "prover")); sys.path.insert(0, str(R / "demo"))
 sys.path.insert(0, str(R / "analysis/bench"))
 os.environ["LIGERO_PHASE_TIMING"] = "1"

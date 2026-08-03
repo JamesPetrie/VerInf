@@ -6,7 +6,7 @@ config; cache flipped via core._WITNESS_CACHE_ON. Logs each config as it
 finishes so partial progress is durable if interrupted."""
 import sys, time, os, gc
 from pathlib import Path
-R = Path("/home/riftuser/VerInf")
+R = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(R / "prover")); sys.path.insert(0, str(R / "demo"))
 sys.path.insert(0, str(R / "analysis/bench"))
 os.environ["LIGERO_PHASE_TIMING"] = "1"

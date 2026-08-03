@@ -4,7 +4,7 @@ cached -> they'll show ~1x call count; everything else recomputes 4x). Wraps
 COMPUTE_FNS with CUDA-synced timers. Reports total s + call count per type."""
 import sys, os, time, collections
 from pathlib import Path
-R = Path("/home/riftuser/VerInf")
+R = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(R / "prover")); sys.path.insert(0, str(R / "demo"))
 sys.path.insert(0, str(R / "analysis/bench"))
 os.environ["LIGERO_PHASE_TIMING"] = "1"
