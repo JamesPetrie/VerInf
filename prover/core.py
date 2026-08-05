@@ -1171,6 +1171,15 @@ def _expand_row_pkts(row_pkts):
             yield item
 
 
+def _compile_one(claim, ch, cfg, base, late_ch=None):
+    """COMPILE_FNS dispatch, passing the late challenge to claims that have a
+    phase-3 stage. Every other claim keeps the original 4-argument call."""
+    fn = COMPILE_FNS[type(claim)]
+    if late_ch is not None and type(claim) in LATE_SAMPLE_FNS:
+        return fn(claim, ch, cfg, base, late_ch=late_ch)
+    return fn(claim, ch, cfg, base)
+
+
 class _StreamingPackets:
     """Lazy per-claim compile for the streaming prover.
 
@@ -1191,9 +1200,14 @@ class _StreamingPackets:
     term-identical to the eager path. The fold consumes the band index via
     bands_overlapping (variable-major; no per-row lists)."""
 
-    def __init__(self, claims, ch0, cfg, n_ops):
+    def __init__(self, claims, ch0, cfg, n_ops, chs_late=None):
         self.claims, self.ch0, self.cfg = claims, ch0, cfg
         self.n_ops = n_ops
+        # Late (phase-3) challenges, for claims that own a second stage. The
+        # compile runs ONCE, after s_bind, so a late claim's bands and its
+        # early ones are emitted together and the constraint ids never depend
+        # on when the compile happened.
+        self.chs_late = chs_late if chs_late is not None else [None] * len(claims)
         # Build the per-(variable, family) band index UPFRONT from the count pass:
         # one template + row range per band (~MB), replacing the per-row packet
         # store (~45 GB). All bands are known before the sweep -> no lazy compile and
@@ -1208,7 +1222,8 @@ class _StreamingPackets:
         self.quad_fams: Dict[int, list] = {}
         for i in range(n_ops):
             self.base_c.append(cur)
-            pk, q, na, _ = COMPILE_FNS[type(claims[i])](claims[i], ch0[i], cfg, cur)
+            pk, q, na, _ = _compile_one(claims[i], ch0[i], cfg, cur,
+                                        self.chs_late[i])
             self._index_bands(pk)
             cur += na
             fams = []
@@ -1219,7 +1234,8 @@ class _StreamingPackets:
         self.ops_end_constraints, self.ops_end_quads = cur, nq
         # settlements: their packets land on rows across the tape -> indexed here too.
         for i in range(n_ops, len(claims)):
-            pk, q, na, _ = COMPILE_FNS[type(claims[i])](claims[i], ch0[i], cfg, cur)
+            pk, q, na, _ = _compile_one(claims[i], ch0[i], cfg, cur,
+                                        self.chs_late[i])
             cur += na
             self._index_bands(pk)
             fams = []
@@ -2890,21 +2906,23 @@ def _stream_setup(tape, cfg):
         n_p3_total=sum(v.n_rows(cfg.ELL) for v in p3_vars))
 
 
-def _derive_op_challenges(claims, cfg, n_ops, s_op):
-    """s_op -> per-claim op challenges + the streaming compile.
+def _build_stream_packets(claims, ch0, ch1, cfg, n_ops):
+    """The streaming compile: band index + quad families for the whole tape.
 
-    Streaming compile: regular ops compile lazily inside the sweep so the
-    ~45 GB packet store never materializes; settlements pre-compile (their
-    packets land on rows emitted long before they would compile). The
-    constructor's count pass also yields the global quad total for r_quad."""
-    ch0 = _sample_chs(claims, s_op)
+    Runs once, after BOTH coins that any claim's bands depend on (s_op and
+    s_bind), so a late claim's phase-3 bands are emitted in the same pass as
+    its early ones and constraint ids are independent of compile timing.
+    Regular ops then stream their rows against this index; settlements are
+    pre-indexed here because their sum-side packets land on rows emitted long
+    before they would compile. The count pass also yields the global quad
+    total for r_quad."""
     globals()['_SKIP_B_CHUNK'] = True
-    stream_pk = _StreamingPackets(claims, ch0, cfg, n_ops)
+    stream_pk = _StreamingPackets(claims, ch0, cfg, n_ops, chs_late=ch1)
     globals()['_SKIP_B_CHUNK'] = False
     # Unified-memory hygiene: release the allocator's reserved high-water
     # before the long-lived phase begins.
     torch.cuda.empty_cache()
-    return ch0, stream_pk
+    return stream_pk
 
 
 def _derive_test_challenges(s_comb, m_total, total_quads):
@@ -3090,8 +3108,7 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
     roots_r1 = ([art_blind.root] + ([root_w_r1] if has_w else [])
                 + ([art_wnew.root] if has_wnew else []) + [art_p1.root])
     s_op = pr.fs_s_op(stmt_digest, blocks_r1, roots_r1)
-    ch0, stream_pk = _derive_op_challenges(s['claims'], cfg, s['n_ops'], s_op)
-    _run_quad_checks(stream_pk)
+    ch0 = _sample_chs(s['claims'], s_op)
     merkle_p2 = _make_merkle_acc(cfg.N_LIG, s['n_p2_total'])              # R2: commit phase-2
     sweep(want_aux=True, merkle_p2=merkle_p2)
     art_p2 = _finalize_merkle_artifact(merkle_p2)
@@ -3108,6 +3125,9 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
         # No late-stage claim on this tape: R3 is the empty message, and the
         # transcript still frames it so a proof cannot silently drop a round.
         art_p3, root_p3 = None, pr.EMPTY_COMMIT_ROOT
+    # Compile once, now that every coin a band can depend on exists.
+    stream_pk = _build_stream_packets(s['claims'], ch0, ch1, cfg, s['n_ops'])
+    _run_quad_checks(stream_pk)
     # ---- coin after R3: the test combiners -------------------------------
     s_comb = pr.fs_s_comb(s_bind, root_p3)
     r_irs_t, r_lin_seed, r_quad_t = _derive_test_challenges(

@@ -14,7 +14,7 @@ use serde_json::Value;
 use serde_json::value::RawValue;
 use ligero_verifier::claim::parse_claim_set_value;
 use ligero_verifier::fs;
-use ligero_verifier::verify::{Round3, Round4, verify};
+use ligero_verifier::verify::{Round3, Round4, verify_bound};
 
 #[derive(Deserialize)]
 struct RawProof {
@@ -164,6 +164,7 @@ fn main() {
     // compared for agreement and otherwise unused, so a prover that wrote
     // itself convenient columns fails the s_col check below.
     let mut policy: Vec<(String, bool)> = Vec::new();
+    let mut s_bind_out: Option<Vec<u8>> = None;
     let (s_op, s_comb, s_col) = match &top.statement_digest {
         Some(stmt_hex) => {
             let stmt_claimed = hex32(stmt_hex);
@@ -180,6 +181,7 @@ fn main() {
             assert!(block_order[n2] == "p2", "phase-2 block is misplaced");
             let s_op = fs::s_op(&stmt_recomputed, &block_order[..n2], &roots[..n2]);
             let s_bind = fs::s_bind(&s_op, &roots[n2]);
+            s_bind_out = Some(s_bind.to_vec());
             let root_p3 = if has_p3 { roots[n2 + 1] } else { fs::EMPTY_COMMIT_ROOT };
             let s_comb = fs::s_comb(&s_bind, &root_p3);
             let s_col = fs::s_col(&s_comb, &r3.q_irs, &r3.q_lin, &r3.p_0);
@@ -198,6 +200,7 @@ fn main() {
             if policy_stmt.is_some() {
                 policy.push(("statement digest required but proof has none".into(), false));
             }
+            s_bind_out = top.seeds.s_bind.as_ref().map(|h| hexbytes(h));
             (hexbytes(&top.seeds.s_op), hexbytes(&top.seeds.s_comb),
              hexbytes(&top.seeds.s_col))
         }
@@ -208,7 +211,8 @@ fn main() {
     }
 
     let t0 = std::time::Instant::now();
-    let (ok_checks, per) = verify(&mut cs, &roots, &r3, r4, &s_op, &s_comb, &s_col);
+    let (ok_checks, per) = verify_bound(&mut cs, &roots, &r3, r4, &s_op,
+                                        s_bind_out.as_deref(), &s_comb, &s_col);
     let elapsed = t0.elapsed();
     for (name, b) in &per {
         println!("  [{}] {}", if *b { "OK " } else { "XX " }, name);

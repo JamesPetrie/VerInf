@@ -15,7 +15,7 @@ use rayon::prelude::*;
 use crate::field::{add, mul, sub};
 use crate::claim::ClaimSet;
 use crate::compile::{CoefSrc, Constraints, Expander, Run};
-use crate::handlers::compile_claims;
+use crate::handlers::compile_claims_bound;
 use crate::prover::Prover;
 use crate::protocol::{challenge, lagrange, merkle_leaf, merkle_verify, poly_eval,
                       random_columns, Chal, Config, BLIND_IRS, BLIND_LIN, BLIND_QUAD,
@@ -172,8 +172,17 @@ pub fn run_verification_fast<Pr: Prover, R: FnMut() -> Vec<u8>>(
 pub fn verify(cs: &mut ClaimSet,
               roots: &[[u8; 32]], r3: &Round3, r4: Round4,
               s_op: &[u8], s_comb: &[u8], s_col: &[u8]) -> (bool, Vec<(&'static str, bool)>) {
+    verify_bound(cs, roots, r3, r4, s_op, None, s_comb, s_col)
+}
+
+/// As `verify`, with the R2 coin `s_bind` that a phase-3 claim's late
+/// challenges come from.
+pub fn verify_bound(cs: &mut ClaimSet,
+              roots: &[[u8; 32]], r3: &Round3, r4: Round4,
+              s_op: &[u8], s_bind: Option<&[u8]>,
+              s_comb: &[u8], s_col: &[u8]) -> (bool, Vec<(&'static str, bool)>) {
     let cfg: Config = cs.cfg;
-    let cons = compile_claims(cs, s_op);
+    let cons = compile_claims_bound(cs, s_op, s_bind);
     let q = random_columns(s_col, &cfg);
     let cols = match opened_columns(r4, &q) {
         Some(c) => c,

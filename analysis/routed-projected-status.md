@@ -87,12 +87,35 @@ carried.  The full 400B proof is not started until every stage below is DONE and
       Note: that suite exercises the BLOCK (an ordinary matmul with its
       Freivalds aux moved to phase 3), not a late-sampled relation — the first
       real `LATE_SAMPLE_FNS` user, with its own soundness tests, is S2.
-- [ ] **S2 — `RoutedProjectedMatmulClaim` + standalone `RescaleClaim`.**
-      Python claim (sample/aux/compile) + Rust handler, relations `P=W rho`,
-      `H=X*Q`, `yr=Y rho`, `sum_k H = yr`, late Freivalds `sum_e f_p =
-      sum_{t,k} lam_t Q sig_k`.
-      Gate: unit tests on a toy MoE, Rust ACCEPT, and tamper tests for each of
-      the five relations plus a wrong-route witness.
+- [x] **S2a — `RoutedProjectedMatmulClaim`.**
+      `prover/routed_projected.py` (claim, early/late samplers, phase-2 and
+      phase-3 aux, compile, active-only witness) and the Rust twin
+      `compile_routed_projected` in `verifier/src/handlers.rs`, with `s_bind`
+      threaded through `verify_bound` / `compile_claims_bound`.  Every band is
+      an EXISTING packet template (identity, FreivaldsB, FreivaldsC,
+      RowsumConst), so no new lowering or kernel was needed — the claim is a
+      re-association, not a new proof system.  Measured constraint count is
+      `E*K + 2T + 2E + 1` linear ids and `T*K + E` quads per matmul, i.e.
+      exactly the `L_route`/`Q_route` terms of the admission ledger.
+      One prover-wide change came with it: the streaming compile now runs ONCE
+      after `s_bind`, so a late claim's early and late bands are emitted in the
+      same pass and constraint ids never depend on compile timing.
+      Gate PASSED: `tests/test_routed_projected.py` 6/6 — honest proof
+      Rust-ACCEPTs; active-only output equals the dense reference; three
+      malicious-prover simulations REJECT (fabricated output, output served by
+      an unrouted expert, committed P != W*rho); the ledger count is asserted.
+      Full suite green (test_claims 21, fiat_shamir 6, phase3 5, routing 19,
+      persistent-weights 3+3+3, reveal 2, empty-root 1).
+      Note: proving against SWAPPED weights is not a claim-level failure — the
+      witness stays self-consistent — it is the enrolled root's job, checked by
+      policy in S4.
+- [ ] **S2b — standalone `RescaleClaim`.**
+      The old signed-floor/range rescale currently lives inside MatmulClaim;
+      the routed claim commits a raw output, so the rescale becomes its own
+      claim that follows every routed accumulator (a forbidden regression if
+      omitted).
+      Gate: rescale-after-routed proof Rust-ACCEPTs; an out-of-range or
+      wrongly-rounded output REJECTs.
 - [ ] **S3 — active-only MoE builder + challenge-keyed `P` cache.**
       One GGUF expert shard at a time, only tokens routed to it; delete the
       128-output lists and the three `freivalds_combine` calls.
