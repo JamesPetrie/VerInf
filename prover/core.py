@@ -924,26 +924,81 @@ class WeightCommitment:
     master_seed: bytes = MASTER_SEED
 
     @staticmethod
-    def from_tape(tape, cfg: LigeroConfig, master_seed: bytes = MASTER_SEED
+    def from_tape(tape, cfg: LigeroConfig, master_seed: bytes = None
                   ) -> "WeightCommitment":
+        # A fresh secret enrollment seed by default: the padding of the
+        # enrolled model is what hides it in the opened columns, so a public
+        # constant would give the weights away. Callers that need a
+        # reproducible R_W (diff-tests) pass one explicitly.
+        if master_seed is None:
+            master_seed = new_zk_seed()
         art, _wv, m_w = commit_weights(tape, cfg, master_seed)
         return WeightCommitment(root=art.root, levels=art.levels, m_w=m_w,
                                 n_lig=cfg.N_LIG, master_seed=bytes(master_seed))
 
+    # Wire format: a plain length-framed binary blob, NOT pickle. The handle
+    # carries the enrollment seed (a secret) and the Merkle levels, and it is
+    # read before anything about it has been checked — pickle.load would
+    # execute whatever the file says. Layout:
+    #   magic "VERINFWC" | u32 version | u32 m_w | u32 n_lig | 32B root
+    #   | 32B master_seed | u32 n_levels | per level: u32 n_nodes, nodes*32B
+    MAGIC = b"VERINFWC"
+    VERSION = 1
+
     def save(self, path: str) -> None:
-        import pickle
+        import struct
         with open(path, "wb") as f:
-            pickle.dump({"root": self.root, "levels": self.levels,
-                         "m_w": self.m_w, "n_lig": self.n_lig,
-                         "master_seed": self.master_seed}, f)
+            f.write(self.MAGIC)
+            f.write(struct.pack("<III", self.VERSION, self.m_w, self.n_lig))
+            f.write(self.root)
+            f.write(self.master_seed)
+            f.write(struct.pack("<I", len(self.levels)))
+            for lvl in self.levels:
+                f.write(struct.pack("<I", len(lvl)))
+                for node in lvl:
+                    assert len(node) == 32, "merkle node must be 32 bytes"
+                    f.write(node)
 
     @staticmethod
     def load(path: str) -> "WeightCommitment":
-        import pickle
+        import struct
         with open(path, "rb") as f:
-            d = pickle.load(f)
-        d.setdefault("master_seed", MASTER_SEED)   # pre-P5 pickles
-        return WeightCommitment(**d)
+            blob = f.read()
+        assert blob[:8] == WeightCommitment.MAGIC, "not a weight commitment file"
+        ver, m_w, n_lig = struct.unpack("<III", blob[8:20])
+        assert ver == WeightCommitment.VERSION, f"unsupported version {ver}"
+        root, seed = blob[20:52], blob[52:84]
+        (n_levels,) = struct.unpack("<I", blob[84:88])
+        off = 88
+        levels: List[List[bytes]] = []
+        for _ in range(n_levels):
+            (n_nodes,) = struct.unpack("<I", blob[off:off + 4]); off += 4
+            end = off + 32 * n_nodes
+            levels.append([blob[i:i + 32] for i in range(off, end, 32)])
+            off = end
+        assert off == len(blob), "trailing bytes in weight commitment file"
+        wc = WeightCommitment(root=root, levels=levels, m_w=m_w, n_lig=n_lig,
+                              master_seed=seed)
+        wc.check_topology()
+        return wc
+
+    def check_topology(self) -> None:
+        """Recompute the tree from its leaves: a handle is trusted for the
+        root it hands to the verifier, so a file whose levels do not build
+        that root must not be usable at all."""
+        assert self.levels, "empty commitment"
+        assert len(self.levels[0]) == self.n_lig, (
+            f"leaf count {len(self.levels[0])} != N_LIG {self.n_lig}")
+        cur = list(self.levels[0])
+        depth = 1
+        while len(cur) > 1:
+            nxt = [_b3(cur[i], cur[i + 1]) for i in range(0, len(cur), 2)]
+            assert depth < len(self.levels) and self.levels[depth] == nxt, (
+                f"merkle level {depth} does not follow from level {depth - 1}")
+            cur = nxt
+            depth += 1
+        assert depth == len(self.levels), "extra levels in commitment"
+        assert cur[0] == self.root, "levels do not build the stored root"
 
 
 # Optional prove-time phase breakdown (env LIGERO_PHASE_TIMING=1). cuda-synced
@@ -2866,7 +2921,7 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
     return p_0
 
 
-def _stream_setup(tape, cfg):
+def _stream_setup(tape, cfg, zk_seed=None):
     """Shared setup for the streaming provers: layout, quad grouping, row-maps
     and blinding — everything that is CHALLENGE-INDEPENDENT.
 
@@ -2883,7 +2938,7 @@ def _stream_setup(tape, cfg):
         print(f"  [setup] {tag}: rss={rss:.1f}GB gpu={torch.cuda.memory_allocated()/1e9:.1f}GB "
               f"peak={torch.cuda.max_memory_allocated()/1e9:.1f}GB", flush=True)
         torch.cuda.reset_peak_memory_stats()   # peak is per-step (since prev checkpoint)
-    master_seed = MASTER_SEED
+    master_seed = zk_seed if zk_seed is not None else MASTER_SEED
     master_seed_t = _master_seed_to_cuda(master_seed)
     claims = _with_synthesized_settlements(tape.claims)
     _m("enter")
@@ -2974,8 +3029,21 @@ def _derive_test_challenges(s_comb, m_total, total_quads):
     return r_irs_t, seed_u8, r_quad_t
 
 
+def new_zk_seed() -> bytes:
+    """A fresh secret seed for one proof's ZK padding and blinding rows.
+
+    The old fixed MASTER_SEED is public (it is a constant in this file), and a
+    verifier who knows it reconstructs every mask and subtracts it from the
+    openings: the proof stays sound but stops being zero-knowledge. Online
+    rows therefore pad under a per-proof secret; the persistent W block keeps
+    padding under its own ENROLLMENT seed, which must be kept secret in the
+    commitment handle, or its committed leaves would not reproduce."""
+    import secrets
+    return secrets.token_bytes(32)
+
+
 def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None,
-                    claims_bytes=None):
+                    claims_bytes=None, zk_seed=None):
     """Streaming prover — the single production path (the sound four-round protocol).
 
     `weight_commitment` (a WeightCommitment, P3): reference a pre-committed W
@@ -3017,10 +3085,18 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
         _PHASE_TIMES.clear()
     for _hook in PROVE_START_HOOKS:
         _hook()
-    s = _stream_setup(tape, cfg)
+    # Fresh secret padding/blinding entropy per proof unless a caller pins it
+    # (diff-tests that compare two proofs byte-for-byte do pin it).
+    s = _stream_setup(tape, cfg, zk_seed=(zk_seed or new_zk_seed()))
     if claims_bytes is None:
         claims_bytes = pr.claims_canonical_bytes(tape.claims, cfg)
-    stmt_digest = pr.statement_digest(claims_bytes)
+    # The row-block layout is part of the statement, not something the proof
+    # gets to choose: it follows from the tape (persistent weights? a linking
+    # block? a late-stage claim?) and is fixed before R1.
+    blocks = (["blind"] + (["w"] if s['n_w_total'] else [])
+              + (["wnew"] if s['n_wnew_total'] else []) + ["p1", "p2"]
+              + (["p3"] if s['n_p3_total'] else []))
+    stmt_digest = pr.statement_digest(claims_bytes, blocks)
     # The streaming sweeps recompile each claim and DISCARD its b_chunk (RHS) —
     # only row packets + quads are consumed (_compile_at: `..., _b = COMPILE_FNS`).
     # Keep _SKIP_B_CHUNK on so the sweep doesn't waste an O(T*V) dense RHS build
@@ -3250,8 +3326,10 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
     # True here silently zeroed every nonzero-RHS constraint in verify.
     globals()['_SKIP_B_CHUNK'] = False
     _disk_spill_close(witness_cache)          # delete the per-proof disk-spill file
-    blocks = (["blind"] + (["w"] if has_w else []) + (["wnew"] if has_wnew else [])
-              + ["p1", "p2"] + (["p3"] if has_p3 else []))
+    assert blocks == (["blind"] + (["w"] if has_w else [])
+                      + (["wnew"] if has_wnew else []) + ["p1", "p2"]
+                      + (["p3"] if has_p3 else [])), (
+        "row-block layout diverged from the one the statement digest fixed")
     return Proof(
         q_irs=q_irs, q_lin=q_lin, p_0=p_0, blocks=blocks,
         seeds={"s_op": s_op, "s_bind": s_bind, "s_comb": s_comb, "s_col": s_col},

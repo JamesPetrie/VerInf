@@ -31,8 +31,9 @@ pub fn fs_seed(label: &str, items: &[&[u8]]) -> [u8; 32] {
 /// The trusted static statement digest: a hash of the EXACT claim-set bytes
 /// carried by the proof file (the raw `claims` sub-document, not a re-encoding
 /// of it — a re-encoding would depend on this verifier's JSON formatting).
-pub fn statement_digest(claims_bytes: &[u8]) -> [u8; 32] {
-    fs_seed("statement", &[claims_bytes])
+pub fn statement_digest(claims_bytes: &[u8], block_order: &[String]) -> [u8; 32] {
+    let labels = block_order.join(",");
+    fs_seed("statement", &[claims_bytes, labels.as_bytes()])
 }
 
 /// Coin after R1: the statement, the R1 block labels and the R1 roots.

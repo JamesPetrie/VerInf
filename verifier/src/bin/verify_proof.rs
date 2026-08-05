@@ -128,7 +128,6 @@ fn main() {
         .expect("parse proof.json");
 
     let claims_bytes = top.claims.get().as_bytes().to_vec();
-    let stmt_recomputed = fs::statement_digest(&claims_bytes);
     let claims_value: Value = serde_json::from_str(top.claims.get())
         .expect("parse claims sub-document");
     let mut cs = parse_claim_set_value(claims_value);
@@ -156,6 +155,9 @@ fn main() {
         opened.push(conv_open(ow.expect("missing opened for block")));
         paths.push(conv_paths(pw.expect("missing paths for block")));
     }
+    // The block layout is part of the statement: the digest covers it, so a
+    // proof cannot relabel or reorder its own blocks.
+    let stmt_recomputed = fs::statement_digest(&claims_bytes, &block_order);
     let r3 = Round3 { q_irs: p.q_irs, q_lin: p.q_lin, p_0: p.p_0 };
     let r4 = Round4 { opened, paths };
 
@@ -168,11 +170,18 @@ fn main() {
     let (s_op, s_comb, s_col) = match &top.statement_digest {
         Some(stmt_hex) => {
             let stmt_claimed = hex32(stmt_hex);
-            policy.push(("statement_digest = H(claim bytes)".into(),
+            policy.push(("statement_digest = H(claim bytes, block order)".into(),
                          stmt_claimed == stmt_recomputed));
-            if let Some(exp) = policy_stmt {
-                policy.push(("statement_digest = trusted policy digest".into(),
-                             exp == stmt_recomputed));
+            // FAIL-CLOSED: the trusted statement digest is not optional. With
+            // no external statement the prover picks what it proves, and the
+            // verifier is reduced to checking that a proof is internally
+            // consistent with itself.
+            match policy_stmt {
+                Some(exp) => policy.push((
+                    "statement_digest = trusted policy digest".into(),
+                    exp == stmt_recomputed)),
+                None => policy.push((
+                    "trusted statement digest supplied as policy".into(), false)),
             }
             // Row-block order is blind|W|Wnew|p1|p2[|p3]: everything up to p2
             // is R1, p2 is R2, and the optional p3 is R3.
@@ -205,9 +214,19 @@ fn main() {
              hexbytes(&top.seeds.s_col))
         }
     };
-    if let Some(exp_w) = policy_root_w {
-        let got = block_order.iter().position(|b| b == "w").map(|i| roots[i]);
-        policy.push(("weight root = trusted enrolled root".into(), got == Some(exp_w)));
+    // A proof over an enrolled model must be checked against the enrolled
+    // root; without it the prover chooses its own weights.
+    let w_idx = block_order.iter().position(|b| b == "w");
+    match (w_idx, policy_root_w) {
+        (Some(i), Some(exp_w)) => policy.push((
+            "weight root = trusted enrolled root".into(), roots[i] == exp_w)),
+        (Some(_), None) => policy.push((
+            "trusted weight root supplied for a persistent-model proof".into(),
+            false)),
+        (None, Some(_)) => policy.push((
+            "policy names a weight root but the proof has no weight block".into(),
+            false)),
+        (None, None) => {}
     }
 
     let t0 = std::time::Instant::now();

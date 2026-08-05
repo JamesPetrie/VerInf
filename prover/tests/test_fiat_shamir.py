@@ -69,14 +69,16 @@ def _rewrite(path, mutate):
 def test_honest_proof_accepts_with_recomputed_coins():
     path, proof = _proof_file()
     try:
-        acc, msg = _run(path)
+        acc, msg = _run(path, "-", proof.statement_digest.hex())
         assert acc, f"honest FS proof: expected ACCEPT ({msg})"
         assert "seeds in file = recomputed transcript" in msg, msg
-        assert "statement_digest = H(claim bytes)" in msg, msg
+        assert "statement_digest = H(claim bytes, block order)" in msg, msg
         # the coins really are transcript-derived, not seed-derived
         blocks = proof.blocks[:-1]
         roots = [getattr(proof, "root_%s" % b) for b in blocks]
         want = pr.fs_s_op(proof.statement_digest, blocks, roots)
+        assert proof.statement_digest == pr.statement_digest(
+            proof.claims_bytes, proof.blocks), "digest must cover the block order"
         assert proof.seeds["s_op"] == want, "s_op is not H(statement || R1 roots)"
         print(f"    honest: ACCEPT, s_op={proof.seeds['s_op'].hex()[:12]}… "
               f"recomputed by the verifier")
@@ -117,6 +119,21 @@ def test_rewritten_statement_rejects():
         acc, msg = _run(path)
         assert not acc, "rewritten claims: expected REJECT"
         print("    rewritten claim set: REJECT ok")
+    finally:
+        os.unlink(path)
+
+
+def test_missing_policy_rejects():
+    """Fail-closed: with no trusted statement digest the prover would be
+    choosing what it proves, so the verifier must refuse."""
+    path, proof = _proof_file()
+    try:
+        acc, msg = _run(path)                       # no policy arguments at all
+        assert not acc, "missing statement policy: expected REJECT"
+        assert "trusted statement digest supplied" in msg, msg
+        acc, _ = _run(path, "-", "-")               # explicitly declining it
+        assert not acc, "declined statement policy: expected REJECT"
+        print("    no trusted statement digest: REJECT ok")
     finally:
         os.unlink(path)
 

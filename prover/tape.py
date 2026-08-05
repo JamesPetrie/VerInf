@@ -1266,7 +1266,7 @@ class Tape:
         return WitnessTensor(outs[x_rot_var] if outs else None, x_rot_var, x.shape, self)
 
     def prove(self, seed=None, *, verbose=False, weight_commitment=None,
-              wnew_seed=None, claims_bytes=None):
+              wnew_seed=None, claims_bytes=None, zk_seed=None):
         """Streaming prover — the sound four-round protocol (the single path).
         Requires a lazy tape (streaming replays the tape's deferred ops).
 
@@ -1277,7 +1277,9 @@ class Tape:
         `claims_bytes`: canonical claim-set bytes, if the driver already built
         them for the proof file (they define the statement digest).
         `seed` is accepted for call compatibility and ignored: the verifier
-        coins are sequential Fiat-Shamir over the transcript, not a base seed."""
+        coins are sequential Fiat-Shamir over the transcript, not a base seed.
+        `zk_seed` pins the per-proof ZK padding/blinding entropy; the default
+        is fresh secret entropy, which is what zero knowledge requires."""
         if not self.lazy:
             raise RuntimeError(
                 "tape.prove requires Tape(cfg, lazy=True): the streaming prover "
@@ -1285,7 +1287,8 @@ class Tape:
         from core import prove_streaming
         return prove_streaming(self, self.cfg, seed,
                                weight_commitment=weight_commitment,
-                               wnew_seed=wnew_seed, claims_bytes=claims_bytes)
+                               wnew_seed=wnew_seed, claims_bytes=claims_bytes,
+                               zk_seed=zk_seed)
 
     def run_engine_pass(self, free_intermediates: bool = False, keep=None):
         """Process self._deferred (recorded by tape.X in lazy mode): for

@@ -54,13 +54,23 @@ def test_reference_matches_and_verifies():
         os.unlink(path)
 
 
+ENROL_SEED = b"\x11" * 32          # a pinned ENROLLMENT seed, for this test only
+
+
 def test_baseline_and_reference_agree():
     """The referenced proof and a rebuilt-W proof commit the SAME R_W and both
-    verify — referencing is transparent to the verdict."""
+    verify — referencing is transparent to the verdict.
+
+    Both sides must pad the W block under the SAME enrollment seed for the
+    roots to coincide. Since proofs now draw fresh secret padding per run (a
+    public seed would let a verifier strip the masks off the openings), the
+    rebuild side is pinned to the enrollment seed explicitly. In production
+    the rebuild path does not exist: weights are enrolled once and referenced,
+    which is why the R_W of an unenrolled proof is deliberately proof-local."""
     tape_a = _build()
-    p_rebuild = tape_a.prove(seed=b"p3b")                 # no commitment → rebuild W
+    p_rebuild = tape_a.prove(seed=b"p3b", zk_seed=ENROL_SEED)
     tape_b = _build()
-    wc = core.WeightCommitment.from_tape(tape_b, CFG)
+    wc = core.WeightCommitment.from_tape(tape_b, CFG, master_seed=ENROL_SEED)
     tape_c = _build()
     p_ref = tape_c.prove(seed=b"p3b", weight_commitment=wc)
     assert p_rebuild.root_w == p_ref.root_w == wc.root, "rebuild vs reference R_W disagree"

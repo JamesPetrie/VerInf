@@ -48,8 +48,15 @@ def _dump(tape, proof, path):
     dump_proof(path, pr.claims_to_json(tape.claims, CFG), seeds, proof, Q, None)
 
 
-def _run(path):
-    r = subprocess.run([_verify_proof_bin(), path], capture_output=True, text=True)
+def _run(path, proof=None):
+    # The verifier is fail-closed on policy, so a proof over persistent weights
+    # must be handed the enrolled root and the trusted statement digest. This
+    # test is about the empty-root sentinel, so policy comes from the proof.
+    argv = [_verify_proof_bin(), path]
+    if proof is not None:
+        argv += [proof.root_w.hex() if proof.root_w else "-",
+                 proof.statement_digest.hex()]
+    r = subprocess.run(argv, capture_output=True, text=True)
     return "rust_verify: ACCEPT" in r.stdout
 
 
@@ -66,7 +73,7 @@ def test_zero_root_sentinel():
         assert d["proof"]["root_p2"] == "00" * 32, \
             "toy tape's p2 should be empty (sentinel root) — test premise"
         assert all(len(col) == 0 for col in d["proof"]["opened_p2"].values())
-        assert _run(path), "baseline proof (with a genuinely empty p2) must ACCEPT"
+        assert _run(path, proof), "baseline proof (with a genuinely empty p2) must ACCEPT"
         print("    baseline ACCEPT (p2 empty under the sentinel root)")
 
         # Gate 2: zeroing a NON-empty block's root must REJECT — the sentinel

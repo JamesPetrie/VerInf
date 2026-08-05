@@ -166,7 +166,36 @@ carried.  The full 400B proof is not started until every stage below is DONE and
       cache hits, Rust ACCEPT; fusing saves exactly E shard loads (one whole
       weight pass); referencing an enrolled commitment saves exactly `m_w`
       encoded rows.  Full suite green.
-- [ ] **S4b — driver: enrollment, policy, streaming proof.**
+- [x] **S4b — ZK entropy, canonical statement, fail-closed policy, safe handle.**
+      Four more review findings:
+      (a) padding and the three blinding rows came from `MASTER_SEED`, a public
+      constant in `core.py` — a verifier who knows it reconstructs every mask
+      and strips it off the openings, so the proof was sound but NOT zero
+      knowledge.  Proofs now draw fresh secret entropy per run (`new_zk_seed`,
+      `secrets.token_bytes`); the enrolled weight block keeps padding under its
+      own ENROLLMENT seed, which `WeightCommitment` now generates fresh and
+      secret by default.  Tests that compare two proofs' roots pin the seed
+      explicitly.
+      (b) the "static" statement digest covered `Table.alpha/beta`, which are
+      per-proof LogUp challenges and MUTATE on the tape after the first proof —
+      two proofs of one claim set could disagree on the digest.  They are out
+      of the canonical bytes now (the verifier re-derives them from `s_op` and
+      already overwrote whatever the JSON said), and the digest additionally
+      covers the row-block layout, so a proof cannot relabel its own blocks.
+      (c) `verify_proof` was fail-OPEN: with no trusted statement digest the
+      prover picks what it proves, and with no enrolled root it picks its own
+      weights.  Both are now required — a proof carrying a statement digest
+      without a policy digest, or a weight block without an enrolled root,
+      REJECTs.
+      (d) `WeightCommitment.load` was `pickle.load` — arbitrary code execution
+      from a file read before anything about it is checked.  Replaced by a
+      framed binary format plus `check_topology()`, which rebuilds the tree
+      from its leaves and refuses a handle whose levels do not produce the
+      stored root.
+      Gate PASSED: `tests/test_fiat_shamir.py` 7/7 (adds missing-policy
+      REJECT), `test_persistent_weights_p5` 3/3 (adds pickle-refused and
+      broken-tree-refused), full suite green.
+- [ ] **S4c — driver: enrollment, admission, no reveal pass, streamed openings.**
       `--enroll-weights`, `--weight-commitment`, `--expected-weight-root`,
       `--public-sz`, `--admission-report`; drop the hidden pre-proof reveal
       pass; `verify_proof` takes the trusted weight root and statement digest as

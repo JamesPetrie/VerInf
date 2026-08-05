@@ -239,7 +239,10 @@ def test_fc_fold_golden_roots():
             os.environ.pop("LIGERO_NO_FOLD", None)
         try:
             tape, *_ = _build(LOGITS, with_combine=True)
-            proof = tape.prove(seed=SEED)
+            # Padding entropy is fresh per proof now (zero knowledge), so a
+            # root-equality test must pin it; the property under test is that
+            # the FOLD does not change the commitment.
+            proof = tape.prove(seed=SEED, zk_seed=b"\x33" * 32)
             acc, msg = rust_verify_tape(tape, proof, seed=SEED)
             assert acc, f"{mode}: expected ACCEPT ({msg})"
             roots[mode] = (proof.root_p1.hex(), proof.root_p2.hex())

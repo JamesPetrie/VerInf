@@ -206,12 +206,15 @@ def u64_bytes(values) -> bytes:
     return b"".join(int(v).to_bytes(8, "little") for v in values)
 
 
-def statement_digest(claims_bytes: bytes) -> bytes:
+def statement_digest(claims_bytes: bytes, block_order=None) -> bytes:
     """The trusted static statement digest: a hash of the EXACT claim-set bytes
-    that the proof carries. The verifier recomputes it from the bytes it read
-    and compares it to the digest supplied as policy, so a proof cannot choose
-    its own statement."""
-    return fs_seed("statement", claims_bytes)
+    the proof carries, plus the row-block layout it must be opened in.
+
+    The verifier recomputes it from what it read and compares against the
+    digest supplied as POLICY, so a proof can choose neither its own claim set
+    nor its own block order. The claim bytes carry no per-proof challenge
+    (see _ser_table), so the digest is stable across proofs of one statement."""
+    return fs_seed("statement", claims_bytes, ",".join(block_order or []))
 
 
 def fs_s_op(stmt_digest: bytes, block_order: List[str], roots_r1: List[bytes]) -> bytes:
@@ -330,8 +333,11 @@ def _ser_table(t, _cache=None):
         "mult_var": _ser_var(t.mult_var),
         "w_var":    _ser_var(t.w_var),
         "z_vars":   [_ser_var(z) for z in t.z_vars],
-        "alpha": int(t.alpha),
-        "beta":  int(t.beta),
+        # alpha/beta are NOT part of the statement. They are per-proof LogUp
+        # challenges the verifier re-derives from s_op (and overwrites on the
+        # parsed table anyway), and they MUTATE on the tape after the first
+        # proof — carrying them would make the "static" statement digest
+        # differ between two proofs of the same claim set.
     }
     if not is_range:                       # fallback: explicit domain (unused today)
         out["T"] = Tl

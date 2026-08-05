@@ -79,8 +79,11 @@ fn parse_table(v: &Value) -> Table {
         mult_var: var_from_pair(&t["mult_var"]),
         w_var: var_from_pair(&t["w_var"]),
         z_vars: t["z_vars"].as_array().unwrap().iter().map(var_from_pair).collect(),
-        alpha: as_u64(&t["alpha"]),
-        beta: as_u64(&t["beta"]),
+        // alpha/beta are absent from the canonical statement (they are
+        // per-proof LogUp challenges); compile_claims derives them from s_op
+        // and patches every table before any handler reads them.
+        alpha: t.get("alpha").map(as_u64).unwrap_or(0),
+        beta: t.get("beta").map(as_u64).unwrap_or(0),
     }
 }
 

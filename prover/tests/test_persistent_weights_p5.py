@@ -98,13 +98,28 @@ def test_commitment_seed_roundtrip():
         loaded = core.WeightCommitment.load(path)
         assert loaded.master_seed == SEED_B, "save/load lost the commitment seed"
         assert loaded.root == wc.root
-        # Pre-P5 pickle (no master_seed key) loads with the default seed.
+        # The handle is read before anything about it is checked, so the
+        # format is a plain framed blob and pickle files are refused outright
+        # (a pickle would have executed whatever it contained).
         with open(path, "wb") as f:
             pickle.dump({"root": wc.root, "levels": wc.levels,
                          "m_w": wc.m_w, "n_lig": wc.n_lig}, f)
-        legacy = core.WeightCommitment.load(path)
-        assert legacy.master_seed == core.MASTER_SEED, "pre-P5 pickle must default to MASTER_SEED"
-        print("    seed round-trips; pre-P5 pickle defaults to MASTER_SEED")
+        try:
+            core.WeightCommitment.load(path)
+            raise AssertionError("a pickle file was accepted as a commitment")
+        except AssertionError as e:
+            assert "not a weight commitment file" in str(e), e
+        # A handle whose levels do not build its root is refused too.
+        wc.save(path)
+        blob = bytearray(open(path, "rb").read())
+        blob[-1] ^= 0xFF                        # corrupt the last merkle node
+        open(path, "wb").write(bytes(blob))
+        try:
+            core.WeightCommitment.load(path)
+            raise AssertionError("a commitment with a broken tree was accepted")
+        except AssertionError as e:
+            assert "merkle" in str(e) or "root" in str(e), e
+        print("    seed round-trips; pickle and broken-tree handles refused")
     finally:
         os.unlink(path)
 
