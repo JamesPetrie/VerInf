@@ -406,9 +406,9 @@ def main():
          f"{bits/len(sum_pos):.4f} bits/token over {len(sum_pos)} positions "
          f"(no reveal pass)")
 
-    claims_bytes = pr.claims_canonical_bytes(tape.claims, CFG)
-    manifest = admission.row_manifest(tape, CFG)
-    stmt = admission.statement_digest_for(tape, CFG, claims_bytes)
+    # One call: the layout is assigned first, then the canonical bytes and the
+    # digest are taken from the laid-out tape (row_start is -1 before that).
+    claims_bytes, manifest, stmt = admission.prepare(tape, CFG)
     report = admission.load_report(a.admission_report)
     admission.check(report, cfg=CFG, model_root=wc.root, statement_digest=stmt,
                     manifest=manifest)

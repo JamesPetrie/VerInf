@@ -127,6 +127,23 @@ def row_manifest(tape, cfg) -> Dict[str, int]:
     }
 
 
+def prepare(tape, cfg):
+    """Fix the layout, then derive everything the statement depends on.
+
+    ORDER IS LOAD-BEARING: a Variable's row_start is -1 until _layout assigns
+    it, so serializing the claims before the layout produces a claim set the
+    verifier cannot compile. Everything downstream (the canonical bytes, the
+    digest the gate binds to, the digest the proof carries) has to come from
+    the same, already-laid-out tape.
+
+    Returns (claims_bytes, row_manifest, statement_digest).
+    """
+    import protocol as pr
+    manifest = row_manifest(tape, cfg)             # runs _layout, assigns rows
+    claims_bytes = pr.claims_canonical_bytes(tape.claims, cfg)
+    return claims_bytes, manifest, statement_digest_for(tape, cfg, claims_bytes)
+
+
 def statement_digest_for(tape, cfg, claims_bytes: bytes) -> bytes:
     """The digest the proof will carry — computed here so the gate can bind to
     it before a single round runs."""
