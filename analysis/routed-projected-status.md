@@ -109,13 +109,17 @@ carried.  The full 400B proof is not started until every stage below is DONE and
       Note: proving against SWAPPED weights is not a claim-level failure — the
       witness stays self-consistent — it is the enrolled root's job, checked by
       policy in S4.
-- [ ] **S2b — standalone `RescaleClaim`.**
-      The old signed-floor/range rescale currently lives inside MatmulClaim;
-      the routed claim commits a raw output, so the rescale becomes its own
-      claim that follows every routed accumulator (a forbidden regression if
-      omitted).
-      Gate: rescale-after-routed proof Rust-ACCEPTs; an out-of-range or
-      wrongly-rounded output REJECTs.
+- [x] **S2b — standalone `RescaleClaim`.**
+      `prover/rescale_claim.py`: the same signed-floor relation the in-matmul
+      rescale enforced (`x_full = 2^r*x + x_low`, `x_shifted = x + 2^(w-1)`,
+      tight and loose range LogUps), now its own claim so it can follow the
+      routed raw accumulator.  The Rust handler reuses the existing
+      `Build::emit_rescale`, so both sides emit an identical layout.
+      Gate PASSED: `tests/test_rescale_claim.py` 4/4 — routed output +
+      standalone rescale Rust-ACCEPTs, the rescaled value equals the
+      signed-floor reference, wrong rounding REJECTs (first linear), and an
+      `x_low` pushed outside `[0, 2^r)` while keeping the linear satisfiable
+      REJECTs (tight LogUp).  Full suite green.
 - [ ] **S3 — active-only MoE builder + challenge-keyed `P` cache.**
       One GGUF expert shard at a time, only tokens routed to it; delete the
       128-output lists and the three `freivalds_combine` calls.

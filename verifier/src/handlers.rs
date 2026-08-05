@@ -266,6 +266,18 @@ fn compile_op(cl: &Claim, ci: usize, s_op: &[u8], s_bind: Option<&[u8]>,
         "FreivaldsCombineClaim" => compile_freivalds_combine(cl, ci, s_op, b, cfg),
         "RoutedProjectedMatmulClaim" =>
             compile_routed_projected(cl, ci, s_op, s_bind, b, cfg),
+        // Standalone signed-floor rescale — the same two linears and two range
+        // LogUps the in-matmul rescale emits, so it reuses emit_rescale.
+        "RescaleClaim" => {
+            let l = cl.scalar("length") as usize;
+            let cur = b.nxt;
+            b.nxt = b.emit_rescale(cur, cl.var("x"), cl.var("x_low"),
+                cl.var("x_full"), cl.var("x_shifted"), cl.var("z_low"),
+                cl.var("z_shifted"), cl.scalar("rescale_bits") as u32,
+                cl.scalar("output_width") as u32,
+                cl.table("range_rescale").alpha, cl.table("range_output").alpha,
+                l, cfg.ell as usize);
+        }
         other => panic!("compile_claims: {} not ported", other),
     }
 }
