@@ -34,13 +34,31 @@ def dump_proof(path, claims_json, seeds, proof, Q, python_accept):
     """The single proof→JSON writer (streaming, so full-model proofs dump at I/O
     cost, not RAM). Block-driven off `proof.blocks`: each block b emits
     root_<b>/opened_<b>/paths_<b>. seeds: hex {s_op,s_comb,s_col}. Q: ordered
-    columns. python_accept: True/False/None."""
+    columns. python_accept: True/False/None.
+
+    A proof from the sequential Fiat-Shamir prover carries its own derived
+    seeds, opened columns and canonical claim bytes; those WIN over the passed
+    `seeds`/`Q`/`claims_json`, so no call site can pair a proof with a
+    transcript it was not made under. The claim bytes are written verbatim
+    because the statement digest is taken over exactly these bytes."""
     blocks = proof_block_order(proof)
+    fs_seeds = getattr(proof, "seeds", None)
+    if fs_seeds:
+        seeds = {k: v.hex() for k, v in fs_seeds.items()}
+    if getattr(proof, "Q_cols", None):
+        Q = list(proof.Q_cols)
+    claims_bytes = getattr(proof, "claims_bytes", None)
     with open(path, "w") as f:
         f.write('{"claims": ')
-        json.dump(claims_json, f)
+        if claims_bytes is not None:
+            f.write(claims_bytes.decode())
+        else:
+            json.dump(claims_json, f)
         f.write(', "seeds": ')
         json.dump(seeds, f)
+        if getattr(proof, "statement_digest", None) is not None:
+            f.write(', "statement_digest": %s'
+                    % json.dumps(proof.statement_digest.hex()))
         f.write(', "proof": {')
         f.write('"blocks": %s, ' % json.dumps(blocks))
         for b in blocks:

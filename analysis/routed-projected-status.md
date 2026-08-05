@@ -53,13 +53,29 @@ carried.  The full 400B proof is not started until every stage below is DONE and
 - [x] **S0 — documents + admission model in-tree.**
       Gate: `analysis/routed_projected_4h_model.py` runs, all asserts pass, and
       its baseline matches `maverick_cost_model.py` at S=1000.  PASSED.
-- [ ] **S1 — sequential Fiat--Shamir, five messages, `p3` phase.**
-      Replace the pre-derived `round_seeds(SEED)` with a framed transcript hash:
-      `R1 -> s_op -> R2 -> s_bind -> R3 -> s_comb -> test polys -> s_col`.
-      Adds a third witness phase to `_layout`/`_stream_sweep` and a fourth seed
-      to the Rust verifier, which recomputes every seed itself.
-      Gate: toy proof still `verify_proof=ACCEPT`; tamper tests reject; a test
-      that proves `s_bind` cannot be derived before the R2 root exists.
+- [x] **S1a — sequential Fiat--Shamir over the existing four rounds.**
+      `round_seeds(SEED)` is gone from the prover: `s_op = H(statement ||
+      R1 block labels || R1 roots)`, `s_comb = H(s_op || root_p2)`,
+      `s_col = H(s_comb || q_irs || q_lin || p_0)`, length-framed
+      (`prover/protocol.py`), mirrored in `verifier/src/fs.rs`.  The verifier
+      recomputes every coin from the raw claim bytes it read and uses the file's
+      seeds only to report agreement.  `verify_proof` gained optional policy
+      arguments (trusted weight root, trusted statement digest; `-` skips one).
+      Gate PASSED: `tests/test_fiat_shamir.py` 6/6 (honest ACCEPT, rewritten
+      s_col / s_op / claim set REJECT, policy digest enforced, and a structural
+      test that R1 runs with no op challenge and no column set), plus
+      test_claims 21/21, test_routing_claim 19/19, persistent-weights 3+3+3,
+      test_reveal 2/2, test_empty_root_sentinel 1/1 unchanged.
+      (`tests/test_multirow.py` fails on `pr._emit_id` — pre-existing, it calls
+      the retired Python compile; verified broken before this work too.)
+- [ ] **S1b — fifth message: `s_bind` + the `p3` witness phase.**
+      Adds a third witness phase to `_layout`/`_claim_var_groups`/
+      `_stream_sweep`, a `p3` block/tree, the fifth sweep, and the fourth coin
+      `s_bind = H(s_op || root_p2)` with `s_comb = H(s_bind || root_p3)`.
+      This is what makes the prover's five witness regenerations the ones the
+      admission model charges.
+      Gate: toy ACCEPT; a test that `s_bind` cannot exist before the R2 root;
+      tamper tests on the p3 block.
 - [ ] **S2 — `RoutedProjectedMatmulClaim` + standalone `RescaleClaim`.**
       Python claim (sample/aux/compile) + Rust handler, relations `P=W rho`,
       `H=X*Q`, `yr=Y rho`, `sum_k H = yr`, late Freivalds `sum_e f_p =

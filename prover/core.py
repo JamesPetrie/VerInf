@@ -1946,6 +1946,21 @@ class Proof:
     opened_blind: Dict[int, torch.Tensor] = field(default_factory=dict)
     paths_blind:  Dict[int, List[Tuple[bytes, int]]] = field(default_factory=dict)
     blocks:       Optional[List[str]] = None
+    # Sequential Fiat-Shamir transcript (S1). `seeds` are the coins the prover
+    # DERIVED (never chose): the verifier recomputes each one from the same
+    # transcript and ignores these. `statement_digest` is the digest of
+    # `claims_bytes`, the exact canonical claim-set bytes the proof file
+    # carries; `Q_cols` are the columns s_col selected.
+    seeds:            Optional[Dict[str, bytes]] = None
+    statement_digest: Optional[bytes] = None
+    claims_bytes:     Optional[bytes] = None
+    Q_cols:           Optional[List[int]] = None
+
+
+def _u64_le_bytes(t: torch.Tensor) -> bytes:
+    """A device u64 field vector as little-endian u64 bytes — the transcript
+    framing the Rust verifier hashes (protocol.u64_bytes)."""
+    return t.cpu().contiguous().view(torch.uint8).numpy().tobytes()
 
 
 # ============================================================
@@ -2745,9 +2760,14 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
     return p_0
 
 
-def _stream_setup(tape, cfg, seed):
-    """Shared setup for the streaming provers: layout, challenges, quad grouping,
-    row-maps, blinding. Returns a context the fast/sound provers fill in."""
+def _stream_setup(tape, cfg):
+    """Shared setup for the streaming provers: layout, quad grouping, row-maps
+    and blinding — everything that is CHALLENGE-INDEPENDENT.
+
+    Nothing derived from a verifier coin is computed here: under sequential
+    Fiat-Shamir each coin exists only after the prover message it follows, so
+    the op challenges (s_op), the test-combiner vectors (s_comb) and the opened
+    columns (s_col) are derived inside prove_streaming at their own round."""
     import os as _os
     def _m(tag):
         if not _os.environ.get("LIGERO_STREAM_DBG"):
@@ -2791,31 +2811,6 @@ def _stream_setup(tape, cfg, seed):
         sys.exit(0)
     groups = _claim_var_groups(claims, cfg)
     n_ops = len(tape.claims)
-    # Challenges + compile, derived inline (compile ONCE). _sample_test_challenges
-    # would re-synthesize, re-layout, AND re-compile — at 32L/SEQ=1000 the compile
-    # is ~87 GB / minutes, so doing it twice doubles setup cost. This reproduces
-    # its derivation byte-for-byte (s_op→ch0, s_comb→ch1, s_col→ch2).
-    s_op, s_comb, s_col = pr.round_seeds(seed)
-    ch0 = _sample_chs(claims, s_op)
-    _m("ch0")
-    # Streaming compile: regular ops compile lazily inside the sweep so the
-    # ~45 GB packet store never materializes; settlements pre-compile (their
-    # packets land on rows emitted long before they would compile). The
-    # constructor's count pass also yields the global quad total for r_quad.
-    globals()['_SKIP_B_CHUNK'] = True
-    stream_pk = _StreamingPackets(claims, ch0, cfg, n_ops)
-    globals()['_SKIP_B_CHUNK'] = False
-    # Unified-memory hygiene: release the allocator's reserved high-water
-    # before the long-lived phase begins.
-    torch.cuda.empty_cache()
-    _m(f"compile-count (m_total={m_total} quads={stream_pk.total_quads})")
-    seed_u8 = torch.tensor(list(s_comb), dtype=torch.uint8, device="cuda")
-    _lbl = lambda b: torch.tensor(list(b), dtype=torch.uint8, device="cuda")
-    r_irs_t = challenge_vec(seed_u8, _lbl(b"irs"), m_total - NUM_BLINDING_ROWS)
-    r_lin_seed = seed_u8
-    r_quad_t = challenge_vec(seed_u8, _lbl(b"quad"), stream_pk.total_quads)
-    Q_cols = list(pr.random_columns(s_col, cfg))
-    _m("challenges")
     # Phase-1 row map covers weights, then the linking proof's Wnew block, then
     # activations (layout B row order), so a quad operand in any of them lands
     # correctly; p2 map starts at the phase-1 end.
@@ -2830,9 +2825,8 @@ def _stream_setup(tape, cfg, seed):
     return dict(
         master_seed_t=master_seed_t, claims=claims, p1_vars=p1_vars, p2_vars=p2_vars,
         weight_vars=weight_vars, m_w_rows=m_w_rows, wnew_vars=wnew_vars,
-        m_p1_rows=m_p1_rows, groups=groups, n_ops=n_ops, ch0=ch0, r_irs_t=r_irs_t,
-        r_lin_seed=r_lin_seed, r_quad_t=r_quad_t, Q_cols=Q_cols,
-        stream_pk=stream_pk, p_maps=p_maps, tables=_collect_tables(claims),
+        m_p1_rows=m_p1_rows, m_total=m_total, groups=groups, n_ops=n_ops,
+        p_maps=p_maps, tables=_collect_tables(claims),
         u_irs_poly=u_irs_polys_K[0], u_lin_poly=polys_2k[0], u_quad_poly=polys_2k[1],
         p1_prefix=torch.cat([u_irs_codes, codes_2k], dim=0),
         n_blind_total=NUM_BLINDING_ROWS,          # blinding is its own tree (layout B)
@@ -2841,7 +2835,34 @@ def _stream_setup(tape, cfg, seed):
         n_p2_total=sum(v.n_rows(cfg.ELL) for v in p2_vars))
 
 
-def prove_streaming(tape, cfg, seed, weight_commitment=None, wnew_seed=None):
+def _derive_op_challenges(claims, cfg, n_ops, s_op):
+    """s_op -> per-claim op challenges + the streaming compile.
+
+    Streaming compile: regular ops compile lazily inside the sweep so the
+    ~45 GB packet store never materializes; settlements pre-compile (their
+    packets land on rows emitted long before they would compile). The
+    constructor's count pass also yields the global quad total for r_quad."""
+    ch0 = _sample_chs(claims, s_op)
+    globals()['_SKIP_B_CHUNK'] = True
+    stream_pk = _StreamingPackets(claims, ch0, cfg, n_ops)
+    globals()['_SKIP_B_CHUNK'] = False
+    # Unified-memory hygiene: release the allocator's reserved high-water
+    # before the long-lived phase begins.
+    torch.cuda.empty_cache()
+    return ch0, stream_pk
+
+
+def _derive_test_challenges(s_comb, m_total, total_quads):
+    """s_comb -> the IRS / linear / quadratic combiner vectors."""
+    seed_u8 = torch.tensor(list(s_comb), dtype=torch.uint8, device="cuda")
+    _lbl = lambda b: torch.tensor(list(b), dtype=torch.uint8, device="cuda")
+    r_irs_t = challenge_vec(seed_u8, _lbl(b"irs"), m_total - NUM_BLINDING_ROWS)
+    r_quad_t = challenge_vec(seed_u8, _lbl(b"quad"), total_quads)
+    return r_irs_t, seed_u8, r_quad_t
+
+
+def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None,
+                    claims_bytes=None):
     """Streaming prover — the single production path (the sound four-round protocol).
 
     `weight_commitment` (a WeightCommitment, P3): reference a pre-committed W
@@ -2859,26 +2880,43 @@ def prove_streaming(tape, cfg, seed, weight_commitment=None, wnew_seed=None):
 
     FOUR streaming sweeps, the witness regenerated each round, as the staged
     interactive protocol requires (commit before the challenges that determine
-    what is revealed). The per-round challenges are derived from `seed` here, at
-    the points the verifier would supply them between rounds; a future interactive
-    transport injects s_op/s_comb/s_col per round instead, with no change to the
-    round structure below. Returns a full Proof; Rust-verified.
+    what is revealed).
+
+    Each coin is SEQUENTIAL Fiat-Shamir over the transcript so far
+    (analysis/routed-projected-protocol.md):
+
+        R1 (blind|W|Wnew|p1 roots) -> s_op
+        R2 (p2 root)               -> s_comb
+        test polynomials           -> s_col -> openings
+
+    so no coin can be derived before the prover message it follows. `seed` no
+    longer determines any coin — it is accepted for call compatibility and
+    ignored. The derived seeds travel on the returned Proof (`proof.seeds`)
+    together with the statement digest they are bound to; the Rust verifier
+    recomputes all of them and trusts none of them from the wire.
+
+    `claims_bytes`: the exact canonical claim-set JSON bytes that will be
+    written into the proof file. Pass the driver's copy so it is built once;
+    None recomputes it here. Returns a full Proof; Rust-verified.
     """
     torch.cuda.reset_peak_memory_stats()
     if _PHASE_ON:
         _PHASE_TIMES.clear()
-    s = _stream_setup(tape, cfg, seed)
+    s = _stream_setup(tape, cfg)
+    if claims_bytes is None:
+        claims_bytes = pr.claims_canonical_bytes(tape.claims, cfg)
+    stmt_digest = pr.statement_digest(claims_bytes)
     # The streaming sweeps recompile each claim and DISCARD its b_chunk (RHS) —
     # only row packets + quads are consumed (_compile_at: `..., _b = COMPILE_FNS`).
     # Keep _SKIP_B_CHUNK on so the sweep doesn't waste an O(T*V) dense RHS build
     # per claim (the V=202048 hidden-routing claim's b_chunk was ~89M entries in
     # Python — a ~40-min stall before op 0). Value-neutral: the RHS is unused.
     globals()['_SKIP_B_CHUNK'] = True
-    Q_cols = s['Q_cols']
-    q_irs_acc = QIrsAccumulator(s['r_irs_t'], cfg)
-    q_lin_acc = QLinAccumulator(s['r_lin_seed'], s['stream_pk'], cfg)
-    col_p1 = {j: [] for j in Q_cols}
-    col_p2 = {j: [] for j in Q_cols}
+    # Coins and everything derived from them are filled in at their own round
+    # below; nothing challenge-dependent may exist before R1 is committed.
+    ch0 = stream_pk = Q_cols = None
+    q_irs_acc = q_lin_acc = None
+    col_p1 = col_p2 = None
 
     w_pad = None      # (pad_seed_t, logical_offset, block_phys_start) for the W /
     wnew_pad = None   # Wnew block — set below (P5 refresh / linking support).
@@ -2901,7 +2939,7 @@ def prove_streaming(tape, cfg, seed, weight_commitment=None, wnew_seed=None):
     def sweep(**kw):
         return _stream_sweep(tape, cfg, s['master_seed_t'], s['groups'], s['n_ops'],
                              s['p1_vars'], s['p2_vars'], s['m_p1_rows'], s['tables'],
-                             s['ch0'], w_pad=w_pad, wnew_pad=wnew_pad,
+                             ch0, w_pad=w_pad, wnew_pad=wnew_pad,
                              witness_cache=witness_cache, **kw)
 
     def _p0_zero():
@@ -2918,7 +2956,19 @@ def prove_streaming(tape, cfg, seed, weight_commitment=None, wnew_seed=None):
     # is for THIS model's W block (same row count and codeword length).
     wc = weight_commitment if has_w else None
 
+    # The quad-placement guards below need the compiled quad families, which
+    # exist only after s_op (the R1 coin) — so they are QUEUED here and run the
+    # moment the compile lands, still before any work that depends on them.
+    _pending_quad_checks = []
+
     def _assert_no_quads_in(lo, hi, what):
+        _pending_quad_checks.append((lo, hi, what))
+
+    def _run_quad_checks(stream_pk):
+        for lo, hi, what in _pending_quad_checks:
+            _assert_no_quads_now(stream_pk, lo, hi, what)
+
+    def _assert_no_quads_now(stream_pk, lo, hi, what):
         # Completeness guard: p_0's sparse re-encode (compute_p_0_streaming)
         # pads by PHYSICAL row under MASTER_SEED, so a quad constraint touching
         # a row padded under a different (seed, logical offset) would make p_0
@@ -2926,7 +2976,7 @@ def prove_streaming(tape, cfg, seed, weight_commitment=None, wnew_seed=None):
         # Refresh/linking tapes are linear in the weight blocks; fail loudly if
         # not. Band anchors are exact at variable granularity (a band lives
         # inside one variable, and a variable is entirely in or out of a block).
-        for fams in s['stream_pk'].quad_fams.values():
+        for fams in stream_pk.quad_fams.values():
             for _b0, fam in fams:
                 for rs in (fam.x_row, fam.y_row, fam.z_row):
                     assert not (lo <= rs < hi), (
@@ -2962,9 +3012,6 @@ def prove_streaming(tape, cfg, seed, weight_commitment=None, wnew_seed=None):
         wnew_pad = (_master_seed_to_cuda(wnew_seed), NUM_BLINDING_ROWS, wnew_phys)
         _assert_no_quads_in(wnew_phys, wnew_phys + s['n_wnew_total'],
                             "linking proof's Wnew block")
-    col_w = {j: [] for j in Q_cols}
-    col_wnew = {j: [] for j in Q_cols}
-    col_blind = {j: [] for j in Q_cols}
     _acc = lambda n: _make_merkle_acc(cfg.N_LIG, n) if n else None
     merkle_blind = _acc(s['n_blind_total'])                              # R1: commit phase-1
     merkle_w = None if wc is not None else _acc(s['n_w_total'])          #   (W referenced → skip)
@@ -2972,17 +3019,49 @@ def prove_streaming(tape, cfg, seed, weight_commitment=None, wnew_seed=None):
     merkle_p1 = _acc(s['n_p1_total'])
     sweep(want_aux=False, merkle_blind=merkle_blind, merkle_w=merkle_w,
           merkle_wnew=merkle_wnew, merkle_p1=merkle_p1,
-          Q_cols=Q_cols, p1_prefix=s['p1_prefix'])
+          p1_prefix=s['p1_prefix'])
     art_blind = _finalize_merkle_artifact(merkle_blind)
     art_w = _finalize_merkle_artifact(merkle_w) if merkle_w is not None else None
     art_wnew = _finalize_merkle_artifact(merkle_wnew) if merkle_wnew is not None else None
     art_p1 = _finalize_merkle_artifact(merkle_p1) if merkle_p1 is not None else None
+    # ---- coin after R1: the op challenges (rho and friends) --------------
+    # root_w of a REFERENCED persistent commitment is part of R1 exactly as an
+    # in-proof weight tree would be, so the same statement/model binds either
+    # way. Block order is framed too: a proof cannot re-label its blocks.
+    root_w_r1 = (wc.root if wc is not None else (art_w.root if has_w else None))
+    blocks_r1 = (["blind"] + (["w"] if has_w else []) + (["wnew"] if has_wnew else [])
+                 + ["p1"])
+    roots_r1 = ([art_blind.root] + ([root_w_r1] if has_w else [])
+                + ([art_wnew.root] if has_wnew else []) + [art_p1.root])
+    s_op = pr.fs_s_op(stmt_digest, blocks_r1, roots_r1)
+    ch0, stream_pk = _derive_op_challenges(s['claims'], cfg, s['n_ops'], s_op)
+    _run_quad_checks(stream_pk)
     merkle_p2 = _make_merkle_acc(cfg.N_LIG, s['n_p2_total'])              # R2: commit phase-2
     sweep(want_aux=True, merkle_p2=merkle_p2)
     art_p2 = _finalize_merkle_artifact(merkle_p2)
+    # ---- coin after R2: the test combiners -------------------------------
+    s_comb = pr.fs_s_comb(s_op, art_p2.root)
+    r_irs_t, r_lin_seed, r_quad_t = _derive_test_challenges(
+        s_comb, s['m_total'], stream_pk.total_quads)
+    q_irs_acc = QIrsAccumulator(r_irs_t, cfg)
+    q_lin_acc = QLinAccumulator(r_lin_seed, stream_pk, cfg)
     p_0 = sweep(want_aux=True, q_irs=q_irs_acc, q_lin=q_lin_acc,          # R3: q-polys + p_0
-                p_0=_p0_zero(), stream_pk=s['stream_pk'],
-                r_quad=s['r_quad_t'], p_maps=s['p_maps'])
+                p_0=_p0_zero(), stream_pk=stream_pk,
+                r_quad=r_quad_t, p_maps=s['p_maps'])
+    # ---- coin after the test polynomials: the opened columns -------------
+    # Mixed with the blinding rows FIRST: s_col must hash the polynomials the
+    # verifier actually receives, not the pre-blinding accumulators.
+    q_irs, q_lin, p_0 = _mix_blinding_into_tests(
+        q_irs_acc.finalize(), q_lin_acc.finalize(), p_0,
+        s['u_irs_poly'], s['u_lin_poly'], s['u_quad_poly'], cfg)
+    s_col = pr.fs_s_col(s_comb, _u64_le_bytes(q_irs), _u64_le_bytes(q_lin),
+                        _u64_le_bytes(p_0))
+    Q_cols = list(pr.random_columns(s_col, cfg))
+    col_p1 = {j: [] for j in Q_cols}
+    col_p2 = {j: [] for j in Q_cols}
+    col_w = {j: [] for j in Q_cols}
+    col_wnew = {j: [] for j in Q_cols}
+    col_blind = {j: [] for j in Q_cols}
     merkle_blindb = _acc(s['n_blind_total'])                            # R4: columns + paths
     merkle_wb = None if wc is not None else _acc(s['n_w_total'])        #   (referenced → no rebuild)
     merkle_wnewb = _acc(s['n_wnew_total'])
@@ -3014,9 +3093,6 @@ def prove_streaming(tape, cfg, seed, weight_commitment=None, wnew_seed=None):
     else:
         root_w = art_w.root if has_w else None
         paths_w = _paths(path_art_w) if has_w else {}
-    q_irs, q_lin, p_0 = _mix_blinding_into_tests(
-        q_irs_acc.finalize(), q_lin_acc.finalize(), p_0,
-        s['u_irs_poly'], s['u_lin_poly'], s['u_quad_poly'], cfg)
     peak = torch.cuda.max_memory_allocated() / 1e9
     print(f"  [stream-sound] 4 rounds done; blind root reproducible across rounds: "
           f"{repro}; W-block rows {s['n_w_total']}; W-ref {wc is not None}; "
@@ -3039,6 +3115,8 @@ def prove_streaming(tape, cfg, seed, weight_commitment=None, wnew_seed=None):
               + ["p1", "p2"])
     return Proof(
         q_irs=q_irs, q_lin=q_lin, p_0=p_0, blocks=blocks,
+        seeds={"s_op": s_op, "s_comb": s_comb, "s_col": s_col},
+        statement_digest=stmt_digest, claims_bytes=claims_bytes, Q_cols=Q_cols,
         root_blind=art_blind.root, opened_blind=_opened(col_blind), paths_blind=_paths(path_art_blind),
         root_w=root_w,
         opened_w=(_opened(col_w) if has_w else {}), paths_w=paths_w,

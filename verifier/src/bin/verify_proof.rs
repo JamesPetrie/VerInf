@@ -11,7 +11,9 @@
 use std::collections::HashMap;
 use serde::Deserialize;
 use serde_json::Value;
+use serde_json::value::RawValue;
 use ligero_verifier::claim::parse_claim_set_value;
+use ligero_verifier::fs;
 use ligero_verifier::verify::{Round3, Round4, verify};
 
 #[derive(Deserialize)]
@@ -51,9 +53,18 @@ struct RawSeeds { s_op: String, s_comb: String, s_col: String }
 
 #[derive(Deserialize)]
 struct RawTop {
-    claims: Value,              // small — keep as Value for parse_claim_set_value
+    // RAW bytes of the claim sub-document, not a re-encoding: the statement
+    // digest is taken over exactly the bytes in the file, so the verifier must
+    // hash what it read (a Value round-trip would depend on serde's
+    // formatting). Still small (~MBs) — parsed into a Value afterwards.
+    claims: Box<RawValue>,
     seeds: RawSeeds,
     proof: RawProof,
+    // Present on proofs from the sequential Fiat-Shamir prover. When present,
+    // every coin is RECOMPUTED here and the file's `seeds` are only checked
+    // for agreement, never trusted.
+    #[serde(default)]
+    statement_digest: Option<String>,
     #[serde(default)]
     python_accept: Option<bool>,
 }
@@ -90,12 +101,27 @@ fn conv_paths(m: HashMap<String, Vec<(String, u8)>>) -> HashMap<u64, Vec<([u8; 3
 }
 
 fn main() {
-    let path = std::env::args().nth(1).unwrap_or_else(|| "/tmp/proof.json".into());
+    // argv: proof.json [EXPECTED_R_W_HEX] [EXPECTED_STATEMENT_DIGEST_HEX]
+    // The policy arguments come from OUTSIDE the proof (the runbook's trusted
+    // enrolled weight root and trusted statement digest). They are optional
+    // today so the existing test corpus still runs; the driver work (S4) makes
+    // them mandatory for a persistent-model proof.
+    let args: Vec<String> = std::env::args().collect();
+    let path = args.get(1).cloned().unwrap_or_else(|| "/tmp/proof.json".into());
+    // "-" means "no policy for this slot" — used to check the statement digest
+    // of a proof that has no persistent weight block.
+    let opt_hex = |i: usize| args.get(i).filter(|s| s.as_str() != "-").map(|s| hex32(s));
+    let policy_root_w = opt_hex(2);
+    let policy_stmt = opt_hex(3);
     let f = std::fs::File::open(&path).expect("open proof.json");
     let top: RawTop = serde_json::from_reader(std::io::BufReader::new(f))
         .expect("parse proof.json");
 
-    let mut cs = parse_claim_set_value(top.claims);
+    let claims_bytes = top.claims.get().as_bytes().to_vec();
+    let stmt_recomputed = fs::statement_digest(&claims_bytes);
+    let claims_value: Value = serde_json::from_str(top.claims.get())
+        .expect("parse claims sub-document");
+    let mut cs = parse_claim_set_value(claims_value);
     let mut p = top.proof;
     // Assemble blocks in the ROW-BLOCK ORDER named by `blocks` (default the
     // legacy ["p1","p2"]). Each block's (root, opened, paths) join in that
@@ -121,15 +147,58 @@ fn main() {
     }
     let r3 = Round3 { q_irs: p.q_irs, q_lin: p.q_lin, p_0: p.p_0 };
     let r4 = Round4 { opened, paths };
-    let (s_op, s_comb, s_col) =
-        (hexbytes(&top.seeds.s_op), hexbytes(&top.seeds.s_comb), hexbytes(&top.seeds.s_col));
+
+    // ---- transcript + policy -------------------------------------------
+    // Fiat-Shamir proofs: recompute every coin here. The file's `seeds` are
+    // compared for agreement and otherwise unused, so a prover that wrote
+    // itself convenient columns fails the s_col check below.
+    let mut policy: Vec<(String, bool)> = Vec::new();
+    let (s_op, s_comb, s_col) = match &top.statement_digest {
+        Some(stmt_hex) => {
+            let stmt_claimed = hex32(stmt_hex);
+            policy.push(("statement_digest = H(claim bytes)".into(),
+                         stmt_claimed == stmt_recomputed));
+            if let Some(exp) = policy_stmt {
+                policy.push(("statement_digest = trusted policy digest".into(),
+                             exp == stmt_recomputed));
+            }
+            assert!(block_order.last().map(|b| b == "p2").unwrap_or(false),
+                    "phase-2 must be the last row block");
+            let n = block_order.len() - 1;
+            let s_op = fs::s_op(&stmt_recomputed, &block_order[..n], &roots[..n]);
+            let s_comb = fs::s_comb(&s_op, &roots[n]);
+            let s_col = fs::s_col(&s_comb, &r3.q_irs, &r3.q_lin, &r3.p_0);
+            policy.push(("seeds in file = recomputed transcript".into(),
+                         hexbytes(&top.seeds.s_op) == s_op
+                             && hexbytes(&top.seeds.s_comb) == s_comb
+                             && hexbytes(&top.seeds.s_col) == s_col));
+            (s_op.to_vec(), s_comb.to_vec(), s_col.to_vec())
+        }
+        // Legacy corpus (the non-streaming test prover): coins were expanded
+        // from one base seed, so there is no transcript to recompute.
+        None => {
+            if policy_stmt.is_some() {
+                policy.push(("statement digest required but proof has none".into(), false));
+            }
+            (hexbytes(&top.seeds.s_op), hexbytes(&top.seeds.s_comb),
+             hexbytes(&top.seeds.s_col))
+        }
+    };
+    if let Some(exp_w) = policy_root_w {
+        let got = block_order.iter().position(|b| b == "w").map(|i| roots[i]);
+        policy.push(("weight root = trusted enrolled root".into(), got == Some(exp_w)));
+    }
 
     let t0 = std::time::Instant::now();
-    let (ok, per) = verify(&mut cs, &roots, &r3, r4, &s_op, &s_comb, &s_col);
+    let (ok_checks, per) = verify(&mut cs, &roots, &r3, r4, &s_op, &s_comb, &s_col);
     let elapsed = t0.elapsed();
     for (name, b) in &per {
         println!("  [{}] {}", if *b { "OK " } else { "XX " }, name);
     }
+    for (name, b) in &policy {
+        println!("  [{}] {}", if *b { "OK " } else { "XX " }, name);
+    }
+    let ok = ok_checks && policy.iter().all(|(_, b)| *b);
     println!("verify_elapsed_ms: {}  (rayon threads: {})",
              elapsed.as_millis(), rayon::current_num_threads());
     println!("rust_verify: {}", if ok { "ACCEPT" } else { "REJECT" });

@@ -43,9 +43,16 @@ def rust_verify(claims, proof, seed, cfg):
     """Dump `proof` via the single writer (proof_dump.dump_proof) and check it
     with the Rust verifier. Returns (accepted, output)."""
     from proof_dump import dump_proof
-    s_op, s_comb, s_col = pr.round_seeds(seed)
+    # A Fiat-Shamir proof carries its own coins/columns (dump_proof prefers
+    # them); the legacy test prover (tests/test_prover.prove) does not, so the
+    # base-seed expansion stays as the fallback for it.
+    if getattr(proof, "seeds", None):
+        s_col = proof.seeds["s_col"]
+        seeds = {k: v.hex() for k, v in proof.seeds.items()}
+    else:
+        s_op, s_comb, s_col = pr.round_seeds(seed)
+        seeds = {"s_op": s_op.hex(), "s_comb": s_comb.hex(), "s_col": s_col.hex()}
     Q = list(pr.random_columns(s_col, cfg))
-    seeds = {"s_op": s_op.hex(), "s_comb": s_comb.hex(), "s_col": s_col.hex()}
     fd, path = tempfile.mkstemp(suffix=".json")
     os.close(fd)
     try:
