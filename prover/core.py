@@ -2004,6 +2004,10 @@ AUX_FNS: Dict[Type, Callable] = {}
 # untouched and its transcript position is unchanged.
 LATE_SAMPLE_FNS: Dict[Type, Callable] = {}
 LATE_AUX_FNS: Dict[Type, Callable] = {}
+# Callables run at the start of every proof, for per-proof state that lives
+# outside core (currently the routed claim's challenge-keyed projection cache).
+# A hook must only DROP state: nothing here may affect what is proved.
+PROVE_START_HOOKS: List[Callable] = []
 
 
 # Set True by the streaming provers around _compile_with_chs. They DISCARD the
@@ -2975,6 +2979,8 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
     torch.cuda.reset_peak_memory_stats()
     if _PHASE_ON:
         _PHASE_TIMES.clear()
+    for _hook in PROVE_START_HOOKS:
+        _hook()
     s = _stream_setup(tape, cfg)
     if claims_bytes is None:
         claims_bytes = pr.claims_canonical_bytes(tape.claims, cfg)

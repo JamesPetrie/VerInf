@@ -43,7 +43,7 @@ def _build():
         M[t, e] = 1
     x = tape.commit("X", _u64(X.reshape(-1)), (T, K))
     m = tape.commit("M", _u64(M.reshape(-1)), (T, E))
-    w = tape.commit("W", _u64(W.reshape(-1)), (E, K * J))
+    w = [tape.commit(f"W{e}", _u64(W[e]), (K, J)) for e in range(E)]
     y_raw = routed_projected_matmul(tape, x, m, w, T=T, K=K, J=J, E=E)
     y = rescale(tape, y_raw, s_in=S_IN, s_out=S_OUT, output_width=WIDTH)
     return tape, y_raw, y

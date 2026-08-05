@@ -73,14 +73,20 @@ class RoutedProjectedMatmulClaim:
       X  (T, K)      layer input
       Y  (T, J)      raw routed output (before rescale — RescaleClaim follows)
       M  (T, E)      one-hot routes, from RoutingClaim
-      W  (E, K, J)   enrolled expert weights (persistent block)
+      W  E vars of (K, J)   enrolled expert weights, ONE VARIABLE PER EXPERT
       P  (E, K)      Q (T, K)   H (T, K)   yr (T,)
       f_y f_u f_p (E,)
+
+    W is a list, not a single (E, K, J) variable, because the prover must never
+    hold more than one expert shard at a time: at Maverick shapes one layer's
+    128 experts are ~43 GB. Per-expert variables let both the witness pass and
+    the projection stream one shard, and they are what the enrolled weight
+    block already contains.
     """
     X: Variable
     Y: Variable
     M: Variable
-    W: Variable
+    W: List[Variable]     # one variable PER EXPERT, each (K, J) flat
     Pj: Variable          # projected weights   (E, K)
     Qm: Variable          # routed projection   (T, K)
     Hd: Variable          # X * Q               (T, K)
@@ -112,12 +118,51 @@ def _vec(xs) -> torch.Tensor:
 
 
 # ------------------------------------------------------------ aux witnesses
-def routed_aux(c: RoutedProjectedMatmulClaim, witness, rho) -> dict:
-    """Phase-2 rows. P is the expensive one (one pass over the enrolled
-    weights); the driver caches it per rho across the sweeps."""
+# P = W*rho is the one pass over the enrolled 400B weights. The prover
+# regenerates the witness in five epochs, so without a cache the projection
+# would be recomputed four more times; caching it turns four identical 400B
+# passes into one (demo/4h-production-runbook.md). The key includes a digest of
+# rho, so a different challenge cannot hit a stale entry — recomputing is
+# always sound, reusing a P from another rho would not be.
+_P_CACHE: dict = {}
+# Observability for the gate: how many 400B projections actually ran.
+P_CACHE_STATS = {"hits": 0, "misses": 0}
+
+
+def clear_p_cache():
+    """Drop the projected-weight cache. Runs at the start of each proof."""
+    _P_CACHE.clear()
+    P_CACHE_STATS.update(hits=0, misses=0)
+
+
+def _rho_key(c, rho) -> tuple:
+    import blake3
+    digest = blake3.blake3(
+        b"".join(int(v).to_bytes(8, "little") for v in rho)).digest()
+    return (id(c), digest)
+
+
+def _project_weights(c: RoutedProjectedMatmulClaim, witness, rho) -> torch.Tensor:
+    """P[e,k] = sum_j W[e,k,j] rho_j, one expert shard at a time."""
+    key = _rho_key(c, rho)
+    hit = _P_CACHE.get(key)
+    if hit is not None:
+        P_CACHE_STATS["hits"] += 1
+        return hit
+    P_CACHE_STATS["misses"] += 1
     rho_t = _vec(rho).view(c.J, 1)
-    W = witness[c.W].reshape(c.E * c.K, c.J)
-    Pj = gl_matmul(W, rho_t).reshape(-1)                       # (E*K,)
+    out = torch.empty(c.E * c.K, dtype=torch.uint64, device="cuda")
+    for e, w_var in enumerate(c.W):
+        w_e = witness[w_var].reshape(c.K, c.J)
+        out[e * c.K:(e + 1) * c.K] = gl_matmul(w_e, rho_t).reshape(-1)
+    _P_CACHE[key] = out
+    return out
+
+
+def routed_aux(c: RoutedProjectedMatmulClaim, witness, rho) -> dict:
+    """Phase-2 rows."""
+    rho_t = _vec(rho).view(c.J, 1)
+    Pj = _project_weights(c, witness, rho)                     # (E*K,)
     M = witness[c.M].reshape(c.T, c.E)
     Qm = gl_matmul(M, Pj.reshape(c.E, c.K)).reshape(-1)        # (T*K,)
     Hd = gl_mul(witness[c.X].reshape(-1), Qm)
@@ -165,9 +210,12 @@ def routed_compile(c: RoutedProjectedMatmulClaim, rho, cfg: LigeroConfig,
     # ---- P = W rho : identity on P, LF1-B on the enrolled weights ----------
     rows(c.Pj, L2_IdentityScalar(base=b_P, var_row_start=c.Pj.row_start,
                                  L=E * K, coef=1))
-    rows(c.W, L2_FreivaldsLF1B(base=b_P, B_row_start=c.W.row_start,
-                               k=E * K, n=J, H=1, K=E * K,
-                               transpose_b=False, neg_rho=neg_rho))
+    # One band per expert shard: expert e owns constraint ids [b_P + e*K,
+    # b_P + (e+1)*K), so the projection streams shard by shard.
+    for e, w_var in enumerate(c.W):
+        rows(w_var, L2_FreivaldsLF1B(base=b_P + e * K, B_row_start=w_var.row_start,
+                                     k=K, n=J, H=1, K=K,
+                                     transpose_b=False, neg_rho=neg_rho))
     # ---- yr = Y rho -------------------------------------------------------
     rows(c.yr, L2_IdentityScalar(base=b_yr, var_row_start=c.yr.row_start,
                                  L=T, coef=1))
@@ -227,7 +275,6 @@ def routed_compute(c: RoutedProjectedMatmulClaim, live) -> dict:
     T, K, J, E = c.T, c.K, c.J, c.E
     X = live[c.X].reshape(T, K)
     M = live[c.M].reshape(T, E).view(torch.int64)
-    W = live[c.W].reshape(E, K, J)
     routes = M.argmax(dim=1)
     # int64 view for the scatter: torch has no index_put for uint64, and the
     # values are field elements either way — the view is a reinterpretation,
@@ -238,7 +285,7 @@ def routed_compute(c: RoutedProjectedMatmulClaim, live) -> dict:
         if idx.numel() == 0:
             continue
         Y[idx] = gl_matmul(X.index_select(0, idx).contiguous(),
-                           W[e].contiguous()).view(torch.int64)
+                           live[c.W[e]].reshape(K, J)).view(torch.int64)
     return {c.Y: Y.view(torch.uint64).reshape(-1)}
 
 
@@ -247,11 +294,14 @@ def routed_projected_matmul(tape, x, m_routes, w_experts, *, T, K, J, E):
 
     x:         (T, K) WitnessTensor — the layer input
     m_routes:  (T, E) WitnessTensor — one-hot routes (RoutingClaim's M)
-    w_experts: (E, K*J) WitnessTensor — the enrolled expert weights
+    w_experts: list of E WitnessTensors, each (K, J) — the enrolled expert
+               shards, kept separate so the prover streams one at a time
     Returns the raw output (T, J); a RescaleClaim follows it in the model
     builder, exactly as the old in-matmul rescale did.
     """
-    name = f"rp[{x.var.name}@{w_experts.var.name}]"
+    assert len(w_experts) == E, f"expected {E} expert shards, got {len(w_experts)}"
+    w_vars = [w.var for w in w_experts]
+    name = f"rp[{x.var.name}@{w_vars[0].name}..]"
     Y = tape._alloc(name, T * J, phase=1)
     Pj = tape._alloc(f"{name}.P", E * K, phase=2)
     Qm = tape._alloc(f"{name}.Q", T * K, phase=2)
@@ -261,14 +311,18 @@ def routed_projected_matmul(tape, x, m_routes, w_experts, *, T, K, J, E):
     f_u = tape._alloc(f"{name}.f_u", E, phase=3)
     f_p = tape._alloc(f"{name}.f_p", E, phase=3)
     claim = RoutedProjectedMatmulClaim(
-        X=x.var, Y=Y, M=m_routes.var, W=w_experts.var,
+        X=x.var, Y=Y, M=m_routes.var, W=w_vars,
         Pj=Pj, Qm=Qm, Hd=Hd, yr=yr, f_y=f_y, f_u=f_u, f_p=f_p,
         T=T, K=K, J=J, E=E)
-    outs = tape._process_claim(claim, [x.var, m_routes.var, w_experts.var])
+    outs = tape._process_claim(claim, [x.var, m_routes.var, *w_vars])
     tape.claims.append(claim)
     from tape import WitnessTensor
     return WitnessTensor(outs[Y] if outs else None, Y, (T, J), tape)
 
+
+import core as _core                          # noqa: E402  (registry wiring)
+if clear_p_cache not in _core.PROVE_START_HOOKS:
+    _core.PROVE_START_HOOKS.append(clear_p_cache)
 
 SAMPLE_FNS[RoutedProjectedMatmulClaim] = routed_sample
 AUX_FNS[RoutedProjectedMatmulClaim] = routed_aux

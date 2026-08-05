@@ -120,12 +120,28 @@ carried.  The full 400B proof is not started until every stage below is DONE and
       signed-floor reference, wrong rounding REJECTs (first linear), and an
       `x_low` pushed outside `[0, 2^r)` while keeping the linear satisfiable
       REJECTs (tight LogUp).  Full suite green.
-- [ ] **S3 — active-only MoE builder + challenge-keyed `P` cache.**
-      One GGUF expert shard at a time, only tokens routed to it; delete the
-      128-output lists and the three `freivalds_combine` calls.
-      Gate: byte-identical model outputs vs. the current builder on a small
-      real-GGUF slice, and a structural test asserting no all-expert tensor is
-      ever allocated.
+- [x] **S3 — active-only MoE block + challenge-keyed `P` cache.**
+      `demo/moe_routed.py` builds the MoE FFN from three
+      `RoutedProjectedMatmulClaim` + `RescaleClaim` pairs instead of 128 gate,
+      128 up and 128 down `tape.matmul` outputs and three `freivalds_combine`
+      folds.  The claim now carries the expert weights as ONE VARIABLE PER
+      EXPERT (a single (E,K,J) variable would be ~43 GB per layer at Maverick
+      shapes), so both the witness pass and the projection stream shard by
+      shard; the Rust handler emits one band per shard to match.
+      `P = W*rho` is cached under a digest of rho (`clear_p_cache` runs from
+      the new `core.PROVE_START_HOOKS` at the start of every proof), which is
+      what turns four identical passes over the enrolled weights into one.
+      Gate PASSED: `tests/test_moe_routed.py` 4/4 — the routed block's output
+      equals the all-expert builder's element for element; growing E by 4 adds
+      exactly `T*E + E*K + 3E` activation slots and NO `T x d_ff` term (the
+      old builder pays that E times); the five witness epochs perform exactly
+      1 projection with 3 cache hits and still Rust-ACCEPT; a different rho
+      misses the cache.  Full suite green (claims 21, fiat_shamir 6, phase3 5,
+      routed 6, rescale 4, moe 4, routing 19, persistent 3+3+3, reveal 2,
+      empty-root 1).
+      Not yet done here: wiring this block into `demo_maverick_full.py` itself
+      and the GGUF per-shard loader — that lands with the driver work in S4,
+      where it can be exercised end to end.
 - [ ] **S4 — driver: enrollment, policy, streaming proof.**
       `--enroll-weights`, `--weight-commitment`, `--expected-weight-root`,
       `--public-sz`, `--admission-report`; drop the hidden pre-proof reveal

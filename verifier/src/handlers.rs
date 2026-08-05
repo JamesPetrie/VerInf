@@ -365,11 +365,17 @@ fn compile_routed_projected(cl: &Claim, ci: usize, s_op: &[u8],
     let b_fin = b_fu + e;
     b.nxt = b_fin + 1;
 
-    // P = W rho
+    // P = W rho, one band per expert shard: expert x owns constraint ids
+    // [b_p + x*K, b_p + (x+1)*K), so the prover can stream shard by shard and
+    // never holds a whole layer's experts (~43 GB at Maverick shapes).
     b.emit_id(cl.var("Pj"), b_p, 1, ell);
-    b.push_family(cl.var("W"), ell, Expander::FreivaldsB {
-        base: b_p, k: e * k, n: j, h: 1, kk: e * k,
-        transpose_b: false, neg_rho: neg_rho.clone() });
+    let w_experts = cl.var_list("W");
+    assert_eq!(w_experts.len(), e, "expected one weight variable per expert");
+    for (x, wv) in w_experts.iter().enumerate() {
+        b.push_family(*wv, ell, Expander::FreivaldsB {
+            base: b_p + x * k, k, n: j, h: 1, kk: k,
+            transpose_b: false, neg_rho: neg_rho.clone() });
+    }
     // yr = Y rho
     b.emit_id(cl.var("yr"), b_yr, 1, ell);
     b.push_family(cl.var("Y"), ell, Expander::FreivaldsB {

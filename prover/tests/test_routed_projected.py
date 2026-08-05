@@ -47,7 +47,7 @@ def _build(routes=(0, 1, 0), x_scale=1, w_bump=0):
         M[t, e] = 1
     x = tape.commit("X", _u64(X.reshape(-1)), (T, K))
     m = tape.commit("M", _u64(M.reshape(-1)), (T, E))
-    w = tape.commit("W", _u64(W.reshape(-1)), (E, K * J))
+    w = [tape.commit(f"W{e}", _u64(W[e]), (K, J)) for e in range(E)]
     y = routed_projected_matmul(tape, x, m, w, T=T, K=K, J=J, E=E)
     return tape, y, X, W, M
 
@@ -121,12 +121,12 @@ def test_route_not_matching_the_output_rejects():
             from cuda_primitives import gl_matmul
             M = live[claim.M].reshape(claim.T, claim.E).view(torch.int64)
             X = live[claim.X].reshape(claim.T, claim.K)
-            W = live[claim.W].reshape(claim.E, claim.K, claim.J)
             routes = (M.argmax(dim=1) + 1) % claim.E          # wrong expert
             Y = torch.zeros((claim.T, claim.J), dtype=torch.int64, device="cuda")
             for t_i in range(claim.T):
+                w_e = live[claim.W[int(routes[t_i])]].reshape(claim.K, claim.J)
                 Y[t_i] = gl_matmul(X[t_i:t_i + 1].contiguous(),
-                                   W[routes[t_i]].contiguous()).view(torch.int64)[0]
+                                   w_e).view(torch.int64)[0]
             return {claim.Y: Y.view(torch.uint64).reshape(-1)}
         return f
 
@@ -161,10 +161,12 @@ def test_constraint_count_matches_the_ledger():
     c = next(c for c in tape.claims if isinstance(c, RoutedProjectedMatmulClaim))
     import protocol as pr
     from routed_projected import routed_compile
-    for v, start in ((c.X, 0), (c.Y, 8), (c.M, 16), (c.W, 24), (c.Pj, 32),
+    for v, start in ((c.X, 0), (c.Y, 8), (c.M, 16), (c.Pj, 32),
                      (c.Qm, 40), (c.Hd, 48), (c.yr, 56), (c.f_y, 64),
                      (c.f_u, 72), (c.f_p, 80)):
         v.row_start = start
+    for e_i, wv in enumerate(c.W):
+        wv.row_start = 24 + e_i
     rho = pr.op_vec(b"x" * 32, 0, "rho", J)
     late = (pr.op_vec(b"y" * 32, 0, "sig", K), pr.op_vec(b"y" * 32, 0, "lam", T))
     _pk, quads, n_added, _b = routed_compile(c, rho, CFG, 0, late_ch=late)
