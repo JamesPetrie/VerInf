@@ -139,7 +139,7 @@ carried.  The full 400B proof is not started until every stage below is DONE and
       misses the cache.  Full suite green (claims 21, fiat_shamir 6, phase3 5,
       routed 6, rescale 4, moe 4, routing 19, persistent 3+3+3, reveal 2,
       empty-root 1).
-      Not yet done here: wiring this block into `demo_maverick_full.py` itself
+      Not yet done here (landed in S4c): wiring this block into `demo_maverick_full.py` itself
       and the GGUF per-shard loader — that lands with the driver work in S4,
       where it can be exercised end to end.
 - [x] **S4a — shard streaming, fused projection, no sink-less encodes.**
@@ -230,6 +230,27 @@ carried.  The full 400B proof is not started until every stage below is DONE and
       Gate: proof with a wrong `--expected-weight-root` or a wrong statement
       digest rejects; missing policy rejects; streaming writer verified not to
       materialize Python ints.
+- [x] **S4e — opening ledger and atomic proof output.**
+      The last two review items.  Every proof against one enrollment opens
+      columns of the SAME weight rows under the SAME padding, so what leaks is
+      the CUMULATIVE set of distinct columns; nothing in the system noticed,
+      because the proofs keep verifying.  `WeightCommitment` now carries an
+      opening ledger (persisted in the handle), refuses a proof that would
+      spend past `(K_DEG-ELL)/2` distinct columns — 4096 at the production
+      geometry, about 75 proofs at 54 per proof — and says to refresh the
+      enrollment.  On a config with no usable slack the ledger stands down,
+      because such a config is not zero knowledge to begin with.  The driver
+      books and saves the ledger after every proof.
+      Proof output is atomic: the size is estimated, the free space checked,
+      the document written to `<path>.part`, fsynced, and renamed — so a run
+      that dies out of disk cannot leave a truncated file that looks like a
+      proof.  The commitment loader reports any malformed handle as a
+      corruption instead of a struct traceback.
+      Gate PASSED: `tests/test_opening_ledger.py` 5/5 (ledger records and
+      survives save/load; an exhausted budget refuses BEFORE any weight column
+      is produced and names the remedy; the budget scales with the pad;
+      atomic write leaves no `.part`; a proof larger than the free space is
+      refused with nothing written).
 - [~] **S5 — admission harness (partial: kernel stages measured, model stages not).**
       `analysis/bench/admission_bench.py` measures the EXECUTED loop bodies at
       the target geometry (ELL=8192, K_DEG=16384, N_LIG=65536), 30 runs each,

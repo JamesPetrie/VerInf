@@ -118,7 +118,7 @@ def test_commitment_seed_roundtrip():
             core.WeightCommitment.load(path)
             raise AssertionError("a commitment with a broken tree was accepted")
         except AssertionError as e:
-            assert "merkle" in str(e) or "root" in str(e), e
+            assert any(w in str(e) for w in ("merkle", "root", "corrupt")), e
         print("    seed round-trips; pickle and broken-tree handles refused")
     finally:
         os.unlink(path)

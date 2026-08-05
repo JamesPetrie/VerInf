@@ -922,6 +922,14 @@ class WeightCommitment:
     m_w: int
     n_lig: int
     master_seed: bytes = MASTER_SEED
+    # Opening ledger. Every proof that references this commitment opens
+    # T_QUERIES columns of the SAME weight rows under the SAME padding, so the
+    # leakage that matters is the CUMULATIVE set of distinct columns, not the
+    # per-proof count. Each row's polynomial carries K_DEG-ELL random pad
+    # coefficients; once the union of opened columns approaches that, the
+    # padding stops hiding and the enrollment must be REFRESHED (the P5 path:
+    # re-commit under a fresh seed and prove the link).
+    opened_columns: List[int] = field(default_factory=list)
 
     @staticmethod
     def from_tape(tape, cfg: LigeroConfig, master_seed: bytes = None
@@ -943,7 +951,10 @@ class WeightCommitment:
     #   magic "VERINFWC" | u32 version | u32 m_w | u32 n_lig | 32B root
     #   | 32B master_seed | u32 n_levels | per level: u32 n_nodes, nodes*32B
     MAGIC = b"VERINFWC"
-    VERSION = 1
+    VERSION = 2
+    # Fraction of the ZK pad we are willing to spend before demanding a
+    # refresh. Half leaves the same margin again for the refresh proof itself.
+    OPENING_BUDGET_FRACTION = 0.5
 
     def save(self, path: str) -> None:
         import struct
@@ -958,9 +969,23 @@ class WeightCommitment:
                 for node in lvl:
                     assert len(node) == 32, "merkle node must be 32 bytes"
                     f.write(node)
+            cols = sorted(set(self.opened_columns))
+            f.write(struct.pack("<I", len(cols)))
+            for c in cols:
+                f.write(struct.pack("<I", c))
 
     @staticmethod
     def load(path: str) -> "WeightCommitment":
+        try:
+            return WeightCommitment._parse(path)
+        except AssertionError:
+            raise
+        except Exception as e:                      # truncated / scrambled file
+            raise AssertionError(
+                f"corrupt weight commitment {path}: {type(e).__name__}: {e}")
+
+    @staticmethod
+    def _parse(path: str) -> "WeightCommitment":
         import struct
         with open(path, "rb") as f:
             blob = f.read()
@@ -976,11 +1001,46 @@ class WeightCommitment:
             end = off + 32 * n_nodes
             levels.append([blob[i:i + 32] for i in range(off, end, 32)])
             off = end
+        (n_cols,) = struct.unpack("<I", blob[off:off + 4]); off += 4
+        cols = list(struct.unpack(f"<{n_cols}I", blob[off:off + 4 * n_cols]))
+        off += 4 * n_cols
         assert off == len(blob), "trailing bytes in weight commitment file"
         wc = WeightCommitment(root=root, levels=levels, m_w=m_w, n_lig=n_lig,
-                              master_seed=seed)
+                              master_seed=seed, opened_columns=cols)
         wc.check_topology()
         return wc
+
+    def opening_budget(self, cfg: 'LigeroConfig') -> int:
+        """How many DISTINCT columns this enrollment may ever reveal."""
+        slack = cfg.K_DEG - cfg.ELL
+        return int(slack * self.OPENING_BUDGET_FRACTION)
+
+    def check_openings(self, cfg: 'LigeroConfig', new_columns) -> None:
+        """Refuse a proof that would spend more of the pad than the ledger
+        allows. Called once the column challenge exists and BEFORE any weight
+        column is produced, so an exhausted enrollment costs nothing.
+
+        A config with no usable slack (K_DEG-ELL <= T_QUERIES) is not zero
+        knowledge to begin with — encode_messages already warns about it — so
+        there is no pad to ration and the ledger stands down. Production runs
+        at K_DEG=2*ELL, where the budget is real."""
+        if cfg.K_DEG - cfg.ELL <= cfg.T_QUERIES:
+            return
+        after = len(set(self.opened_columns) | set(new_columns))
+        budget = self.opening_budget(cfg)
+        if after > budget:
+            raise AssertionError(
+                f"weight-commitment opening budget exhausted: this proof would "
+                f"take the enrollment to {after} distinct opened columns, past "
+                f"the {budget} its ZK padding covers "
+                f"(K_DEG-ELL={cfg.K_DEG - cfg.ELL}). REFRESH the enrollment "
+                f"under a fresh seed and prove the link (persistent-weights P5) "
+                f"before proving again.")
+
+    def record_openings(self, new_columns) -> None:
+        """Book the columns a completed proof revealed. The caller persists the
+        handle afterwards — an unsaved ledger is a silently reusable pad."""
+        self.opened_columns = sorted(set(self.opened_columns) | set(new_columns))
 
     def check_topology(self) -> None:
         """Recompute the tree from its leaves: a handle is trusted for the
@@ -3317,6 +3377,9 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
     s_col = pr.fs_s_col(s_comb, _u64_le_bytes(q_irs), _u64_le_bytes(q_lin),
                         _u64_le_bytes(p_0))
     Q_cols = list(pr.random_columns(s_col, cfg))
+    if wc is not None:
+        # Fail before a single weight column is extracted.
+        wc.check_openings(cfg, Q_cols)
     # One pre-sized HOST buffer per column per block: the openings are written
     # through as they are produced, so nothing accumulates on the GPU and
     # there is no final torch.cat (which briefly doubled tens of GB).

@@ -39,6 +39,20 @@ def proof_block_order(proof):
     return list(getattr(proof, "blocks", None) or ["p1", "p2"])
 
 
+def estimated_bytes(proof, Q, claims_bytes_len=0):
+    """A deliberately generous size estimate for the proof file.
+
+    Values are u64 in decimal, at most 20 digits plus a separator; paths are
+    hex node strings. Used to refuse a write that would run the filesystem out
+    of space halfway through a multi-hour proof."""
+    n_values = sum(t.numel() for b in proof_block_order(proof)
+                   for t in getattr(proof, "opened_%s" % b).values())
+    n_values += sum(getattr(proof, k).numel() for k in ("q_irs", "q_lin", "p_0"))
+    n_paths = sum(len(steps) for b in proof_block_order(proof)
+                  for steps in getattr(proof, "paths_%s" % b).values())
+    return int(n_values * 21 + n_paths * 80 + claims_bytes_len + (1 << 20))
+
+
 def dump_proof(path, claims_json, seeds, proof, Q, python_accept):
     """The single proof→JSON writer (streaming, so full-model proofs dump at I/O
     cost, not RAM). Block-driven off `proof.blocks`: each block b emits
@@ -57,7 +71,21 @@ def dump_proof(path, claims_json, seeds, proof, Q, python_accept):
     if getattr(proof, "Q_cols", None):
         Q = list(proof.Q_cols)
     claims_bytes = getattr(proof, "claims_bytes", None)
-    with open(path, "w") as f:
+    # Reserve first, write atomically. A proof that dies out of disk space
+    # after four hours leaves a truncated file that looks like a proof; the
+    # rename makes the final path appear only once the whole document is on
+    # disk and fsynced.
+    import os
+    import shutil
+    need = estimated_bytes(proof, Q, len(claims_bytes or b""))
+    target_dir = os.path.dirname(os.path.abspath(path)) or "."
+    free = shutil.disk_usage(target_dir).free
+    if free < need:
+        raise OSError(
+            f"refusing to write the proof: {target_dir} has {free/1e9:.1f} GB "
+            f"free, the proof needs about {need/1e9:.1f} GB")
+    part = path + ".part"
+    with open(part, "w") as f:
         f.write('{"claims": ')
         if claims_bytes is not None:
             f.write(claims_bytes.decode())
@@ -93,3 +121,6 @@ def dump_proof(path, claims_json, seeds, proof, Q, python_accept):
         f.write('}, "python_accept": ')
         json.dump(python_accept, f)
         f.write('}')
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(part, path)

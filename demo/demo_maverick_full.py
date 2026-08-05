@@ -426,6 +426,15 @@ def main():
         t0 = time.time()
         dump_proof(a.dump_proof, None, None, proof, None, None)
         _log(f"proof dumped to {a.dump_proof} ({time.time()-t0:.1f}s)")
+
+    # Book what this proof revealed of the enrolled model's pad, and persist
+    # it: an unrecorded opening is a pad silently spent twice.
+    wc.record_openings(proof.Q_cols)
+    wc.save(a.weight_commitment)
+    spent, budget = len(wc.opened_columns), wc.opening_budget(CFG)
+    _log(f"opening ledger: {spent}/{budget} columns of the enrollment spent"
+         + ("" if spent < budget else " — REFRESH the enrollment before the "
+            "next proof"))
     return 0
 
 
