@@ -230,7 +230,39 @@ carried.  The full 400B proof is not started until every stage below is DONE and
       Gate: proof with a wrong `--expected-weight-root` or a wrong statement
       digest rejects; missing policy rejects; streaming writer verified not to
       materialize Python ints.
-- [ ] **S5 — admission harness on real GGUF.**
+- [~] **S5 — admission harness (partial: kernel stages measured, model stages not).**
+      `analysis/bench/admission_bench.py` measures the EXECUTED loop bodies at
+      the target geometry (ELL=8192, K_DEG=16384, N_LIG=65536), 30 runs each,
+      and converts each per-slot rate into the stage seconds the model caps.
+      It deliberately leaves `model_load` and the five semantic sweeps as
+      `null` — they need real GGUF shards — so the report it writes is
+      incomplete and the gate refuses it, which is the correct outcome.
+
+      MEASURED on the local V100-SXM3-32GB (p99-conservative bounds,
+      mean+3sd floored at the observed max):
+
+      | stage | measured | cap | verdict |
+      |---|---|---|---|
+      | fresh_commit_fold | 491.6 s | 950 | ok |
+      | quadratic | 821.7 s | 765 | **OVER 1.07x** |
+      | fresh_hash_coef | 32.7 s | 140 | ok |
+      | persistent_open | 94.1 s | 1812 | ok |
+      | fresh_open | 23.4 s | 450 | ok |
+      | proof_egress | 2114 s | 879.6 | **OVER 2.40x** |
+
+      Per-slot rates: encode 4.92 ns, hash 0.33 ns, open 0.23 ns,
+      quad 18.28 ns/product, egress 44.9 MB/s.
+
+      The egress failure is CPU-bound, not GPU-bound: the streaming decimal
+      JSON writer. Rendering each chunk with json.dumps (the C encoder)
+      instead of a Python `",".join(str(v) ...)` is byte-identical output and
+      measures 79 MB/s vs 47 MB/s single-run — but the p99 bound only moved
+      44.9 from 42.0, because run-to-run I/O variance dominates the bound on
+      this 4-vCPU box. Byte-level alternatives were slower
+      (b",".join of %d: 38.5 MB/s; numpy.savetxt: 14.9 MB/s).
+      So on THIS box the 4-hour envelope does not close, and the two failing
+      stages are known before any money is spent.
+- [ ] **S5b — the model-dependent stages, on the rented card.**
       Benchmarks the exact production loop bodies (no random matrices, no
       isolated modmul), >=30 runs, simultaneous >=99% upper bounds, writes
       `admission.json` bound to source digest, model root, statement digest,
