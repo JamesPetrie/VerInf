@@ -195,7 +195,34 @@ carried.  The full 400B proof is not started until every stage below is DONE and
       Gate PASSED: `tests/test_fiat_shamir.py` 7/7 (adds missing-policy
       REJECT), `test_persistent_weights_p5` 3/3 (adds pickle-refused and
       broken-tree-refused), full suite green.
-- [ ] **S4c — driver: enrollment, admission, no reveal pass, streamed openings.**
+- [x] **S4c — driver, admission gate, no reveal pass, streamed openings.**
+      `demo/demo_maverick_full.py` now builds the MoE FFN from three routed
+      claims + their rescales (the 128-output lists and three
+      `freivalds_combine` folds are gone) and its expert shards are enrolled
+      persistent variables.  New modes and policy:
+      `--enroll-weights` commits the model once and prints the root;
+      a proof REFUSES to start without `--weight-commitment`,
+      `--expected-weight-root`, `--public-sz` and `--admission-report`, and
+      those are checked before the model is even built.
+      The pre-proof reveal pass is gone: `--public-sz` comes from the already
+      fixed serving statement and is pinned into the reveal claim before R1,
+      so there is no sixth semantic sweep.
+      The Ligero geometry is pinned (`admission.TARGET`, `T_QUERIES=54`); a
+      non-target config refuses unless `--allow-dev-config`.
+      `prover/admission.py` is the fail-closed gate: the report must bind to
+      the source digest, model root, statement digest, machine fingerprint and
+      the row manifest of the layout just built, carry >=30 runs of p99 UPPER
+      bounds measured on real GGUF, and come in under every per-stage cap.
+      Openings no longer accumulate on the GPU: `ColumnSink` writes each
+      chunk's slice straight into a pre-sized host buffer, so there is no
+      final `torch.cat` (which briefly doubled tens of GB of openings).
+      Gate PASSED: `tests/test_admission_gate.py` 11/11 — an honest report at
+      cap is admitted, and a report that is over cap by 1 ms, from another
+      GPU, another build, another model, another statement, a smaller ELL or
+      half the rows, 29 runs, averages instead of upper bounds, random
+      weights, a missing stage, an unpriced stage or without a machine binding
+      is refused, as is a dev geometry.  Driver refusals checked directly
+      (wrong config, missing policy).  Full suite green.
       `--enroll-weights`, `--weight-commitment`, `--expected-weight-root`,
       `--public-sz`, `--admission-report`; drop the hidden pre-proof reveal
       pass; `verify_proof` takes the trusted weight root and statement digest as

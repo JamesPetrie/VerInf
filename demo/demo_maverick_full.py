@@ -47,6 +47,7 @@ _s.path.insert(0, str(_R / "prover")); _s.path.insert(0, str(_R / "demo"))
 import _uint64_compat  # noqa: F401
 
 import core
+import protocol as pr
 from core import P
 import claims as _C          # noqa: F401
 import packets as _PK         # noqa: F401
@@ -152,14 +153,26 @@ def _moe_part(gguf, il, key, E):
     return load
 
 
-def build_moe_ffn(tape, n2g, gguf, il, sig_tbl, ones_bc, *, T, E, d, d_ff):
-    """MoE FFN (all E experts, Freivalds combines, shared expert)."""
+def build_moe_ffn(tape, n2g, gguf, il, sig_tbl, ones_bc, *, T, E, d, d_ff,
+                  persistent=True):
+    """MoE FFN, ACTIVE-ONLY (analysis/routed-projected-protocol.md).
+
+    The three expert matrices are one RoutedProjectedMatmulClaim each, followed
+    by the standalone RescaleClaim that used to live inside tape.matmul. The
+    expert shards stay one lazily-loaded GGUF variable apiece, so the witness
+    pass holds exactly one at a time and the projection P = W*rho rides along
+    with it. Nothing else about the layer changes: the router, the sigmoid gate
+    on the chosen logit and the shared expert are the old code.
+    """
     from loader import maverick_lazy_expert
+    from routed_projected import routed_projected_matmul
+    from rescale_claim import rescale
     mm = dict(s_a=S, s_b=S, s_out=S, output_width=OUTPUT_WIDTH)
 
     def wexp(kind, name, shape, e):
         ld = maverick_lazy_expert(gguf, il, kind, e, S)
-        return tape.commit_lazy(name, ld, shape, shape[0] * shape[1])
+        return tape.commit_lazy(name, ld, shape, shape[0] * shape[1],
+                                persistent=persistent)
 
     W_router = tape.commit_lazy(f"L{il}_Wr", _moe_part(gguf, il, "W_router", E), (d, E), d * E)
     r = tape.matmul(n2g, W_router, **mm)
@@ -169,16 +182,15 @@ def build_moe_ffn(tape, n2g, gguf, il, sig_tbl, ones_bc, *, T, E, d, d_ff):
     s_rep = freivalds_combine(tape, s_val, [ones_bc], T=T, E=1, F=d)
     x_r = tape.hadamard(s_rep, n2g, **mm)
 
-    gates = [tape.matmul(x_r, wexp("gate_exps", f"L{il}_Wg{e}", (d, d_ff), e), **mm)
-             for e in range(E)]
-    ups = [tape.matmul(x_r, wexp("up_exps", f"L{il}_Wu{e}", (d, d_ff), e), **mm)
-           for e in range(E)]
-    g_sum = freivalds_combine(tape, m, gates, T=T, E=E, F=d_ff)
-    up_sum = freivalds_combine(tape, m, ups, T=T, E=E, F=d_ff)
+    def routed(x, kind, tag, K, J):
+        shards = [wexp(kind, f"L{il}_W{tag}{e}", (K, J), e) for e in range(E)]
+        raw = routed_projected_matmul(tape, x, m, shards, T=T, K=K, J=J, E=E)
+        return rescale(tape, raw, s_in=S * S, s_out=S, output_width=OUTPUT_WIDTH)
+
+    g_sum = routed(x_r, "gate_exps", "g", d, d_ff)
+    up_sum = routed(x_r, "up_exps", "u", d, d_ff)
     hidden = tape.hadamard(tape.silu(g_sum), up_sum, **mm)
-    outs = [tape.matmul(hidden, wexp("down_exps", f"L{il}_Wd{e}", (d_ff, d), e), **mm)
-            for e in range(E)]
-    ffn = freivalds_combine(tape, m, outs, T=T, E=E, F=d)
+    ffn = routed(hidden, "down_exps", "d", d_ff, d)
 
     Wg_s = tape.commit_lazy(f"L{il}_Wgs", _moe_part(gguf, il, "W_gate_sh", E), (d, d_ff), d * d_ff)
     Wu_s = tape.commit_lazy(f"L{il}_Wus", _moe_part(gguf, il, "W_up_sh", E), (d, d_ff), d * d_ff)
@@ -279,13 +291,48 @@ def main():
     ap.add_argument("--witness-only", action="store_true")
     ap.add_argument("--dump-proof", default=None)
     ap.add_argument("--logits-out", default=None)
-    ap.add_argument("--ui-abort-above", type=float, default=None,
-                    help="bits/token threshold: if the reveal engine pass "
-                         "(run before the prove sweep) computes a bound above "
-                         "this, abort BEFORE the ~8h sweep instead of proving "
-                         "a useless number")
+    # --- enrollment / policy (demo/4h-production-runbook.md) ---------------
+    ap.add_argument("--enroll-weights", default=None,
+                    help="ENROLL mode: commit the persistent weight block to "
+                         "this path and print its root. Not a proof stage.")
+    ap.add_argument("--weight-commitment", default=None,
+                    help="the enrolled commitment to prove against")
+    ap.add_argument("--expected-weight-root", default=None,
+                    help="the trusted enrolled root, from verifier policy")
+    ap.add_argument("--public-sz", type=int, default=None,
+                    help="the already-fixed public Sz from the serving "
+                         "statement. Required: the driver does NOT run a "
+                         "reveal pass to discover it.")
+    ap.add_argument("--admission-report", default=None,
+                    help="admission.json from the production benchmark; the "
+                         "run is refused unless every stage is under its cap")
+    ap.add_argument("--allow-dev-config", action="store_true",
+                    help="permit a non-target Ligero config (dev only)")
     a = ap.parse_args()
     torch.manual_seed(7)
+
+    import admission
+    dev_ok = a.allow_dev_config or a.witness_only
+    admission.check_config(CFG, allow_dev=dev_ok)
+
+    # Policy is checked BEFORE the build: discovering a missing argument after
+    # loading a 400B model is a wasted hour.
+    proving = not (a.enroll_weights or a.witness_only)
+    if proving:
+        missing = [n for n, v in (("--weight-commitment", a.weight_commitment),
+                                  ("--expected-weight-root", a.expected_weight_root),
+                                  ("--public-sz", a.public_sz),
+                                  ("--admission-report", a.admission_report))
+                   if v is None]
+        if missing:
+            raise SystemExit(
+                "refusing to prove: missing " + ", ".join(missing) +
+                ".\nA production proof references an enrolled model, states "
+                "the public Sz it was served under, and passes the admission "
+                "gate. See demo/4h-production-runbook.md.")
+        for path in (a.weight_commitment, a.admission_report):
+            if not pathlib.Path(path).is_file():
+                raise SystemExit(f"refusing to prove: {path} does not exist")
 
     if a.tokens:
         tk = json.load(open(a.tokens))
@@ -304,6 +351,17 @@ def main():
         tape, a.from_gguf, prompt_ids, cont_ids, V=a.vocab, d=a.d,
         n_layers=a.layers, E=a.experts, d_ff=a.d_ff)
     _log(f"build {time.time()-t0:.1f}s, {len(tape.claims)} claims")
+
+    # ---- ENROLL: commit the model once, print the root, stop --------------
+    if a.enroll_weights:
+        t0 = time.time()
+        wc = core.WeightCommitment.from_tape(tape, CFG)
+        wc.save(a.enroll_weights)
+        _log(f"enrolled {wc.m_w} weight rows in {time.time()-t0:.1f}s")
+        print(f"root={wc.root.hex()}")
+        _log("record this root in verifier policy; enrollment is not a proof "
+             "stage and the proof command will not rebuild it")
+        return 0
 
     if a.witness_only:
         t0 = time.time()
@@ -328,44 +386,45 @@ def main():
             _log(f"logits saved to {a.logits_out}")
         return 0
 
-    # Reveal the bound: compute Sz (engine pass), pin it as the PUBLIC value
-    # the verifier reads, then re-zero LogUp mults so the prove sweep
-    # re-accumulates cleanly.
-    if handles.get("reveal_pin") is not None:
-        t0 = time.time()
-        _live = tape.run_engine_pass(free_intermediates=True, keep={Sz.var})
-        _sz = int(_live[Sz.var].cpu().item())
-        _bits = bound_bits(_sz, s_b=UI["s_b"])
-        _bpt = _bits / len(sum_pos)
-        _log(f"reveal engine pass {time.time()-t0:.1f}s: Sz={_sz} -> "
-             f"{_bits:.1f} bits total ({_bpt:.4f} bits/token over "
-             f"{len(sum_pos)} positions)")
-        if a.ui_abort_above is not None and _bpt > a.ui_abort_above:
-            _log(f"ABORT before prove sweep: {_bpt:.4f} bits/token > "
-                 f"{a.ui_abort_above} threshold. Skipping the ~8h prove "
-                 f"(the number would be useless). No proof written.")
-            return 0
-        handles["reveal_pin"].public_rhs = _sz
-        for _v in list(tape.inputs):
-            if getattr(_v, "name", "").endswith("_mult"):
-                tape.inputs[_v].zero_()
-        _log(f"reveal: Sz={_sz} pinned as PUBLIC bound; "
-             f"verifier reads {_bpt:.4f} bits/token from the claim")
+    # ---- PROOF: policy first, then the admission gate, then prove ---------
+    wc = core.WeightCommitment.load(a.weight_commitment)
+    expected_root = bytes.fromhex(a.expected_weight_root.removeprefix("0x"))
+    if wc.root != expected_root:
+        raise SystemExit(
+            f"refusing to prove: the commitment's root {wc.root.hex()} is not "
+            f"the trusted enrolled root {expected_root.hex()}")
+    _log(f"model: enrolled root {wc.root.hex()[:16]}… ({wc.m_w} weight rows)")
+
+    # The public bound is an INPUT to the statement, not something the prover
+    # discovers: pinning it here removes the extra pre-proof reveal pass (a
+    # sixth semantic sweep the admission model does not pay for).
+    if handles.get("reveal_pin") is None:
+        raise SystemExit("this tape has no reveal pin to bind --public-sz to")
+    handles["reveal_pin"].public_rhs = a.public_sz
+    bits = bound_bits(a.public_sz, s_b=UI["s_b"])
+    _log(f"public Sz={a.public_sz} pinned from the serving statement -> "
+         f"{bits/len(sum_pos):.4f} bits/token over {len(sum_pos)} positions "
+         f"(no reveal pass)")
+
+    claims_bytes = pr.claims_canonical_bytes(tape.claims, CFG)
+    manifest = admission.row_manifest(tape, CFG)
+    stmt = admission.statement_digest_for(tape, CFG, claims_bytes)
+    report = admission.load_report(a.admission_report)
+    admission.check(report, cfg=CFG, model_root=wc.root, statement_digest=stmt,
+                    manifest=manifest)
+    _log(f"admission: PASSED on {report['machine']['gpu_name']} "
+         f"({report['runs']} runs/stage)")
+    print(f"statement_digest={stmt.hex()}")
 
     t0 = time.time()
-    proof = tape.prove(seed=SEED)
+    proof = tape.prove(weight_commitment=wc, claims_bytes=claims_bytes)
     t_prove = time.time() - t0
     _log(f"prove returned ({t_prove:.1f}s) "
          f"peakGPU={torch.cuda.max_memory_allocated()/2**30:.2f}GB")
     if a.dump_proof:
-        import protocol as pr
         from proof_dump import dump_proof
-        s_op, s_comb, s_col = pr.round_seeds(SEED)
-        Q = pr.random_columns(s_col, CFG)
         t0 = time.time()
-        dump_proof(a.dump_proof, pr.claims_to_json(tape.claims, CFG),
-                   {"s_op": s_op.hex(), "s_comb": s_comb.hex(), "s_col": s_col.hex()},
-                   proof, list(Q), None)
+        dump_proof(a.dump_proof, None, None, proof, None, None)
         _log(f"proof dumped to {a.dump_proof} ({time.time()-t0:.1f}s)")
     return 0
 

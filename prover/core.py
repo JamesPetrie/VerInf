@@ -1058,6 +1058,44 @@ def _ephase_report():
         print(f"    {n:14s} {ms / 1000:7.3f}s  ({len(_EPHASE[n])} calls)", flush=True)
 
 
+class ColumnSink:
+    """Opened columns, written straight to host memory as they are produced.
+
+    The old path buffered every chunk's slice on the GPU and joined them with
+    torch.cat at the end. At the target geometry the openings are tens of GB
+    and the join briefly doubles that — the peak that decides whether a run
+    fits in VRAM at all. Here each column is one pre-sized pinned host tensor
+    (the block's row count is known before the sweep) and every chunk is
+    copied into its own slice, so there is no accumulation and no join.
+    """
+
+    __slots__ = ("cols", "n_rows", "row_base", "_filled")
+
+    def __init__(self, n_rows: int, columns: List[int], row_base: int = 0):
+        self.n_rows = n_rows
+        self.row_base = row_base          # absolute row of this block's row 0
+        self.cols = {j: torch.empty(n_rows, dtype=torch.uint64, device="cpu")
+                     for j in columns}
+        self._filled = 0
+
+    def write(self, abs_row: int, chunk: torch.Tensor, columns: List[int]):
+        """chunk: (rows, len(columns)) device slice of this chunk's codewords,
+        starting at ABSOLUTE row `abs_row`."""
+        lo = abs_row - self.row_base
+        n = chunk.size(0)
+        assert 0 <= lo and lo + n <= self.n_rows, (
+            f"column sink overflow: [{lo}, {lo + n}) outside [0, {self.n_rows})")
+        host = chunk.cpu()
+        for k, j in enumerate(columns):
+            self.cols[j][lo:lo + n] = host[:, k]
+        self._filled += n
+
+    def finish(self) -> Dict[int, torch.Tensor]:
+        assert self._filled == self.n_rows, (
+            f"column sink filled {self._filled} of {self.n_rows} rows")
+        return self.cols
+
+
 def _stream_phase(
     vars_list: List[Variable],
     inputs: Dict[Variable, InputVal],
@@ -1072,6 +1110,7 @@ def _stream_phase(
     q_irs_acc: Optional['QIrsAccumulator'] = None,
     q_lin_acc: Optional['QLinAccumulator'] = None,
     columns_at: Optional[List[int]] = None,
+    column_sink: Optional['ColumnSink'] = None,
     chunk_size: int = _ENCODE_CHUNK_ROWS,
 ) -> Dict[str, Any]:
     """One streaming pass over (vars_list, inputs). For each chunk:
@@ -1111,13 +1150,18 @@ def _stream_phase(
     col_buf: Optional[Dict[int, List[torch.Tensor]]] = None
     Q_set: Optional[torch.Tensor] = None
     if columns_at is not None:
-        col_buf = {j: [] for j in columns_at}
+        # With a sink the slices go straight to host; without one (unit tests,
+        # the in-process verifier) the old device buffer is kept.
+        col_buf = None if column_sink is not None else {j: [] for j in columns_at}
         Q_set = torch.tensor(list(columns_at), dtype=torch.long, device="cuda")
 
     # Optional prefix codewords (round 1: blinding rows for phase-1).
     if prefix_codewords is not None and prefix_codewords.size(0) > 0:
         if merkle_acc is not None:
             merkle_acc.update(prefix_codewords)
+        if column_sink is not None:
+            column_sink.write(abs_row_offset,
+                              prefix_codewords.index_select(1, Q_set), columns_at)
         if col_buf is not None:
             slice_ = prefix_codewords.index_select(1, Q_set)
             for k, j in enumerate(columns_at):
@@ -1141,7 +1185,11 @@ def _stream_phase(
         if q_lin_acc is not None:
             with _phase('fold_qlin'):
                 q_lin_acc.update(chunk_abs_row, polys)
-        if col_buf is not None:
+        if column_sink is not None:
+            with _phase('cols'):
+                column_sink.write(chunk_abs_row,
+                                  codes.index_select(1, Q_set), columns_at)
+        elif col_buf is not None:
             with _phase('cols'):
                 slice_ = codes.index_select(1, Q_set)
                 for k, j in enumerate(columns_at):
@@ -2705,8 +2753,11 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
             merkle_blind.update(p1_prefix)
         if col_blind is not None:
             pslice = p1_prefix.index_select(1, Q_set)
-            for k, j in enumerate(Q_cols):
-                col_blind[j].append(pslice[:, k].clone())
+            if isinstance(col_blind, ColumnSink):
+                col_blind.write(0, pslice, Q_cols)
+            else:
+                for k, j in enumerate(Q_cols):
+                    col_blind[j].append(pslice[:, k].clone())
     last_use = {}
     for i, (_c, ivars, _se) in enumerate(tape._deferred):
         for v in ivars:
@@ -2736,12 +2787,14 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
     def emit(vg, merkle, abs0, colbuf, pad=None):
         if not vg:
             return
+        sink = colbuf if isinstance(colbuf, ColumnSink) else None
         res = _stream_phase(vg, live, cfg, master_seed=master_seed_t, abs_row_offset=abs0,
                             pad_seed=(None if pad is None else pad[0]),
                             pad_row_offset=(None if pad is None else pad[1]),
                             merkle_acc=merkle, q_irs_acc=q_irs, q_lin_acc=q_lin,
-                            columns_at=(Q_cols if colbuf is not None else None))
-        if colbuf is not None:
+                            columns_at=(Q_cols if colbuf is not None else None),
+                            column_sink=sink)
+        if colbuf is not None and sink is None:
             for j in Q_cols:
                 colbuf[j].append(res['opened_columns'][j])
     do_p1 = any(x is not None for x in (merkle_p1, q_irs, q_lin, col_p1))
@@ -3264,12 +3317,18 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
     s_col = pr.fs_s_col(s_comb, _u64_le_bytes(q_irs), _u64_le_bytes(q_lin),
                         _u64_le_bytes(p_0))
     Q_cols = list(pr.random_columns(s_col, cfg))
-    col_p1 = {j: [] for j in Q_cols}
-    col_p2 = {j: [] for j in Q_cols}
-    col_w = {j: [] for j in Q_cols}
-    col_wnew = {j: [] for j in Q_cols}
-    col_blind = {j: [] for j in Q_cols}
-    col_p3 = {j: [] for j in Q_cols}
+    # One pre-sized HOST buffer per column per block: the openings are written
+    # through as they are produced, so nothing accumulates on the GPU and
+    # there is no final torch.cat (which briefly doubled tens of GB).
+    _w_base = NUM_BLINDING_ROWS
+    _wnew_base = _w_base + s['n_w_total']
+    _p1_base = _wnew_base + s['n_wnew_total']
+    col_blind = ColumnSink(s['n_blind_total'], Q_cols, 0)
+    col_w = ColumnSink(s['n_w_total'], Q_cols, _w_base)
+    col_wnew = ColumnSink(s['n_wnew_total'], Q_cols, _wnew_base)
+    col_p1 = ColumnSink(s['n_p1_total'], Q_cols, _p1_base)
+    col_p2 = ColumnSink(s['n_p2_total'], Q_cols, s['m_p1_rows'])
+    col_p3 = ColumnSink(s['n_p3_total'], Q_cols, s['m_p2_rows'])
     merkle_blindb = _acc(s['n_blind_total'])                           # R5: columns + paths
     merkle_wb = None if wc is not None else _acc(s['n_w_total'])        #   (referenced → no rebuild)
     merkle_wnewb = _acc(s['n_wnew_total'])
@@ -3294,6 +3353,8 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
             "phase-3 tree not reproducible between R3 and the opening round")
 
     def _opened(colbuf):
+        if isinstance(colbuf, ColumnSink):
+            return colbuf.finish()
         return {j: (torch.cat(colbuf[j]) if colbuf[j]
                     else torch.empty(0, dtype=torch.uint64, device="cuda")) for j in Q_cols}
     def _paths(art):

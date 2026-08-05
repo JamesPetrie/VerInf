@@ -1,0 +1,210 @@
+"""Fail-closed admission gate.
+
+A 400B proof is a ~4-hour, single-shot commitment of a rented machine. The
+point of this module is that the run is REFUSED before it starts unless
+somebody measured this build, on this machine, on this geometry, and every
+stage came in under its cap.
+
+What the gate refuses, and why each one matters:
+
+  * a report from a different source tree — the measured code is not the code
+    about to run;
+  * a report for a different model root or statement — the numbers describe
+    another proof;
+  * a report from a different machine — the single most common way a good
+    benchmark becomes a bad prediction;
+  * a report whose row manifest differs from the layout just built — a smaller
+    ELL/N geometry or a shorter context measures a different amount of work;
+  * fewer than 30 runs per stage, or a bound that is not an upper confidence
+    bound — an average is not an admission argument;
+  * any stage over its cap in analysis/routed_projected_4h_model.py;
+  * a report that admits it used random weights — the semantic sweep cap
+    includes real GGUF decode and page migration.
+
+Caps come from the model file itself, so there is exactly one place where the
+4-hour envelope is written down.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import pathlib
+import subprocess
+from typing import Dict
+
+_ANALYSIS = pathlib.Path(__file__).resolve().parents[1] / "analysis"
+
+# The target Ligero geometry. A production proof runs at exactly this config:
+# the admission model prices these row counts, and a smaller ELL/N or a lower
+# query count is a different (cheaper, weaker) proof.
+TARGET = dict(ELL=8192, K_DEG=16384, N_LIG=65536, T_QUERIES=54)
+
+# Stage caps, in seconds, straight out of the admission model.
+STAGE_CAPS = {
+    "model_load": 400.0,
+    "semantic_5_active_sweeps": 3609.0,
+    "fresh_commit_fold": 950.0,
+    "linear": 25.6,
+    "quadratic": 765.0,
+    "fresh_hash_coef": 140.0,
+    "persistent_weight_qlin": 3624.522,
+    "persistent_open": 1812.261,
+    "fresh_open": 450.0,
+    "proof_egress": 879.63,
+    "rtt": 80.0,
+    "tail": 20.0,
+    "orchestration_refresh": 600.0,
+}
+TOTAL_CAP_S = 14_400.0
+MIN_RUNS = 30
+
+
+class AdmissionError(SystemExit):
+    """Refusal to start. SystemExit so a driver aborts loudly."""
+
+
+def check_config(cfg, *, allow_dev: bool = False) -> None:
+    got = dict(ELL=cfg.ELL, K_DEG=cfg.K_DEG, N_LIG=cfg.N_LIG,
+               T_QUERIES=cfg.T_QUERIES)
+    if got == TARGET:
+        return
+    msg = (f"Ligero config {got} is not the target {TARGET}. "
+           f"The admission envelope and the soundness budget are both stated "
+           f"for the target geometry.")
+    if not allow_dev:
+        raise AdmissionError("refusing to run: " + msg)
+    print(f"  [admission] DEV CONFIG: {msg}", flush=True)
+
+
+def source_digest() -> str:
+    """A digest of the prover + verifier source actually present.
+
+    Tracked files only (git), so an untracked scratch file does not change it;
+    if git is unavailable the tree is hashed directly."""
+    root = pathlib.Path(__file__).resolve().parents[1]
+    try:
+        files = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "prover", "verifier", "demo",
+             "analysis/routed_projected_4h_model.py"],
+            capture_output=True, text=True, check=True).stdout.split()
+    except Exception:
+        files = sorted(str(p.relative_to(root))
+                       for p in root.rglob("*.py") if "deprecated" not in str(p))
+    h = hashlib.sha256()
+    for rel in sorted(files):
+        f = root / rel
+        if not f.is_file():
+            continue
+        h.update(rel.encode())
+        h.update(f.read_bytes())
+    return h.hexdigest()
+
+
+def machine_fingerprint() -> Dict[str, str]:
+    import torch
+    props = torch.cuda.get_device_properties(0)
+    return {
+        "gpu_name": props.name,
+        "gpu_total_mem": str(props.total_memory),
+        "gpu_count": str(torch.cuda.device_count()),
+        "cuda": torch.version.cuda or "",
+        "torch": torch.__version__,
+    }
+
+
+def row_manifest(tape, cfg) -> Dict[str, int]:
+    """The layout the proof will actually commit — not a projection of it."""
+    import core
+    claims = core._with_synthesized_settlements(tape.claims)
+    (_all, p1, p2, p3, m_p1, m_p2, m_total,
+     _wv, m_w, _wn, m_wnew) = core._layout(claims, cfg)
+    rows = lambda vs: sum(v.n_rows(cfg.ELL) for v in vs)
+    return {
+        "m_total": m_total, "m_w": m_w, "m_wnew": m_wnew,
+        "n_p1": rows(p1), "n_p2": rows(p2), "n_p3": rows(p3),
+        "n_claims": len(tape.claims),
+        "ELL": cfg.ELL, "N_LIG": cfg.N_LIG, "T_QUERIES": cfg.T_QUERIES,
+    }
+
+
+def statement_digest_for(tape, cfg, claims_bytes: bytes) -> bytes:
+    """The digest the proof will carry — computed here so the gate can bind to
+    it before a single round runs."""
+    import core
+    import protocol as pr
+    claims = core._with_synthesized_settlements(tape.claims)
+    (_a, _p1, _p2, p3, _m1, _m2, _mt, _wv, m_w, _wn, m_wnew) = core._layout(claims, cfg)
+    blocks = (["blind"] + (["w"] if m_w else []) + (["wnew"] if m_wnew else [])
+              + ["p1", "p2"]
+              + (["p3"] if sum(v.n_rows(cfg.ELL) for v in p3) else []))
+    return pr.statement_digest(claims_bytes, blocks)
+
+
+def load_report(path: str) -> dict:
+    with open(path) as f:
+        report = json.load(f)
+    for key in ("source_digest", "model_root", "statement_digest", "machine",
+                "row_manifest", "runs", "bound_kind", "weights", "stages"):
+        if key not in report:
+            raise AdmissionError(
+                f"admission report {path} has no '{key}'. It must bind the "
+                f"measurement to the build, the model, the statement, the "
+                f"machine and the geometry it was taken on.")
+    return report
+
+
+def check(report: dict, *, cfg, model_root: bytes, statement_digest: bytes,
+          manifest: Dict[str, int]) -> None:
+    fails = []
+
+    def need(cond, msg):
+        if not cond:
+            fails.append(msg)
+
+    need(report["source_digest"] == source_digest(),
+         "source digest differs: the benchmark measured a different build")
+    need(report["model_root"] == model_root.hex(),
+         f"model root differs: report {report['model_root'][:16]}… vs enrolled "
+         f"{model_root.hex()[:16]}…")
+    need(report["statement_digest"] == statement_digest.hex(),
+         "statement digest differs: the report describes another proof")
+
+    here = machine_fingerprint()
+    for k, v in here.items():
+        need(report["machine"].get(k) == v,
+             f"machine mismatch on {k}: report {report['machine'].get(k)!r} vs "
+             f"this box {v!r}")
+
+    for k, v in manifest.items():
+        need(report["row_manifest"].get(k) == v,
+             f"row manifest mismatch on {k}: report "
+             f"{report['row_manifest'].get(k)} vs this layout {v}")
+
+    need(int(report["runs"]) >= MIN_RUNS,
+         f"{report['runs']} runs per stage, need >= {MIN_RUNS}")
+    need(report["bound_kind"] == "p99_upper",
+         f"bound_kind is {report['bound_kind']!r}; admission needs simultaneous "
+         f">=99% UPPER confidence bounds, not averages")
+    need(report["weights"] == "real_gguf",
+         f"weights are {report['weights']!r}; the semantic cap includes real "
+         f"GGUF decode and page migration, so random weights cannot satisfy it")
+
+    total = 0.0
+    for stage, cap in STAGE_CAPS.items():
+        if stage not in report["stages"]:
+            fails.append(f"stage '{stage}' is not in the report")
+            continue
+        got = float(report["stages"][stage])
+        total += got
+        need(got <= cap, f"stage '{stage}': {got:.3f}s over its cap {cap:.3f}s")
+    extra = set(report["stages"]) - set(STAGE_CAPS)
+    need(not extra, f"unpriced stages in the report: {sorted(extra)}")
+    need(total <= TOTAL_CAP_S,
+         f"stages sum to {total:.1f}s, over the {TOTAL_CAP_S:.0f}s envelope")
+
+    if fails:
+        raise AdmissionError(
+            "ADMISSION REFUSED — the run would not be a controlled one:\n  - "
+            + "\n  - ".join(fails))
+    print(f"  [admission] all {len(STAGE_CAPS)} stages under cap; "
+          f"total {total:.1f}s of {TOTAL_CAP_S:.0f}s", flush=True)
