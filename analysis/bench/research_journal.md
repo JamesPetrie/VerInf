@@ -832,3 +832,502 @@ is proven, the speedup is not (and won't be at any rentable scale). Measuring th
 actual 4.4h needs the real 400B run: the ~200GB GGUF checkpoint (no synthetic-weight
 loader for the full model) + a box with >=7.5TB disk + ~$15/~10h. Everything up to
 that — the optimization and the mechanism — is now real, not modeled.
+
+---
+
+## iter18 — Layer-GKR-LF: proposed replacement protocol prototyped + cost model audited
+
+A protocol proposal arrived (`analysis/VerInf_LayerGKR_4h_theorem_ru.md`, 2026-08-04):
+replace the flat Ligero trace with layer-local tensor-GKR, keeping Ligero only as a
+PCS for four kinds of boundary (weights, layer I/O states, lookup boundaries, sort
+records + mask tape). Claims T_prove <= 3.95 h at S=1000. Prototyped its mechanisms
+and re-derived its cost model in a NEW self-contained package `layergkr/` — the
+existing prover is not touched (`git diff` = one additive section in analysis/TODO.md).
+
+**Built + gated (41 tests, `layergkr/tests/run_tests.py`):** the project-before-
+sumcheck weight seam with same-column codeword equality (§4), the commit-before-
+challenge ordering as an *enforced schedule* rather than prose (§3.2), the MoE
+hidden stable sort + delimiters + segmented scan + permutation fingerprint (§5),
+the affine ZK mask compiler and masked products (§7), and layer composition by
+exact root equality (§8.1). Two things are MEASURED rather than quoted: a forged
+projection codeword is shown to disagree in >= N-K positions (the (K/N)^q bound),
+and the mask-tape -> transcript-polynomial map is inverted to exhibit the
+uniformity §7.1 claims.
+
+**Cost model audited.** `layergkr/cost_model.py` recomputes P and N_pad from
+Maverick tensor shapes via the doc's own row-capacity rule and reproduces its §9.2
+table exactly (P = 402,725,114,880; N_pad = 564,632,231,936). The arithmetic of
+the theorem is sound; the disagreement is calibration.
+
+**The finding.** The whole claim is T = 3609 + kappa*6995 + 86. The doc adopts
+kappa <= 1.5 (break-even 1.530 — a 2% margin), justified against the *model's* own
+upper edge 10/7.784 = 1.285. But kappa is "how far an implementation lands above
+its own cost identity", and the one measured instance of that in this project is
+our prover: 51,334.6 s vs a 28,059 s identity at S=1000 => **kappa_observed = 1.83**,
+giving **4.57 h**, not 3.95 h. Still ~3.1x on the 14.26 h record; not a four-hour
+theorem. Same class of error prod_lens.py exists to prevent — a model's self-
+uncertainty is not the model-to-reality gap.
+
+**Constructive:** 75% of the new proof-compute is weight projection + opening
+encode, both driven by N_pad, and N_pad/P = 1.40 is almost entirely the 5120->8192
+row rounding. ELL=5120 models to -1392 s (3.93 -> 3.54 h) — more than the entire
+kappa margin. Question for the author, not a claim: ELL touches every row-layout
+assumption in the scheme.
+
+**Not built, stated plainly:** no tensor-GKR for the real layer semantics (SiLU/
+softmax/RMSNorm/RoPE/range-rescale/booleanity as sumchecks — the doc budgets 305 s
+total for all of it, the thinnest line in its table); no LogUp reciprocal argument;
+the layer driver reveals the small projected vectors (binds them by re-encoding)
+so it is not ZK as written; no enrollment, ledger, streamed proof format or memory
+liveness. Nothing here is measured — there is no performance claim in the package.
+
+**Inherited caveat:** the doc's one measured input (3609 s forward, memory
+high-water) comes from full-model-hidden-run-archive.md, which is agent-authored
+prose whose raw logs are on spark-c191 and could not be verified from this box.
+
+---
+
+## iter19 — Layer-GKR-LF implemented over real semantics; the cost model loses its kappa
+
+Follow-up to iter18. Three complaints drove this: the prototype proved only a
+dense `Y = XW` so nothing could be run; the model leaned on a calibration factor;
+and verifier time was modelled nowhere (the doc's §9.4 is a conditional corollary
+outside its theorem). All three are addressed in `layergkr/`; the existing prover
+is still untouched.
+
+**Implemented since iter18.** Real integer layer semantics (`semantics.py`):
+RMSNorm via sum-of-squares → isqrt lookup, QKV matmuls, RoPE as affine mixing,
+causal scores, exp lookup, reciprocal-normalised softmax, SiLU, SwiGLU hadamard,
+both residuals, and a raw accumulator + deterministic range-checked rescale after
+every multiply. The relation zoo (`relations.py`) batches hadamard / booleanity /
+affine / rescale into one tagged ragged eq-weighted sumcheck; `sumcheck.py` was
+generalised to sums of products to carry it. LogUp (`logup.py`) with the
+`beta -> R_cmp -> alpha` order enforced by the staged API. The §7 masks are now
+WIRED IN (they carry the gate batch). `full_layer.py` proves a whole layer and
+verifies it; 66 tests, positive and tamper, all green.
+
+**One real bug found by writing the tests, worth recording:** LogUp padding
+cannot be zero-filled. The eq-weighted reciprocal constraint weights every
+hypercube slot, so a slot with r=0 makes the sum fall short; padding must carry
+real values (queries repeat a table entry and are counted in the multiplicity;
+the table gets sentinel rows with multiplicity 0). Zero-padding IS safe for the
+gate batch, because a zero relation stays a zero relation -- the two cases look
+alike and are not.
+
+**The model no longer has a kappa.** It predicts COUNTS (field muls with and
+without deferred reduction, adds, inversions, hashed bytes, opened values), which
+are a property of the protocol and geometry, not the machine; rates are measured
+separately by `bench/rates.py` and never fitted. Seven configurations from
+S=2/d=4 to S=12/d=32 were proved and verified with full instrumentation:
+**predicted vs measured field-op counts agree to 0.00%**, per phase, for prover
+AND verifier, and the geometry->relation-count level is exact too.
+
+**What exactness bought.** With counts nailed, the residual uncertainty is
+isolated in the rate card -- and the first run exposed a genuine error there: the
+time model drifted 1.08x -> 4.14x with size because the card measured `(a*b) % P`
+while the hot loops accumulate `a*b` and reduce once (170 ns vs 63 ns here).
+Splitting the two primitives halved the drift to 0.69x -> 2.48x; the residual is
+CPython operand-width growth, which does not transfer to a GPU projection. The
+method is the result: a discrepancy became a found modelling bug, not a bigger
+multiplier.
+
+**Verifier cost, first time anywhere.** Predicted exactly and measured:
+verification is a SHRINKING fraction of proving as the instance grows -- 37% of
+prove time at S=2/d=4, 3% at S=8/d=32 -- because the verifier rides the q-column
+openings and per-round interpolations, which do not grow with d the way encode
+and projection do. Favourable for the scheme, and now a measurement.
+
+**Deliberately NOT quoted: any 400B number.** `moe.py` implements and gates the
+sort/segment argument, but `full_layer.py` still proves the routed FFN as
+per-token matmuls, so extrapolating this code would price the very `S*E*K`
+structure the scheme exists to remove. Wiring moe.py into full_layer.py is the
+next step; until then a projection would be dishonest.
+
+Still open: the local LF proof over the small roots (A, P and the LogUp
+reciprocals travel in the clear -- soundness intact, hiding of those vectors is
+not), the enrolment ledger, the streamed binary proof format, and memory-phase
+liveness.
+
+---
+
+## iter20 — machine model instead of a coefficient; GPU backend; near-real widths
+
+Three things, all driven by the same correction: a cost model that does not match
+the stopwatch must be FIXED, not scaled.
+
+**The kappa was still there, hiding.** iter19 reported "counts exact, kappa gone",
+but the TIME model was off 0.69x-2.48x -- which is exactly where a kappa lives.
+Fixed by modelling the machine instead of the abstraction. Four characteristics
+were found and added, in order:
+
+1. deferred vs reduced multiplication. The rate card measured `(a*b) % P`; the hot
+   loops accumulate `a*b` and reduce once. 170 ns vs 63 ns. -> 2.12x
+2. the UNIT was wrong. A least-squares fit for per-primitive costs over the real
+   workload returned a NEGATIVE cost per multiply. Negative time is impossible, so
+   the parameterisation was wrong, not the data: mul and add occur in a fixed
+   ratio in this code, are collinear, and can never be separately identified. The
+   unit became the LOOP BODY -- one iteration of a loop that exists in the source.
+3. the encoder skips zeros, the model did not. `rs.encode_row` tests `if v:`, and
+   almost every row it encodes is mostly padding (a LogUp multiplicity row is one
+   value in an ELL-wide message). Nonzero slot 100 ns, zero slot 33 ns. Largest
+   single error. -> 0.95x
+4. unmodelled work: the column transpose in rs.Commit (23 ns/element) and the
+   per-call cost of hashing a column (5.4 us -- call overhead, not GB/s). -> 1.01x
+
+Now **0.80x-1.01x with no coefficient anywhere**, and the residual is largest on
+the SMALLEST instances (fixed per-call overhead), i.e. it shrinks in the direction
+the model is used for. `analysis/layergkr-cost-model.md` is the standing document;
+its change log carries all of the above so none of it is rediscovered.
+
+**Protocol consequence of (3), not just a modelling one.** At Maverick geometry a
+5120-wide contraction row in an ELL=8192 message is 37% padding, and encode +
+opening is ~75% of the theorem's budget. Worth asking the author whether §9.2's
+N_pad counts row CAPACITY or real work; if capacity, his budget is conservative.
+
+**GPU backend.** `layergkr/gpu.py` runs encode and linear-combination through the
+PRODUCTION Goldilocks kernels (`prover/cuda_primitives.gl_matmul`), which both
+lifts the size ceiling and makes a future rate card mean something for a real
+prover. It refuses to enable itself for a Config until it has proved BIT-IDENTICAL
+to the CPU path (5 tests). Same config went 53s -> 15s.
+
+**Near-real widths now run.** S=16, d=128 (one Maverick attention-head group),
+d_ff=256, E=8, ELL=256/K=512/N=1024 (production rate K/N = 1/4): prove 83.8 s,
+verify 4.5 s, ACCEPT. That is ~2.65M matmul cells in one layer, against 336 cells
+at the original toy size.
+
+Unchanged and still blocking any 400B number: moe.py is not wired into
+full_layer.py, so the routed FFN is still priced as per-token matmuls.
+
+---
+
+## iter21 — MoE path wired in; two more machine terms found by profiling
+
+**MoE segmented path is now in the prover.** The routed FFN was previously one
+published matmul per token -- cheaper, but it PUBLISHES the route: the trace said
+which expert each token used. Now it is three nodes (gate/up/down) with the route
+secret, proved by moe.py's sort + permutation fingerprint + delimiter segments
+plus the §5.3 scalar identity. Cost consequence, which is the point: the seam runs
+for EVERY expert, so a MoE node costs E projections rather than one. That is
+exactly the term §9.2 prices, and it is now in the model. New tests cover it
+(route not readable off the proof; tampered permutation product and tampered
+segment sums both rejected). 74 tests green; counts exact again at 0.00%.
+
+**Two more machine terms, found by PROFILING instead of guessing.** I had guessed
+the missing time was sumcheck list allocation. A cProfile of a real prove said
+otherwise:
+
+  * `protocol.pack_column` -- one `int.to_bytes(8)` per value inside a generator,
+    then a join -- was 6.3 s of a 19.8 s prove, the single largest cost in the
+    whole prover. The model charged it per hash CALL. It is per VALUE, 145 ns.
+  * the Lagrange matrix build (~3 s of pow() per Config) was landing inside the
+    measured window. It is one-time setup; now pre-warmed before the stopwatch,
+    the way a production prover builds its tables once.
+
+Time model went 0.47x-0.95x -> **0.68x-1.28x**, and more importantly stopped
+drifting monotonically with size: it now scatters around 1, which is the
+signature of leftover per-call constants rather than a missing scaling term.
+Still no coefficient anywhere. Worst case is real-128 at 0.68x -- next to profile.
+
+Lesson worth keeping: my guess about where the missing time was (sumcheck list
+allocation) was WRONG. The profiler found something I would not have proposed.
+Profile before theorising about performance.
+
+---
+
+## iter22 — the prover moved onto the device; d=192 now runs
+
+User asked to rent a box and run at realistic sizes. Before spending, two checks:
+vast credit was fine ($23.49), but a GPU-utilisation trace during a 76 s prove read
+**0% in 38 of 40 samples**. The card was idle -- the prover was CPython-bound, so a
+rented H100 would have bought ~1.4x from a faster CPU core, not the ~30x needed to
+reach real widths. Reported that instead of renting; user chose to fix the
+bottleneck. Nothing was spent.
+
+**What moved to the device.**
+
+  * `rs.Commit` is tensor-native: codewords stay on the card, and the production
+    kernels `hash_columns_streamed` + `merkle_build_blake3` do the column hashing
+    and the tree. That deletes `pack_column` -- the single largest cost in the
+    prover, 6.3 s of 19.8 s, one `int.to_bytes` per value -- and the device->host
+    marshalling with it: only the q opened columns come back. Per-value CPU
+    packing at d=128 fell from millions to 7,168.
+  * the sumcheck runs on the device, INCLUDING masked proofs: the §7 mask touches
+    only the scalar samples, never the vector work, so it does not block the
+    device path.
+
+Both are gated on producing bit-identical output to the CPython path, checked
+before either is enabled (`rs._gpu_ok`, `sumcheck._sumcheck_gpu_ok`). The GPU
+column digests and Merkle roots were verified equal to `protocol.merkle_leaf` +
+`rs.build_tree` first -- if the packing layout differed, every root would.
+
+**Result.**
+
+    d=128   prove 76.0s -> 16.8s (4.5x),  verify 4.5s -> 2.8s
+    d=192   prove 19.2s, verify 5.4s      -- a width that did not run before
+
+74 tests green throughout.
+
+**Modelling consequence, worth keeping:** the unit table now has two columns per
+step, not one. The same protocol operation has a CPU unit and a device unit with
+DIFFERENT cost structure -- the CPython encoder skips zero slots, `gl_matmul` does
+not. The model selects per backend rather than averaging, which is the same
+principle as the rest of iter20: model the machine, do not scale the answer.
+
+---
+
+## iter23 — multi-row layout: contractions wider than ELL
+
+The ceiling after iter22 was not speed, it was structure: `PersistentWeights.enroll`
+refused `n_in > ELL`. That is not a prototype limitation -- Maverick's FFN
+contracts over 16384 against ELL=8192, so ANY implementation at production
+geometry needs the layout, and it is exactly the `ceil(n_in/ELL)` factor the
+theorem's N_pad formula already assumed. The formula assumed a layout the
+implementation did not have.
+
+**Implemented.** Each output coordinate now spans `n_blocks = ceil(n_in/ELL)` RS
+rows, BLOCK-MAJOR (`row = b*n_out + i`), so at any opened column one block's
+values are contiguous and the seam's linear combination applies per block. The
+projected commitment gets one row per block; the opening carries one value per
+block per column; the verifier checks every block.
+
+Soundness is unchanged, and for a reason worth writing down: the manifest aligns
+all output coordinates of a block on the same message and padding positions, so
+the (K/N)^q argument holds per block independently. Nothing about the seam's
+causal ordering changes.
+
+**One subtlety that cost a debugging round.** Two different vectors come out of a
+projection and they are not interchangeable:
+
+  * the FLAT vector (length n_in) is what the contraction sumcheck runs on;
+  * the BLOCKS (full ELL wide, secret-padding tail included) are what the
+    re-encode binding needs -- the committed row is the projection of the padding
+    too, so re-encoding a flattened vector reproduces a different codeword.
+
+Both are now carried, and tampering either is rejected: the blocks by the binding,
+the flat vector by the contraction. Two tests pin exactly that.
+
+78 tests green. `d=384` (d_ff=768 against ELL=512, i.e. two blocks) now runs,
+which it could not before at any speed.
+
+**Bug in the same change, caught by running it (iter23 addendum).** The padding
+length was still computed as `ELL - n_in`, which goes NEGATIVE once n_in > ELL
+and silently produced empty padding rows -- enrolment then failed with a
+misleading message. Only the LAST block has a tail, of length `(-n_in) % ELL`.
+Fixed in both the callers and `PersistentWeights.enroll`, which now refuses
+padding shorter than the tail instead of zero-filling it (zero padding is not
+hiding, and silently degrading ZK is worse than an error). Regression test added.
+
+**Width ladder, no wall (iter23 addendum 2).** d=512 (2 blocks) prove 44.0s /
+verify 12.3s / peak GPU 5.38 GB; d=768 (3 blocks) prove 63.8s / verify 22.4s /
+peak 5.56 GB. Both ACCEPT. Memory is NOT the constraint (5.6 GB of 32), and time
+grows LINEARLY in d although matmul cells grow as d^2 -- because ELL and N are
+held fixed, so widening adds blocks/rows while the per-row cost ELL*N stays put.
+Conclusion: the untested axis is the LIGERO GEOMETRY, not the model width. At
+production ELL=8192/N=65536 the per-row cost is ~512x this ladder's, and that is
+exactly the term the ladder held constant -- so no 400B projection may be drawn
+from it.
+
+---
+
+## iter24 — CORRECTION: the width ladder did not show linearity
+
+An analyst review caught a wrong conclusion in iter23's addendum and in §4.9 of
+the cost-model doc. I wrote "time grows LINEARLY in d, not quadratically". That is
+false, and the model's own formula already said so.
+
+`C_proj = n_out * ELL * ceil(n_in / ELL)`; for a transformer matrix
+`n_in, n_out = Θ(d)`, so at fixed ELL it is `Θ(d * ELL * d/ELL) = Θ(d^2)`. The
+multi-row layout SPLITS the d^2 weights into blocks; it does not remove them. The
+MoE term in the same document, `E*d*d_ff`, is `Θ(E d^2)` at `d_ff ∝ d`. My prose
+contradicted my own arithmetic and the arithmetic was right.
+
+**Why the measurements looked linear.** Two reasons, both about the range rather
+than the protocol. While `n_in <= ELL` the block count is 1 and the cost reads as
+`n_out * ELL = Θ(d)` -- a transient regime in which most of each row is padding.
+And the projection term simply is not dominant yet: recomputing the row capacity
+the three FFN projections touch at ELL=512, d_ff=2d gives 1,179,648 (d=384) ->
+4,325,376 (d=768), i.e. **3.67x for a 2x width, close to the 4x that d^2
+predicts**, while wall-clock grew only 2.04x. When the work grows 3.7x and the
+clock grows 2.0x, the clock is measuring something else -- fixed per-call cost,
+under-occupied GPU, and the step function of the block count.
+
+**Quadratics that genuinely remain:** Θ(P) in parameters (each weight is read and
+projected), Θ(d^2) in width when d_ff ∝ d, Θ(E) in experts (binding a hidden route
+touches every expert's weights), Θ(S^2) for dense attention. NOT quadratic: the
+Ligero "quadratic constraint" -- that is the DEGREE of z = x*y, not a complexity;
+those batch and cost time linear in their count. The protocol is roughly linear in
+P, not O(P^2); it is quadratic in d only because P ~ d^2.
+
+What the scheme removes is a different, artificial dimension:
+`S*E*d*d_ff -> E*d*d_ff + S*d*d_ff`. Real structural win, but `E*d*d_ff` stays.
+Lower bound to respect in any 400B claim: `T >= Ω(P / R_projection)` -- an online
+proof applying a fresh random projection to all weights cannot be sublinear in
+them.
+
+**Fixed.** §4.9 of the cost-model doc now carries the correction, the true
+asymptotics table, and an explicit statement that this ladder cannot price 400B --
+for two independent reasons: it never varied ELL/N (production is ~512x the
+per-row cost) and the projection term is not dominant within it.
+
+**New instrument:** `bench/row_capacity.py` prices ONE ROW OF CAPACITY
+(`seconds / sum n_out*ELL*ceil(n_in/ELL)`) and sweeps width and geometry
+SEPARATELY -- the two axes the old ladder conflated. If ns-per-capacity converges,
+that is an honest per-row price and extrapolation becomes defensible; if it keeps
+falling, the run is still dominated by fixed costs. Neither outcome is a 400B
+number by itself.
+
+Lesson, and it is the same one as the kappa episode: I generalised an asymptotic
+from a narrow range against a formula I had already written down. Check the
+conclusion against the model's own algebra before writing it as a finding.
+
+**Capacity ladder, first results (iter24 addendum).**
+
+    run           d   ELL      N       capacity  prove s   ns/cap   step
+    w-128       128   512   2048      1,658,880     11.9  7182.80
+    w-256       256   512   2048      3,297,280     12.3  3732.15   0.52x
+    w-512       512   512   2048      7,622,656     20.1  2640.96   0.71x
+    g-256       128   256   1024        829,440      6.9  8373.48
+    g-512       128   512   2048      1,658,880      8.4  5073.66   0.61x
+    g-1024      128  1024   4096      3,317,760     17.8  5376.16   1.06x
+
+Width axis NOT converged -- price still falling (7183 -> 3732 -> 2641), so fixed
+costs still dominate and the width ladder cannot price anything. Confirms 4.9.1.
+
+Geometry axis shows the FIRST flat step: 8373 -> 5074 -> 5376 (1.06x); between
+g-512 and g-1024 capacity doubled and the clock went 8.4 -> 17.8 s (2.12x), i.e.
+time tracked capacity. Not yet a price, for three reasons recorded in the doc:
+one flat step is not convergence; N co-varied with ELL so the metric attributes
+nothing (capacity counts message slots, encode work is capacity*N); and
+production ELL=8192/N=65536 is 8x/16x further out. Next: extend the geometry
+ladder and vary ELL and N INDEPENDENTLY.
+
+
+---
+
+## iter25 — factorial ELL/N experiment: no single per-row price, but a 3-term model
+
+An hour, ELL and N varied INDEPENDENTLY at fixed width (d=128). Also batched the
+Lagrange matrix build first (one eta^K per column, one Montgomery inversion per
+column instead of ELL Fermat inversions): 52s -> 1.6s at ELL=512/N=2048, 32x,
+bit-identical to protocol.lagrange, 4 new tests. Without it the far point would
+have been an hour of pure setup.
+
+**Result: ns-per-capacity does NOT converge, and the reason is that the question
+was underspecified.** The three N-axis rows have IDENTICAL capacity and times of
+15.4 / 18.1 / 24.9 s, so capacity alone is not the unit; and
+ns/cap = a/cap + b + c*N cannot be flat while N varies. The prescribed test was
+right and it correctly failed -- what it showed is that the cost needs TWO scaling
+terms plus a constant.
+
+    t = 7.21 s + 1586.73 ns * capacity + 0.469 ns * capacity * N     R^2 = 0.9998
+
+over 7 points spanning 8x in capacity and 8x in N. The mix moves the right way:
+fixed 52% -> 6% and encode 23% -> 78% from the nearest to the farthest point. The
+earlier ladders were not wrong to look flat; they sat in the regime where the
+constant dominated.
+
+**The finding that blocks extrapolation:** the fitted encode coefficient is
+0.469 ns/slot-position against 0.006 ns/slot measured for gl_matmul in isolation --
+78x worse. Encoding is not running at kernel speed in situ: per-commitment calls
+with modest row counts, each paying launch and host->device overhead. Projecting
+from this fit would bake a 78x implementation inefficiency into its dominant term.
+
+Next: batch encodes across commitments, re-fit, then consider production geometry.
+
+
+---
+
+## iter26 — commit sweep: my batching hypothesis was wrong
+
+Analyst pushed back correctly on iter25: the regression gives one end-to-end
+number and does NOT decompose into launch / H2D / sync / occupancy / allocation /
+hashing, so "batch the encodes and it approaches 0.006 ns" was a hypothesis I had
+written as a cause. Also correctly: 1586.73 ns*C is not "a price per row" -- it is
+everything linear in C; a true per-row term would be b_row*(C/ELL). Both fixed in
+the doc.
+
+Ran the experiment they specified: C and N fixed, only the number of CUDA calls
+varied, per-stage CUDA events, median/p95 after warm-up rather than best-of-five.
+
+    rows/call    wall ms    h2d  matmul   hash   d2h   ns/slot-pos   kernel-only
+            8      378.1  225.3   100.3   19.9  10.7        0.0440        0.0117
+           32      279.6  208.4    57.0    5.5   2.9        0.0325        0.0066
+          256      256.0  201.4    51.9    1.4   0.4        0.0298        0.0060
+         2048      254.3  203.4    49.7    0.9   0.1        0.0296        0.0058
+
+**Batching buys 1.5x and saturates by ~256 rows/call. Not 78x. Hypothesis dead.**
+
+What the stages say instead: H2D is 80% of this path (Python lists shipped to the
+device every time), gl_matmul is 20% and runs at 0.0058 ns/slot-position -- i.e.
+AT the isolated-kernel rate, so the kernel was never the problem.
+
+And the finding that matters: the whole encode+commit path costs 0.0294
+ns/slot-position while the full-prover fit attributed 0.469 to C*N -- 16x more. So
+most of that coefficient is not this path. Either something else in the prover
+scales like C*N, or the 3-parameter fit on 7 points is absorbing differently
+shaped work. Unknown, and the next step is to instrument the PROVER per stage with
+the same events -- not to propose a third story.
+
+Twice now a plausible performance narrative of mine has been wrong and the
+measurement has been right. Stop narrating, keep instrumenting.
+
+---
+
+## iter27 — the forward pass moved to the device; the wall moved to the prover
+
+The task named in HANDOFF.md §3: tensorise `semantics.py`, with a bit-exactness
+step that was not to be skipped. Done, and the gate is stronger than the one the
+handoff asked for.
+
+**The gate.** Three levels: the traces compare equal field by field (every matmul
+operand, every gate term in order, every lookup query); `check_trace` -- which
+shares no arithmetic with either path -- accepts both; and the two traces produce
+a BYTE-IDENTICAL proof. The third subsumes the first but says nothing about WHERE
+a mismatch is, so all three run, in `tests/test_semantics.py` (6 tests) and
+`bench/validate_semantics.py` (5 shapes). Suite: 83 -> 90 green.
+
+Both paths are fed the same weights via `LayerWeights`, drawn on the device and
+converted down. Deliberately not the same seed: equal seeds only give equal
+weights while both implementations consume the RNG stream identically, which is
+exactly the assumption a validation is supposed to test rather than rely on.
+
+**Measured.** 10.8x at d=128 rising to 127x at d=512; d=4096/d_ff=8192 completes
+in 0.24 s, which the Python path cannot do at all.
+
+**I got the first reading of my own ladder wrong.** Version one drew weights in
+Python and handed lists to the tensor path: 4.5 s at d=1024, 19.2 s at d=2048.
+Both were marshalling, not arithmetic. With the weights already resident: 0.07 s
+and 0.15 s. That is 4.9.8's lesson for the fourth time -- the thing that looks
+like the cost is the data movement -- and the profile said so in one run.
+
+**Two limits, both now measured rather than assumed.**
+
+* Memory, not time, is what stops the forward pass: 13.9 GB at d=4096/E=8, OOM at
+  d=5120/E=16 on a 32 GB card. The resident term is `3*E*d*d_ff` int64 of expert
+  weights, i.e. the model's Theta(E) and Theta(d^2) appearing as an allocation.
+* The int64 representation needs every TRUE value below 2^63 (the Python path
+  divides raw accumulators by the scale, which is only the same operation while
+  nothing has wrapped). Headroom: 32 bits at d=128 down to 6 bits at d=4096,
+  because the toy's values grow by ~n_in per matmul. The guard fires with the
+  node and the arithmetic shown, and a test makes it fire -- an unexercised guard
+  is not a guard.
+
+**A real bug found en route.** The batched NTT kernels use one block-row per
+message and a CUDA grid dimension is capped at 65535, so an encode past that
+fails outright: 65535 rows encode, 65536 raises `invalid configuration argument`.
+LogUp commits one RS row per lookup QUERY, so this bites at about d=256, S=8 --
+inside the range this prototype is meant to run, and the reason the pipeline
+ladder had never got past d=128. Now chunked, with a bit-identical test.
+
+**What this did NOT unlock, stated plainly.** Whole pipeline at ELL=1024/N=4096:
+
+    d    S   E   forward   to_python    prove   verify   forward share
+  128    8   4      0.03        0.32    18.39    11.40          0.10%
+  256    8   4      0.02        0.29    27.59    12.21          0.05%
+
+The forward pass is now a rounding error in its own pipeline. `Enrollment.enroll`
+keys weights by content as a tuple-of-tuples; `relations.prove_batch` pads every
+gate factor into a Python list; `logup.LogUp` builds a membership dict over every
+query; `moe.source_records` makes one object per (token, coordinate) and the lane
+loop is O(n_in^2 * S). Those are the prover, and they are next. A production-width
+number is bounded by them, not by semantics -- so there still is not one.
