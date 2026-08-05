@@ -142,7 +142,14 @@ def _rho_key(c, rho) -> tuple:
     return (id(c), digest)
 
 
-def _project_weights(c: RoutedProjectedMatmulClaim, witness, rho) -> torch.Tensor:
+def _resolve(live, var):
+    """Read ONE shard, resolving its loader. Deliberately not cached: the
+    caller drops the tensor before touching the next expert."""
+    val = live[var]
+    return val() if callable(val) else val
+
+
+def _project_weights(c: RoutedProjectedMatmulClaim, live, rho) -> torch.Tensor:
     """P[e,k] = sum_j W[e,k,j] rho_j, one expert shard at a time."""
     key = _rho_key(c, rho)
     hit = _P_CACHE.get(key)
@@ -153,14 +160,17 @@ def _project_weights(c: RoutedProjectedMatmulClaim, witness, rho) -> torch.Tenso
     rho_t = _vec(rho).view(c.J, 1)
     out = torch.empty(c.E * c.K, dtype=torch.uint64, device="cuda")
     for e, w_var in enumerate(c.W):
-        w_e = witness[w_var].reshape(c.K, c.J)
+        w_e = _resolve(live, w_var).reshape(c.K, c.J)
         out[e * c.K:(e + 1) * c.K] = gl_matmul(w_e, rho_t).reshape(-1)
+        del w_e
     _P_CACHE[key] = out
     return out
 
 
 def routed_aux(c: RoutedProjectedMatmulClaim, witness, rho) -> dict:
-    """Phase-2 rows."""
+    """Phase-2 rows. The projection is normally already in the cache: the same
+    sweep's witness pass computed it while each shard was resident (see
+    routed_compute), so no expert is read twice per epoch."""
     rho_t = _vec(rho).view(c.J, 1)
     Pj = _project_weights(c, witness, rho)                     # (E*K,)
     M = witness[c.M].reshape(c.T, c.E)
@@ -267,25 +277,45 @@ def routed_compile(c: RoutedProjectedMatmulClaim, rho, cfg: LigeroConfig,
 
 
 # ------------------------------------------------------------------ witness
-def routed_compute(c: RoutedProjectedMatmulClaim, live) -> dict:
+def routed_compute(c: RoutedProjectedMatmulClaim, live, rho=None) -> dict:
     """The raw routed output, executed ACTIVE-ONLY: one expert at a time, and
     for each expert only the tokens routed to it. No all-expert output tensor
     is ever allocated — that is the structural requirement in
-    demo/4h-production-runbook.md, not just an optimisation."""
+    demo/4h-production-runbook.md, not just an optimisation.
+
+    `live` arrives with its loaders UNRESOLVED (core.STREAMING_INPUT_CLAIMS):
+    exactly one expert shard is in memory at a time, which is what makes a
+    128-expert Maverick matrix (~43 GB) fit at all.
+
+    When `rho` is given (every sweep from R2 on), the SAME resident shard also
+    contributes its slice of P = W*rho, so the projection costs no extra read
+    or decode of the enrolled weights."""
     T, K, J, E = c.T, c.K, c.J, c.E
-    X = live[c.X].reshape(T, K)
-    M = live[c.M].reshape(T, E).view(torch.int64)
+    X = _resolve(live, c.X).reshape(T, K)
+    M = _resolve(live, c.M).reshape(T, E).view(torch.int64)
     routes = M.argmax(dim=1)
+    fuse_projection = rho is not None and _rho_key(c, rho) not in _P_CACHE
+    if fuse_projection:
+        P_CACHE_STATS["misses"] += 1
+        rho_t = _vec(rho).view(J, 1)
+        proj = torch.empty(E * K, dtype=torch.uint64, device="cuda")
     # int64 view for the scatter: torch has no index_put for uint64, and the
     # values are field elements either way — the view is a reinterpretation,
     # not a conversion.
     Y = torch.zeros((T, J), dtype=torch.int64, device="cuda")
     for e in range(E):
         idx = (routes == e).nonzero(as_tuple=True)[0]
-        if idx.numel() == 0:
-            continue
-        Y[idx] = gl_matmul(X.index_select(0, idx).contiguous(),
-                           live[c.W[e]].reshape(K, J)).view(torch.int64)
+        if idx.numel() == 0 and not fuse_projection:
+            continue                       # shard never touched: no load at all
+        w_e = _resolve(live, c.W[e]).reshape(K, J)
+        if idx.numel():
+            Y[idx] = gl_matmul(X.index_select(0, idx).contiguous(),
+                               w_e).view(torch.int64)
+        if fuse_projection:
+            proj[e * K:(e + 1) * K] = gl_matmul(w_e, rho_t).reshape(-1)
+        del w_e                            # released before the next shard
+    if fuse_projection:
+        _P_CACHE[_rho_key(c, rho)] = proj
     return {c.Y: Y.view(torch.uint64).reshape(-1)}
 
 
@@ -314,7 +344,11 @@ def routed_projected_matmul(tape, x, m_routes, w_experts, *, T, K, J, E):
         X=x.var, Y=Y, M=m_routes.var, W=w_vars,
         Pj=Pj, Qm=Qm, Hd=Hd, yr=yr, f_y=f_y, f_u=f_u, f_p=f_p,
         T=T, K=K, J=J, E=E)
-    outs = tape._process_claim(claim, [x.var, m_routes.var, *w_vars])
+    # The expert shards are NOT declared as claim inputs: the generic sweep
+    # pre-fetches every input_var, which for 128 Maverick shards is ~43 GB in
+    # one go. They are claim fields (so they are laid out, compiled and
+    # emitted), and the compute/aux resolve them one at a time.
+    outs = tape._process_claim(claim, [x.var, m_routes.var])
     tape.claims.append(claim)
     from tape import WitnessTensor
     return WitnessTensor(outs[Y] if outs else None, Y, (T, J), tape)
@@ -323,6 +357,7 @@ def routed_projected_matmul(tape, x, m_routes, w_experts, *, T, K, J, E):
 import core as _core                          # noqa: E402  (registry wiring)
 if clear_p_cache not in _core.PROVE_START_HOOKS:
     _core.PROVE_START_HOOKS.append(clear_p_cache)
+_core.STREAMING_INPUT_CLAIMS.add(RoutedProjectedMatmulClaim)
 
 SAMPLE_FNS[RoutedProjectedMatmulClaim] = routed_sample
 AUX_FNS[RoutedProjectedMatmulClaim] = routed_aux

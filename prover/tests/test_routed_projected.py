@@ -86,8 +86,8 @@ def test_wrong_output_rejects():
     import compute_fns as cf
     real = cf.COMPUTE_FNS[RoutedProjectedMatmulClaim]
 
-    def lying(claim, live):
-        out = real(claim, live)
+    def lying(claim, live, rho=None):
+        out = real(claim, live, rho)
         out[claim.Y] = (out[claim.Y].view(torch.int64) + 1).view(torch.uint64)
         return out
 
@@ -117,14 +117,16 @@ def test_route_not_matching_the_output_rejects():
     Everything else stays consistent, so only the late Q = M*P check sees it —
     precisely the relation the fifth transcript message exists for."""
     def lying_router(real):
-        def f(claim, live):
+        def f(claim, live, rho=None):
             from cuda_primitives import gl_matmul
-            M = live[claim.M].reshape(claim.T, claim.E).view(torch.int64)
-            X = live[claim.X].reshape(claim.T, claim.K)
+            from routed_projected import _resolve
+            M = _resolve(live, claim.M).reshape(claim.T, claim.E).view(torch.int64)
+            X = _resolve(live, claim.X).reshape(claim.T, claim.K)
             routes = (M.argmax(dim=1) + 1) % claim.E          # wrong expert
             Y = torch.zeros((claim.T, claim.J), dtype=torch.int64, device="cuda")
             for t_i in range(claim.T):
-                w_e = live[claim.W[int(routes[t_i])]].reshape(claim.K, claim.J)
+                w_e = _resolve(live, claim.W[int(routes[t_i])]).reshape(
+                    claim.K, claim.J)
                 Y[t_i] = gl_matmul(X[t_i:t_i + 1].contiguous(),
                                    w_e).view(torch.int64)[0]
             return {claim.Y: Y.view(torch.uint64).reshape(-1)}

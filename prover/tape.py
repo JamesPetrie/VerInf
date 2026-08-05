@@ -262,6 +262,7 @@ def _signed_floor_decomp(c_full_data, k_resc: int, output_width: int):
                                   c_shifted_i,
                                   c_shifted_i - FIELD_GAP).view(torch.uint64)
     return c_rescaled_fld, c_low_fld, c_shifted_fld
+import core as _core
 from core import Variable, LigeroConfig, Table
 from claims import (
     matmul_claim, AddClaim, HadamardClaim,
@@ -1326,6 +1327,11 @@ class Tape:
             if fold.is_fold(claim):
                 input_data = {}
                 outs = fold.finalize(claim, live)
+            elif type(claim) in _core.STREAMING_INPUT_CLAIMS:
+                # Streams its own shards; must not be pre-fetched (see
+                # core.STREAMING_INPUT_CLAIMS). No challenge in an engine pass.
+                input_data = {}
+                outs = _compute_fns.COMPUTE_FNS[type(claim)](claim, live, None)
             else:
                 input_data = {v: fetch(v) for v in input_vars}
                 outs = _compute_fns.COMPUTE_FNS[type(claim)](claim, input_data)

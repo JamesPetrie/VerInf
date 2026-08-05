@@ -142,7 +142,31 @@ carried.  The full 400B proof is not started until every stage below is DONE and
       Not yet done here: wiring this block into `demo_maverick_full.py` itself
       and the GGUF per-shard loader — that lands with the driver work in S4,
       where it can be exercised end to end.
-- [ ] **S4 — driver: enrollment, policy, streaming proof.**
+- [x] **S4a — shard streaming, fused projection, no sink-less encodes.**
+      Three review findings, all reproduced before they were fixed:
+      (a) the routed claim declared its 128 expert shards as claim INPUTS, and
+      the generic sweep pre-fetches every input — ~43 GB in one go for one
+      Maverick matrix.  The shards are now claim FIELDS only
+      (`core.STREAMING_INPUT_CLAIMS`); compute and aux get the raw `live` map
+      with loaders unresolved and release each shard before the next.  The
+      caching `_LazyResolvingDict` is bypassed for these claims for the same
+      reason.
+      (b) `_iter_message_chunks` kept the previous variable alive while the
+      next loaded (a `carry` VIEW into the old tensor, plus plain rebinding
+      evaluating the new loader before dropping the old value) — measured peak
+      of 2 resident shards, now 1.
+      (c) `_stream_phase` encoded rows even when every sink was None, so a
+      REFERENCED weight commitment still paid a full RS pass over the enrolled
+      model in R1 (402.7G slots, ~3625 s at the model's own rate).  It now
+      returns immediately.
+      Also fused: the sweep that projects reads each shard once and computes
+      both the active output and its slice of `P = W*rho`.
+      Gate PASSED: `tests/test_shard_streaming.py` 4/4 with 128 lazy loaders —
+      peak resident shards = 1; exactly 5 semantic sweeps, 1 projection, 4
+      cache hits, Rust ACCEPT; fusing saves exactly E shard loads (one whole
+      weight pass); referencing an enrolled commitment saves exactly `m_w`
+      encoded rows.  Full suite green.
+- [ ] **S4b — driver: enrollment, policy, streaming proof.**
       `--enroll-weights`, `--weight-commitment`, `--expected-weight-root`,
       `--public-sz`, `--admission-report`; drop the hidden pre-proof reveal
       pass; `verify_proof` takes the trusted weight root and statement digest as

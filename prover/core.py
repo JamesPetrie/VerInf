@@ -420,6 +420,7 @@ def _iter_message_chunks(vars_list: List[Variable],
     ELL = cfg.ELL
     carry = None                          # (k, ELL) leftover rows, k < chunk_size, or None
     abs_offset = row_offset_start
+    padded = None
     for v in vars_list:
         data = _to_device_u64(_fetch(inputs, v)).reshape(-1)
         v_len = data.numel()
@@ -443,7 +444,16 @@ def _iter_message_chunks(vars_list: List[Variable],
             abs_offset += chunk_size
             pos += chunk_size
         if pos < n:
-            carry = rows_v[pos:]
+            # .clone(), not a view: a view keeps the WHOLE source variable
+            # alive until the next chunk boundary, so the previous expert
+            # shard would still be resident while the next one loads (~336 MB
+            # each at Maverick shapes, and the routed claim walks 128 of
+            # them). The copy is at most one partial chunk.
+            carry = rows_v[pos:].clone()
+        # Drop this variable's tensors BEFORE the next iteration resolves the
+        # next one: plain rebinding evaluates the new loader while the old
+        # tensor is still bound, which means two shards resident at the peak.
+        data = rows_v = padded = None
     if carry is not None and carry.shape[0] > 0:
         yield abs_offset, carry.clone()
 
@@ -1034,6 +1044,14 @@ def _stream_phase(
     Caller-owned accumulators are not included; caller finalises them.
     """
     out: Dict[str, Any] = {}
+    # No sink: nothing to compute. This is the referenced-weight case (a
+    # persistent commitment supplies root and paths, so R1 has no merkle
+    # accumulator for the W block) — encoding it anyway would cost a full
+    # RS pass over every weight slot, 402.7G slots at Maverick scale, for
+    # output nobody reads.
+    if (merkle_acc is None and q_irs_acc is None and q_lin_acc is None
+            and columns_at is None):
+        return out
 
     col_buf: Optional[Dict[int, List[torch.Tensor]]] = None
     Q_set: Optional[torch.Tensor] = None
@@ -2008,6 +2026,13 @@ LATE_AUX_FNS: Dict[Type, Callable] = {}
 # outside core (currently the routed claim's challenge-keyed projection cache).
 # A hook must only DROP state: nothing here may affect what is proved.
 PROVE_START_HOOKS: List[Callable] = []
+# Claim types whose compute/aux resolve their OWN inputs, one shard at a time.
+# The sweep must not pre-fetch their inputs and must not hand them a caching
+# view: a routed MoE matmul references 128 expert shards (~43 GB for one
+# Maverick matrix), so materializing them together is an OOM, not a slowdown.
+# Their compute takes (claim, live, ch) — `live` still holds unresolved
+# loaders — and is responsible for releasing each shard before the next.
+STREAMING_INPUT_CLAIMS: set = set()
 
 
 # Set True by the streaming provers around _compile_with_chs. They DISCARD the
@@ -2684,6 +2709,14 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
                 input_data = {}
                 with _phase('witness'):
                     outs = fold.finalize(claim, live)
+            elif type(claim) in STREAMING_INPUT_CLAIMS:
+                # Shard-streaming claim: hand it the raw live map (loaders
+                # unresolved) and the round's op challenge, so one pass over a
+                # shard can serve both the semantic output and the projection.
+                input_data = {}
+                with _phase('witness'):
+                    outs = _cf.COMPUTE_FNS[type(claim)](
+                        claim, live, ch0[i] if (want_aux and ch0) else None)
             else:
                 input_data = {v: fetch(v) for v in input_vars}
                 _spill = witness_cache.get('_spill') if witness_cache else False
@@ -2732,11 +2765,14 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
                 if i < n_ops and fold.is_fold(claim):
                     live.update(fold.aux_finalize(claim, live, ch0[i]))
                 else:
-                    live.update(AUX_FNS[type(claim)](claim, _LazyResolvingDict(live), ch0[i]))
+                    _wit = (live if type(claim) in STREAMING_INPUT_CLAIMS
+                            else _LazyResolvingDict(live))
+                    live.update(AUX_FNS[type(claim)](claim, _wit, ch0[i]))
                 # Late (phase-3) aux: only once the R2 coin exists.
                 if ch1 is not None and type(claim) in LATE_AUX_FNS:
-                    live.update(LATE_AUX_FNS[type(claim)](
-                        claim, _LazyResolvingDict(live), ch1[i]))
+                    _wit_l = (live if type(claim) in STREAMING_INPUT_CLAIMS
+                              else _LazyResolvingDict(live))
+                    live.update(LATE_AUX_FNS[type(claim)](claim, _wit_l, ch1[i]))
         own_quads = None
         if use_pk:
             with _phase('compile'):
