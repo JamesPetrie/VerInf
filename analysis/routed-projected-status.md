@@ -283,6 +283,30 @@ carried.  The full 400B proof is not started until every stage below is DONE and
       (b",".join of %d: 38.5 MB/s; numpy.savetxt: 14.9 MB/s).
       So on THIS box the 4-hour envelope does not close, and the two failing
       stages are known before any money is spent.
+      MEASURED on a rented RTX A6000 (vast, $0.404/h, 654 s total = $0.07,
+      instance destroyed and confirmed gone). All 12 gate suites passed on the
+      rented card (`gate_failures: 0`), so nothing in the build is
+      V100-specific.
+
+      | stage | V100 | A6000 | cap | A6000 verdict |
+      |---|---|---|---|---|
+      | fresh_commit_fold | 491.6 | 428.4 | 950 | ok |
+      | quadratic | 821.7 | 800.2 | 765 | **OVER 1.05x** |
+      | fresh_hash_coef | 32.7 | 29.8 | 140 | ok |
+      | persistent_open | 94.1 | 68.7 | 1812 | ok |
+      | fresh_open | 23.4 | 17.1 | 450 | ok |
+      | proof_egress | 2114 | 979.8 | 879.6 | **OVER 1.11x** |
+
+      Rates: encode 4.28 ns/slot, hash 0.30, open 0.17, quad 17.78 ns/product,
+      egress 97.0 MB/s.
+
+      The finding: BOTH stages that fail on the dev box still fail on a modern
+      card, by 5% and 11%. The kernels are bandwidth-bound and the A6000
+      (768 GB/s GDDR6) is not a step up from a V100 SXM3 on that axis — encode
+      moved only 4.92 -> 4.28 ns/slot. So the 4-hour envelope does not close on
+      either card measured so far, and the gap is small enough that it is a
+      real engineering question (a much higher-bandwidth card, a faster
+      quad kernel, or caps that need restating), not a rounding error.
 - [ ] **S5b — the model-dependent stages, on the rented card.**
       Benchmarks the exact production loop bodies (no random matrices, no
       isolated modmul), >=30 runs, simultaneous >=99% upper bounds, writes

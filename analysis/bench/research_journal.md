@@ -1331,3 +1331,48 @@ gate factor into a Python list; `logup.LogUp` builds a membership dict over ever
 query; `moe.source_records` makes one object per (token, coordinate) and the lane
 loop is O(n_in^2 * S). Those are the prover, and they are next. A production-width
 number is bounded by them, not by semantics -- so there still is not one.
+
+
+## S5a admission probe — production-geometry kernel rates (2026-08-05)
+
+**Lever:** none — this is a MEASUREMENT for the routed-projected admission gate
+(`analysis/routed_projected_4h_model.py`), not an optimization A/B.
+
+**Question:** at the target geometry (ELL=8192, K_DEG=16384, N_LIG=65536,
+T_QUERIES=54), which admission stages does real hardware actually meet?
+
+**Method:** `analysis/bench/admission_bench.py`, 30 runs/stage, bound =
+max(observed max, mean+3sd). Per-slot rate x the row capacity the model prices.
+`model_load` and the five semantic sweeps are NOT measured (they need real GGUF
+shards; the runbook forbids random-weight substitutes), so the emitted report is
+incomplete and the gate refuses it by design.
+
+**Measured**
+
+| stage | V100-SXM3-32GB | RTX A6000 (vast) | cap |
+|---|---|---|---|
+| fresh_commit_fold | 491.6 s | 428.4 s | 950 |
+| quadratic | 821.7 s | 800.2 s | 765 |
+| fresh_hash_coef | 32.7 s | 29.8 s | 140 |
+| persistent_open | 94.1 s | 68.7 s | 1812 |
+| fresh_open | 23.4 s | 17.1 s | 450 |
+| proof_egress | 2114 s | 979.8 s | 879.6 |
+
+Rates — V100: encode 4.92 ns/slot, hash 0.33, open 0.23, quad 18.28
+ns/product, egress 44.9 MB/s. A6000: 4.28 / 0.30 / 0.17 / 17.78 / 97.0 MB/s.
+
+**Result:** `quadratic` and `proof_egress` miss on BOTH cards (A6000: 1.05x and
+1.11x over). The kernels are bandwidth-bound and the A6000 is not a step up
+from a V100 SXM3 on memory bandwidth, so the card change bought ~13% on encode
+and nothing decisive. The 4-hour envelope does not close on either machine.
+
+**Side result:** the proof writer's chunk rendering moved from a Python
+`",".join(str(v) ...)` to `json.dumps` (the C encoder). Output byte-identical
+(checked on 2.5M values); single-run 47 -> 79 MB/s on the V100 box, but the
+p99 bound only 42.0 -> 44.9 because I/O variance dominates on 4 vCPU. On the
+A6000 box the same code bounds at 97 MB/s. Byte-level alternatives were slower
+(b",".join of %d: 38.5 MB/s; numpy.savetxt: 14.9).
+
+**Gates on the rented card:** all 12 suites passed (`gate_failures: 0`).
+
+**Cost:** $0.07 (654 s at $0.404/h). Instance destroyed; API shows 0 instances.
