@@ -68,14 +68,25 @@ carried.  The full 400B proof is not started until every stage below is DONE and
       test_reveal 2/2, test_empty_root_sentinel 1/1 unchanged.
       (`tests/test_multirow.py` fails on `pr._emit_id` — pre-existing, it calls
       the retired Python compile; verified broken before this work too.)
-- [ ] **S1b — fifth message: `s_bind` + the `p3` witness phase.**
-      Adds a third witness phase to `_layout`/`_claim_var_groups`/
-      `_stream_sweep`, a `p3` block/tree, the fifth sweep, and the fourth coin
-      `s_bind = H(s_op || root_p2)` with `s_comb = H(s_bind || root_p3)`.
-      This is what makes the prover's five witness regenerations the ones the
-      admission model charges.
-      Gate: toy ACCEPT; a test that `s_bind` cannot exist before the R2 root;
-      tamper tests on the p3 block.
+- [x] **S1b — fifth message: `s_bind` + the `p3` witness phase.**
+      Third witness epoch through `_layout` / `_claim_var_groups` /
+      `_stream_sweep` / `_stream_setup`, its own Merkle tree and `p3` block, a
+      fifth sweep, and the coins `s_bind = H(s_op || root_p2)`,
+      `s_comb = H(s_bind || root_p3)`.  Claims opt in through the new
+      `LATE_SAMPLE_FNS` / `LATE_AUX_FNS` registries; a sweep without `ch1`
+      cannot emit a phase-3 row at all, so no value can depend on a coin the
+      prover has not seen.  A tape with no late-stage claim still frames R3
+      with `EMPTY_COMMIT_ROOT`, so dropping the message changes the transcript.
+      p_0's row map and the quad-ref hardening cover p3 rows.
+      Gate PASSED: `tests/test_phase3_block.py` 5/5 (p3 commits, opens and
+      Rust-ACCEPTs; the transcript really is `s_op -> s_bind(root_p2) ->
+      s_comb(root_p3) -> s_col`; empty-p3 framing; tampered p3 column REJECT;
+      dropped R3 message REJECT), with test_claims 21/21, test_fiat_shamir
+      6/6, test_routing_claim 19/19, persistent-weights 3+3+3, test_reveal
+      2/2, test_empty_root_sentinel 1/1 unchanged.
+      Note: that suite exercises the BLOCK (an ordinary matmul with its
+      Freivalds aux moved to phase 3), not a late-sampled relation — the first
+      real `LATE_SAMPLE_FNS` user, with its own soundness tests, is S2.
 - [ ] **S2 — `RoutedProjectedMatmulClaim` + standalone `RescaleClaim`.**
       Python claim (sample/aux/compile) + Rust handler, relations `P=W rho`,
       `H=X*Q`, `yr=Y rho`, `sum_k H = yr`, late Freivalds `sum_e f_p =

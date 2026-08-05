@@ -47,10 +47,22 @@ pub fn s_op(stmt_digest: &[u8; 32], block_order_r1: &[String], roots_r1: &[[u8; 
     fs_seed("s_op", &items)
 }
 
-/// Coin after R2 (the phase-2 commitment).
-pub fn s_comb(s_op: &[u8; 32], root_p2: &[u8; 32]) -> [u8; 32] {
-    fs_seed("s_comb", &[s_op, root_p2])
+/// Coin after R2 (the phase-2 commitment): the LATE challenges of the
+/// routed-projected Freivalds check, which must not exist before P and Q are
+/// committed.
+pub fn s_bind(s_op: &[u8; 32], root_p2: &[u8; 32]) -> [u8; 32] {
+    fs_seed("s_bind", &[s_op, root_p2])
 }
+
+/// Coin after R3 (the phase-3 commitment). A proof with no phase-3 block still
+/// frames the round with the all-zero empty-commit root, so dropping a message
+/// changes the transcript.
+pub fn s_comb(s_bind: &[u8; 32], root_p3: &[u8; 32]) -> [u8; 32] {
+    fs_seed("s_comb", &[s_bind, root_p3])
+}
+
+/// The empty-commitment sentinel (protocol.EMPTY_COMMIT_ROOT).
+pub const EMPTY_COMMIT_ROOT: [u8; 32] = [0u8; 32];
 
 /// Coin after the test polynomials — the column challenge. The polynomials are
 /// framed as little-endian u64 vectors, the same bytes the prover hashed.

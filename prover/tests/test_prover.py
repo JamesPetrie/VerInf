@@ -37,7 +37,7 @@ def _sample_test_challenges(claims: List, cfg: LigeroConfig, seed: bytes):
     challenges (Freivalds ρ,λ / LogUp α,β), ch1 = (r_irs, r_lin, r_quad) test
     combiners, ch2 = opened columns Q."""
     claims = _with_synthesized_settlements(claims)
-    _, _, _, _, m_total, _, _, _, _ = _layout(claims, cfg)
+    _, _, _, _, _, _, m_total, _, _, _, _ = _layout(claims, cfg)
     s_op, s_comb, s_col = pr.round_seeds(seed)
     ch0 = _sample_chs(claims, s_op)
     _, quads, _, n_lin = _compile_with_chs(claims, ch0, cfg, m_total)
@@ -84,7 +84,7 @@ def prove(claims, inputs, cfg, ch0=None, ch1=None, ch2=None,
     plog = _PhaseLogger("prove", verbose); plog.log("entry")
 
     claims = _with_synthesized_settlements(claims)
-    _, p1_vars, p2_vars, m_p1_rows, m_total, _, _, _, _ = _layout(claims, cfg)
+    _, p1_vars, p2_vars, _p3, m_p1_rows, _m_p2, m_total, _, _, _, _ = _layout(claims, cfg)
 
     # Test-mode shortcut: derive challenges + flip returnEverything.
     if seed is not None:

@@ -219,9 +219,19 @@ def fs_s_op(stmt_digest: bytes, block_order: List[str], roots_r1: List[bytes]) -
     return fs_seed("s_op", stmt_digest, ",".join(block_order), *roots_r1)
 
 
-def fs_s_comb(s_op: bytes, root_p2: bytes) -> bytes:
-    """Coin after R2 (phase-2 commitment)."""
-    return fs_seed("s_comb", s_op, root_p2)
+def fs_s_bind(s_op: bytes, root_p2: bytes) -> bytes:
+    """Coin after R2 (phase-2 commitment) — the LATE challenges (sigma, lambda
+    of the routed-projected Freivalds check). Sampling it here, and not with
+    s_op, is the whole point of the fifth message: Q = M·P has two inputs that
+    were not both fixed in R1."""
+    return fs_seed("s_bind", s_op, root_p2)
+
+
+def fs_s_comb(s_bind: bytes, root_p3: bytes) -> bytes:
+    """Coin after R3 (phase-3 commitment). A tape with no late-stage claim
+    still frames the round, with EMPTY_COMMIT_ROOT as root_p3, so a proof
+    cannot silently drop a message from the transcript."""
+    return fs_seed("s_comb", s_bind, root_p3)
 
 
 def fs_s_col(s_comb: bytes, q_irs, q_lin, p_0) -> bytes:

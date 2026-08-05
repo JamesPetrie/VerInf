@@ -65,10 +65,14 @@ import protocol as pr   # shared challenge PRF / domains / column sampler (no to
 class Variable:
     """A named contiguous block of witness slots.
 
-    `phase` is 1 (committed before challenges) or 2 (after). `row_start`
-    is assigned by the framework when prove/verify is called — variables
-    are laid out phase 1 first, then phase 2, in declaration order, with
-    each variable taking n_rows(ELL) = ceil(length/ELL) rows.
+    `phase` is the commitment epoch a variable belongs to:
+      1 — committed in R1, before any challenge exists;
+      2 — committed in R2, may depend on the R1 coin s_op;
+      3 — committed in R3, may depend on the R2 coin s_bind (the late
+          Freivalds auxiliaries of the routed-projected matmul live here).
+    `row_start` is assigned by the framework when prove/verify is called —
+    variables are laid out phase 1 first, then 2, then 3, in declaration
+    order, with each variable taking n_rows(ELL) = ceil(length/ELL) rows.
 
     eq=False so identity-based equality/hash hold: two Variables are
     distinct unless they're the same Python object, which lets us use
@@ -874,7 +878,8 @@ def commit_weights(tape, cfg: LigeroConfig, master_seed: bytes = MASTER_SEED):
     tree. (A weight committed but never referenced by a claim is not in the
     proof's witness, so it is excluded here too.)"""
     claims = _with_synthesized_settlements(tape.claims)
-    _all, _p1, _p2, _m_p1, _m_total, weight_vars, m_w, _wn, _m_wn = _layout(claims, cfg)
+    (_all, _p1, _p2, _p3, _m_p1, _m_p2, _m_total,
+     weight_vars, m_w, _wn, _m_wn) = _layout(claims, cfg)
     master_seed_t = _master_seed_to_cuda(master_seed)
     acc = _make_merkle_acc(cfg.N_LIG, m_w) if m_w else None
     if acc is not None:
@@ -1945,6 +1950,11 @@ class Proof:
     root_blind:   Optional[bytes] = None
     opened_blind: Dict[int, torch.Tensor] = field(default_factory=dict)
     paths_blind:  Dict[int, List[Tuple[bytes, int]]] = field(default_factory=dict)
+    # Phase-3 block: the late auxiliaries committed in R3, after the coin
+    # s_bind. None when no claim on the tape has a late stage.
+    root_p3:    Optional[bytes] = None
+    opened_p3:  Dict[int, torch.Tensor] = field(default_factory=dict)
+    paths_p3:   Dict[int, List[Tuple[bytes, int]]] = field(default_factory=dict)
     blocks:       Optional[List[str]] = None
     # Sequential Fiat-Shamir transcript (S1). `seeds` are the coins the prover
     # DERIVED (never chose): the verifier recomputes each one from the same
@@ -1971,6 +1981,13 @@ def _u64_le_bytes(t: torch.Tensor) -> bytes:
 SAMPLE_FNS: Dict[Type, Callable] = {}
 # Per-claim auxiliary-witness computer: (claim, witness, challenge) → dict.
 AUX_FNS: Dict[Type, Callable] = {}
+# LATE (phase-3) counterparts, for claims that need a second, independent coin
+# sampled AFTER their phase-2 rows are committed — the routed-projected
+# matmul's Freivalds check of Q = M·P is the reason these exist. A claim
+# registers here only if it owns phase-3 variables; every other claim is
+# untouched and its transcript position is unchanged.
+LATE_SAMPLE_FNS: Dict[Type, Callable] = {}
+LATE_AUX_FNS: Dict[Type, Callable] = {}
 
 
 # Set True by the streaming provers around _compile_with_chs. They DISCARD the
@@ -2022,6 +2039,14 @@ def _sample_chs(claims: List, s_op) -> List:
     Rust verifier use, so prover and verifier agree bit-for-bit with no challenge
     values sent. No compile work."""
     return [SAMPLE_FNS[type(c)](c, ci, s_op) for ci, c in enumerate(claims)]
+
+
+def _sample_late_chs(claims: List, s_bind) -> List:
+    """The phase-3 coins, from the R2 seed. None for claims with no late
+    stage, so the index stays the claim's position in the settled list."""
+    return [LATE_SAMPLE_FNS[type(c)](c, ci, s_bind)
+            if type(c) in LATE_SAMPLE_FNS else None
+            for ci, c in enumerate(claims)]
 
 
 def _compile_with_chs(claims: List, chs_per_claim: List, cfg: LigeroConfig,
@@ -2307,6 +2332,7 @@ def _layout(claims: List, cfg: LigeroConfig):
     wnew_vars   = [v for v in all_vars if v.phase == 1 and v.persistent and v.w_new]
     p1_vars     = [v for v in all_vars if v.phase == 1 and not v.persistent]
     p2_vars     = [v for v in all_vars if v.phase == 2]
+    p3_vars     = [v for v in all_vars if v.phase == 3]
     next_row = NUM_BLINDING_ROWS    # rows 0..NUM_BLINDING_ROWS-1 → blinding (its own tree)
     for v in weight_vars:
         v.row_start = next_row
@@ -2323,38 +2349,42 @@ def _layout(claims: List, cfg: LigeroConfig):
     for v in p2_vars:
         v.row_start = next_row
         next_row += v.n_rows(cfg.ELL)
-    return (all_vars, p1_vars, p2_vars, m_p1_rows, next_row,
+    m_p2_rows = next_row                # end of phase-2, start of phase-3
+    for v in p3_vars:
+        v.row_start = next_row
+        next_row += v.n_rows(cfg.ELL)
+    return (all_vars, p1_vars, p2_vars, p3_vars, m_p1_rows, m_p2_rows, next_row,
             weight_vars, m_w_rows, wnew_vars, m_wnew_rows)
 
 
 def _claim_var_groups(claims, cfg):
-    """Mirror _layout's var-walk, returning [(claim, p1_vars, p2_vars)] in
-    claim order with each list in row order. The streaming prover encodes a
+    """Mirror _layout's var-walk, returning [(claim, p1_vars, p2_vars, p3_vars)]
+    in claim order with each list in row order. The streaming prover encodes a
     claim's own vars right after generating them, so it needs this per-claim
     split of the (relaid-out) layout. The walk MUST match _layout exactly
     (same TableSettlement guard) or row-order != op-order and roots diverge."""
     seen = set()
     groups = []
-    def collect(v, p1, p2):
+    def collect(v, buckets):
         if isinstance(v, Variable) and id(v) not in seen:
             seen.add(id(v))
-            (p1 if v.phase == 1 else p2).append(v)
+            buckets[min(v.phase, 3) - 1].append(v)
     for c in claims:
-        p1, p2 = [], []
+        buckets = ([], [], [])
         is_settlement = isinstance(c, TableSettlement)
         for f in fields(c):
             v = getattr(c, f.name)
-            collect(v, p1, p2)
+            collect(v, buckets)
             if isinstance(v, Table):
                 if is_settlement:
-                    collect(v.mult_var, p1, p2)
-                    collect(v.w_var, p1, p2)
+                    collect(v.mult_var, buckets)
+                    collect(v.w_var, buckets)
                     for z in v.z_vars:
-                        collect(z, p1, p2)
+                        collect(z, buckets)
             elif isinstance(v, list):
                 for item in v:
-                    collect(item, p1, p2)
-        groups.append((c, p1, p2))
+                    collect(item, buckets)
+        groups.append((c, *buckets))
     return groups
 
 
@@ -2523,9 +2553,10 @@ def _disk_spill_close(wc):
 
 
 def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p1_rows,
-                  tables, ch0, *, want_aux, merkle_p1=None, merkle_p2=None, merkle_w=None,
+                  tables, ch0, *, want_aux, ch1=None, p3_vars=(), m_p2_rows=None,
+                  merkle_p1=None, merkle_p2=None, merkle_p3=None, merkle_w=None,
                   merkle_wnew=None, merkle_blind=None, q_irs=None, q_lin=None,
-                  col_p1=None, col_p2=None,
+                  col_p1=None, col_p2=None, col_p3=None,
                   col_w=None, col_wnew=None, col_blind=None, p_0=None,
                   w_pad=None, wnew_pad=None,
                   stream_pk=None, r_quad=None, p_maps=None, Q_cols=None, p1_prefix=None,
@@ -2535,6 +2566,11 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
     from `live`, freeing per op. want_aux=False does phase-1 only (the commit
     round before α exists). Fast mode calls this once with every accumulator;
     sound mode calls it once per round with the round's subset. Returns p_0.
+
+    `ch1` (the phase-3 coins, sampled after the R2 commitment) enables the LATE
+    aux stage: claims registered in LATE_AUX_FNS produce their phase-3 rows
+    only when it is present, so the R2 sweep physically cannot compute a value
+    that depends on a coin it has not seen.
 
     w_pad / wnew_pad: optional (pad_seed_tensor, logical_offset,
     block_phys_start) for the W / Wnew block's ZK padding (P5) — the block
@@ -2582,7 +2618,7 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
     # claim set; the outs-free below uses last_use (not the consumed set) so an
     # own-var operand still frees at its declaring claim rather than leaking.
     if stream_pk is not None:
-        start2var = {v.row_start: v for v in (*p1_vars, *p2_vars)}
+        start2var = {v.row_start: v for v in (*p1_vars, *p2_vars, *p3_vars)}
         for qi_claim, fams in stream_pk.quad_fams.items():
             for _b0, fam in fams:
                 for rs in (fam.x_row, fam.y_row, fam.z_row):
@@ -2610,6 +2646,10 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
                 colbuf[j].append(res['opened_columns'][j])
     do_p1 = any(x is not None for x in (merkle_p1, q_irs, q_lin, col_p1))
     do_p2 = any(x is not None for x in (merkle_p2, q_irs, q_lin, col_p2))
+    # Phase-3 rows exist only once their coin does, so a sweep without ch1
+    # emits nothing for them however its accumulators are set.
+    do_p3 = ch1 is not None and any(x is not None
+                                    for x in (merkle_p3, q_irs, q_lin, col_p3))
     # Optional periodic allocator release during the sweep (LIGERO_SWEEP_GC=N):
     # diagnostic/workaround for sustained-churn faults on unified-memory GPUs.
     _sweep_gc = int(os.environ.get("LIGERO_SWEEP_GC", "0") or "0")
@@ -2673,11 +2713,15 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
                     live.update(fold.aux_finalize(claim, live, ch0[i]))
                 else:
                     live.update(AUX_FNS[type(claim)](claim, _LazyResolvingDict(live), ch0[i]))
+                # Late (phase-3) aux: only once the R2 coin exists.
+                if ch1 is not None and type(claim) in LATE_AUX_FNS:
+                    live.update(LATE_AUX_FNS[type(claim)](
+                        claim, _LazyResolvingDict(live), ch1[i]))
         own_quads = None
         if use_pk:
             with _phase('compile'):
                 own_quads = stream_pk.compile_op(i)
-        p1g, p2g = groups[i][1], groups[i][2]
+        p1g, p2g, p3g = groups[i][1], groups[i][2], groups[i][3]
         if do_p1:
             # Split the claim's phase-1 vars — activations → p1 tree,
             # persistent weights → W tree, refreshed weights (linking proofs)
@@ -2704,11 +2748,14 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
                 emit(p1g_wn, merkle_wnew, p1g_wn[0].row_start, col_wnew, pad=wp)
         if want_aux and do_p2:
             emit(p2g, merkle_p2, p2g[0].row_start if p2g else m_p1_rows, col_p2)
+        if want_aux and do_p3:
+            emit(p3g, merkle_p3, p3g[0].row_start if p3g else m_p2_rows, col_p3)
         if want_aux and p_0 is not None and own_quads:
             with _phase('quad'):
                 idx = torch.tensor([gi for gi, _ in own_quads], dtype=torch.long, device="cuda")
                 p_0 = gl_add(p_0, compute_p_0_streaming(
-                    p1_vars, p2_vars, live, m_p1_rows, r_quad.index_select(0, idx),
+                    p1_vars, [*p2_vars, *p3_vars], live, m_p1_rows,
+                    r_quad.index_select(0, idx),
                     [qc for _, qc in own_quads], cfg, master_seed_t, maps=p_maps))
         if i < n_ops:                              # free: dead inputs / unread outputs
             for v in input_vars:
@@ -2727,6 +2774,9 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
         if want_aux:
             for v in p2g:
                 live.pop(v, None)
+            if do_p3:
+                for v in p3g:
+                    live.pop(v, None)
         # Always-on progress line: op count, % done, elapsed, and a linear-rate
         # ETA. Just a print — correctness-neutral. The verbose memory dump below
         # stays behind LIGERO_STREAM_DBG.
@@ -2781,7 +2831,7 @@ def _stream_setup(tape, cfg):
     master_seed_t = _master_seed_to_cuda(master_seed)
     claims = _with_synthesized_settlements(tape.claims)
     _m("enter")
-    (_all, p1_vars, p2_vars, m_p1_rows, m_total,
+    (_all, p1_vars, p2_vars, p3_vars, m_p1_rows, m_p2_rows, m_total,
      weight_vars, m_w_rows, wnew_vars, m_wnew_rows) = _layout(claims, cfg)
     if _os.environ.get("LIGERO_LAYOUT_BREAKDOWN"):
         import sys
@@ -2814,8 +2864,11 @@ def _stream_setup(tape, cfg):
     # Phase-1 row map covers weights, then the linking proof's Wnew block, then
     # activations (layout B row order), so a quad operand in any of them lands
     # correctly; p2 map starts at the phase-1 end.
+    # Phase 3 continues straight after phase 2, so one map covers both: p_0's
+    # row split is "< m_p1_rows" vs "the rest", and the rest is p2 then p3 in
+    # row order.
     p_maps = (_build_row_map(weight_vars + wnew_vars + p1_vars, cfg, NUM_BLINDING_ROWS),
-              _build_row_map(p2_vars, cfg, m_p1_rows))
+              _build_row_map(p2_vars + p3_vars, cfg, m_p1_rows))
     _m("row_maps")
     u_irs_msg, u_lin_msg, u_quad_msg = _make_blinding_messages(cfg, master_seed)
     u_irs_polys_K, u_irs_codes = encode_messages(
@@ -2824,15 +2877,17 @@ def _stream_setup(tape, cfg):
         torch.stack([u_lin_msg, u_quad_msg], dim=0), cfg)
     return dict(
         master_seed_t=master_seed_t, claims=claims, p1_vars=p1_vars, p2_vars=p2_vars,
-        weight_vars=weight_vars, m_w_rows=m_w_rows, wnew_vars=wnew_vars,
-        m_p1_rows=m_p1_rows, m_total=m_total, groups=groups, n_ops=n_ops,
+        p3_vars=p3_vars, weight_vars=weight_vars, m_w_rows=m_w_rows,
+        wnew_vars=wnew_vars, m_p1_rows=m_p1_rows, m_p2_rows=m_p2_rows,
+        m_total=m_total, groups=groups, n_ops=n_ops,
         p_maps=p_maps, tables=_collect_tables(claims),
         u_irs_poly=u_irs_polys_K[0], u_lin_poly=polys_2k[0], u_quad_poly=polys_2k[1],
         p1_prefix=torch.cat([u_irs_codes, codes_2k], dim=0),
         n_blind_total=NUM_BLINDING_ROWS,          # blinding is its own tree (layout B)
         n_p1_total=sum(v.n_rows(cfg.ELL) for v in p1_vars),   # activations only, no blinding
         n_w_total=m_w_rows, n_wnew_total=m_wnew_rows,
-        n_p2_total=sum(v.n_rows(cfg.ELL) for v in p2_vars))
+        n_p2_total=sum(v.n_rows(cfg.ELL) for v in p2_vars),
+        n_p3_total=sum(v.n_rows(cfg.ELL) for v in p3_vars))
 
 
 def _derive_op_challenges(claims, cfg, n_ops, s_op):
@@ -2914,9 +2969,9 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
     globals()['_SKIP_B_CHUNK'] = True
     # Coins and everything derived from them are filled in at their own round
     # below; nothing challenge-dependent may exist before R1 is committed.
-    ch0 = stream_pk = Q_cols = None
+    ch0 = ch1 = stream_pk = Q_cols = None
     q_irs_acc = q_lin_acc = None
-    col_p1 = col_p2 = None
+    col_p1 = col_p2 = col_p3 = None
 
     w_pad = None      # (pad_seed_t, logical_offset, block_phys_start) for the W /
     wnew_pad = None   # Wnew block — set below (P5 refresh / linking support).
@@ -2939,7 +2994,8 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
     def sweep(**kw):
         return _stream_sweep(tape, cfg, s['master_seed_t'], s['groups'], s['n_ops'],
                              s['p1_vars'], s['p2_vars'], s['m_p1_rows'], s['tables'],
-                             ch0, w_pad=w_pad, wnew_pad=wnew_pad,
+                             ch0, ch1=ch1, p3_vars=s['p3_vars'],
+                             m_p2_rows=s['m_p2_rows'], w_pad=w_pad, wnew_pad=wnew_pad,
                              witness_cache=witness_cache, **kw)
 
     def _p0_zero():
@@ -3039,8 +3095,21 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
     merkle_p2 = _make_merkle_acc(cfg.N_LIG, s['n_p2_total'])              # R2: commit phase-2
     sweep(want_aux=True, merkle_p2=merkle_p2)
     art_p2 = _finalize_merkle_artifact(merkle_p2)
-    # ---- coin after R2: the test combiners -------------------------------
-    s_comb = pr.fs_s_comb(s_op, art_p2.root)
+    # ---- coin after R2: the late (phase-3) challenges --------------------
+    s_bind = pr.fs_s_bind(s_op, art_p2.root)
+    has_p3 = bool(s['n_p3_total'])
+    ch1 = _sample_late_chs(s['claims'], s_bind)
+    if has_p3:                                                            # R3: commit phase-3
+        merkle_p3 = _acc(s['n_p3_total'])
+        sweep(want_aux=True, merkle_p3=merkle_p3)
+        art_p3 = _finalize_merkle_artifact(merkle_p3)
+        root_p3 = art_p3.root
+    else:
+        # No late-stage claim on this tape: R3 is the empty message, and the
+        # transcript still frames it so a proof cannot silently drop a round.
+        art_p3, root_p3 = None, pr.EMPTY_COMMIT_ROOT
+    # ---- coin after R3: the test combiners -------------------------------
+    s_comb = pr.fs_s_comb(s_bind, root_p3)
     r_irs_t, r_lin_seed, r_quad_t = _derive_test_challenges(
         s_comb, s['m_total'], stream_pk.total_quads)
     q_irs_acc = QIrsAccumulator(r_irs_t, cfg)
@@ -3062,22 +3131,29 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
     col_w = {j: [] for j in Q_cols}
     col_wnew = {j: [] for j in Q_cols}
     col_blind = {j: [] for j in Q_cols}
-    merkle_blindb = _acc(s['n_blind_total'])                            # R4: columns + paths
+    col_p3 = {j: [] for j in Q_cols}
+    merkle_blindb = _acc(s['n_blind_total'])                           # R5: columns + paths
     merkle_wb = None if wc is not None else _acc(s['n_w_total'])        #   (referenced → no rebuild)
     merkle_wnewb = _acc(s['n_wnew_total'])
     merkle_p1b = _acc(s['n_p1_total'])
     merkle_p2b = _make_merkle_acc(cfg.N_LIG, s['n_p2_total'])
+    merkle_p3b = _acc(s['n_p3_total'])
     sweep(want_aux=True, merkle_blind=merkle_blindb, merkle_w=merkle_wb,
           merkle_wnew=merkle_wnewb, merkle_p1=merkle_p1b,
-          merkle_p2=merkle_p2b, col_blind=col_blind, col_w=col_w,
-          col_wnew=col_wnew, col_p1=col_p1, col_p2=col_p2,
+          merkle_p2=merkle_p2b, merkle_p3=merkle_p3b,
+          col_blind=col_blind, col_w=col_w,
+          col_wnew=col_wnew, col_p1=col_p1, col_p2=col_p2, col_p3=col_p3,
           Q_cols=Q_cols, p1_prefix=s['p1_prefix'])
     path_art_blind = _finalize_merkle_artifact(merkle_blindb)
     path_art_p2 = _finalize_merkle_artifact(merkle_p2b)
     path_art_w = _finalize_merkle_artifact(merkle_wb) if merkle_wb is not None else None
     path_art_wnew = _finalize_merkle_artifact(merkle_wnewb) if merkle_wnewb is not None else None
     path_art_p1 = _finalize_merkle_artifact(merkle_p1b) if merkle_p1b is not None else None
+    path_art_p3 = _finalize_merkle_artifact(merkle_p3b) if merkle_p3b is not None else None
     repro = (art_blind.root == path_art_blind.root)
+    if has_p3:
+        assert path_art_p3.root == root_p3, (
+            "phase-3 tree not reproducible between R3 and the opening round")
 
     def _opened(colbuf):
         return {j: (torch.cat(colbuf[j]) if colbuf[j]
@@ -3094,9 +3170,10 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
         root_w = art_w.root if has_w else None
         paths_w = _paths(path_art_w) if has_w else {}
     peak = torch.cuda.max_memory_allocated() / 1e9
-    print(f"  [stream-sound] 4 rounds done; blind root reproducible across rounds: "
-          f"{repro}; W-block rows {s['n_w_total']}; W-ref {wc is not None}; "
-          f"Wnew rows {s['n_wnew_total']}; peak {peak:.2f} GB", flush=True)
+    print(f"  [stream-sound] {5 if has_p3 else 4} rounds done; blind root "
+          f"reproducible across rounds: {repro}; W-block rows {s['n_w_total']}; "
+          f"W-ref {wc is not None}; Wnew rows {s['n_wnew_total']}; "
+          f"p3 rows {s['n_p3_total']}; peak {peak:.2f} GB", flush=True)
     if _PHASE_ON and _PHASE_TIMES:
         _tot = sum(_PHASE_TIMES.values())
         print("  [phase] prove-time breakdown (cuda-synced buckets; shares, not "
@@ -3112,10 +3189,10 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
     globals()['_SKIP_B_CHUNK'] = False
     _disk_spill_close(witness_cache)          # delete the per-proof disk-spill file
     blocks = (["blind"] + (["w"] if has_w else []) + (["wnew"] if has_wnew else [])
-              + ["p1", "p2"])
+              + ["p1", "p2"] + (["p3"] if has_p3 else []))
     return Proof(
         q_irs=q_irs, q_lin=q_lin, p_0=p_0, blocks=blocks,
-        seeds={"s_op": s_op, "s_comb": s_comb, "s_col": s_col},
+        seeds={"s_op": s_op, "s_bind": s_bind, "s_comb": s_comb, "s_col": s_col},
         statement_digest=stmt_digest, claims_bytes=claims_bytes, Q_cols=Q_cols,
         root_blind=art_blind.root, opened_blind=_opened(col_blind), paths_blind=_paths(path_art_blind),
         root_w=root_w,
@@ -3124,7 +3201,10 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
         opened_wnew=(_opened(col_wnew) if has_wnew else {}),
         paths_wnew=(_paths(path_art_wnew) if has_wnew else {}),
         root_p1=art_p1.root, opened_p1=_opened(col_p1), paths_p1=_paths(path_art_p1),
-        root_p2=art_p2.root, opened_p2=_opened(col_p2), paths_p2=_paths(path_art_p2))
+        root_p2=art_p2.root, opened_p2=_opened(col_p2), paths_p2=_paths(path_art_p2),
+        root_p3=(root_p3 if has_p3 else None),
+        opened_p3=(_opened(col_p3) if has_p3 else {}),
+        paths_p3=(_paths(path_art_p3) if has_p3 else {}))
 
 
 class _PhaseLogger:

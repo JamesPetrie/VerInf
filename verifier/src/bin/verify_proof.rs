@@ -43,13 +43,23 @@ struct RawProof {
     #[serde(default)] root_wnew: Option<String>,
     #[serde(default)] opened_wnew: Option<HashMap<String, Vec<u64>>>,
     #[serde(default)] paths_wnew: Option<HashMap<String, Vec<(String, u8)>>>,
+    // Phase-3 block: the late auxiliaries committed in R3 (routed-projected
+    // Freivalds). Absent on proofs whose tape has no late-stage claim.
+    #[serde(default)] root_p3: Option<String>,
+    #[serde(default)] opened_p3: Option<HashMap<String, Vec<u64>>>,
+    #[serde(default)] paths_p3: Option<HashMap<String, Vec<(String, u8)>>>,
     #[serde(default)] root_blind: Option<String>,
     #[serde(default)] opened_blind: Option<HashMap<String, Vec<u64>>>,
     #[serde(default)] paths_blind: Option<HashMap<String, Vec<(String, u8)>>>,
 }
 
 #[derive(Deserialize)]
-struct RawSeeds { s_op: String, s_comb: String, s_col: String }
+struct RawSeeds {
+    s_op: String,
+    s_comb: String,
+    s_col: String,
+    #[serde(default)] s_bind: Option<String>,
+}
 
 #[derive(Deserialize)]
 struct RawTop {
@@ -136,6 +146,7 @@ fn main() {
                      Some(std::mem::take(&mut p.opened_p1)), Some(std::mem::take(&mut p.paths_p1))),
             "p2" => (Some(std::mem::take(&mut p.root_p2)),
                      Some(std::mem::take(&mut p.opened_p2)), Some(std::mem::take(&mut p.paths_p2))),
+            "p3" => (p.root_p3.take(), p.opened_p3.take(), p.paths_p3.take()),
             "w"  => (p.root_w.take(), p.opened_w.take(), p.paths_w.take()),
             "wnew" => (p.root_wnew.take(), p.opened_wnew.take(), p.paths_wnew.take()),
             "blind" => (p.root_blind.take(), p.opened_blind.take(), p.paths_blind.take()),
@@ -162,14 +173,21 @@ fn main() {
                 policy.push(("statement_digest = trusted policy digest".into(),
                              exp == stmt_recomputed));
             }
-            assert!(block_order.last().map(|b| b == "p2").unwrap_or(false),
-                    "phase-2 must be the last row block");
-            let n = block_order.len() - 1;
-            let s_op = fs::s_op(&stmt_recomputed, &block_order[..n], &roots[..n]);
-            let s_comb = fs::s_comb(&s_op, &roots[n]);
+            // Row-block order is blind|W|Wnew|p1|p2[|p3]: everything up to p2
+            // is R1, p2 is R2, and the optional p3 is R3.
+            let has_p3 = block_order.last().map(|b| b == "p3").unwrap_or(false);
+            let n2 = block_order.len() - 1 - has_p3 as usize;   // index of p2
+            assert!(block_order[n2] == "p2", "phase-2 block is misplaced");
+            let s_op = fs::s_op(&stmt_recomputed, &block_order[..n2], &roots[..n2]);
+            let s_bind = fs::s_bind(&s_op, &roots[n2]);
+            let root_p3 = if has_p3 { roots[n2 + 1] } else { fs::EMPTY_COMMIT_ROOT };
+            let s_comb = fs::s_comb(&s_bind, &root_p3);
             let s_col = fs::s_col(&s_comb, &r3.q_irs, &r3.q_lin, &r3.p_0);
+            let bind_ok = top.seeds.s_bind.as_ref()
+                .map(|h| hexbytes(h) == s_bind).unwrap_or(false);
             policy.push(("seeds in file = recomputed transcript".into(),
                          hexbytes(&top.seeds.s_op) == s_op
+                             && bind_ok
                              && hexbytes(&top.seeds.s_comb) == s_comb
                              && hexbytes(&top.seeds.s_col) == s_col));
             (s_op.to_vec(), s_comb.to_vec(), s_col.to_vec())
