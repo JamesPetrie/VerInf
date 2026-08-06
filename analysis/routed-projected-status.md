@@ -340,6 +340,36 @@ carried.  The full 400B proof is not started until every stage below is DONE and
       The compact-wire cap is now derived rather than asserted: (weight rows +
       fresh rows) x 54 columns x 11 B/value = 36.45 GB against the 52 GB cap,
       checked by an assert in the model.
+
+      **The largest kernel stage is no longer unmeasured.**
+      `persistent_weight_qlin` (cap 3624.5 s) was listed as needing the real
+      GGUF.  It does not: it is the R3 `_stream_phase` over the enrolled weight
+      block with the two q accumulators as its only sinks, and that body runs
+      on any rows.  Measured on the V100 it came to 8.00 ns/slot = 3222.7 s,
+      inside the cap with 11% margin — and it showed the sweep computing a full
+      N_LIG-point coset LDE per weight row and throwing it away, because the
+      q-poly round has no Merkle tree and opens no column.  The model's SLO
+      comment already assumed that LDE was skipped; it was not.  Now it is
+      (`encode_messages(need_codewords=...)`):
+
+      | | before | after | cap |
+      |---|---|---|---|
+      | qsweep rate | 8.00 ns/slot | **6.68** | 9.0 |
+      | persistent_weight_qlin | 3222.7 s | **2691.9 s** | 3624.5 |
+
+      Verified byte-identical: `prover/tests/difftest_lde_skip.py` dumps the
+      same proof with the skip forced off, under a pinned ZK seed, and all 13
+      gate suites stay green.
+
+      `linear` (cap 25.6 s) stays NOT MEASURED on purpose.  Charging the q_lin
+      fold to it would double-count: the caps of `fresh_commit_fold` (9.5
+      ns/slot against 4.9 measured for encode alone) and
+      `persistent_weight_qlin` (9.0 against 6.7 for encode + both folds) were
+      evidently sized to include the fold.  The bench reports the fold rate as
+      `lin_ns_per_cid` (3.56 ns/id) so the number is visible, but what else the
+      model's separate `linear` line is meant to cover is undefined, and
+      picking a mapping that happens to pass would be exactly the kind of
+      number this file exists to prevent.
 - [~] **S5 — admission harness (partial: kernel stages measured, model stages not).**
       `analysis/bench/admission_bench.py` measures the EXECUTED loop bodies at
       the target geometry (ELL=8192, K_DEG=16384, N_LIG=65536). A 30-run
