@@ -1,0 +1,141 @@
+[verify] merkle @ 0.0 min
+[verify] irs_col @ 0.8 min
+[verify] lin_sum @ 0.9 min
+[verify] lin_col @ 1.6 min
+[verify]   lin_col ~5% (3304489/66077399 rows)
+[verify]   lin_col ~10% (6609304/66077399 rows)
+[verify]   lin_col ~15% (9914796/66077399 rows)
+[verify]   lin_col ~20% (13219126/66077399 rows)
+[verify]   lin_col ~25% (16521768/66077399 rows)
+[verify]   lin_col ~30% (19827260/66077399 rows)
+[verify]   lin_col ~35% (23131590/66077399 rows)
+[verify]   lin_col ~40% (26432678/66077399 rows)
+[verify]   lin_col ~45% (29737413/66077399 rows)
+[verify]   lin_col ~50% (33041415/66077399 rows)
+[verify]   lin_col ~55% (36347235/66077399 rows)
+[verify]   lin_col ~60% (39649877/66077399 rows)
+[verify]   lin_col ~65% (42953879/66077399 rows)
+[verify]   lin_col ~70% (46254579/66077399 rows)
+[verify]   lin_col ~75% (49558369/66077399 rows)
+[verify]   lin_col ~80% (52864032/66077399 rows)
+[verify]   lin_col ~85% (56169524/66077399 rows)
+[verify]   lin_col ~90% (59473854/66077399 rows)
+[verify]   lin_col ~95% (62787451/66077399 rows)
+[verify]   lin_col ~100% (66077399/66077399 rows)
+[verify] quad_zero @ 110.7 min
+[verify] quad_col @ 110.8 min
+[verify]   quad_col 0/5412064 quads
+[verify]   quad_col 54120/5412064 quads
+[verify]   quad_col 108240/5412064 quads
+[verify]   quad_col 162360/5412064 quads
+[verify]   quad_col 216480/5412064 quads
+[verify]   quad_col 270600/5412064 quads
+[verify]   quad_col 324720/5412064 quads
+[verify]   quad_col 378840/5412064 quads
+[verify]   quad_col 432960/5412064 quads
+[verify]   quad_col 487080/5412064 quads
+[verify]   quad_col 541200/5412064 quads
+[verify]   quad_col 595320/5412064 quads
+[verify]   quad_col 649440/5412064 quads
+[verify]   quad_col 703560/5412064 quads
+[verify]   quad_col 757680/5412064 quads
+[verify]   quad_col 811800/5412064 quads
+[verify]   quad_col 865920/5412064 quads
+[verify]   quad_col 920040/5412064 quads
+[verify]   quad_col 974160/5412064 quads
+[verify]   quad_col 1028280/5412064 quads
+[verify]   quad_col 1082400/5412064 quads
+[verify]   quad_col 1136520/5412064 quads
+[verify]   quad_col 1190640/5412064 quads
+[verify]   quad_col 1244760/5412064 quads
+[verify]   quad_col 1298880/5412064 quads
+[verify]   quad_col 1353000/5412064 quads
+[verify]   quad_col 1407120/5412064 quads
+[verify]   quad_col 1461240/5412064 quads
+[verify]   quad_col 1515360/5412064 quads
+[verify]   quad_col 1569480/5412064 quads
+[verify]   quad_col 1623600/5412064 quads
+[verify]   quad_col 1677720/5412064 quads
+[verify]   quad_col 1731840/5412064 quads
+[verify]   quad_col 1785960/5412064 quads
+[verify]   quad_col 1840080/5412064 quads
+[verify]   quad_col 1894200/5412064 quads
+[verify]   quad_col 1948320/5412064 quads
+[verify]   quad_col 2002440/5412064 quads
+[verify]   quad_col 2056560/5412064 quads
+[verify]   quad_col 2110680/5412064 quads
+[verify]   quad_col 2164800/5412064 quads
+[verify]   quad_col 2218920/5412064 quads
+[verify]   quad_col 2273040/5412064 quads
+[verify]   quad_col 2327160/5412064 quads
+[verify]   quad_col 2381280/5412064 quads
+[verify]   quad_col 2435400/5412064 quads
+[verify]   quad_col 2489520/5412064 quads
+[verify]   quad_col 2543640/5412064 quads
+[verify]   quad_col 2597760/5412064 quads
+[verify]   quad_col 2651880/5412064 quads
+[verify]   quad_col 2706000/5412064 quads
+[verify]   quad_col 2760120/5412064 quads
+[verify]   quad_col 2814240/5412064 quads
+[verify]   quad_col 2868360/5412064 quads
+[verify]   quad_col 2922480/5412064 quads
+[verify]   quad_col 2976600/5412064 quads
+[verify]   quad_col 3030720/5412064 quads
+[verify]   quad_col 3084840/5412064 quads
+[verify]   quad_col 3138960/5412064 quads
+[verify]   quad_col 3193080/5412064 quads
+[verify]   quad_col 3247200/5412064 quads
+[verify]   quad_col 3301320/5412064 quads
+[verify]   quad_col 3355440/5412064 quads
+[verify]   quad_col 3409560/5412064 quads
+[verify]   quad_col 3463680/5412064 quads
+[verify]   quad_col 3517800/5412064 quads
+[verify]   quad_col 3571920/5412064 quads
+[verify]   quad_col 3626040/5412064 quads
+[verify]   quad_col 3680160/5412064 quads
+[verify]   quad_col 3734280/5412064 quads
+[verify]   quad_col 3788400/5412064 quads
+[verify]   quad_col 3842520/5412064 quads
+[verify]   quad_col 3896640/5412064 quads
+[verify]   quad_col 3950760/5412064 quads
+[verify]   quad_col 4004880/5412064 quads
+[verify]   quad_col 4059000/5412064 quads
+[verify]   quad_col 4113120/5412064 quads
+[verify]   quad_col 4167240/5412064 quads
+[verify]   quad_col 4221360/5412064 quads
+[verify]   quad_col 4275480/5412064 quads
+[verify]   quad_col 4329600/5412064 quads
+[verify]   quad_col 4383720/5412064 quads
+[verify]   quad_col 4437840/5412064 quads
+[verify]   quad_col 4491960/5412064 quads
+[verify]   quad_col 4546080/5412064 quads
+[verify]   quad_col 4600200/5412064 quads
+[verify]   quad_col 4654320/5412064 quads
+[verify]   quad_col 4708440/5412064 quads
+[verify]   quad_col 4762560/5412064 quads
+[verify]   quad_col 4816680/5412064 quads
+[verify]   quad_col 4870800/5412064 quads
+[verify]   quad_col 4924920/5412064 quads
+[verify]   quad_col 4979040/5412064 quads
+[verify]   quad_col 5033160/5412064 quads
+[verify]   quad_col 5087280/5412064 quads
+[verify]   quad_col 5141400/5412064 quads
+[verify]   quad_col 5195520/5412064 quads
+[verify]   quad_col 5249640/5412064 quads
+[verify]   quad_col 5303760/5412064 quads
+[verify]   quad_col 5357880/5412064 quads
+[verify]   quad_col 5412000/5412064 quads
+[verify] done @ 110.8 min
+  [OK ] merkle
+  [OK ] irs_col
+  [OK ] lin_sum
+  [OK ] lin_col
+  [OK ] quad_zero
+  [OK ] quad_col
+  [OK ] statement_digest = H(claim bytes, block order)
+  [OK ] statement_digest = trusted policy digest
+  [OK ] seeds in file = recomputed transcript
+  [OK ] weight root = trusted enrolled root
+verify_elapsed_ms: 6661444  (rayon threads: 30)
+rust_verify: ACCEPT
+python_accept: (none — GPU verify skipped; Rust verdict stands alone)

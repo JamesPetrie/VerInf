@@ -468,7 +468,69 @@ carried.  The full 400B proof is not started until every stage below is DONE and
       in this tree contradict each other, and the resolution is a model
       question, not a benchmarking one — see "Open question: what is `linear`"
       below.  Nothing was fabricated to get past it and the proof did not start.
-- [ ] **S5c — the proof itself, once `linear` is settled.**
+- [x] **S5c/S6 — the production run. Proved and independently ACCEPTED.**
+      2026-08-06, rented A100-SXM4-80GB (vast, real $1.44/h, 18,076 s total
+      = ~$7.2; instance 46989988 destroyed and confirmed gone). Real GGUF
+      UD-Q4_K_XL, 48 layers, E=128, S=1000 (442 prompt + 558 continuation),
+      T_QUERIES=54, 2596 claims.
+
+      | step | wall clock |
+      |---|---|
+      | probe + download 217 GB | ~13 min |
+      | smoke (4 layers) | 3 min |
+      | witness-only at real geometry (gives Sz) | 5.5 min |
+      | enrollment (one-time, 49,160,720 weight rows) | 26 min |
+      | admission report (714-run campaign + warm sweep) | 9.5 min |
+      | **proof** | **7352.9 s = 2 h 02 min** |
+      | proof serialization | 47.2 s, 35.46 GB, u64le/base64 |
+      | **independent verification** | **6,661,444 ms = 1 h 51 min, 30 threads** |
+
+      Admission PASSED on the box it ran on, every stage measured, nothing
+      null: total 6939.8 s of the 14,400 s envelope.
+
+      | stage | measured bound | cap |
+      |---|---|---|
+      | model_load | 62.8 | 400 |
+      | semantic_5_active_sweeps | 2023.8 | 3609 |
+      | fresh_commit_fold | 596.2 | 950 |
+      | linear | 89.2 | 114 |
+      | quadratic | 682.2 | 765 |
+      | fresh_hash_coef | 103.9 | 140 |
+      | persistent_weight_qlin | 2401.2 | 3624.5 |
+      | persistent_open | 54.5 | 1812.3 |
+      | fresh_open | 13.5 | 450 |
+      | proof_egress | 212.5 | 481.5 |
+      | rtt / tail / orchestration | 80 / 20 / 600 | same |
+      | **TOTAL** | **6939.8** | **14400** |
+
+      The prover reported `5 rounds done; blind root reproducible across
+      rounds: True; W-block rows 49160720; W-ref True; p3 rows 216;
+      peak 69.91 GB` (peakGPU 65.11 GB), and booked 54 of the enrollment's
+      4096 openable columns.
+
+      `verify_proof` with the enrolled root and statement digest as external
+      policy: **ACCEPT**, all ten checks — merkle, irs_col, lin_sum, lin_col
+      (66,077,399 rows), quad_zero, quad_col (5,412,064 quads), plus the four
+      that make it a policy check rather than a self-check:
+      `statement_digest = H(claim bytes, block order)`,
+      `statement_digest = trusted policy digest`,
+      `seeds in file = recomputed transcript`,
+      `weight root = trusted enrolled root`.
+
+      Enrolled root `e300bc0789427af7cc35f67ccf426afc15fa3ea569336ae72eb106ac2bf6f507`,
+      statement digest `83335ea6019cfbcb788bdccf5a61133f668d1ab2f0253858521f2f74f77b2141`,
+      public Sz 32865524 = 20.7454 bits/token over 558 continuation positions.
+
+      Accuracy of the model, worth recording: the actual prove was 7352.9 s
+      against 6939.8 s of summed measured stages — 6.0% over, which is the
+      orchestration nobody had measured separately. The proof file is 35.46 GB
+      against the 36.45 GB derived from the layout.
+
+      Two numbers NOT to read as measurements: the 47.2 s serialization
+      (35.46 GB / 47.2 s = 751 MB/s, far above the 200-315 MB/s the egress
+      benchmark sees — the box has 129 GB of RAM and most of that write went to
+      page cache), and verification time, which was never priced by the model
+      at all and is outside the prover SLO.
       Benchmarks the exact production loop bodies (no random matrices, no
       isolated modmul), with the sample count/method required by
       `prover/admission.py`, writes
