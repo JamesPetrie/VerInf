@@ -83,6 +83,15 @@ WEIGHT_ROW_CAPACITY = 402_724_618_240
 # decimal JSON remains accepted by the verifier but is not the 4-hour path.
 PROOF_BYTES_COMPACT = 52_000_000_000
 
+# ...and the cap is DERIVED, not asserted.  One opened column carries one value
+# per committed row, over T_QUERIES columns; base64 of 8 canonical bytes is
+# 10.67 B/value, and 11 B/value covers the JSON envelope (quotes, commas, keys).
+# Merkle paths, roots and the claim document are megabytes against this.
+T_QUERIES = 54
+BYTES_PER_VALUE_B64 = 11
+OPENED_VALUES = ((WEIGHT_ROW_CAPACITY + FRESH_ROW_CAPACITY) // ELL) * T_QUERIES
+PROOF_BYTES_DERIVED = OPENED_VALUES * BYTES_PER_VALUE_B64
+
 # The current global transcript regenerates the witness in five commitment /
 # test epochs.  This is NOT hidden behind a one-pass fiction: every pass uses
 # active-only expert execution on the real GGUF shards.  Shape-exact selected
@@ -150,6 +159,10 @@ def main():
     assert L == 31_064_630_194
     assert Q == 42_394_577_408
     assert ACTIVE_MACS_TOTAL / SLO().semantic_all_sweeps_s >= 27_000_000_000
+    # The compact-wire cap must cover the layout it is charged for, or the
+    # egress stage would be priced for a file smaller than the one written.
+    assert PROOF_BYTES_DERIVED <= PROOF_BYTES_COMPACT, (
+        f"proof cap {PROOF_BYTES_COMPACT:,} < derived {PROOF_BYTES_DERIVED:,}")
     parts, total = seconds()
     print(f"old ledger W/L/Q = {W_OLD:,} / {L_OLD:,} / {Q_OLD:,}")
     print(f"new ledger W/L/Q = {W:,} / {L:,} / {Q:,}")
