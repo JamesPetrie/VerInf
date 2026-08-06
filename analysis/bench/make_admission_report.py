@@ -60,27 +60,34 @@ def _measure_model_stages(a):
         n_layers=a.layers, E=a.experts, d_ff=a.d_ff)
     build_s = time.time() - t0
 
-    # model_load: the cold read of the enrolled shards. The tape is lazy, so
-    # the first engine pass is what actually pulls and decodes them; time the
-    # build plus the first touch separately from the sweep body below.
+    # LOAD-BEARING: the public Sz is serialized into the claim set, so it is
+    # part of the statement digest. Pin the same value the proof will pin, or
+    # this report describes a different statement and the gate refuses it —
+    # correctly, and only after the model has been loaded.
+    if handles.get("reveal_pin") is None:
+        raise SystemExit("this tape has no reveal pin to bind --public-sz to")
+    handles["reveal_pin"].public_rhs = a.public_sz
+
+    # One WARM pass here. The COLD pass already happened: the driver's
+    # witness-only run is what produced the public Sz this report is bound to,
+    # and its wall time comes in as --cold-sweep-s. Repeating it would buy two
+    # more hours of rental for a number we already have.
+    #
+    #   sweep      = the warm pass (the loader's caches are hot)
+    #   model_load = tape build + whatever the cold pass paid on top
     t0 = time.time()
     keep = {logits.var, Sz.var}
     live = tape.run_engine_pass(free_intermediates=True, keep=keep)
-    sweep1_s = time.time() - t0
+    warm_s = time.time() - t0
     del live
 
-    # A second pass reuses whatever the loader cached, so it isolates the sweep
-    # from the cold load: sweep = pass2, model_load = build + (pass1 - pass2).
-    t0 = time.time()
-    live = tape.run_engine_pass(free_intermediates=True, keep=keep)
-    sweep2_s = time.time() - t0
-    del live
-
-    model_load_s = build_s + max(0.0, sweep1_s - sweep2_s)
-    print(f"  build {build_s:.1f}s  cold sweep {sweep1_s:.1f}s  "
-          f"warm sweep {sweep2_s:.1f}s -> model_load {model_load_s:.1f}s, "
-          f"sweep {sweep2_s:.1f}s", flush=True)
-    return tape, model_load_s, [sweep1_s, sweep2_s]
+    model_load_s = build_s + max(0.0, a.cold_sweep_s - warm_s)
+    print(f"  build {build_s:.1f}s  cold sweep {a.cold_sweep_s:.1f}s (from the "
+          f"witness-only run)  warm sweep {warm_s:.1f}s\n"
+          f"  -> model_load {model_load_s:.1f}s, sweep {warm_s:.1f}s", flush=True)
+    # Both observations of the sweep are kept: the bound is taken over the max,
+    # so a cold pass that is genuinely slower is what gets charged.
+    return tape, model_load_s, [warm_s, a.cold_sweep_s]
 
 
 def core_tape(drv, a):
@@ -101,6 +108,9 @@ def main():
     ap.add_argument("--public-sz", type=int, required=True)
     ap.add_argument("--egress-dir", required=True,
                     help="the filesystem that will receive --dump-proof")
+    ap.add_argument("--cold-sweep-s", type=float, required=True,
+                    help="wall time of the COLD active-only semantic sweep, "
+                         "from the witness-only run that produced --public-sz")
     ap.add_argument("--kernel-runs", type=int, default=admission.MIN_RUNS)
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
