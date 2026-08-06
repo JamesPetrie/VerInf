@@ -119,6 +119,55 @@ def test_weak_statistics_refused():
     print("    insufficient runs / averages instead of upper bounds: refused")
 
 
+def _mixed_report():
+    """A report under the mixed policy: kernels keep the 714-run bound, the
+    single-shot stages carry one measured run and the required margin."""
+    r = _honest_report()
+    r["bound_kind"] = admission.BOUND_KIND_MIXED
+    r["single_shot_stages"] = sorted(admission.SINGLE_SHOT_STAGES)
+    for stage in admission.SINGLE_SHOT_STAGES:
+        # measured once, at the cap divided by the margin, so the bound (= cap)
+        # is exactly SINGLE_SHOT_SAFETY above what was observed
+        observed = admission.STAGE_CAPS[stage] / admission.SINGLE_SHOT_SAFETY
+        r["stage_samples"][stage] = [observed]
+    return r
+
+
+def test_mixed_policy_admits_single_shot_stages():
+    """The long stages are the production run itself: one measurement plus a
+    stated margin, and the report has to say that is what it is."""
+    _check(_mixed_report())
+    print(f"    mixed policy: {len(admission.SINGLE_SHOT_STAGES)} single-shot "
+          f"stages measured once at {admission.SINGLE_SHOT_SAFETY}x margin: admitted")
+
+
+def test_single_shot_margin_enforced():
+    r = _mixed_report()
+    # observed max creeps up so the cap is no longer a full margin above it
+    r["stage_samples"]["semantic_5_active_sweeps"] = [
+        admission.STAGE_CAPS["semantic_5_active_sweeps"] / 1.05]
+    _refuses(r, "margin over its observed max")
+    print("    single-shot bound without its margin: refused")
+
+
+def test_single_shot_class_cannot_be_widened():
+    """A kernel must not be moved into the weaker class to dodge 714 runs."""
+    r = _mixed_report()
+    r["single_shot_stages"] = sorted(
+        set(admission.SINGLE_SHOT_STAGES) | {"quadratic"})
+    r["stage_samples"]["quadratic"] = [admission.STAGE_CAPS["quadratic"] / 2]
+    _refuses(r, "single_shot_stages must be exactly")
+    print("    kernel relabelled as single-shot: refused")
+
+
+def test_kernel_stages_still_need_the_full_campaign():
+    """Under the mixed policy the repeatable stages keep the 714-run rule."""
+    r = _mixed_report()
+    r["stage_samples"]["quadratic"] = [admission.STAGE_CAPS["quadratic"]] * 30
+    _refuses(r, "raw samples, need >= 714")
+    print("    30 samples on a kernel stage, even under the mixed policy: refused")
+
+
 def test_nonfinite_or_negative_stage_refused():
     for bad in (float("nan"), float("inf"), -1.0):
         r = _honest_report()

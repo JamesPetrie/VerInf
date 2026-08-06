@@ -66,6 +66,42 @@ TOTAL_CAP_S = 14_400.0
 # exploratory probe may guide optimization but cannot authorize a 4-hour run.
 MIN_RUNS = math.ceil(math.log(0.01 / len(STAGE_CAPS)) / math.log(0.99))
 BOUND_KIND = "simultaneous_nonparametric_p99_max"
+
+# ---------------------------------------------------------------------------
+# Two classes of stage, because one statistical rule cannot cover both.
+#
+# REPEATABLE stages are kernels. Their measurement body runs on a 512-row batch
+# in milliseconds, so 714 runs costs seconds and the rule above applies as
+# written.
+#
+# SINGLE-SHOT stages are not kernels. `semantic_5_active_sweeps` IS the proof's
+# own forward work and its cap is 3609 s; `model_load` is a cold read of the
+# enrolled GGUF; rtt/tail/orchestration are operational allowances. Demanding
+# 714 samples of a 3609 s stage asks for ~30 GPU-days per stage — the campaign
+# is not merely expensive, it is a different experiment from the one being
+# authorized, and consecutive runs on one rented box are not iid anyway
+# (thermal drift, noisy neighbours, page-cache warmth).
+#
+# So these stages are measured by RUNNING them and are bounded by
+# max(observed) * SINGLE_SHOT_SAFETY. That is a margin, NOT a confidence
+# interval, and the report must say so: `bound_kind` must name the mixed
+# policy, and `single_shot_stages` must list exactly this set, so no reader can
+# mistake the resulting file for a uniform 99%/p99 claim.
+# ---------------------------------------------------------------------------
+SINGLE_SHOT_STAGES = frozenset({
+    "model_load",
+    "semantic_5_active_sweeps",
+    "rtt",
+    "tail",
+    "orchestration_refresh",
+})
+MIN_RUNS_SINGLE_SHOT = 1
+SINGLE_SHOT_SAFETY = 1.25
+BOUND_KIND_MIXED = "mixed_nonparametric_p99_max_and_single_shot_margin"
+
+
+def min_runs_for(stage: str) -> int:
+    return MIN_RUNS_SINGLE_SHOT if stage in SINGLE_SHOT_STAGES else MIN_RUNS
 # Compact u64le/base64 proof is ~35--45 GB at the target manifest.  Reserve a
 # deliberately larger inode before proving so ENOSPC cannot be discovered four
 # hours later.  The writer truncates it to the actual length before rename.
@@ -260,10 +296,20 @@ def check(report: dict, *, cfg, model_root: bytes, statement_digest: bytes,
     except (TypeError, ValueError):
         n_runs = -1
     need(n_runs >= MIN_RUNS,
-         f"{report['runs']!r} runs per stage, need >= {MIN_RUNS}")
-    need(report["bound_kind"] == BOUND_KIND,
+         f"{report['runs']!r} runs per stage, need >= {MIN_RUNS} on every "
+         f"repeatable (kernel) stage")
+    need(report["bound_kind"] in (BOUND_KIND, BOUND_KIND_MIXED),
          f"bound_kind is {report['bound_kind']!r}; admission needs simultaneous "
-         f">=99% distribution-free p99 bounds ({BOUND_KIND!r}), not averages")
+         f">=99% distribution-free p99 bounds ({BOUND_KIND!r}), or the mixed "
+         f"policy ({BOUND_KIND_MIXED!r}) that names its single-shot stages")
+    # A mixed report must declare EXACTLY the stages this module treats as
+    # single-shot: a report cannot quietly move a kernel into the weaker class.
+    if report.get("bound_kind") == BOUND_KIND_MIXED:
+        declared = report.get("single_shot_stages")
+        need(isinstance(declared, list)
+             and set(declared) == set(SINGLE_SHOT_STAGES),
+             f"single_shot_stages must be exactly {sorted(SINGLE_SHOT_STAGES)}, "
+             f"got {declared!r}")
     need(report["weights"] == "real_gguf",
          f"weights are {report['weights']!r}; the semantic cap includes real "
          f"GGUF decode and page migration, so random weights cannot satisfy it")
@@ -290,9 +336,12 @@ def check(report: dict, *, cfg, model_root: bytes, statement_digest: bytes,
         if not isinstance(samples, list):
             fails.append(f"stage '{stage}' has no raw sample list")
             continue
-        if len(samples) < MIN_RUNS:
+        want_runs = min_runs_for(stage)
+        if report.get("bound_kind") != BOUND_KIND_MIXED:
+            want_runs = MIN_RUNS      # a pure-p99 report claims it everywhere
+        if len(samples) < want_runs:
             fails.append(
-                f"stage '{stage}' has {len(samples)} raw samples, need >= {MIN_RUNS}")
+                f"stage '{stage}' has {len(samples)} raw samples, need >= {want_runs}")
             continue
         try:
             raw = [float(x) for x in samples]
@@ -306,6 +355,16 @@ def check(report: dict, *, cfg, model_root: bytes, statement_digest: bytes,
         need(got >= max(raw),
              f"stage '{stage}' bound {got:.6f}s is below observed max "
              f"{max(raw):.6f}s")
+        # Single-shot stages buy their weaker statistics with an explicit
+        # margin: one run of a 3609 s stage says little about the next one, so
+        # the bound must sit a stated factor above what was actually seen.
+        if (report.get("bound_kind") == BOUND_KIND_MIXED
+                and stage in SINGLE_SHOT_STAGES and raw):
+            floor = max(raw) * SINGLE_SHOT_SAFETY
+            need(got >= floor,
+                 f"single-shot stage '{stage}' bound {got:.3f}s is under the "
+                 f"required {SINGLE_SHOT_SAFETY}x margin over its observed max "
+                 f"({floor:.3f}s)")
         total += got
         need(got <= cap, f"stage '{stage}': {got:.3f}s over its cap {cap:.3f}s")
     extra = set(report["stages"]) - set(STAGE_CAPS)
