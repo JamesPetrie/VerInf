@@ -431,7 +431,44 @@ carried.  The full 400B proof is not started until every stage below is DONE and
       real engineering question, not a rounding error. S4f changes exactly
       those two bodies, so this report remains a baseline but is invalid as
       admission evidence for the new source digest.
-- [ ] **S5b — the model-dependent stages, on the rented card.**
+- [~] **S5b — model stages MEASURED on the real model; report blocked on `linear`.**
+      Four rentals, ~$1.6 total, each stop cheaper than the one it prevented:
+
+      | # | stopped at | cost | what it found |
+      |---|---|---|---|
+      | 1 | network probe | $0.12 | the probe used ONE curl stream; HF caps a connection at ~20 MB/s, so it measured HF and not the box, and rejected a good A100. Now 8 parallel ranges, like hf_transfer. |
+      | 2 | smoke | $0.35 | `gguf` was installed by hand in the dev venv and declared in no manifest — every fresh environment was always going to fail. Now in pyproject + uv.lock. |
+      | 3 | launch | $0.03 | my own shell brace group `{ echo …; }` collided with `str.format()` in the launch template. Templates are now rendered locally before renting. |
+      | 4 | report writer | ~$1.1 | got all the way through the model — see below |
+
+      **First real measurements of the routed build at production geometry**
+      (A100-SXM4-80GB, real GGUF UD-Q4_K_XL, 48 layers, E=128, S=1000,
+      2596 claims):
+
+      | quantity | measured | cap | verdict |
+      |---|---|---|---|
+      | peak GPU (48-layer witness pass) | **23.98 GB** | — | a 40 GB card is enough; 80 GB was insurance |
+      | active-only semantic sweep | **290.7 s cold / 309.9 s warm** | — | |
+      | semantic_5_active_sweeps (5x warm) | **1549.5 s** (1937 s with the 1.25x margin) | 3609 | **ok, 2.3x under** |
+      | model_load | **36.4 s** | 400 | **ok, 11x under** |
+      | enrollment (one-time, not in the envelope) | 1401.2 s for 49,160,720 weight rows | — | |
+
+      So the two stages that had never been measured — the ones the whole
+      admission argument was waiting on — both fit comfortably. Note the peak
+      memory figure: the only prior number was 77.56 GB, from the ALL-EXPERT
+      build we replaced, and nobody had measured the routed one.
+
+      Enrolled root `e3983d6bde089ad3a7a2486a61807d2fd16ae7d66611296252b8cada4577263f`,
+      public Sz 32865524 (20.7454 bits/token over 558 continuation positions).
+
+      BLOCKED, by my own guard and correctly: the report writer refuses to emit
+      a file with a hole in it, and `linear` is deliberately NOT measured by the
+      kernel bench (charging the q_lin fold to it double-counts work already
+      inside `fresh_commit_fold` and `persistent_weight_qlin`).  Two decisions
+      in this tree contradict each other, and the resolution is a model
+      question, not a benchmarking one — see "Open question: what is `linear`"
+      below.  Nothing was fabricated to get past it and the proof did not start.
+- [ ] **S5c — the proof itself, once `linear` is settled.**
       Benchmarks the exact production loop bodies (no random matrices, no
       isolated modmul), with the sample count/method required by
       `prover/admission.py`, writes
@@ -455,3 +492,33 @@ carried.  The full 400B proof is not started until every stage below is DONE and
 3. S1 is a protocol change to a prover whose soundness rule is
    commit-before-challenge.  It is the highest-risk stage and gets its own
    tamper tests before anything is built on top of it.
+
+## Open question: what is `linear`?
+
+The admission model prices thirteen stages. Twelve of them now have a measured
+body. `linear` (cap 25.6 s = 0.8 ns x 32e9 constraint ids) does not, and the
+evidence says charging it the obvious way would be double counting:
+
+* `fresh_commit_fold` caps 9.5 ns/slot. Encode ALONE measures 4.92 ns/slot on
+  the V100, 5.12 on the A100. The name says "commit/fold".
+* `persistent_weight_qlin` caps 9.0 ns/slot. Encode + q_irs + q_lin over the
+  same rows measures 6.68 ns/slot after the LDE fix.
+
+Both caps were evidently sized to include the fold, and `_stream_phase` does
+feed q_irs and q_lin from the same pass that those two stages price. The q_lin
+fold on its own measures 3.56 ns per constraint id, which charged against
+32e9 ids is 114 s — 4.5x the `linear` cap, and 0.8% of the envelope against a
+1442 s margin.
+
+So one of these is true, and only the model's author can say which:
+
+1. `linear` means the q_lin fold, the fold is NOT inside the two per-slot
+   stages, and its 25.6 s cap is wrong by 4.5x (the total envelope still
+   closes: 12,957.9 + 114 - 25.6 = 13,046 s of 14,400).
+2. `linear` means some residual — challenge-vector generation per constraint
+   id, say — and the fold is correctly inside the per-slot stages, in which
+   case the residual is what should be measured and 25.6 s may well be right.
+
+Raising the cap to make a result green is forbidden by the handoff and is not
+proposed here. Until this is settled, `make_admission_report.py` cannot emit a
+complete report, so the production proof does not start.

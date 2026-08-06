@@ -1,0 +1,14 @@
+[maverick-full] layers=4 E=128 T=1000 V=202048 T_QUERIES=54 witness_only=True
+[maverick-full] input bound: all 1000 tokens hidden (442 prompt + 558 continuation)
+/workspace/VerInf/demo/demo_maverick_block.py:89: UserWarning: The given NumPy array is not writable, and PyTorch does not support non-writable tensors. This means writing to this tensor will result in undefined behavior. You may want to copy the array to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at /__w/pytorch/pytorch/torch/csrc/utils/tensor_numpy.cpp:213.)
+  w = kquant_to_field(torch.from_numpy(
+[maverick-full] layer 0 built (dense, rope=True) — 28 claims so far
+[maverick-full] layer 1 built (moe E=128, rope=True) — 68 claims so far
+[maverick-full] layer 2 built (dense, rope=True) — 90 claims so far
+[maverick-full] layer 3 built (moe E=128, rope=False) — 128 claims so far
+[maverick-full] LM head from output.weight (untied)
+[maverick-full] UI claim over 558 continuation positions; 1254 claims total
+[maverick-full] build 124.5s, 1254 claims
+[maverick-full] witness pass 45.9s peakGPU=23.14GB
+[maverick-full] UI: Sz=129810075  ->  45721.8 bits total = 81.9386 bits/token over 558 continuation positions
+[maverick-full] greedy agreement: 0/558 continuation argmax matches
