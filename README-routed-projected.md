@@ -20,10 +20,8 @@ verifier checks, and the same zero-knowledge padding discipline is retained.
 
 > [!IMPORTANT]
 > This implementation does **not** use GKR, private sorting, or a new polynomial
-> commitment scheme. The repository does contain a GKR prototype under
-> `layergkr/` — it implements a *different*, unadopted proposal and is not
-> imported by anything on this path; [§9](#9-what-this-is-not-comparison-with-gkr)
-> shows the check and is candid about what the two approaches do share. See
+> commitment scheme. Earlier design notes explored a layer-local GKR hybrid;
+> that is not the protocol implemented or benchmarked here. See
 > [RoutedProjected protocol](analysis/routed-projected-protocol.md) for the
 > normative construction and [implementation status](analysis/routed-projected-status.md)
 > for the only authoritative completion ledger.
@@ -435,26 +433,6 @@ not a sumcheck protocol. Concretely: a sumcheck over the `K = 5120` contraction
 index would cost ~13 rounds of interaction and per-round verifier arithmetic;
 §4 costs two commitments and one equality that `q_lin` and `q_quad` already
 know how to check.
-
-### The `layergkr/` directory
-
-The repository does contain a real GKR implementation — `layergkr/`, 8,374
-lines with its own `sumcheck.py`, `transcript.py` and cost model. It is a
-prototype of a *different* proposal (Layer-GKR-LF,
-`analysis/VerInf_LayerGKR_4h_theorem_ru.md`) that was built, measured, and
-**not adopted**. Its own README states that it modifies nothing outside its
-directory.
-
-It is not reachable from the protocol described here, and that is checkable
-rather than asserted:
-
-```console
-$ grep -rn "layergkr\|sumcheck\|multilinear\|gkr" prover/ demo/ verifier/src/
-$                       # no matches
-```
-
-The routed claim emits exactly three band families, all of which predate it:
-`L2_FreivaldsLF`, `L2_IdentityScalar`, `L2_StrideManyToOneScalar`.
 
 ### Why not the hybrid
 
