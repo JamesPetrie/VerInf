@@ -35,14 +35,27 @@ step() { echo "=== [$(date -u +%H:%M:%S)] $* ==="; }
 fail() { echo "S5B-ABORT: $*"; echo "{\"aborted\":\"$*\"}" > "$OUT/campaign_results.json"; exit 1; }
 
 step "0. network probe"
+# PARALLEL, because that is what the real download does. A single stream to
+# HF caps around 20 MB/s regardless of the link, so a one-stream probe
+# measures HF's per-connection limit and not this box — it rejected an
+# 6715 Mbit/s A100 on the first attempt. hf_transfer opens many connections;
+# the probe mirrors it with 8 ranges of 256 MB and reports the aggregate.
 URL="https://huggingface.co/$REPO/resolve/main/$QUANT/${BASE}-00001-of-0000${SHARDS}.gguf"
 AUTH=(); [ -n "${HF_TOKEN:-}" ] && AUTH=(-H "Authorization: Bearer $HF_TOKEN")
+PAR=8
+CHUNK=$((256 * 1024 * 1024))
 T0=$(date +%s)
-curl -sL "${AUTH[@]}" -r 0-2147483647 -o /dev/null "$URL" || fail "probe download failed"
+for i in $(seq 0 $((PAR - 1))); do
+  LO=$((i * CHUNK)); HI=$((LO + CHUNK - 1))
+  curl -sL "${AUTH[@]}" -r "${LO}-${HI}" -o /dev/null "$URL" &
+done
+wait
 T1=$(date +%s)
-MBPS=$(( 2048 / ( (T1 - T0) > 0 ? (T1 - T0) : 1 ) ))
-echo "probe: 2 GB in $((T1-T0))s = ${MBPS} MB/s"
+DT=$(( (T1 - T0) > 0 ? (T1 - T0) : 1 ))
+MBPS=$(( PAR * 256 / DT ))
+echo "probe: $((PAR * 256)) MB over $PAR streams in ${DT}s = ${MBPS} MB/s aggregate"
 [ "$MBPS" -lt "$MIN_MBPS" ] && fail "network ${MBPS} MB/s below the ${MIN_MBPS} MB/s floor"
+echo "projected pull of ~243 GB: $(( 243000 / MBPS / 60 )) min"
 
 step "1. download $SHARDS shards"
 $PY - "$MODEL_DIR" "$REPO" "$QUANT" "$BASE" "$SHARDS" <<'PY' || fail "download failed"
