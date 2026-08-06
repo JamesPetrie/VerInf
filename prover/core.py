@@ -747,8 +747,15 @@ def encode_messages(messages: torch.Tensor, cfg: LigeroConfig,
                     *,
                     master_seed: torch.Tensor,
                     row_offset: int = 0,
-                    ) -> Tuple[torch.Tensor, torch.Tensor]:
+                    need_codewords: bool = True,
+                    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
     """messages: (m, ELL). Returns (row_polys: (m, K_DEG), codewords: (m, N_LIG)).
+
+    `need_codewords=False` returns (row_polys, None) and skips the N_LIG-point
+    coset LDE. The q-poly round consumes only row_polys — it has no Merkle tree
+    and opens no column — so computing the codewords there is work whose result
+    nobody reads: 402.7G weight slots' worth of it at Maverick scale. Skipping
+    output that is never consumed cannot change the proof.
 
     The K_DEG - ELL slack slots are filled by `row_prg(master_seed,
     row_offset + i, slack)` for row i. Deterministic: same (master_seed,
@@ -789,6 +796,8 @@ def encode_messages(messages: torch.Tensor, cfg: LigeroConfig,
 
     row_polys = padded.clone()
     ntt_inverse_batched(row_polys)
+    if not need_codewords:
+        return row_polys, None
     codewords = _coset_encode_codewords(row_polys, cfg)
     return row_polys, codewords
 
@@ -1240,14 +1249,23 @@ def _stream_phase(
                 col_buf[j].append(slice_[:, k].clone())
 
     # Stream encode + feed every active accumulator.
+    #
+    # Only the codeword sinks need the LDE: the Merkle tree hashes codeword
+    # values and an opening slices codeword columns. The q-poly round has
+    # neither, and its rows are the whole enrolled weight block, so computing
+    # the codewords there was the single largest piece of unread work in the
+    # prover.
     seed_for_pad = master_seed if pad_seed is None else pad_seed
+    need_codes = (merkle_acc is not None or column_sink is not None
+                  or col_buf is not None)
     for chunk_abs_row, chunk_msg in _iter_message_chunks(
             vars_list, inputs, cfg, abs_row_offset, chunk_size):
         with _phase('encode'):
             polys, codes = encode_messages(
                 chunk_msg, cfg, master_seed=seed_for_pad,
                 row_offset=(chunk_abs_row if pad_row_offset is None
-                            else pad_row_offset + (chunk_abs_row - abs_row_offset)))
+                            else pad_row_offset + (chunk_abs_row - abs_row_offset)),
+                need_codewords=need_codes)
         if merkle_acc is not None:
             with _phase('merkle'):
                 merkle_acc.update(codes)

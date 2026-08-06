@@ -30,6 +30,7 @@ sys.path.insert(0, str(_ROOT / "prover"))
 import torch                                            # noqa: E402
 import core                                             # noqa: E402
 import cuda_primitives as cp                            # noqa: E402
+import packets                                          # noqa: E402
 import admission                                        # noqa: E402
 
 sys.path.insert(0, str(_ROOT / "analysis"))
@@ -129,6 +130,65 @@ def measure(runs: int, egress_dir: str) -> dict:
     stage_samples["quadratic"] = [
         x / (ROWS * CFG.ELL) * model.QUADRATIC_COUNT_CAP for x in qd]
 
+    # --- the R3 q-fold sweep over the enrolled weight block ---------------
+    # This is the stage the model prices as persistent_weight_qlin (cap
+    # 3624.5 s, the largest kernel stage) and linear.  The body is the one the
+    # prover executes: _stream_phase over weight variables with the two q
+    # accumulators as its only sinks — no Merkle tree, no column extraction,
+    # because a referenced enrollment supplies root and paths.
+    #
+    # The band index drives q_lin's work, so it is a real one: an identity
+    # band per row, which is what a weight variable's linear constraints
+    # lower to.  Measuring with an empty index would price an empty fold.
+    qv = core.Variable("w_bench", length=ROWS * CFG.ELL, phase=1, persistent=True)
+    qv.row_start = core.NUM_BLINDING_ROWS
+    q_inputs = {qv: vals}
+    ident = packets.L2_IdentityScalar(base=0, var_row_start=qv.row_start,
+                                      L=ROWS * CFG.ELL, coef=1)
+    per_row = [[] for _ in range(core.NUM_BLINDING_ROWS)] + [[ident]] * ROWS
+    r_irs = torch.randint(0, 1 << 62, (ROWS,), dtype=torch.int64,
+                          device="cuda").view(torch.uint64)
+    seed_u8_lin = torch.tensor(list(core.new_zk_seed()), dtype=torch.uint8,
+                               device="cuda")
+
+    def do_qsweep():
+        qi = core.QIrsAccumulator(r_irs, CFG)
+        ql = core.QLinAccumulator(seed_u8_lin, per_row, CFG)
+        core._stream_phase(
+            [qv], q_inputs, CFG, master_seed=seed,
+            abs_row_offset=core.NUM_BLINDING_ROWS,
+            q_irs_acc=qi, q_lin_acc=ql)
+        qi.finalize(); ql.finalize()
+
+    qs = _time(do_qsweep, runs, warmup=1)
+    got["qsweep_ns_per_slot"] = _p99_upper(qs) * 1e9 / slots
+    stage_samples["persistent_weight_qlin"] = [
+        x / slots * model.WEIGHT_ROW_CAPACITY for x in qs]
+
+    # --- the q_lin fold alone, per constraint id (REPORTED, NOT CHARGED) ---
+    # Measured because it is the one number that says whether the fold is
+    # affordable at all — but deliberately NOT mapped onto the model's
+    # `linear` stage, because that would double-charge it.  The evidence that
+    # the fold is already inside the two per-slot stages:
+    #   fresh_commit_fold      cap 9.5 ns/slot, encode alone measures ~4.9
+    #   persistent_weight_qlin cap 9.0 ns/slot, encode + BOTH folds measures ~8.0
+    # i.e. both caps were sized for encode+fold, and the second one is met by a
+    # body that contains the whole fold.  What the model's separate 25.6 s
+    # `linear` line is meant to cover beyond that is not defined by the model,
+    # so this bench reports the rate and leaves the stage unmeasured rather
+    # than inventing a mapping that happens to pass or happens to fail.
+    polys_pre = core.encode_messages(msgs, CFG, master_seed=seed)[0]
+
+    def do_lin_fold():
+        ql = core.QLinAccumulator(seed_u8_lin, per_row, CFG)
+        ql.update(core.NUM_BLINDING_ROWS, polys_pre)
+        ql.finalize()
+
+    lin = _time(do_lin_fold, runs, warmup=1)
+    # One identity band per row covers ELL constraint ids per row, so this
+    # batch folds `slots` ids.
+    got["lin_ns_per_cid"] = _p99_upper(lin) * 1e9 / slots
+
     # --- proof egress: production u64le/base64 JSON transport -------------
     import proof_dump
     import tempfile, os
@@ -159,10 +219,12 @@ def stages_from_rates(r: dict) -> dict:
         "model_load": None,                       # needs the real GGUF
         "semantic_5_active_sweeps": None,         # needs the real GGUF
         "fresh_commit_fold": r["encode_ns_per_slot"] * ns * model.FRESH_ROW_CAPACITY,
-        "linear": None,                           # q_lin fold not measured yet
+        # Reported as lin_ns_per_cid, not charged here — see the note in
+        # measure(): the fold is already inside the two per-slot stages.
+        "linear": None,
         "quadratic": r["quad_ns_per_product"] * ns * model.QUADRATIC_COUNT_CAP,
         "fresh_hash_coef": r["hash_ns_per_slot"] * ns * model.FRESH_ROW_CAPACITY,
-        "persistent_weight_qlin": None,           # q_lin fold not measured yet
+        "persistent_weight_qlin": r["qsweep_ns_per_slot"] * ns * model.WEIGHT_ROW_CAPACITY,
         "persistent_open": r["open_ns_per_slot"] * ns * model.WEIGHT_ROW_CAPACITY,
         "fresh_open": r["open_ns_per_slot"] * ns * model.FRESH_ROW_CAPACITY,
         "proof_egress": model.PROOF_BYTES_COMPACT / r["egress_bytes_per_s"],
