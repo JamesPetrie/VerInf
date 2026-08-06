@@ -248,3 +248,27 @@ def main():
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+def test_caps_match_the_model():
+    """The gate's caps are a COPY of the model's stage seconds.
+
+    Nothing kept them in sync, so restating a cap in the model would have left
+    the gate quietly enforcing the old one — which is how a run gets authorized
+    against numbers nobody agreed to."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "rp4h", pathlib.Path(admission._ANALYSIS) / "routed_projected_4h_model.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    parts, total = m.seconds()
+    assert set(parts) == set(admission.STAGE_CAPS), (
+        f"stage sets differ: model {sorted(parts)} vs gate "
+        f"{sorted(admission.STAGE_CAPS)}")
+    for stage, cap in parts.items():
+        assert abs(cap - admission.STAGE_CAPS[stage]) < 1e-3, (
+            f"cap drift on '{stage}': model {cap} vs gate "
+            f"{admission.STAGE_CAPS[stage]}")
+    assert total <= admission.TOTAL_CAP_S, total
+    print(f"    caps match the model on all {len(parts)} stages; "
+          f"total {total:.1f}s of {admission.TOTAL_CAP_S:.0f}s")

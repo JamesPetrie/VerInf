@@ -111,7 +111,13 @@ class SLO:
     model_load_s: float = 400.0
     semantic_all_sweeps_s: float = 3609.0
     fresh_commit_fold_ns: float = 9.5
-    linear_ns: float = 0.8
+    # RESTATED 2026-08-06 by the model's owner, on measurement rather than
+    # estimate. `linear` is the CONSTRAINT-side half of the q_lin fold;
+    # fresh_commit_fold and persistent_weight_qlin price the row/witness side.
+    # The measured fold rate is 3.56 ns per constraint id (V100 and A100
+    # agree), so the 0.8 ns estimate understated it by 4.5x. At 3.5625 ns the
+    # stage costs 114.0 s and the envelope still closes at 13,046.3 s.
+    linear_ns: float = 3.5625
     quadratic_ns: float = 17.0
     fresh_hash_coef_ns: float = 1.4
     # Complete persistent q sweep: message->polynomial inverse NTT, IRS/linear

@@ -78,8 +78,10 @@ def measure(runs: int, egress_dir: str) -> dict:
 
     enc = _time(do_encode, runs)
     got["encode_ns_per_slot"] = _p99_upper(enc) * 1e9 / slots
-    stage_samples["fresh_commit_fold"] = [
-        x / slots * model.FRESH_ROW_CAPACITY for x in enc]
+    # NOTE: fresh_commit_fold is NOT charged from this number. Its cap prices
+    # the row/witness side of the round, which is encode AND the folds fed from
+    # the same pass; charging the encode alone would understate it. It is
+    # assigned from the full row-side body measured below.
 
     # --- blake3 column hashing --------------------------------------------
     cw = hold["cw"]
@@ -162,8 +164,13 @@ def measure(runs: int, egress_dir: str) -> dict:
 
     qs = _time(do_qsweep, runs, warmup=1)
     got["qsweep_ns_per_slot"] = _p99_upper(qs) * 1e9 / slots
+    # The SAME row-side body prices both per-slot stages; they differ only in
+    # how many rows they run over. It contains the constraint-side fold too, so
+    # against `linear` this is a deliberate over-charge, never an under-charge.
     stage_samples["persistent_weight_qlin"] = [
         x / slots * model.WEIGHT_ROW_CAPACITY for x in qs]
+    stage_samples["fresh_commit_fold"] = [
+        x / slots * model.FRESH_ROW_CAPACITY for x in qs]
 
     # --- the q_lin fold alone, per constraint id (REPORTED, NOT CHARGED) ---
     # Measured because it is the one number that says whether the fold is
@@ -188,6 +195,8 @@ def measure(runs: int, egress_dir: str) -> dict:
     # One identity band per row covers ELL constraint ids per row, so this
     # batch folds `slots` ids.
     got["lin_ns_per_cid"] = _p99_upper(lin) * 1e9 / slots
+    stage_samples["linear"] = [
+        x / slots * model.LINEAR_COUNT_CAP for x in lin]
 
     # --- proof egress: production u64le/base64 JSON transport -------------
     import proof_dump
@@ -218,10 +227,11 @@ def stages_from_rates(r: dict) -> dict:
     return {
         "model_load": None,                       # needs the real GGUF
         "semantic_5_active_sweeps": None,         # needs the real GGUF
-        "fresh_commit_fold": r["encode_ns_per_slot"] * ns * model.FRESH_ROW_CAPACITY,
-        # Reported as lin_ns_per_cid, not charged here — see the note in
-        # measure(): the fold is already inside the two per-slot stages.
-        "linear": None,
+        "fresh_commit_fold": r["qsweep_ns_per_slot"] * ns * model.FRESH_ROW_CAPACITY,
+        # `linear` is the CONSTRAINT side of the q_lin fold (the model's owner
+        # settled this on 2026-08-06); the two per-slot stages price the
+        # row/witness side.
+        "linear": r["lin_ns_per_cid"] * ns * model.LINEAR_COUNT_CAP,
         "quadratic": r["quad_ns_per_product"] * ns * model.QUADRATIC_COUNT_CAP,
         "fresh_hash_coef": r["hash_ns_per_slot"] * ns * model.FRESH_ROW_CAPACITY,
         "persistent_weight_qlin": r["qsweep_ns_per_slot"] * ns * model.WEIGHT_ROW_CAPACITY,

@@ -42,22 +42,24 @@ _ANALYSIS = pathlib.Path(__file__).resolve().parents[1] / "analysis"
 # query count is a different (cheaper, weaker) proof.
 TARGET = dict(ELL=8192, K_DEG=16384, N_LIG=65536, T_QUERIES=54)
 
-# Stage caps, in seconds, straight out of the admission model.
-STAGE_CAPS = {
-    "model_load": 400.0,
-    "semantic_5_active_sweeps": 3609.0,
-    "fresh_commit_fold": 950.0,
-    "linear": 25.6,
-    "quadratic": 765.0,
-    "fresh_hash_coef": 140.0,
-    "persistent_weight_qlin": 3624.522,
-    "persistent_open": 1812.261,
-    "fresh_open": 450.0,
-    "proof_egress": 879.63,
-    "rtt": 80.0,
-    "tail": 20.0,
-    "orchestration_refresh": 600.0,
-}
+# Stage caps, in seconds, COMPUTED from the admission model — not copied.
+# They were copied once, and drifted: the S4f compact proof wire moved
+# proof_egress from 879.63 s to 481.48 s in the model while the gate kept
+# enforcing the old, looser number. There is one place where the envelope is
+# written down, so the gate reads it.
+def _model_stage_caps() -> Dict[str, float]:
+    import importlib.util
+    path = _ANALYSIS / "routed_projected_4h_model.py"
+    spec = importlib.util.spec_from_file_location("_rp4h_model", path)
+    if spec is None or spec.loader is None:          # pragma: no cover
+        raise AdmissionError(f"admission model not found at {path}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    parts, _total = mod.seconds()
+    return {k: float(v) for k, v in parts.items()}
+
+
+STAGE_CAPS = _model_stage_caps()
 TOTAL_CAP_S = 14_400.0
 # Distribution-free simultaneous tolerance bound.  If each stage cap is the
 # observed maximum of n independent runs, the probability that it lies below
