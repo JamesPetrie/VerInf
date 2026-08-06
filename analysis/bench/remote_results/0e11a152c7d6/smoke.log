@@ -1,0 +1,14 @@
+[maverick-full] layers=4 E=128 T=1000 V=202048 T_QUERIES=54 witness_only=True
+Traceback (most recent call last):
+  File "/workspace/VerInf/demo/demo_maverick_full.py", line 472, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/workspace/VerInf/demo/demo_maverick_full.py", line 362, in main
+    logits, Sz, handles, sum_pos = build_model(
+                                   ^^^^^^^^^^^^
+  File "/workspace/VerInf/demo/demo_maverick_full.py", line 206, in build_model
+    by = _gguf_by_name(gguf)
+         ^^^^^^^^^^^^^^^^^^^
+  File "/workspace/VerInf/prover/loader.py", line 325, in _gguf_by_name
+    from gguf import GGUFReader
+ModuleNotFoundError: No module named 'gguf'

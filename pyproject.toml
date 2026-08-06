@@ -10,6 +10,10 @@ dependencies = [
     "safetensors",
     "blake3",
     "ninja",
+    # prover/loader.py reads the model through GGUFReader. It was installed by
+    # hand in the dev venv and declared nowhere, so every fresh environment —
+    # including every rented box — imported it and died.
+    "gguf",
 ]
 
 [dependency-groups]
