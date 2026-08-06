@@ -315,6 +315,31 @@ carried.  The full 400B proof is not started until every stage below is DONE and
       campaign, as are `linear` and every model-dependent stage.  So "the two
       failing stages now pass" is exactly that claim and not "the envelope
       closes".
+
+      **CONFIRMED on a rented A100-SXM4-40GB** (2026-08-06, $0.61/h, 476 s
+      total ≈ $0.08, instance 46975810 destroyed and confirmed gone).  All 14
+      gate suites ran on the rented card with `gate_failures: 0`, so nothing in
+      S4f is V100-specific.  Kernel rates, 30 runs (exploratory):
+
+      | stage | A6000 pre-S4f | V100 S4f | A100 S4f | cap |
+      |---|---|---|---|---|
+      | quadratic | 800.2 | 703.8 | **686.0** | 765 |
+      | proof_egress | 979.8 | 455.3 | **165.1** | 879.6 |
+      | fresh_commit_fold | 428.4 | 492.0 | 511.9 | 950 |
+      | fresh_hash_coef | 29.8 | 32.5 | 22.9 | 140 |
+      | persistent_open | 68.7 | 97.2 | 78.7 | 1812 |
+      | fresh_open | 17.1 | 24.1 | 19.5 | 450 |
+
+      Both S5a failures are therefore fixed on both cards measured, with the
+      A100 at 0.90x and 0.19x of cap.  One honest oddity: encode is SLOWER on
+      the A100 than on the A6000 (5.12 vs 4.28 ns/slot) despite twice the
+      memory bandwidth, so the commit path is not bandwidth-limited on that
+      card — untuned for sm_80, or clock/power capped.  It has 1.9x margin, so
+      it is a note, not a blocker.
+
+      The compact-wire cap is now derived rather than asserted: (weight rows +
+      fresh rows) x 54 columns x 11 B/value = 36.45 GB against the 52 GB cap,
+      checked by an assert in the model.
 - [~] **S5 — admission harness (partial: kernel stages measured, model stages not).**
       `analysis/bench/admission_bench.py` measures the EXECUTED loop bodies at
       the target geometry (ELL=8192, K_DEG=16384, N_LIG=65536). A 30-run
