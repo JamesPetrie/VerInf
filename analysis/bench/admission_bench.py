@@ -1,7 +1,7 @@
 """Production-geometry kernel rates for the admission report (S5).
 
 Measures the EXECUTED loop bodies at the target Ligero geometry
-(ELL=8192, K_DEG=16384, N_LIG=65536), 30+ runs each, and converts every
+(ELL=8192, K_DEG=16384, N_LIG=65536), and converts every
 per-slot rate into the stage seconds the admission model caps.
 
 What it does NOT do, on purpose:
@@ -15,13 +15,12 @@ What it does NOT do, on purpose:
     model prices. No global multiplier anywhere.
 
 Usage:
-    python analysis/bench/admission_bench.py --runs 30 --out bench.json
+    python analysis/bench/admission_bench.py --runs 30 --out bench.json  # exploratory
 """
 import argparse
 import json
 import math
 import pathlib
-import statistics
 import sys
 import time
 
@@ -41,17 +40,13 @@ ROWS = 512                                              # rows per timed batch
 
 
 def _p99_upper(samples):
-    """A conservative >=99% upper bound from n samples.
+    """Distribution-free upper tolerance statistic: the observed maximum.
 
-    With n=30 the empirical 99th percentile is not resolvable, so this uses
-    mean + 3*sd (one-sided, ~99.9% for anything near-normal) and never returns
-    less than the observed maximum. Deliberately pessimistic: an admission
-    bound that is too tight is the failure mode that costs four hours."""
-    mx = max(samples)
-    if len(samples) < 2:
-        return mx
-    m, sd = statistics.mean(samples), statistics.stdev(samples)
-    return max(mx, m + 3.0 * sd)
+    With admission.MIN_RUNS=714, Bonferroni across every priced stage gives at
+    least 99% confidence that all these maxima exceed their true p99 values.
+    mean+3sd is not a distribution-free tail bound and is intentionally not
+    used.  Smaller probes are exploratory only and the gate refuses them."""
+    return max(samples)
 
 
 def _time(fn, runs, warmup=3):
@@ -67,12 +62,12 @@ def _time(fn, runs, warmup=3):
     return out
 
 
-def measure(runs: int) -> dict:
+def measure(runs: int, egress_dir: str) -> dict:
     seed = core._master_seed_to_cuda(core.new_zk_seed())
     msgs = torch.randint(0, 1 << 62, (ROWS, CFG.ELL), dtype=torch.int64,
                          device="cuda").view(torch.uint64)
     slots = ROWS * CFG.ELL
-    got = {}
+    got, stage_samples = {}, {}
 
     # --- encode: pad + inverse NTT + coset LDE (the commit/fold body) ------
     hold = {}
@@ -82,11 +77,15 @@ def measure(runs: int) -> dict:
 
     enc = _time(do_encode, runs)
     got["encode_ns_per_slot"] = _p99_upper(enc) * 1e9 / slots
+    stage_samples["fresh_commit_fold"] = [
+        x / slots * model.FRESH_ROW_CAPACITY for x in enc]
 
     # --- blake3 column hashing --------------------------------------------
     cw = hold["cw"]
     hsh = _time(lambda: cp.hash_columns_streamed(cw), runs)
     got["hash_ns_per_slot"] = _p99_upper(hsh) * 1e9 / slots
+    stage_samples["fresh_hash_coef"] = [
+        x / slots * model.FRESH_ROW_CAPACITY for x in hsh]
 
     # --- opening: gather the queried columns and land them on the host ----
     cols = list(range(0, CFG.N_LIG, CFG.N_LIG // CFG.T_QUERIES))[:CFG.T_QUERIES]
@@ -99,6 +98,10 @@ def measure(runs: int) -> dict:
 
     opn = _time(do_open, runs, warmup=1)
     got["open_ns_per_slot"] = _p99_upper(opn) * 1e9 / slots
+    stage_samples["persistent_open"] = [
+        x / slots * model.WEIGHT_ROW_CAPACITY for x in opn]
+    stage_samples["fresh_open"] = [
+        x / slots * model.FRESH_ROW_CAPACITY for x in opn]
 
     # --- quadratic: the real p_0 streaming body ---------------------------
     v1 = core.Variable("q_x", length=ROWS * CFG.ELL, phase=1)
@@ -121,28 +124,32 @@ def measure(runs: int) -> dict:
         core.compute_p_0_streaming([v1], [v2], inputs, m_p1, r_quad, quads,
                                    CFG, seed, maps=maps)
 
-    qd = _time(do_quad, max(3, runs // 5), warmup=1)
+    qd = _time(do_quad, runs, warmup=1)
     got["quad_ns_per_product"] = _p99_upper(qd) * 1e9 / (ROWS * CFG.ELL)
+    stage_samples["quadratic"] = [
+        x / (ROWS * CFG.ELL) * model.QUADRATIC_COUNT_CAP for x in qd]
 
-    # --- proof egress: the streaming decimal-JSON writer ------------------
+    # --- proof egress: production u64le/base64 JSON transport -------------
     import proof_dump
     import tempfile, os
     payload = torch.randint(0, 1 << 62, (4_000_000,), dtype=torch.int64,
                             device="cpu").view(torch.uint64)
-    fd, path = tempfile.mkstemp(suffix=".json")
+    fd, path = tempfile.mkstemp(suffix=".json", dir=egress_dir)
     os.close(fd)
 
     def do_write():
         with open(path, "w") as f:
-            proof_dump._w_u64_list(f, payload)
+            proof_dump._w_u64_b64(f, payload)
 
     try:
-        wr = _time(do_write, max(3, runs // 10), warmup=1)
+        wr = _time(do_write, runs, warmup=1)
         nbytes = os.path.getsize(path)
     finally:
         os.unlink(path)
     got["egress_bytes_per_s"] = nbytes / _p99_upper(wr)
-    return got
+    stage_samples["proof_egress"] = [
+        x / nbytes * model.PROOF_BYTES_COMPACT for x in wr]
+    return got, stage_samples
 
 
 def stages_from_rates(r: dict) -> dict:
@@ -158,7 +165,7 @@ def stages_from_rates(r: dict) -> dict:
         "persistent_weight_qlin": None,           # q_lin fold not measured yet
         "persistent_open": r["open_ns_per_slot"] * ns * model.WEIGHT_ROW_CAPACITY,
         "fresh_open": r["open_ns_per_slot"] * ns * model.FRESH_ROW_CAPACITY,
-        "proof_egress": 95_000_000_000 / r["egress_bytes_per_s"],
+        "proof_egress": model.PROOF_BYTES_COMPACT / r["egress_bytes_per_s"],
         "rtt": None,
         "tail": None,
         "orchestration_refresh": None,
@@ -169,6 +176,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs", type=int, default=30)
     ap.add_argument("--out", default=None)
+    ap.add_argument("--egress-dir", default=".",
+                    help="the same filesystem that will hold the production proof")
     a = ap.parse_args()
     if a.runs < admission.MIN_RUNS:
         print(f"NOTE: {a.runs} runs is below the admission minimum "
@@ -178,7 +187,7 @@ def main():
     print(f"machine: {fp['gpu_name']}  torch {fp['torch']}  cuda {fp['cuda']}")
     print(f"geometry: {admission.TARGET}\n")
 
-    rates = measure(a.runs)
+    rates, stage_samples = measure(a.runs, a.egress_dir)
     stages = stages_from_rates(rates)
 
     print(f"{'stage':26s} {'measured':>12s} {'cap':>12s}  verdict")
@@ -210,10 +219,12 @@ def main():
             "machine": fp,
             "geometry": admission.TARGET,
             "runs": a.runs,
-            "bound_kind": "p99_upper",
+            "bound_kind": admission.BOUND_KIND,
             "weights": "none_kernel_only",
             "rates": rates,
             "stages": stages,
+            "stage_samples": stage_samples,
+            "egress_filesystem": admission.filesystem_fingerprint(a.egress_dir),
         }
         pathlib.Path(a.out).write_text(json.dumps(doc, indent=2))
         print(f"\nwrote {a.out} (NOT an admission report: stages are missing "

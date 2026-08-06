@@ -322,7 +322,8 @@ def main():
         missing = [n for n, v in (("--weight-commitment", a.weight_commitment),
                                   ("--expected-weight-root", a.expected_weight_root),
                                   ("--public-sz", a.public_sz),
-                                  ("--admission-report", a.admission_report))
+                                  ("--admission-report", a.admission_report),
+                                  ("--dump-proof", a.dump_proof))
                    if v is None]
         if missing:
             raise SystemExit(
@@ -333,6 +334,17 @@ def main():
         for path in (a.weight_commitment, a.admission_report):
             if not pathlib.Path(path).is_file():
                 raise SystemExit(f"refusing to prove: {path} does not exist")
+        # Serialize access to the enrollment ledger.  Without the lock, two
+        # concurrent provers can both read the same opening set and the last
+        # save silently loses the other proof's columns.
+        import fcntl
+        a._wc_lock = open(a.weight_commitment + ".lock", "a+b")
+        try:
+            fcntl.flock(a._wc_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise SystemExit(
+                "refusing to prove: this weight enrollment is already in use "
+                "by another prover (opening-ledger lock held)")
 
     if a.tokens:
         tk = json.load(open(a.tokens))
@@ -411,26 +423,44 @@ def main():
     claims_bytes, manifest, stmt = admission.prepare(tape, CFG)
     report = admission.load_report(a.admission_report)
     admission.check(report, cfg=CFG, model_root=wc.root, statement_digest=stmt,
-                    manifest=manifest)
+                    manifest=manifest, output_path=a.dump_proof)
     _log(f"admission: PASSED on {report['machine']['gpu_name']} "
          f"({report['runs']} runs/stage)")
     print(f"statement_digest={stmt.hex()}")
 
+    # Reserve the output inode before the multi-hour proof.  dump_proof writes
+    # into this exact .part file and atomically publishes it only after fsync.
+    from proof_dump import reserve_output
+    reserved_part = reserve_output(a.dump_proof, admission.PROOF_RESERVE_BYTES)
+
     t0 = time.time()
-    proof = tape.prove(weight_commitment=wc, claims_bytes=claims_bytes)
+    try:
+        proof = tape.prove(weight_commitment=wc, claims_bytes=claims_bytes)
+    except BaseException:
+        try: pathlib.Path(reserved_part).unlink()
+        except FileNotFoundError: pass
+        raise
     t_prove = time.time() - t0
     _log(f"prove returned ({t_prove:.1f}s) "
          f"peakGPU={torch.cuda.max_memory_allocated()/2**30:.2f}GB")
-    if a.dump_proof:
-        from proof_dump import dump_proof
-        t0 = time.time()
-        dump_proof(a.dump_proof, None, None, proof, None, None)
-        _log(f"proof dumped to {a.dump_proof} ({time.time()-t0:.1f}s)")
-
-    # Book what this proof revealed of the enrolled model's pad, and persist
-    # it: an unrecorded opening is a pad silently spent twice.
+    # Book and durably save the leakage BEFORE publishing the proof.  Spending
+    # budget for a proof whose final write later fails is conservative; the
+    # reverse order is unsafe because a crash can publish openings and lose
+    # their ledger update.
     wc.record_openings(proof.Q_cols)
     wc.save(a.weight_commitment)
+    from proof_dump import dump_proof
+    t0 = time.time()
+    try:
+        dump_proof(a.dump_proof, None, None, proof, None, None,
+                   u64_encoding="u64le-base64", reserved_part=reserved_part)
+    except BaseException:
+        try: pathlib.Path(reserved_part).unlink()
+        except FileNotFoundError: pass
+        raise
+    _log(f"proof dumped to {a.dump_proof} ({time.time()-t0:.1f}s, "
+         "u64le-base64 wire)")
+
     spent, budget = len(wc.opened_columns), wc.opening_budget(CFG)
     _log(f"opening ledger: {spent}/{budget} columns of the enrollment spent"
          + ("" if spent < budget else " — REFRESH the enrollment before the "

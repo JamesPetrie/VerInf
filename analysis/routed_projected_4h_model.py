@@ -77,6 +77,12 @@ QUADRATIC_COUNT_CAP = 45_000_000_000
 P_WEIGHT = 402_724_618_240
 WEIGHT_ROW_CAPACITY = 402_724_618_240
 
+# Production proof transport is JSON-framed u64le/base64, not decimal integers.
+# The exact field payload is unchanged; 4/3 base64 expansion plus roots, paths,
+# claims and a conservative metadata allowance stays below this cap.  Legacy
+# decimal JSON remains accepted by the verifier but is not the 4-hour path.
+PROOF_BYTES_COMPACT = 52_000_000_000
+
 # The current global transcript regenerates the witness in five commitment /
 # test epochs.  This is NOT hidden behind a one-pass fiction: every pass uses
 # active-only expert execution on the real GGUF shards.  Shape-exact selected
@@ -111,12 +117,12 @@ class SLO:
 
 
 def seconds(slo: SLO = SLO()):
-    # Executed serializer is the streaming decimal JSON writer, not a proposed
-    # binary format. Exact weight openings are 21.237GB; the conservative 95GB
-    # cap also covers fresh rows, paths, polynomials and repeated metadata.
+    # Executed serializer writes base64 of canonical u64le field bytes inside
+    # the same JSON envelope. Exact weight openings are 21.237GB raw; the cap
+    # covers 4/3 expansion, fresh rows, paths, polynomials and metadata.
     # Local verifier reads this file; remote transfer
     # is outside this prover SLO unless it is overlapped explicitly.
-    proof_bytes = 95_000_000_000
+    proof_bytes = PROOF_BYTES_COMPACT
     parts = {
         "model_load": slo.model_load_s,
         "semantic_5_active_sweeps": slo.semantic_all_sweeps_s,

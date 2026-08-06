@@ -35,11 +35,16 @@ def _honest_report():
         "statement_digest": STMT.hex(),
         "machine": admission.machine_fingerprint(),
         "row_manifest": dict(MANIFEST),
-        "runs": 30,
-        "bound_kind": "p99_upper",
+        "runs": admission.MIN_RUNS,
+        "bound_kind": admission.BOUND_KIND,
         "weights": "real_gguf",
         # every stage exactly at its cap: admissible, with nothing to spare
         "stages": {k: v for k, v in admission.STAGE_CAPS.items()},
+        "stage_samples": {
+            k: [v] * admission.MIN_RUNS
+            for k, v in admission.STAGE_CAPS.items()
+        },
+        "egress_filesystem": admission.filesystem_fingerprint("."),
     }
 
 
@@ -106,12 +111,30 @@ def test_smaller_geometry_refused():
 
 def test_weak_statistics_refused():
     r = _honest_report()
-    r["runs"] = 29
+    r["runs"] = admission.MIN_RUNS - 1
     _refuses(r, "runs per stage")
     r = _honest_report()
     r["bound_kind"] = "mean"
-    _refuses(r, "UPPER confidence bounds")
-    print("    29 runs / averages instead of upper bounds: refused")
+    _refuses(r, "bound_kind")
+    print("    insufficient runs / averages instead of upper bounds: refused")
+
+
+def test_nonfinite_or_negative_stage_refused():
+    for bad in (float("nan"), float("inf"), -1.0):
+        r = _honest_report()
+        r["stages"]["quadratic"] = bad
+        _refuses(r, "finite and non-negative")
+    print("    NaN / infinity / negative stage bounds: refused")
+
+
+def test_missing_or_understated_raw_samples_refused():
+    r = _honest_report()
+    del r["stage_samples"]["quadratic"]
+    _refuses(r, "no raw sample list")
+    r = _honest_report()
+    r["stage_samples"]["quadratic"][-1] += 1.0
+    _refuses(r, "below observed max")
+    print("    missing / understated raw measurements: refused")
 
 
 def test_random_weights_refused():

@@ -21,7 +21,7 @@ import core
 import claims as _C       # noqa: F401
 import packets as _PK     # noqa: F401
 from tape import Tape
-from proof_dump import dump_proof, estimated_bytes
+from proof_dump import dump_proof, estimated_bytes, reserve_output
 
 # A config WITH slack, so the ledger is live: K_DEG = 2*ELL.
 CFG = core.LigeroConfig(ELL=8, K_DEG=16, N_LIG=64, T_QUERIES=4)
@@ -120,6 +120,36 @@ def test_write_refused_when_the_disk_cannot_hold_it():
         print("    proof larger than the free space: refused, nothing written")
     finally:
         proof_dump.estimated_bytes = real
+        for f in os.listdir(tmp):
+            os.unlink(os.path.join(tmp, f))
+        os.rmdir(tmp)
+
+
+def test_compact_wire_and_preproof_reservation():
+    """Production encoding is smaller and consumes a pre-reserved inode."""
+    import base64, json
+    proof = _build().prove()
+    tmp = tempfile.mkdtemp()
+    path = os.path.join(tmp, "proof.json")
+    try:
+        compact_need = estimated_bytes(
+            proof, proof.Q_cols, 0, u64_encoding="u64le-base64")
+        decimal_need = estimated_bytes(proof, proof.Q_cols, 0)
+        assert compact_need < decimal_need
+        part = reserve_output(path, compact_need + (1 << 20))
+        dump_proof(path, None, None, proof, None, None,
+                   u64_encoding="u64le-base64", reserved_part=part)
+        doc = json.load(open(path))
+        wire = doc["proof"]["q_irs"]
+        assert wire.startswith("u64le:")
+        raw = base64.b64decode(wire[6:])
+        got = [int.from_bytes(raw[i:i + 8], "little")
+               for i in range(0, len(raw), 8)]
+        want = [int(x) for x in proof.q_irs.cpu().tolist()]
+        assert got == want, "compact wire changed field elements"
+        assert not os.path.exists(part)
+        print(f"    compact wire: {os.path.getsize(path)} bytes, exact u64 roundtrip")
+    finally:
         for f in os.listdir(tmp):
             os.unlink(os.path.join(tmp, f))
         os.rmdir(tmp)

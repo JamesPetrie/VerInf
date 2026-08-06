@@ -3,12 +3,12 @@
 //! driver compares this to Python's verdict and to a tampered-REJECT.
 //!
 //! Parsing: the big proof arrays (opened columns, merkle paths) are
-//! deserialized straight into typed Vec<u64> via serde's streaming from_reader,
-//! NOT a serde_json::Value DOM. At full-model scale the proof JSON is ~12 GB;
-//! a Value DOM of it peaks >120 GB (each integer a 24-byte enum node) and OOMs.
-//! Typed parse keeps peak at a few GB (packed u64). `claims` stays a Value —
+//! deserialized into typed vectors via serde's streaming from_reader, NOT a
+//! serde_json::Value DOM. Production field arrays are u64le/base64 strings;
+//! legacy decimal arrays remain accepted. `claims` stays a Value —
 //! it is small (~MBs) and parse_claim_set_value already consumes a Value.
 use std::collections::HashMap;
+use std::convert::TryInto;
 use serde::Deserialize;
 use serde_json::Value;
 use serde_json::value::RawValue;
@@ -16,15 +16,72 @@ use ligero_verifier::claim::parse_claim_set_value;
 use ligero_verifier::fs;
 use ligero_verifier::verify::{Round3, Round4, verify_bound};
 
+/// A field vector on the proof wire.  Legacy proofs use a JSON array; the
+/// production writer uses `"u64le:<base64>"`.  Both decode to the identical
+/// Vec<u64>, so this is transport-only and does not alter any verifier check or
+/// Fiat--Shamir input.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum WireU64Vec {
+    Legacy(Vec<u64>),
+    U64Le(String),
+}
+
+fn decode_b64(s: &str) -> Result<Vec<u8>, String> {
+    fn val(c: u8) -> Option<u8> {
+        match c {
+            b'A'..=b'Z' => Some(c - b'A'),
+            b'a'..=b'z' => Some(c - b'a' + 26),
+            b'0'..=b'9' => Some(c - b'0' + 52),
+            b'+' => Some(62), b'/' => Some(63), _ => None,
+        }
+    }
+    let b = s.as_bytes();
+    if b.len() % 4 != 0 { return Err("base64 length is not a multiple of 4".into()); }
+    let mut out = Vec::with_capacity(b.len() / 4 * 3);
+    for (qi, q) in b.chunks_exact(4).enumerate() {
+        let last = qi + 1 == b.len() / 4;
+        let pad2 = q[2] == b'='; let pad3 = q[3] == b'=';
+        if (pad2 || pad3) && !last { return Err("interior base64 padding".into()); }
+        if pad2 && !pad3 { return Err("invalid base64 padding".into()); }
+        let a = val(q[0]).ok_or("bad base64 character")? as u32;
+        let c = val(q[1]).ok_or("bad base64 character")? as u32;
+        let d = if pad2 { 0 } else { val(q[2]).ok_or("bad base64 character")? as u32 };
+        let e = if pad3 { 0 } else { val(q[3]).ok_or("bad base64 character")? as u32 };
+        let x = (a << 18) | (c << 12) | (d << 6) | e;
+        out.push((x >> 16) as u8);
+        if !pad2 { out.push((x >> 8) as u8); }
+        if !pad3 { out.push(x as u8); }
+    }
+    Ok(out)
+}
+
+impl WireU64Vec {
+    fn into_vec(self) -> Result<Vec<u64>, String> {
+        match self {
+            Self::Legacy(v) => Ok(v),
+            Self::U64Le(s) => {
+                let payload = s.strip_prefix("u64le:")
+                    .ok_or("unknown string encoding for field vector")?;
+                let raw = decode_b64(payload)?;
+                if raw.len() % 8 != 0 { return Err("u64le payload is not 8-byte aligned".into()); }
+                Ok(raw.chunks_exact(8).map(|c| {
+                    u64::from_le_bytes(c.try_into().unwrap())
+                }).collect())
+            }
+        }
+    }
+}
+
 #[derive(Deserialize)]
 struct RawProof {
     root_p1: String,
     root_p2: String,
-    q_irs: Vec<u64>,
-    q_lin: Vec<u64>,
-    p_0: Vec<u64>,
-    opened_p1: HashMap<String, Vec<u64>>,
-    opened_p2: HashMap<String, Vec<u64>>,
+    q_irs: WireU64Vec,
+    q_lin: WireU64Vec,
+    p_0: WireU64Vec,
+    opened_p1: HashMap<String, WireU64Vec>,
+    opened_p2: HashMap<String, WireU64Vec>,
     paths_p1: HashMap<String, Vec<(String, u8)>>,
     paths_p2: HashMap<String, Vec<(String, u8)>>,
     // Persistent W block (analysis/persistent-weights.md) — present only when
@@ -34,22 +91,22 @@ struct RawProof {
     // the row-block order to join in (default ["p1","p2"]).
     #[serde(default)] blocks: Option<Vec<String>>,
     #[serde(default)] root_w: Option<String>,
-    #[serde(default)] opened_w: Option<HashMap<String, Vec<u64>>>,
+    #[serde(default)] opened_w: Option<HashMap<String, WireU64Vec>>,
     #[serde(default)] paths_w: Option<HashMap<String, Vec<(String, u8)>>>,
     // Second weight block of a linking proof (persistent-weights P5): the
     // refreshed commitment's tree. The caller adopts root_wnew as the new
     // trusted R_W' after (a) this proof ACCEPTs and (b) root_w matches the
     // currently-trusted R_W.
     #[serde(default)] root_wnew: Option<String>,
-    #[serde(default)] opened_wnew: Option<HashMap<String, Vec<u64>>>,
+    #[serde(default)] opened_wnew: Option<HashMap<String, WireU64Vec>>,
     #[serde(default)] paths_wnew: Option<HashMap<String, Vec<(String, u8)>>>,
     // Phase-3 block: the late auxiliaries committed in R3 (routed-projected
     // Freivalds). Absent on proofs whose tape has no late-stage claim.
     #[serde(default)] root_p3: Option<String>,
-    #[serde(default)] opened_p3: Option<HashMap<String, Vec<u64>>>,
+    #[serde(default)] opened_p3: Option<HashMap<String, WireU64Vec>>,
     #[serde(default)] paths_p3: Option<HashMap<String, Vec<(String, u8)>>>,
     #[serde(default)] root_blind: Option<String>,
-    #[serde(default)] opened_blind: Option<HashMap<String, Vec<u64>>>,
+    #[serde(default)] opened_blind: Option<HashMap<String, WireU64Vec>>,
     #[serde(default)] paths_blind: Option<HashMap<String, Vec<(String, u8)>>>,
 }
 
@@ -96,9 +153,11 @@ fn hexbytes(s: &str) -> Vec<u8> {
         .collect()
 }
 
-fn conv_open(m: HashMap<String, Vec<u64>>) -> HashMap<u64, Vec<u64>> {
+fn conv_open(m: HashMap<String, WireU64Vec>) -> HashMap<u64, Vec<u64>> {
     // into_iter moves the Vec<u64> — no copy of the (large) column data.
-    m.into_iter().map(|(k, v)| (k.parse().unwrap(), v)).collect()
+    m.into_iter().map(|(k, v)| {
+        (k.parse().unwrap(), v.into_vec().expect("decode u64 proof vector"))
+    }).collect()
 }
 
 fn conv_paths(m: HashMap<String, Vec<(String, u8)>>) -> HashMap<u64, Vec<([u8; 32], u8)>> {
@@ -158,7 +217,11 @@ fn main() {
     // The block layout is part of the statement: the digest covers it, so a
     // proof cannot relabel or reorder its own blocks.
     let stmt_recomputed = fs::statement_digest(&claims_bytes, &block_order);
-    let r3 = Round3 { q_irs: p.q_irs, q_lin: p.q_lin, p_0: p.p_0 };
+    let r3 = Round3 {
+        q_irs: p.q_irs.into_vec().expect("decode q_irs"),
+        q_lin: p.q_lin.into_vec().expect("decode q_lin"),
+        p_0: p.p_0.into_vec().expect("decode p_0"),
+    };
     let r4 = Round4 { opened, paths };
 
     // ---- transcript + policy -------------------------------------------
@@ -249,5 +312,21 @@ fn main() {
             println!("match: {}", if ok == py { "YES" } else { "NO" });
         }
         None => println!("python_accept: (none — GPU verify skipped; Rust verdict stands alone)"),
+    }
+}
+
+#[cfg(test)]
+mod wire_tests {
+    use super::{decode_b64, WireU64Vec};
+
+    #[test]
+    fn compact_u64le_roundtrip_and_bad_padding() {
+        // little-endian bytes of [1, u64::MAX]
+        let got = WireU64Vec::U64Le(
+            "u64le:AQAAAAAAAAD//////////w==".to_string())
+            .into_vec().unwrap();
+        assert_eq!(got, vec![1, u64::MAX]);
+        assert!(decode_b64("AA=A").is_err());
+        assert!(decode_b64("AAAA=AAA").is_err());
     }
 }

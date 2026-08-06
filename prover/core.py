@@ -957,8 +957,12 @@ class WeightCommitment:
     OPENING_BUDGET_FRACTION = 0.5
 
     def save(self, path: str) -> None:
+        import os
         import struct
-        with open(path, "wb") as f:
+        # The ledger is security state, not a cache.  Publish it atomically so
+        # a crash cannot roll the enrollment back to an earlier opening set.
+        part = path + ".part"
+        with open(part, "wb") as f:
             f.write(self.MAGIC)
             f.write(struct.pack("<III", self.VERSION, self.m_w, self.n_lig))
             f.write(self.root)
@@ -973,6 +977,14 @@ class WeightCommitment:
             f.write(struct.pack("<I", len(cols)))
             for c in cols:
                 f.write(struct.pack("<I", c))
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(part, path)
+        dfd = os.open(os.path.dirname(os.path.abspath(path)) or ".", os.O_RDONLY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
 
     @staticmethod
     def load(path: str) -> "WeightCommitment":
@@ -2003,6 +2015,45 @@ def compute_p_0_streaming(
     if T == 0:
         return p_0
 
+    # Multiplication is performed in the 2K evaluation domain.  The previous
+    # implementation inverse-transformed every product row and only then took
+    # the r_quad-weighted row sum.  The inverse NTT is linear, so that did
+    # exactly the same work as
+    #
+    #   iNTT(sum_i r_i * (NTT(px_i)NTT(py_i) +
+    #                     NTT(pa_i)NTT(pz_i)))
+    #
+    # but paid one 2K inverse transform per constraint row.  Accumulate the
+    # products in the evaluation domain and invert ONCE at the end.  This is a
+    # pure reassociation in F_p: transcript, polynomial coefficients and the
+    # verifier are unchanged.
+    n_eval = 1
+    while n_eval < 2 * K - 1:
+        n_eval <<= 1
+    eval_acc = torch.zeros(n_eval, dtype=torch.uint64, device="cuda")
+    public_acc = torch.zeros(K, dtype=torch.uint64, device="cuda")
+    saw_public = False
+
+    # Public a/b rows are uniform on the first n message positions and zero on
+    # the rest of the K interpolation domain.  A full chunk normally repeats
+    # the same (n,a,b) hundreds of times (notably LogUp's a=-1,b=0).  Interpolate
+    # each distinct public row once instead of running an identical iNTT for
+    # every constraint.  The cache is local to this call and therefore bounded
+    # by the number of distinct public coefficients in one claim.
+    public_poly_cache = {}
+
+    def public_poly(n: int, coef: int) -> torch.Tensor:
+        key = (int(n), int(coef) % P)
+        hit = public_poly_cache.get(key)
+        if hit is not None:
+            return hit
+        mask = (slot_grid < int(n)).to(torch.int64).unsqueeze(0)
+        c = torch.tensor([key[1]], dtype=torch.uint64, device="cuda")
+        vals = (c.view(torch.int64).unsqueeze(1) * mask).view(torch.uint64)
+        hit = _interpolate_to_kdeg(vals.contiguous(), cfg)
+        public_poly_cache[key] = hit
+        return hit
+
     # Build row maps once — walking the var lists per chunk would be O(M·rows·T/chunk_size).
     # The streaming prover passes prebuilt maps so per-op calls don't rebuild them.
     if maps is not None:
@@ -2054,35 +2105,60 @@ def compute_p_0_streaming(
                                   dtype=torch.int64, device="cuda")
         z_compact = torch.tensor([compact_idx_of[qc.z_row] for qc in chunk_qcs],
                                   dtype=torch.int64, device="cuda")
-        n_chunk = torch.tensor([qc.n for qc in chunk_qcs],
-                                dtype=torch.int64, device="cuda")
-        a_chunk = torch.tensor([qc.a_values[0] for qc in chunk_qcs],
-                                dtype=torch.uint64, device="cuda")
-        b_chunk = torch.tensor([qc.b_values[0] for qc in chunk_qcs],
-                                dtype=torch.uint64, device="cuda")
-
-        mask_i = (slot_grid.unsqueeze(0) < n_chunk.unsqueeze(1)).to(torch.int64)
-        a_i = a_chunk.contiguous().view(torch.int64).unsqueeze(1)
-        b_i = b_chunk.contiguous().view(torch.int64).unsqueeze(1)
-        pa_vals = (a_i * mask_i).view(torch.uint64).contiguous()
-        pb_vals = (b_i * mask_i).view(torch.uint64).contiguous()
-
         px = polys_cache.index_select(0, x_compact)
         py = polys_cache.index_select(0, y_compact)
         pz = polys_cache.index_select(0, z_compact)
-        pa = _interpolate_to_kdeg(pa_vals, cfg)
-        pb = _interpolate_to_kdeg(pb_vals, cfg)
 
-        inner = gl_sub(
-            gl_add(poly_mul_batched(px, py), poly_mul_batched(pa, pz)),
-            torch.cat([pb,
-                        torch.zeros((chunk, K - 1), dtype=torch.uint64, device="cuda")],
-                       dim=1),
-        )
-        p_0 = gl_add(p_0, gl_matvec(inner.T.contiguous(), r_quad[t_lo:t_hi]))
+        a_keys = [(qc.n, qc.a_values[0] % P) for qc in chunk_qcs]
+        b_keys = [(qc.n, qc.b_values[0] % P) for qc in chunk_qcs]
+        have_a = any(a != 0 for _, a in a_keys)
+        have_b = any(b != 0 for _, b in b_keys)
 
-        del polys_cache, px, py, pz, pa, pb, inner, pa_vals, pb_vals, mask_i
+        # One pair of batched forward NTT launches for both products.  Rows
+        # with a=0 need no a*z product at all.
+        lhs_parts, rhs_parts = [px], [py]
+        if have_a:
+            pa = torch.cat([public_poly(n, a) for n, a in a_keys], dim=0)
+            lhs_parts.append(pa)
+            rhs_parts.append(pz)
+        lhs_k = torch.cat(lhs_parts, dim=0)
+        rhs_k = torch.cat(rhs_parts, dim=0)
+        lhs = torch.zeros((lhs_k.size(0), n_eval), dtype=torch.uint64, device="cuda")
+        rhs = torch.zeros_like(lhs)
+        lhs[:, :K] = lhs_k
+        rhs[:, :K] = rhs_k
+        ntt_forward_batched(lhs)
+        ntt_forward_batched(rhs)
+        products = gl_mul(lhs, rhs)
+        product_sum = products[:chunk]
+        if have_a:
+            product_sum = gl_add(product_sum, products[chunk:])
+        weighted_eval = gl_matvec(product_sum.T.contiguous(), r_quad[t_lo:t_hi])
+        eval_acc = gl_add(eval_acc, weighted_eval)
 
+        # The public b polynomial is already in coefficient form.  Accumulate
+        # it separately and subtract after the single inverse transform.  The
+        # overwhelmingly common b=0 family avoids this path entirely.
+        if have_b:
+            saw_public = True
+            pb = torch.cat([public_poly(n, b) for n, b in b_keys], dim=0)
+            public_acc = gl_add(
+                public_acc,
+                gl_matvec(pb.T.contiguous(), r_quad[t_lo:t_hi]))
+
+        del (polys_cache, px, py, pz, lhs_k, rhs_k, lhs, rhs, products,
+             product_sum, weighted_eval)
+        if have_a:
+            del pa
+        if have_b:
+            del pb
+
+    ntt_inverse(eval_acc)
+    p_0 = eval_acc[:2 * K - 1].contiguous()
+    if saw_public:
+        public_pad = torch.zeros(2 * K - 1, dtype=torch.uint64, device="cuda")
+        public_pad[:K] = public_acc
+        p_0 = gl_sub(p_0, public_pad)
     return p_0
 
 

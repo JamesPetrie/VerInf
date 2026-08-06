@@ -3,13 +3,12 @@
 This runbook is deliberately fail-closed.  It describes the executed path in
 this tree, not a future GKR/PCS implementation and not a random-weight proxy.
 
-> **Implementation status (2026-08-05).**  This document is the TARGET.  The
-> tree does not yet contain `RoutedProjectedMatmulClaim`, the standalone
-> `RescaleClaim`, the five-message sequential Fiat--Shamir transcript, the
-> active-only MoE builder, or any of the CLI flags below.  See
-> `analysis/routed-projected-status.md` for the gap list and the staged plan.
-> Do not treat any command here as runnable until its stage is marked DONE
-> there.
+> **Implementation status (2026-08-06).** S0--S4e are implemented and gated.
+> S4f (quadratic accumulator, compact proof wire, transactional ledger/output)
+> is implemented but awaits the new GPU/Rust campaign. S5 still lacks real
+> GGUF load and five-sweep measurements. See
+> `analysis/routed-projected-status.md`, the only implementation authority.
+> Do not start the 400B proof until S4f and S5 are marked DONE there.
 
 ## What changed
 
@@ -97,7 +96,7 @@ not one.  Their exact shape count is `5 * 19.68898048T = 98.4449024T`
 real-model MACs (including embedding and QK/AV attention).
 All five, including GGUF decode/page movement, must complete in <=3609s
 (>=27.278G decoded MAC/s aggregate).  The remaining hard caps are the fields in
-`SLO`; the complete executed streaming-JSON model is:
+`SLO`; the complete executed compact-wire model is:
 
 ```
 model cold/load                   400.000 s
@@ -109,18 +108,23 @@ fresh hash/coefficient           140.000 s
 persistent-weight qlin          3624.522 s
 persistent opening              1812.261 s
 fresh opening                    450.000 s
-streaming JSON proof             879.630 s
+compact u64le/base64 proof       481.481 s
 RTT/tail/orchestration           700.000 s
-TOTAL                          13,356.012 s = 3.7100 h
-margin                         1,043.988 s
+TOTAL                          12,957.864 s = 3.5994 h
+margin                         1,442.136 s
 ```
 
 There is no global kappa.  Before the full run, benchmark the exact production
 CUDA loop bodies on real GGUF shards and create `admission.json`; the driver
-rejects reports that are not simultaneous >=99% upper bounds from >=30 runs,
+rejects reports that do not satisfy the distribution-free simultaneous bound
+and sample count in `prover/admission.py`,
 do not match the model root/statement, or exceed any stage cap. Do not
 substitute random weights, Python primitive timings,
 isolated modular multiplication, or a smaller ELL/N geometry.
+The report contains the raw seconds list for every stage; the gate recomputes
+that the declared bound is at least its observed maximum. It is also bound to
+the GPU/driver/power identity and to the filesystem used by `--dump-proof`.
+Benchmarking egress to `/tmp` does not authorize a proof written elsewhere.
 
 ## Forbidden regressions
 
@@ -134,4 +138,6 @@ The following each invalidates either soundness or the time theorem:
 - omitting `RescaleClaim` after a routed raw accumulator;
 - rebuilding the persistent model commitment online;
 - adding a sixth witness/reveal pass;
-- materializing proof JSON as Python integers instead of using the streaming writer.
+- materializing proof JSON as Python integers instead of using the compact
+  streaming writer;
+- publishing a proof before atomically saving its opening-ledger update.

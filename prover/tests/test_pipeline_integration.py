@@ -63,11 +63,16 @@ def _report_for(tape, wc, stmt, at_cap=True):
         "statement_digest": stmt.hex(),
         "machine": admission.machine_fingerprint(),
         "row_manifest": admission.row_manifest(tape, CFG),
-        "runs": 30,
-        "bound_kind": "p99_upper",
+        "runs": admission.MIN_RUNS,
+        "bound_kind": admission.BOUND_KIND,
         "weights": "real_gguf",
         "stages": {k: (v if at_cap else v / 2) for k, v in
                    admission.STAGE_CAPS.items()},
+        "stage_samples": {
+            k: [(v if at_cap else v / 2)] * admission.MIN_RUNS
+            for k, v in admission.STAGE_CAPS.items()
+        },
+        "egress_filesystem": admission.filesystem_fingerprint("."),
     }
 
 
@@ -108,7 +113,11 @@ def test_enroll_admit_prove_verify():
         assert proof.root_w == trusted_root
         assert proof.statement_digest == stmt, (
             "the statement the gate admitted is not the one the proof carries")
-        dump_proof(proof_path, None, None, proof, None, None)
+        # Production transport: compact base64 of the exact same u64le field
+        # bytes.  This gate exercises the independent Rust decoder, not merely
+        # the Python writer.
+        dump_proof(proof_path, None, None, proof, None, None,
+                   u64_encoding="u64le-base64")
 
         # 5. the verifier, with both policy values supplied externally
         acc, msg = _verify(proof_path, trusted_root.hex(), stmt.hex())

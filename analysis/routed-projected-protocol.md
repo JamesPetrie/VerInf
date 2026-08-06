@@ -136,7 +136,7 @@ there is no global calibration multiplier.  It includes GGUF load/decode,
 fresh rows, linear/quadratic work, the exact
 executed flattened-variable weight geometry including row padding, the post-combiner persistent
 weight `q_lin` fold, persistent and
-fresh openings, the currently implemented streaming-JSON proof drain, RTT,
+fresh openings, the currently implemented compact u64le/base64 JSON proof drain, RTT,
 refresh and orchestration.  It also
 charges the current global prover's five complete witness regenerations:
 $5\cdot19.68898048$T active-model MACs must fit in 3609 seconds (at least 27.278G
@@ -145,9 +145,9 @@ weights cannot satisfy this admission test.
 
 The admission limits sum to
 
-$$T=13{,}356.012\text{ s}=3.7100\text{ h},$$
+$$T=12{,}957.864\text{ s}=3.5994\text{ h},$$
 
-leaving $1043.988$ seconds.  A production build rejects startup unless
+leaving $1442.136$ seconds.  A production build rejects startup unless
 simultaneous p99 bounds satisfy every per-kernel limit in that file.  The
 critical structural requirements are exactly five active-only regenerations
 and no sixth reveal pass, no all-expert activation tensor, no ordinary

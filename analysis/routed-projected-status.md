@@ -23,7 +23,8 @@ Ledger cross-check (done): the document's baseline
 `(W,L,Q) = (888,249,981,888 / 162,237,276,010 / 173,106,423,296)` is exactly what
 `analysis/maverick_cost_model.py` emits at S=1000, so the new ledger is derived
 against this tree and not against an abstraction.
-`analysis/routed_projected_4h_model.py` runs and closes at 13,356.012 s = 3.7100 h.
+`analysis/routed_projected_4h_model.py` now runs and closes at 12,957.864 s =
+3.5994 h after the compact proof-wire change described in S4f.
 Exact ratios are 10.7183% / 19.1477% / 24.4905% (the protocol note said 10.78%
 for W — corrected in the copy checked in here).
 
@@ -211,15 +212,17 @@ carried.  The full 400B proof is not started until every stage below is DONE and
       non-target config refuses unless `--allow-dev-config`.
       `prover/admission.py` is the fail-closed gate: the report must bind to
       the source digest, model root, statement digest, machine fingerprint and
-      the row manifest of the layout just built, carry >=30 runs of p99 UPPER
+      the row manifest of the layout just built, carry the admission module's
+      distribution-free sample count and bound kind,
       bounds measured on real GGUF, and come in under every per-stage cap.
       Openings no longer accumulate on the GPU: `ColumnSink` writes each
       chunk's slice straight into a pre-sized host buffer, so there is no
       final `torch.cat` (which briefly doubled tens of GB of openings).
-      Gate PASSED: `tests/test_admission_gate.py` 11/11 — an honest report at
+      Gate PASSED on the pre-S4f tree: `tests/test_admission_gate.py` 11/11 —
+      an honest report at
       cap is admitted, and a report that is over cap by 1 ms, from another
       GPU, another build, another model, another statement, a smaller ELL or
-      half the rows, 29 runs, averages instead of upper bounds, random
+      half the rows, insufficient runs, averages instead of upper bounds, random
       weights, a missing stage, an unpriced stage or without a machine binding
       is refused, as is a dev geometry.  Driver refusals checked directly
       (wrong config, missing policy).  Full suite green.
@@ -246,15 +249,78 @@ carried.  The full 400B proof is not started until every stage below is DONE and
       that dies out of disk cannot leave a truncated file that looks like a
       proof.  The commitment loader reports any malformed handle as a
       corruption instead of a struct traceback.
-      Gate PASSED: `tests/test_opening_ledger.py` 5/5 (ledger records and
+      Gate PASSED on the pre-S4f tree: `tests/test_opening_ledger.py` 5/5
+      (ledger records and
       survives save/load; an exhausted budget refuses BEFORE any weight column
       is produced and names the remedy; the budget scales with the pad;
       atomic write leaves no `.part`; a proof larger than the free space is
       refused with nothing written).
+- [~] **S4f — quadratic reassociation, compact proof wire, transactional output.**
+      Implemented in this handoff, but NOT marked DONE until the new CUDA and
+      Rust gates run on the rented machine. `compute_p_0_streaming` now uses
+      linearity of the inverse NTT: it accumulates the random linear
+      combination of quadratic products in the 2K evaluation domain and pays
+      one inverse NTT at the end, instead of one per constraint row. Public
+      constant rows are interpolated once per distinct `(n,c)`. This changes
+      neither `p_0` nor the verifier equation; `test_quad_eval_accumulator`
+      compares it coefficient-for-coefficient to the literal construction.
+
+      Production field vectors are JSON strings containing canonical `u64le`
+      bytes in base64. The Rust verifier accepts this form and legacy decimal
+      arrays and reconstructs the same `Vec<u64>` before every check. At the
+      exact cap this changes modeled drain from 879.630 s to 481.481 s; model
+      total is 12,957.864 s (3.5994 h), margin 1,442.136 s.
+
+      Output is reserved with `posix_fallocate` before proving. Access to an
+      enrollment is locked across the run; after proving, its opening ledger
+      is atomically saved and fsynced BEFORE the proof is atomically published.
+      Failure after ledger save spends budget conservatively instead of
+      publishing unrecorded leakage.
+
+      Admission rejects NaN, infinity and negative durations. The old “30
+      samples imply simultaneous p99/99%” statement was false: without a
+      parametric tail assumption the required stagewise-max count is 714 after
+      Bonferroni over 13 stages. Thirty-run campaigns are now exploratory and
+      cannot authorize production.
+      Reports additionally bind GPU UUID/driver/PCI id/power limit and the
+      actual proof-output filesystem; timing `/tmp` cannot authorize a write
+      to a different disk.
+
+      **Local CUDA/Rust gates RUN (2026-08-06, V100-SXM3-32GB).**  Everything
+      the handoff listed as the load-bearing next action, except the rented
+      card: `cargo build --release` clean, `cargo test --release --bin
+      verify_proof` 1/1 (compact-wire roundtrip + bad padding), and
+      test_quad_eval_accumulator 1/1, test_opening_ledger 6/6,
+      test_admission_gate 13/13, test_pipeline_integration 3/3,
+      test_fiat_shamir 7/7, test_phase3_block 5/5, test_routed_projected 6/6,
+      test_rescale_claim 4/4, test_moe_routed 4/4, test_shard_streaming 4/4,
+      test_claims 21/21.
+
+      Both stages that failed S5a now clear their caps ON THE SAME BOX as the
+      earlier V100 measurement, so this is a like-for-like A/B, 30 runs
+      (exploratory, not a report):
+
+      | stage | V100 pre-S4f | V100 S4f | cap |
+      |---|---|---|---|
+      | quadratic | 821.7 s (18.28 ns/product) | **703.8 s (15.64 ns)** | 765 |
+      | proof_egress | 2114 s (44.9 MB/s) | **455.3 s (114.2 MB/s)** | 879.6 |
+
+      Other kernel stages unchanged (fresh_commit_fold 492.0, fresh_hash_coef
+      32.5, persistent_open 97.2, fresh_open 24.1).  The quadratic win is the
+      reassociation; the egress win is the compact wire (52 GB modeled instead
+      of 95 GB) plus base64 in C rather than decimal formatting in Python.
+
+      What this does NOT show: `persistent_weight_qlin` (cap 3624.5 s, the
+      largest single kernel stage) is still `NOT MEASURED` by the kernel
+      campaign, as are `linear` and every model-dependent stage.  So "the two
+      failing stages now pass" is exactly that claim and not "the envelope
+      closes".
 - [~] **S5 — admission harness (partial: kernel stages measured, model stages not).**
       `analysis/bench/admission_bench.py` measures the EXECUTED loop bodies at
-      the target geometry (ELL=8192, K_DEG=16384, N_LIG=65536), 30 runs each,
-      and converts each per-slot rate into the stage seconds the model caps.
+      the target geometry (ELL=8192, K_DEG=16384, N_LIG=65536). A 30-run
+      campaign is an exploratory optimization check; production needs the
+      sample count and method required by `prover/admission.py`. It converts
+      each per-slot rate into the stage seconds the model caps.
       It deliberately leaves `model_load` and the five semantic sweeps as
       `null` — they need real GGUF shards — so the report it writes is
       incomplete and the gate refuses it, which is the correct outcome.
@@ -274,7 +340,8 @@ carried.  The full 400B proof is not started until every stage below is DONE and
       Per-slot rates: encode 4.92 ns, hash 0.33 ns, open 0.23 ns,
       quad 18.28 ns/product, egress 44.9 MB/s.
 
-      The egress failure is CPU-bound, not GPU-bound: the streaming decimal
+      HISTORICAL result for the pre-S4f tree. The egress failure was CPU-bound:
+      the streaming decimal
       JSON writer. Rendering each chunk with json.dumps (the C encoder)
       instead of a Python `",".join(str(v) ...)` is byte-identical output and
       measures 79 MB/s vs 47 MB/s single-run — but the p99 bound only moved
@@ -300,16 +367,19 @@ carried.  The full 400B proof is not started until every stage below is DONE and
       Rates: encode 4.28 ns/slot, hash 0.30, open 0.17, quad 17.78 ns/product,
       egress 97.0 MB/s.
 
-      The finding: BOTH stages that fail on the dev box still fail on a modern
+      The finding for commit `0279686`: BOTH stages that failed on the dev box
+      also failed on a modern
       card, by 5% and 11%. The kernels are bandwidth-bound and the A6000
       (768 GB/s GDDR6) is not a step up from a V100 SXM3 on that axis — encode
       moved only 4.92 -> 4.28 ns/slot. So the 4-hour envelope does not close on
       either card measured so far, and the gap is small enough that it is a
-      real engineering question (a much higher-bandwidth card, a faster
-      quad kernel, or caps that need restating), not a rounding error.
+      real engineering question, not a rounding error. S4f changes exactly
+      those two bodies, so this report remains a baseline but is invalid as
+      admission evidence for the new source digest.
 - [ ] **S5b — the model-dependent stages, on the rented card.**
       Benchmarks the exact production loop bodies (no random matrices, no
-      isolated modmul), >=30 runs, simultaneous >=99% upper bounds, writes
+      isolated modmul), with the sample count/method required by
+      `prover/admission.py`, writes
       `admission.json` bound to source digest, model root, statement digest,
       CUDA machine fingerprint and the actual row manifest.  Driver refuses to
       start when any stage bound exceeds its cap.
@@ -321,10 +391,10 @@ carried.  The full 400B proof is not started until every stage below is DONE and
 
 ## Open risks (stated now, not discovered later)
 
-1. The five-sweep semantic cap (27.278G decoded real-GGUF MAC/s aggregate) and
-   the 95 GB decimal-JSON drain at 108 MB/s are the two caps most likely to
-   fail; both are CPU/loader bound, and the local box has 4 vCPU.  They must be
-   measured on the rented machine before anything is promised.
+1. The five-sweep semantic cap (27.278G decoded real-GGUF MAC/s aggregate) is
+   now the largest completely unmeasured term. Compact proof egress and the
+   optimized quadratic accumulator must be remeasured on the rented machine;
+   neither is inferred from the historical A6000 report.
 2. GGUF availability: only shard 1 of 5 (21 GB) is present locally as of
    2026-08-05.
 3. S1 is a protocol change to a prover whose soundness rule is

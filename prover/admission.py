@@ -15,7 +15,7 @@ What the gate refuses, and why each one matters:
     benchmark becomes a bad prediction;
   * a report whose row manifest differs from the layout just built — a smaller
     ELL/N geometry or a shorter context measures a different amount of work;
-  * fewer than 30 runs per stage, or a bound that is not an upper confidence
+  * fewer than 714 runs per stage, or a bound that is not an upper confidence
     bound — an average is not an admission argument;
   * any stage over its cap in analysis/routed_projected_4h_model.py;
   * a report that admits it used random weights — the semantic sweep cap
@@ -28,7 +28,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
+import os
 import pathlib
+import platform
 import subprocess
 from typing import Dict
 
@@ -56,7 +59,17 @@ STAGE_CAPS = {
     "orchestration_refresh": 600.0,
 }
 TOTAL_CAP_S = 14_400.0
-MIN_RUNS = 30
+# Distribution-free simultaneous tolerance bound.  If each stage cap is the
+# observed maximum of n independent runs, the probability that it lies below
+# the true 99th percentile is 0.99**n.  Bonferroni across all priced stages
+# requires len(STAGE_CAPS)*0.99**n <= 0.01, hence 714 (not 30).  A smaller
+# exploratory probe may guide optimization but cannot authorize a 4-hour run.
+MIN_RUNS = math.ceil(math.log(0.01 / len(STAGE_CAPS)) / math.log(0.99))
+BOUND_KIND = "simultaneous_nonparametric_p99_max"
+# Compact u64le/base64 proof is ~35--45 GB at the target manifest.  Reserve a
+# deliberately larger inode before proving so ENOSPC cannot be discovered four
+# hours later.  The writer truncates it to the actual length before rename.
+PROOF_RESERVE_BYTES = 64_000_000_000
 
 
 class AdmissionError(SystemExit):
@@ -85,11 +98,13 @@ def source_digest() -> str:
     try:
         files = subprocess.run(
             ["git", "-C", str(root), "ls-files", "prover", "verifier", "demo",
-             "analysis/routed_projected_4h_model.py"],
+             "analysis/bench", "analysis/routed_projected_4h_model.py"],
             capture_output=True, text=True, check=True).stdout.split()
     except Exception:
-        files = sorted(str(p.relative_to(root))
-                       for p in root.rglob("*.py") if "deprecated" not in str(p))
+        suffixes = {".py", ".rs", ".cu", ".cuh", ".toml", ".lock", ".sh"}
+        files = sorted(
+            str(p.relative_to(root)) for p in root.rglob("*")
+            if p.is_file() and p.suffix in suffixes and "deprecated" not in str(p))
     h = hashlib.sha256()
     for rel in sorted(files):
         f = root / rel
@@ -103,13 +118,45 @@ def source_digest() -> str:
 def machine_fingerprint() -> Dict[str, str]:
     import torch
     props = torch.cuda.get_device_properties(0)
-    return {
+    out = {
         "gpu_name": props.name,
         "gpu_total_mem": str(props.total_memory),
         "gpu_count": str(torch.cuda.device_count()),
+        "gpu_capability": f"{props.major}.{props.minor}",
         "cuda": torch.version.cuda or "",
         "torch": torch.__version__,
+        "python": platform.python_version(),
+        "hostname": platform.node(),
     }
+    try:
+        smi = subprocess.run([
+            "nvidia-smi", "--query-gpu=uuid,driver_version,pci.bus_id,power.limit",
+            "--format=csv,noheader,nounits", "-i", "0"], capture_output=True,
+            text=True, check=True).stdout.strip().split(", ")
+        out.update(gpu_uuid=smi[0], driver=smi[1], gpu_pci=smi[2],
+                   power_limit_w=smi[3])
+    except Exception:
+        out.update(gpu_uuid="", driver="", gpu_pci="", power_limit_w="")
+    return out
+
+
+def filesystem_fingerprint(path: str) -> Dict[str, str]:
+    """Bind the egress measurement to the filesystem used for the proof."""
+    p = pathlib.Path(path).resolve()
+    target = p if p.exists() and p.is_dir() else p.parent
+    while not target.exists() and target != target.parent:
+        target = target.parent
+    st = os.stat(target)
+    out = {"st_dev": str(st.st_dev)}
+    try:
+        fields = subprocess.run(
+            ["findmnt", "-n", "-o", "SOURCE,FSTYPE", "--target", str(target)],
+            capture_output=True, text=True, check=True).stdout.strip().split(None, 1)
+        out["source"] = fields[0] if fields else ""
+        out["fstype"] = fields[1] if len(fields) > 1 else ""
+    except Exception:
+        out.update(source="", fstype="")
+    return out
 
 
 def row_manifest(tape, cfg) -> Dict[str, int]:
@@ -161,7 +208,8 @@ def load_report(path: str) -> dict:
     with open(path) as f:
         report = json.load(f)
     for key in ("source_digest", "model_root", "statement_digest", "machine",
-                "row_manifest", "runs", "bound_kind", "weights", "stages"):
+                "row_manifest", "runs", "bound_kind", "weights", "stages",
+                "stage_samples", "egress_filesystem"):
         if key not in report:
             raise AdmissionError(
                 f"admission report {path} has no '{key}'. It must bind the "
@@ -171,7 +219,7 @@ def load_report(path: str) -> dict:
 
 
 def check(report: dict, *, cfg, model_root: bytes, statement_digest: bytes,
-          manifest: Dict[str, int]) -> None:
+          manifest: Dict[str, int], output_path: str = ".") -> None:
     fails = []
 
     def need(cond, msg):
@@ -192,30 +240,79 @@ def check(report: dict, *, cfg, model_root: bytes, statement_digest: bytes,
              f"machine mismatch on {k}: report {report['machine'].get(k)!r} vs "
              f"this box {v!r}")
 
+    report_fs = report["egress_filesystem"]
+    if not isinstance(report_fs, dict):
+        fails.append("egress_filesystem must be an object")
+        report_fs = {}
+    here_fs = filesystem_fingerprint(output_path)
+    for k, v in here_fs.items():
+        need(report_fs.get(k) == v,
+             f"egress filesystem mismatch on {k}: report "
+             f"{report_fs.get(k)!r} vs output {v!r}")
+
     for k, v in manifest.items():
         need(report["row_manifest"].get(k) == v,
              f"row manifest mismatch on {k}: report "
              f"{report['row_manifest'].get(k)} vs this layout {v}")
 
-    need(int(report["runs"]) >= MIN_RUNS,
-         f"{report['runs']} runs per stage, need >= {MIN_RUNS}")
-    need(report["bound_kind"] == "p99_upper",
+    try:
+        n_runs = int(report["runs"])
+    except (TypeError, ValueError):
+        n_runs = -1
+    need(n_runs >= MIN_RUNS,
+         f"{report['runs']!r} runs per stage, need >= {MIN_RUNS}")
+    need(report["bound_kind"] == BOUND_KIND,
          f"bound_kind is {report['bound_kind']!r}; admission needs simultaneous "
-         f">=99% UPPER confidence bounds, not averages")
+         f">=99% distribution-free p99 bounds ({BOUND_KIND!r}), not averages")
     need(report["weights"] == "real_gguf",
          f"weights are {report['weights']!r}; the semantic cap includes real "
          f"GGUF decode and page migration, so random weights cannot satisfy it")
 
+    sample_map = report["stage_samples"]
+    if not isinstance(sample_map, dict):
+        fails.append("stage_samples must be an object of raw sample lists")
+        sample_map = {}
     total = 0.0
     for stage, cap in STAGE_CAPS.items():
         if stage not in report["stages"]:
             fails.append(f"stage '{stage}' is not in the report")
             continue
-        got = float(report["stages"][stage])
+        try:
+            got = float(report["stages"][stage])
+        except (TypeError, ValueError):
+            fails.append(f"stage '{stage}' is not a numeric bound")
+            continue
+        need(math.isfinite(got) and got >= 0,
+             f"stage '{stage}' must be finite and non-negative, got {got!r}")
+        if not math.isfinite(got) or got < 0:
+            continue
+        samples = sample_map.get(stage)
+        if not isinstance(samples, list):
+            fails.append(f"stage '{stage}' has no raw sample list")
+            continue
+        if len(samples) < MIN_RUNS:
+            fails.append(
+                f"stage '{stage}' has {len(samples)} raw samples, need >= {MIN_RUNS}")
+            continue
+        try:
+            raw = [float(x) for x in samples]
+        except (TypeError, ValueError):
+            fails.append(f"stage '{stage}' has a nonnumeric raw sample")
+            continue
+        if not all(math.isfinite(x) and x >= 0 for x in raw):
+            fails.append(
+                f"stage '{stage}' raw samples must be finite and non-negative")
+            continue
+        need(got >= max(raw),
+             f"stage '{stage}' bound {got:.6f}s is below observed max "
+             f"{max(raw):.6f}s")
         total += got
         need(got <= cap, f"stage '{stage}': {got:.3f}s over its cap {cap:.3f}s")
     extra = set(report["stages"]) - set(STAGE_CAPS)
     need(not extra, f"unpriced stages in the report: {sorted(extra)}")
+    extra_samples = set(sample_map) - set(STAGE_CAPS)
+    need(not extra_samples,
+         f"unpriced stage samples in the report: {sorted(extra_samples)}")
     need(total <= TOTAL_CAP_S,
          f"stages sum to {total:.1f}s, over the {TOTAL_CAP_S:.0f}s envelope")
 
