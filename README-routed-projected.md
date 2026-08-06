@@ -20,8 +20,10 @@ verifier checks, and the same zero-knowledge padding discipline is retained.
 
 > [!IMPORTANT]
 > This implementation does **not** use GKR, private sorting, or a new polynomial
-> commitment scheme. Earlier design notes explored a layer-local GKR hybrid;
-> that is not the protocol implemented or benchmarked here. See
+> commitment scheme. The repository does contain a GKR prototype under
+> `layergkr/` — it implements a *different*, unadopted proposal and is not
+> imported by anything on this path; [§9](#9-what-this-is-not-comparison-with-gkr)
+> shows the check and is candid about what the two approaches do share. See
 > [RoutedProjected protocol](analysis/routed-projected-protocol.md) for the
 > normative construction and [implementation status](analysis/routed-projected-status.md)
 > for the only authoritative completion ledger.
@@ -403,12 +405,63 @@ participates in `P = W rho` and in the persistent Ligero fold/opening path.
 
 ## 9. What this is not: comparison with GKR
 
-GKR and sumcheck reduce a layered arithmetic circuit to evaluations at random
-multilinear points. A possible hybrid would use GKR inside each transformer
-layer and a polynomial commitment only at layer boundaries. That is an
-interesting future direction, but it requires an additional recursive
-soundness and zero-knowledge compiler, terminal-opening machinery, and exact
-lookup integration.
+### What IS shared
+
+The honest starting point: the two projections in §3 and §4 are the classical
+random-linear-combination trick — reduce an identity over many indices to one
+random combination, and let Schwartz–Zippel bound the chance an error survives.
+Freivalds (1979) is its matrix form, and sumcheck, hence GKR, is built on the
+same idea. Anyone who says "that is the sumcheck move" is pointing at real
+common ancestry, and this document does not claim otherwise.
+
+### What is NOT shared
+
+GKR is a specific construction on top of that idea: a layered arithmetic
+circuit reduced *round by round*, with multilinear extensions of the layer
+wiring, `O(log)` interaction per layer, and a terminal polynomial-commitment
+opening at the input layer. None of that is here:
+
+| | Sumcheck / GKR | RoutedProjected-MoE |
+|---|---|---|
+| Interaction | `O(log n)` rounds per layer, prover sends a polynomial per round | **Two** extra prover messages total (R2, R3), independent of `T`, `E`, `K`, `J` |
+| Object reduced | Multilinear extension of the circuit | Ordinary committed field values |
+| Verifier per-round work | Evaluates a low-degree polynomial each round | None — there are no rounds |
+| Layer structure | Load-bearing; each layer reduces to the next | Irrelevant; one global claim tape |
+| Terminal opening | A PCS evaluation proof at a random point | The existing Ligero column opening |
+| New soundness compiler | Required | None; the error terms are Ligero's plus `3/|F|` |
+
+So the projections are a Freivalds check *expressed as ordinary Ligero rows*,
+not a sumcheck protocol. Concretely: a sumcheck over the `K = 5120` contraction
+index would cost ~13 rounds of interaction and per-round verifier arithmetic;
+§4 costs two commitments and one equality that `q_lin` and `q_quad` already
+know how to check.
+
+### The `layergkr/` directory
+
+The repository does contain a real GKR implementation — `layergkr/`, 8,374
+lines with its own `sumcheck.py`, `transcript.py` and cost model. It is a
+prototype of a *different* proposal (Layer-GKR-LF,
+`analysis/VerInf_LayerGKR_4h_theorem_ru.md`) that was built, measured, and
+**not adopted**. Its own README states that it modifies nothing outside its
+directory.
+
+It is not reachable from the protocol described here, and that is checkable
+rather than asserted:
+
+```console
+$ grep -rn "layergkr\|sumcheck\|multilinear\|gkr" prover/ demo/ verifier/src/
+$                       # no matches
+```
+
+The routed claim emits exactly three band families, all of which predate it:
+`L2_FreivaldsLF`, `L2_IdentityScalar`, `L2_StrideManyToOneScalar`.
+
+### Why not the hybrid
+
+A GKR hybrid would use sumcheck inside each transformer layer and a polynomial
+commitment only at layer boundaries. That remains an interesting direction, but
+it requires an additional recursive soundness and zero-knowledge compiler,
+terminal-opening machinery, and exact lookup integration.
 
 RoutedProjected-MoE takes a narrower route:
 
