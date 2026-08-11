@@ -186,11 +186,12 @@ def _commit_weights_from_hf_lazy(tape, lazy_loader, layer_idx: int) -> Dict[str,
     shapes = lazy_loader.layer_shapes(d, d_ff)
     specs = lazy_loader.layer_specs(layer_idx)
     out = {}
-    for short, (hf_name, transpose, divide_by) in specs.items():
+    for short, spec in specs.items():
         shape = shapes[short]
         length = shape[0] * (shape[1] if len(shape) > 1 else 1)
         loader = lazy_loader.make_loader(
-            hf_name, transpose=transpose, divide_by=divide_by)
+            spec.hf_name, transpose=spec.transpose, divide_by=spec.divide_by,
+            kv_groups=spec.kv_groups)
         out[short] = tape.commit_lazy(f"{short}{sfx}", loader, shape, length)
     return out
 
