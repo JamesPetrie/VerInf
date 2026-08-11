@@ -603,7 +603,10 @@
         <span class="mono">W_e</span>), и вся проверка сворачивается в один отпечаток:
         <span class="mono">y_t·ρ = x_t·(W_e·ρ) = x_t·P_e</span>. Ложный выход
         <span class="mono">Y′</span> проходит, только если его ошибка попала в ядро случайного
-        <span class="mono">ρ</span> — вероятность ≤ <span class="mono">1/|F|</span>.</p>
+        <span class="mono">ρ</span> — вероятность ≤ <span class="mono">1/|F|</span>.
+        Полный разбор с диаграммами и выводом — в отдельной ноте:
+        <a href="https://claude.ai/code/artifact/4478fd6b-b774-44f9-9481-26f973a4309f">routed-projection-note</a>
+        (исходник: <span class="mono">analysis/routed-projection-note.html</span> / <span class="mono">.tex</span>).</p>
     </div>
     <div class="mf" style="margin-top:12px">
       <div class="eq">
@@ -634,19 +637,36 @@
         <div><span class="t-wit">witness W</span>&nbsp; 888 249 981 888 → 95 205 646 976 &nbsp;=&nbsp; 10.72% &nbsp;·&nbsp; <b>×9.33</b></div>
         <div><span class="t-lin">linear L</span>&nbsp;&nbsp; 162 237 276 010 → 31 064 630 194 &nbsp;=&nbsp; 19.15% &nbsp;·&nbsp; <b>×5.22</b></div>
         <div><span class="t-qd">quad Q</span>&nbsp;&nbsp;&nbsp; 173 106 423 296 → 42 394 577 408 &nbsp;=&nbsp; 24.49% &nbsp;·&nbsp; <b>×4.08</b></div>
-        <div class="res" style="margin-top:8px">admission-модель «после»: t_prove ≤ 13 046 s = 3.624 ч при S=1000 — внутри 4-часового конверта</div>
-        <div style="margin-top:6px;color:var(--muted)">Каждый этап прувера линеен по своим ячейкам
-          (t = Σ cᵢ·nᵢ(W,L,Q), константы — замеренные per-kernel), поэтому per-stage ускорение равно
-          отношению ячеек: witness-этапы ×9.33, линейные фолды ×5.22, квадратичные ×4.08. Цена по
-          надёжности: ε_new ≤ ε_Ligero + 3/|F| + ε_hash.</div>
       </div>
-      <div class="eta" style="margin-top:14px;border-top:1px dashed var(--hair);padding-top:12px">
-        <b>Что с чем сравниваем.</b> «До» — full-witness пайплайн из мастер-формулы выше (те самые
-        28 778 s ≈ 7.99 ч на 400B: веса в витнесе + пострим всех экспертов). «После» — протокол
-        RoutedProjected-MoE (<span class="mono">analysis/routed-projected-protocol.md</span>), оценка —
-        из его собственной per-kernel admission-модели при S=1000, это не пересчёт формулы выше.
-        Обе стороны — один и тот же код и одна структура затрат Ligero; никакие посторонние
-        оптимизации ни в одну из сторон не входят.</div>
+    </div>
+
+    <h2 style="margin-top:28px">Итоговая формула оценки затрат — после проекции</h2>
+    <div class="mf">
+      <div class="eq">
+        <span class="row"><span class="lhs">PROVE_s′</span> <span class="op">= η · [</span> <span class="t-wit">5 · T_wit^act</span> <span class="op">]</span> <span class="tag">← WITNESS: 5 активных свипов (5-раундовый транскрипт с фазой-3); форвард активной модели, не всех экспертов</span></span>
+        <span class="row"><span class="op">+ (η / 10⁹) · </span><span class="t-str">[ (W′_p/ELL)·(2·enc + 4K·c(2K) + (N/8)·h) + fold_qlin(W_w) + open(W_w) ]</span> <span class="tag">← STREAMING: W′ = 0.107·W; веса не стримятся — персистентный q_lin-фолд + открытия по леджеру</span></span>
+        <span class="row"><span class="op">+ (η / 10⁹) · </span><span class="t-qd">(Q′/ELL) · τ · 2K·c(2K)</span> <span class="tag">← QUAD: Q′ = 0.245·Q</span></span>
+        <span class="row"><span class="op">+ (η / 10⁹) · </span><span class="t-lin">β · L′_lin</span> <span class="tag">← LIN: L′ = 0.191·L</span></span>
+        <span class="row"><span class="op">+ 22 мкс · </span><span class="t-ovh">min(m′_total, 5·10⁶)</span> <span class="tag">← OVERHEAD: m′ = W′/ELL — падает вместе с witness</span></span>
+      </div>
+      <div class="where">
+        <span><b>W′</b> = 95.21G = 10.72% W <b>(×9.33)</b></span>
+        <span><b>L′_lin</b> = 31.06G = 19.15% L <b>(×5.22)</b></span>
+        <span><b>Q′</b> = 42.39G = 24.49% Q <b>(×4.08)</b></span>
+        <span><b>T_wit^act</b> — форвард только активной модели (top-1 маршруты)</span>
+        <span><b>5 свипов</b> — R1 · R2 · R3(p3) · тесты · открытия</span>
+        <span><b>fold_qlin / open</b> — персистентные веса вместо flat-commit</span>
+      </div>
+      <div class="eval">
+        <div>подстановка per-kernel (<span class="mono">routed_projected_4h_model.py</span>, S=1000, без глобального калибровочного множителя):</div>
+        <div><span class="t-wit">5 активных свипов</span> 3 609 &nbsp;·&nbsp; <span class="t-str">персист. q_lin-фолд</span> 3 625 &nbsp;·&nbsp; <span class="t-str">открытия (персист.+fresh)</span> 2 262 &nbsp;·&nbsp; <span class="t-str">fresh commit+fold</span> 950 &nbsp;·&nbsp; <span class="t-qd">quad</span> 765 &nbsp;·&nbsp; <span class="t-lin">lin</span> 114 &nbsp;·&nbsp; hash 140 · load 400 · egress 481 · RTT+tail 100 · refresh 600</div>
+        <div class="res">PROVE_s′ = 13 046 s = 3.62 ч &nbsp;·&nbsp; «до» (формула выше) = 28 778 s ≈ 7.99 ч &nbsp;→&nbsp; ≈×2.2 конец-в-конец</div>
+        <div style="margin-top:6px;color:var(--muted)">×9.33 по witness-ячейкам не превращается в ×9.33
+          по времени: «после» несёт пятый свип, персистентный вес-фолд и полный per-kernel учёт (egress,
+          RTT, refresh), которых асимптотическая формула «до» не видит. «До» посчитано при S=1093,
+          «после» — при S=1000: сравнение честное по порядку величины, не по третьему знаку.
+          Цена по надёжности: ε_new ≤ ε_Ligero + 3/|F| + ε_hash.</div>
+      </div>
     </div>
   </section>
 
