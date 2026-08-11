@@ -47,8 +47,8 @@ import demo_llama7b as demo
 
 CFG = demo.CFG
 S   = demo.S
-d   = demo.d
-d_h = demo.d_h
+d   = demo.RANDOM_WEIGHTS_CFG.d          # 7B shapes (this script is 7B-specific)
+d_h = demo.RANDOM_WEIGHTS_CFG.d_h
 
 
 # ---------------------------------------------------------------------------

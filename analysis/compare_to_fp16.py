@@ -13,11 +13,13 @@ changes). Only the quantized run needs re-running between experiments."""
 import sys, os, re, numpy as np, torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-MODEL = "meta-llama/Llama-2-7b-hf"
+# Override with VERINF_COMPARE_MODEL to check another checkpoint
+# (e.g. the Llama-3.2-1B-Instruct path). Cache is per-model.
+MODEL = os.environ.get("VERINF_COMPARE_MODEL", "meta-llama/Llama-2-7b-hf")
 MASK32 = (1 << 32) - 1
 quant_path = sys.argv[1] if len(sys.argv) > 1 else "/tmp/logits_silufix.npy"
 toks_src   = sys.argv[2] if len(sys.argv) > 2 else "/tmp/silufix_out.txt"
-FP16_CACHE = "/tmp/fp16_logits.npy"
+FP16_CACHE = f"/tmp/fp16_logits_{os.path.basename(MODEL.rstrip('/'))}.npy"
 
 _log = open(toks_src).read()
 toks = eval(re.search(r"prompt tokens \(first \d+\): (\[[0-9,\s]+\])", _log).group(1))
@@ -31,7 +33,7 @@ tok = AutoTokenizer.from_pretrained(MODEL)
 if os.path.exists(FP16_CACHE):
     fp16 = np.load(FP16_CACHE)
 else:
-    m = AutoModelForCausalLM.from_pretrained(MODEL, torch_dtype=torch.float16,
+    m = AutoModelForCausalLM.from_pretrained(MODEL, torch_dtype="auto",
                                              device_map="cuda")
     with torch.no_grad():
         fp16 = m(torch.tensor([toks], device="cuda")).logits[0].float().cpu().numpy()

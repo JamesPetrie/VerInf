@@ -1,5 +1,15 @@
-"""Unified Llama 2 7B transformer-block proof at production scale, with
-the uniform "input at S, output at S" scale contract enforced end-to-end.
+"""Unified dense-Llama transformer proof at production scale, with the
+uniform "input at S, output at S" scale contract enforced end-to-end.
+
+Architecture dims come from a ModelConfig — read from the checkpoint's own
+config.json on the --from-hf path — so Llama-2-7B and Llama-3.2-1B-Instruct
+are the same code; only the checkpoint path differs. Defaults (and the
+random-weights path) remain exactly the Llama-2-7B shapes. GQA models prove
+as plain MHA (KV weights are column-replicated at load time, see loader);
+tied-embedding models commit the embedding table ONCE and reuse it as the
+LM head via a transpose_b matmul, so the tying is part of the proven
+statement. The scale cascade (SCALE_BITS, Z_MAX, SILU_CFG, OUTPUT_WIDTH) is
+calibration, not architecture, and stays module-level.
 
 Every value-producing op in the chain (RmsNorm, Matmul, RoPE, Hadamard)
 takes inputs at scale S and outputs at scale S via internal output rescale.
@@ -35,10 +45,8 @@ REMAINING GAPS:
     op_vec); a real run supplies the verifier's fresh per-round coins. This is
     an interactive protocol, not Fiat-Shamir-flattened.
 
-Shapes (Llama 2 7B per-layer; SEQ=2 matches bringup-plan.md two-token target):
-  d        = 4096       hidden dim
-  d_ff     = 11008      FFN intermediate
-  d_h      = 128        head dim (single-head approximation for RoPE)
+Shapes come from ModelConfig (the checkpoint's config.json on --from-hf;
+RANDOM_WEIGHTS_CFG = the Llama-2-7B shapes otherwise). Non-architecture:
   SEQ      = 2          two-token target (overridable via --seq)
   S        = 2^SCALE_BITS  Q-format scale (default 2^12); all scale-coupled
                         constants cascade from SCALE_BITS — no hidden magic
@@ -69,6 +77,7 @@ from cuda_primitives import P, gl_sub
 from core import LigeroConfig
 from tape import Tape
 from claims import SiluConfig
+from model_config import ModelConfig
 
 # T_QUERIES overridable via env (e.g. =4 for a fast non-sound timing/feasibility
 # run; production soundness uses 80).
@@ -77,20 +86,31 @@ CFG = LigeroConfig(ELL=8192, K_DEG=16384, N_LIG=65536,
 
 
 SEQ      = 2                    # overridable via --seq
-d        = 4096
-d_ff     = 11008
-d_h      = 128                  # head dim (used for RoPE)
+
+# Architecture for the random-weights path (no checkpoint to read a
+# config.json from): exactly the historical Llama-2-7B shapes. The
+# --from-hf path IGNORES this and reads the checkpoint's own config.
+RANDOM_WEIGHTS_CFG = ModelConfig(
+    d=4096, d_ff=11008, n_layers=32, n_heads=32, n_kv_heads=32, d_h=128,
+    vocab=32000, eps_real=1e-5, rope_theta=10000.0, rope_scaling=None,
+    tied_embeddings=False)
+
 # ── Scale cascade: ONE knob (SCALE_BITS); every scale-coupled constant is
-#    derived from it + a named real-world quantity. No hidden magic numbers. ──
+#    derived from it + a named real-world quantity. No hidden magic numbers.
+#    These are CALIBRATION (currently swept on Llama-2-7B), not architecture —
+#    they do not move to ModelConfig. ──
 SCALE_BITS = 12                       # Q-format fractional bits  (S = 2^SCALE_BITS)
 S          = 1 << SCALE_BITS
 OUTPUT_WIDTH = 26                     # rescale range-table width; real range ±2^(OUTPUT_WIDTH-1)/S
-EPS_REAL   = 1e-5                     # Llama rmsnorm epsilon
-EPS_INT    = round(EPS_REAL * S * S)  # ε at scale S²   (168 @ 2^12, 42 @ 2^11)
 Z_NONZERO_REAL = 40000 / 4096         # softmax non-zero exp region (~9.77·s_c)
 Z_MAX      = round(Z_NONZERO_REAL * S)  # softmax saturation at scale S (40000 @ 2^12)
 SILU_CFG   = SiluConfig(b=4, T_LEN=1 << 14, b_2=1 << 16, b_3=1 << 32, b_4=1 << 48,
                         width_2=16, width_3=16, width_4=14, r=SCALE_BITS)  # s_x = S
+
+
+def _eps_int(mcfg: ModelConfig) -> int:
+    """rmsnorm ε at scale S² (168 @ 2^12 for ε=1e-5) — model-dependent."""
+    return round(mcfg.eps_real * S * S)
 
 # Production-shape independent benchmarks (NOT chained from x).
 SM_B     = 512
@@ -126,12 +146,14 @@ HALF = 32
 HALF_X = 4
 
 
-def _commit_weights_random(tape, layer_idx: int = 0) -> Dict[str, object]:
+def _commit_weights_random(tape, mcfg: ModelConfig,
+                            layer_idx: int = 0) -> Dict[str, object]:
     """Random signed Glorot-ish weights, with 1/√d_h folded into W_Q.
     rms_pre_*_w are committed as identity (all = S) so the per-channel
     gain hadamard is a no-op for the random-weights smoke test.
     Layer-suffixed names mirror the HF loader."""
-    HALF_Q = max(1, HALF // int(round(math.sqrt(d_h))))   # ≈ 3 for d_h=128
+    d, d_ff = mcfg.d, mcfg.d_ff
+    HALF_Q = max(1, HALF // int(round(math.sqrt(mcfg.d_h))))   # ≈ 3 for d_h=128
     identity_gain = torch.full((d,), S, dtype=torch.uint64, device="cuda")
     sfx = f"_L{layer_idx}"
     return {
@@ -148,32 +170,22 @@ def _commit_weights_random(tape, layer_idx: int = 0) -> Dict[str, object]:
 
 
 def _commit_weights_from_hf(tape, model_id: str, layer_idx: int) -> Dict[str, object]:
-    """Quantize Llama 2 7B layer weights from HF format and commit them.
-    Weight Variable names are prefixed `_L{layer_idx}` so multi-layer
-    demos can commit distinct weight sets without name collisions.
+    """Quantize one transformer block's weights from HF format and commit
+    them, shapes straight from the loader's config-derived spec table (so
+    GQA replication and dims need no repetition here). Weight Variable
+    names are prefixed `_L{layer_idx}` so multi-layer demos can commit
+    distinct weight sets without name collisions.
 
-    Requires the `transformers` library + a downloaded checkpoint or HF auth."""
+    Requires the `transformers` library + a downloaded checkpoint."""
     from loader import load_layer_weights
-    # No extra_q_k_shrink: proper multi-head attention (H=32 heads, d_h=128)
-    # reduces the q·k^T contraction from d=4096 to d_h=128, and the
-    # per-channel RmsNorm gain (rms_pre_attn_w) dampens norm1 outliers
-    # before W_Q/K — together these bring scores into a range the
-    # saturating softmax handles natively.
-    w = load_layer_weights(model_id, layer_idx, S=S, d_h=d_h)
+    # No extra_q_k_shrink: proper multi-head attention reduces the q·k^T
+    # contraction from d to d_h, and the per-channel RmsNorm gain
+    # (rms_pre_attn_w) dampens norm1 outliers before W_Q/K — together these
+    # bring scores into a range the saturating softmax handles natively.
+    w = load_layer_weights(model_id, layer_idx, S=S)
     sfx = f"_L{layer_idx}"
-    return {
-        "W_Q":    tape.commit(f"W_Q{sfx}",    w["W_Q"],    (d, d)),
-        "W_K":    tape.commit(f"W_K{sfx}",    w["W_K"],    (d, d)),
-        "W_V":    tape.commit(f"W_V{sfx}",    w["W_V"],    (d, d)),
-        "W_O":    tape.commit(f"W_O{sfx}",    w["W_O"],    (d, d)),
-        "W_gate": tape.commit(f"W_gate{sfx}", w["W_gate"], (d, d_ff)),
-        "W_up":   tape.commit(f"W_up{sfx}",   w["W_up"],   (d, d_ff)),
-        "W_down": tape.commit(f"W_down{sfx}", w["W_down"], (d_ff, d)),
-        "rms_pre_attn_w": tape.commit(
-            f"rms_pre_attn_w{sfx}", w["rms_pre_attn_w"], (d,)),
-        "rms_pre_ffn_w":  tape.commit(
-            f"rms_pre_ffn_w{sfx}",  w["rms_pre_ffn_w"],  (d,)),
-    }
+    return {short: tape.commit(f"{short}{sfx}", t, tuple(t.shape))
+            for short, t in w.items()}
 
 
 def _commit_weights_from_hf_lazy(tape, lazy_loader, layer_idx: int) -> Dict[str, object]:
@@ -183,7 +195,7 @@ def _commit_weights_from_hf_lazy(tape, lazy_loader, layer_idx: int) -> Dict[str,
     and is freed before the next loader fires. Used when 32 × ~1.6 GB of
     weights can't coexist in unified memory (DGX Spark GB10 driver bug)."""
     sfx = f"_L{layer_idx}"
-    shapes = lazy_loader.layer_shapes(d, d_ff)
+    shapes = lazy_loader.layer_shapes()
     specs = lazy_loader.layer_specs(layer_idx)
     out = {}
     for short, spec in specs.items():
@@ -196,21 +208,24 @@ def _commit_weights_from_hf_lazy(tape, lazy_loader, layer_idx: int) -> Dict[str,
     return out
 
 
-def _run_block(tape, x, weights, *, H: int):
+def _run_block(tape, x, weights, *, mcfg: ModelConfig):
     """One transformer block: x → norm1 → attn → resid_1 → norm2 → FFN → resid_2.
-    Returns the output residual, ready to feed into the next block's input."""
+    Returns the output residual, ready to feed into the next block's input.
+    Attention runs as plain MHA at mcfg.n_heads — GQA models arrive here with
+    K/V already column-replicated to full width by the loader."""
+    d, d_h, H = mcfg.d, mcfg.d_h, mcfg.n_heads
+    eps = _eps_int(mcfg)
     W_Q    = weights["W_Q"]
     W_K    = weights["W_K"]
     W_V    = weights["W_V"]
     W_O    = weights["W_O"]
     W_gate = weights["W_gate"]
     W_up   = weights["W_up"]
-    W_down = weights["W_down"]
     rms_pre_attn_w = weights["rms_pre_attn_w"]
     rms_pre_ffn_w  = weights["rms_pre_ffn_w"]
 
     # ----- Attention -----
-    norm1 = tape.rmsnorm(x, d=d, s=S, eps_int=EPS_INT,
+    norm1 = tape.rmsnorm(x, d=d, s=S, eps_int=eps,
                          s_out=S, output_width=OUTPUT_WIDTH)
     norm1_g = tape.hadamard_broadcast(norm1, rms_pre_attn_w, SEQ=SEQ, d=d,
                                        s_a=S, s_b=S, s_out=S, output_width=OUTPUT_WIDTH)
@@ -220,8 +235,10 @@ def _run_block(tape, x, weights, *, H: int):
     v = tape.matmul(norm1_g, W_V, s_a=S, s_b=S, s_out=S, output_width=OUTPUT_WIDTH)
 
     q_rope = tape.rope(q, SEQ=SEQ, d_h=d_h, heads=H,
+                        base=mcfg.rope_theta, rope_scaling=mcfg.rope_scaling,
                         s_x=S, s_out=S, output_width=OUTPUT_WIDTH)
     k_rope = tape.rope(k, SEQ=SEQ, d_h=d_h, heads=H,
+                        base=mcfg.rope_theta, rope_scaling=mcfg.rope_scaling,
                         s_x=S, s_out=S, output_width=OUTPUT_WIDTH)
 
     scores = tape.matmul(q_rope, k_rope, transpose_b=True,
@@ -237,7 +254,7 @@ def _run_block(tape, x, weights, *, H: int):
     resid_1 = x + proj
 
     # ----- FFN -----
-    norm2 = tape.rmsnorm(resid_1, d=d, s=S, eps_int=EPS_INT,
+    norm2 = tape.rmsnorm(resid_1, d=d, s=S, eps_int=eps,
                           s_out=S, output_width=OUTPUT_WIDTH)
     norm2_g = tape.hadamard_broadcast(norm2, rms_pre_ffn_w, SEQ=SEQ, d=d,
                                        s_a=S, s_b=S, s_out=S, output_width=OUTPUT_WIDTH)
@@ -245,26 +262,33 @@ def _run_block(tape, x, weights, *, H: int):
     up   = tape.matmul(norm2_g, W_up,   s_a=S, s_b=S, s_out=S, output_width=OUTPUT_WIDTH)
     silu_gate = tape.silu(gate)
     intermediate = tape.hadamard(silu_gate, up, s_a=S, s_b=S, s_out=S, output_width=OUTPUT_WIDTH)
-    ffn_out      = tape.matmul(intermediate, W_down, s_a=S, s_b=S, s_out=S, output_width=OUTPUT_WIDTH)
+    ffn_out      = tape.matmul(intermediate, weights["W_down"], s_a=S, s_b=S, s_out=S, output_width=OUTPUT_WIDTH)
     resid_2      = resid_1 + ffn_out
     return resid_2
 
 
-def _run_tail(tape, x, final_norm_w, W_lm_head, *,
-               vocab_size: int, lm_s_out: int = S, lm_ow: int = OUTPUT_WIDTH):
+def _run_tail(tape, x, final_norm_w, W_lm_head, *, mcfg: ModelConfig,
+               vocab_size: int, lm_s_out: int = S, lm_ow: int = OUTPUT_WIDTH,
+               lm_transpose_b: bool = False):
     """Post-layer-stack tail: final RmsNorm + per-channel gain + LM head.
     Returns the logits WitnessTensor of shape (SEQ, vocab_size).
 
     `lm_s_out` sets the LM-head output scale: the default S keeps the uniform
     scale contract; a COARSER scale (e.g. 1) is used for the unexplained-info
     bound so the bound-relevant gaps land in a feasible range, BOUND by the
-    matmul's own rescale (no separate coarsening claim)."""
-    final_norm = tape.rmsnorm(x, d=d, s=S, eps_int=EPS_INT,
+    matmul's own rescale (no separate coarsening claim).
+
+    `lm_transpose_b`: tied-embedding models pass the embedding table itself
+    (committed once at its natural (vocab, d) shape) and multiply against its
+    transpose — the tying is then part of the proven statement, not an
+    unstated coincidence of two separate commits."""
+    d = mcfg.d
+    final_norm = tape.rmsnorm(x, d=d, s=S, eps_int=_eps_int(mcfg),
                                s_out=S, output_width=OUTPUT_WIDTH)
     final_norm_g = tape.hadamard_broadcast(
         final_norm, final_norm_w, SEQ=SEQ, d=d,
         s_a=S, s_b=S, s_out=S, output_width=OUTPUT_WIDTH)
-    logits = tape.matmul(final_norm_g, W_lm_head,
+    logits = tape.matmul(final_norm_g, W_lm_head, transpose_b=lm_transpose_b,
                           s_a=S, s_b=S, s_out=lm_s_out, output_width=lm_ow)
     return logits
 
@@ -331,6 +355,7 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
           save_logits: Optional[str] = None,
           num_layers: int = 1,
           prompt: Optional[str] = None,
+          chat: bool = False,
           with_lm_head: bool = True,
           verbose: bool = False,
           lazy_weights: bool = False,
@@ -348,13 +373,26 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
           ui_positions: Optional[list] = None,
           token_ids: Optional[list] = None):
     global SEQ
+    mcfg = (ModelConfig.from_hf(from_hf) if from_hf is not None
+            else RANDOM_WEIGHTS_CFG)
+    if chat:
+        assert from_hf is not None and prompt is not None, (
+            "chat mode needs --from-hf (for the tokenizer/template) and "
+            "--prompt/--prompt-file (the user message)")
+        from loader import tokenize_chat_prompt
+        token_ids = tokenize_chat_prompt(from_hf, prompt)
+        prompt = None               # binding proceeds via token_ids below
     if token_ids is not None:
         SEQ = len(token_ids)        # forward over an exact id stream
-    print(f"=== Llama 2 7B transformer block, production scale ===")
+    print(f"=== dense-Llama transformer proof, production scale ===")
     print(f"  cfg: ELL={CFG.ELL}, K_DEG={CFG.K_DEG}, "
           f"N_LIG={CFG.N_LIG}, T_QUERIES={CFG.T_QUERIES}")
-    print(f"  shapes: d={d}, d_ff={d_ff}, SEQ={SEQ}, d_h={d_h}; scale s=2^{SCALE_BITS} "
-          f"(EPS_INT={EPS_INT}, Z_MAX={Z_MAX}, output_width={OUTPUT_WIDTH}, silu r={SCALE_BITS})")
+    print(f"  shapes: d={mcfg.d}, d_ff={mcfg.d_ff}, SEQ={SEQ}, d_h={mcfg.d_h}, "
+          f"H={mcfg.n_heads} (kv {mcfg.n_kv_heads}); scale s=2^{SCALE_BITS} "
+          f"(EPS_INT={_eps_int(mcfg)}, Z_MAX={Z_MAX}, "
+          f"output_width={OUTPUT_WIDTH}, silu r={SCALE_BITS})")
+    if chat:
+        print(f"  chat template: {SEQ} tokens (incl. system block + headers)")
     if from_hf is not None:
         print(f"  weights: HF model {from_hf!r}, layers "
               f"[{layer_idx}, {layer_idx + num_layers})")
@@ -365,12 +403,11 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
               f"{num_layers} layers")
 
     # ---------- Prepare the input residual data (no commits yet) ----------
-    # Each layer creates its own Tape and commits fresh, so we just need
-    # the raw data here. For the prompt path we also save E_subset and
-    # the re-indexed token_ids so layer 0 can bind via EmbeddingLookupClaim.
-    E_subset_data = None
-    E_subset_shape = None
-    subset_token_ids_saved = None
+    # For the id-bound paths we also save the table data and the ids INTO
+    # that table so layer 0 can bind via EmbeddingLookupClaim.
+    E_data = None
+    E_shape = None
+    embed_token_ids = None       # ids into the committed table
     if from_hf is not None and (prompt is not None or token_ids is not None):
         from loader import tokenize_prompt, load_token_embedding, free_model_cache
         tok_ids = (list(token_ids) if token_ids is not None
@@ -381,35 +418,48 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
         else:
             tok_ids = tok_ids + [0] * (SEQ - len(tok_ids))
             print(f"  prompt tokens (padded to {SEQ}): {tok_ids}")
-        # SOUNDNESS NOTE: committing the full Llama 2 7B embedding table
-        # (vocab_size=32000 × d=4096 ≈ 131M cells) inflates m_total to
-        # ~46K rows. For the demo we commit only the SUBSET of rows used by
-        # this prompt; a deployable version would commit the full E once
-        # with a Merkle anchor.
         E_full = load_token_embedding(from_hf, S=S)
-        unique_ids = sorted(set(tok_ids))
-        id_to_subset_idx = {tid: i for i, tid in enumerate(unique_ids)}
-        unique_t = torch.tensor(unique_ids, dtype=torch.int64, device="cuda")
-        E_subset_data = E_full.view(-1, d).index_select(
-            0, unique_t).contiguous().view(-1)
-        E_subset_shape = (len(unique_ids), d)
-        subset_token_ids_saved = [id_to_subset_idx[t] for t in tok_ids]
+        if mcfg.tied_embeddings:
+            # Tied model: keep the FULL table (vocab, d) — it is committed
+            # once and doubles as the LM head (transpose_b matmul in
+            # _run_tail), binding input and output to the same matrix.
+            E_data = E_full.view(-1)
+            E_shape = (mcfg.vocab, mcfg.d)
+            embed_token_ids = tok_ids
+            tok_t = torch.tensor(tok_ids, dtype=torch.int64, device="cuda")
+            x_data_init = E_full.view(mcfg.vocab, mcfg.d).index_select(
+                0, tok_t).contiguous().view(-1)
+            print(f"  E: full table ({mcfg.vocab} × {mcfg.d}) — tied, "
+                  f"doubles as the LM head")
+        else:
+            # SOUNDNESS NOTE (untied): committing the full embedding table
+            # (e.g. 32000 × 4096 ≈ 131M cells for Llama-2-7B) inflates
+            # m_total; the demo commits only the SUBSET of rows used by this
+            # prompt. A deployable version would commit the full E once with
+            # a Merkle anchor.
+            unique_ids = sorted(set(tok_ids))
+            id_to_subset_idx = {tid: i for i, tid in enumerate(unique_ids)}
+            unique_t = torch.tensor(unique_ids, dtype=torch.int64, device="cuda")
+            E_data = E_full.view(-1, mcfg.d).index_select(
+                0, unique_t).contiguous().view(-1)
+            E_shape = (len(unique_ids), mcfg.d)
+            embed_token_ids = [id_to_subset_idx[t] for t in tok_ids]
+            # The actual x data for layer 0's input: look the rows up now
+            # (layer 0 RE-binds via embed in the tape; downstream layers
+            # need the .data).
+            tok_t = torch.tensor(embed_token_ids, dtype=torch.int64,
+                                 device="cuda")
+            x_data_init = E_data.view(len(unique_ids), mcfg.d).index_select(
+                0, tok_t).contiguous().view(-1)
+            print(f"  E subset: {len(unique_ids)} rows (full E would be "
+                  f"vocab × d ≈ {mcfg.vocab * mcfg.d / 1e6:.0f}M cells — "
+                  f"see SOUNDNESS NOTE)")
         del E_full
         torch.cuda.empty_cache()
-        # The actual x data for layer 0's input: just look up the rows now
-        # so we can pass it through layer 0 (which RE-binds via embed in
-        # its own tape, but we also need the .data for downstream layers).
-        tok_t = torch.tensor(subset_token_ids_saved, dtype=torch.int64, device="cuda")
-        x_data_init = E_subset_data.view(len(unique_ids), d).index_select(
-            0, tok_t).contiguous().view(-1)
-        print(f"  E subset: {len(unique_ids)} rows (full E would be "
-              f"vocab_size × d ≈ 131M cells — see SOUNDNESS NOTE)")
         free_model_cache()
         torch.cuda.synchronize()
     else:
-        x_data_init = _rand_signed(SEQ * d, half=HALF_X)
-
-    H = d // d_h                       # Llama 2 7B: 4096 / 128 = 32 heads
+        x_data_init = _rand_signed(SEQ * mcfg.d, half=HALF_X)
 
     # ---------- Single-tape proof ----------
     # All layers (+ optional tail) record claims on ONE Tape. The residual
@@ -420,13 +470,19 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
     # constraints are emitted once instead of N_LAYERS times.
     tape = Tape(CFG, silu_config=SILU_CFG, lazy=engine, time_ops=time_ops)
 
-    # Initial residual: prompt-bound via EmbeddingLookupClaim, or random.
-    if from_hf is not None and prompt is not None:
-        E_wt = tape.commit(
-            "E_embedding_subset", E_subset_data, E_subset_shape)
-        resid = tape.embed(E_wt, token_ids=subset_token_ids_saved, d=d)
+    # Initial residual: bound via EmbeddingLookupClaim when a committed
+    # table + ids exist, else an opaque commit. Untied models keep the
+    # legacy behavior (embed-bind only on the --prompt path — the token_ids
+    # path stays an opaque x_input commit, as the 7B gate has always run);
+    # tied models embed-bind whenever ids exist, since the full E must be
+    # committed for the LM head anyway.
+    E_wt = None
+    if E_data is not None and (prompt is not None or mcfg.tied_embeddings):
+        E_name = "E_embedding" if mcfg.tied_embeddings else "E_embedding_subset"
+        E_wt = tape.commit(E_name, E_data, E_shape)
+        resid = tape.embed(E_wt, token_ids=embed_token_ids, d=mcfg.d)
     else:
-        resid = tape.commit("x_input", x_data_init, (SEQ, d))
+        resid = tape.commit("x_input", x_data_init, (SEQ, mcfg.d))
 
     # Optional lazy HF loader: one instance shared across all layers; each
     # weight loads from disk on demand. Avoids holding 32×~1.6 GB of
@@ -438,7 +494,7 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
             raise ValueError("--lazy-weights requires --from-hf "
                              "(random weights are generated, not loaded)")
         from loader import LazyHFLoader
-        lazy_loader = LazyHFLoader(from_hf, S=S, d_h=d_h)
+        lazy_loader = LazyHFLoader(from_hf, S=S)
         print(f"  lazy weights: enabled (per-weight on-demand load from "
               f"{lazy_loader.model_dir})")
 
@@ -453,35 +509,46 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
                 tape, from_hf, this_layer_idx)
         else:
             layer_weights = _commit_weights_random(
-                tape, layer_idx=this_layer_idx)
-        resid = _run_block(tape, resid, layer_weights, H=H)
+                tape, mcfg, layer_idx=this_layer_idx)
+        resid = _run_block(tape, resid, layer_weights, mcfg=mcfg)
         del layer_weights
         torch.cuda.empty_cache()
 
-    # Optional tail: final RmsNorm + LM head, on the same tape.
+    # Optional tail: final RmsNorm + LM head, on the same tape. Tied models
+    # with a committed full E reuse it as the LM head (transpose_b) — one
+    # commit, and the tying is part of the proven statement.
     logits = None
     vocab_size = None
     if with_lm_head:
+        vocab_size = mcfg.vocab
+        lm_tied_reuse = mcfg.tied_embeddings and E_wt is not None
         if from_hf is not None:
-            from loader import load_final_weights, free_model_cache
-            fw = load_final_weights(from_hf, S=S)
-            final_norm_data = fw["final_norm_w"]
-            lm_head_data    = fw["W_lm_head"]
-            vocab_size = lm_head_data.numel() // d
+            from loader import LazyHFLoader, free_model_cache
+            ldr = LazyHFLoader(from_hf, S=S)
+            final_norm_data = ldr.load_final_norm()
+            lm_head_data = (None if lm_tied_reuse
+                            else ldr.load_final_weights()["W_lm_head"])
             free_model_cache()
         else:
-            vocab_size = 32000              # Llama-2-7B vocab; matches HF
-            final_norm_data = torch.full((d,), S, dtype=torch.uint64, device="cuda")
-            lm_head_data    = _rand_signed(d * vocab_size, half=HALF)
-        final_norm_w_wt = tape.commit("final_norm_w", final_norm_data, (d,))
-        W_lm_head_wt    = tape.commit("W_lm_head", lm_head_data, (d, vocab_size))
+            final_norm_data = torch.full((mcfg.d,), S, dtype=torch.uint64,
+                                         device="cuda")
+            lm_head_data    = _rand_signed(mcfg.d * vocab_size, half=HALF)
+        final_norm_w_wt = tape.commit("final_norm_w", final_norm_data, (mcfg.d,))
+        if lm_tied_reuse:
+            W_lm_head_wt = E_wt          # (vocab, d); transpose_b in the tail
+            print("  LM head: tied — reusing the committed embedding table")
+        else:
+            W_lm_head_wt = tape.commit("W_lm_head", lm_head_data,
+                                        (mcfg.d, vocab_size))
         # For --unexplained-info, run the LM head COARSE (s_out=1) so the
         # bound-relevant gaps fit a feasible exp/gap table -- bound by the
         # matmul's own rescale (no separate coarsening claim).
         _lm_s_out = ui_lm_sout if unexplained_info else S
         _lm_ow = ui_lm_ow if unexplained_info else OUTPUT_WIDTH
         logits = _run_tail(tape, resid, final_norm_w_wt, W_lm_head_wt,
-                            vocab_size=vocab_size, lm_s_out=_lm_s_out, lm_ow=_lm_ow)
+                            mcfg=mcfg, vocab_size=vocab_size,
+                            lm_s_out=_lm_s_out, lm_ow=_lm_ow,
+                            lm_transpose_b=lm_tied_reuse)
 
     # Optional: unexplained-information bound over HIDDEN, committed output tokens.
     ui_Sz = ui_info = None
@@ -626,6 +693,17 @@ if __name__ == "__main__":
                           "(avoids shell-quoting a long prompt). Overrides "
                           "--prompt when set. E.g. --prompt-file demo_prompt.txt "
                           "for the SEQ=1000 demo run.")
+    ap.add_argument("--chat", action="store_true",
+                     help="Render --prompt as a single-turn chat via the "
+                          "model's chat template (Instruct header tokens + "
+                          "generation prompt) before tokenizing. Requires "
+                          "--from-hf. SEQ is set to the rendered length.")
+    ap.add_argument("--tokens-file", type=str, default=None,
+                     help="JSON file of exact token ids to forward over: "
+                          "either a flat list, or {\"prompt\": [...], "
+                          "\"continuation\": [...]} (concatenated) — the "
+                          "Maverick transcript format. Overrides --prompt/"
+                          "--chat. SEQ is set to the id count.")
     ap.add_argument("--seq", type=int, default=None,
                      help="Override sequence length (default 2). Larger SEQ "
                           "scales activation cost linearly; attention "
@@ -693,8 +771,16 @@ if __name__ == "__main__":
         _prompt = open(args.prompt_file).read()
     _ui_tokens = ([int(v) for v in args.ui_output_tokens.split(",")]
                   if args.ui_output_tokens else None)
+    _token_ids = None
+    if args.tokens_file:
+        blob = json.load(open(args.tokens_file))
+        _token_ids = ([int(v) for v in blob["prompt"]]
+                      + [int(v) for v in blob.get("continuation", [])]
+                      if isinstance(blob, dict) else [int(v) for v in blob])
     main(from_hf=args.from_hf, layer_idx=args.layer_idx,
          num_layers=args.num_layers, prompt=_prompt,
+         chat=args.chat and not args.tokens_file,
+         token_ids=_token_ids,
          with_lm_head=not args.no_lm_head, verbose=args.verbose,
          lazy_weights=args.lazy_weights, engine=args.engine,
          save_logits=args.save_logits, time_ops=args.time_ops,

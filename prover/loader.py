@@ -225,6 +225,12 @@ class LazyHFLoader:
         ship no lm_head.weight tensor at all — e.g. Llama-3.2-1B."""
         return self.has_tensor("lm_head.weight")
 
+    def load_final_norm(self) -> torch.Tensor:
+        """Final RmsNorm gain only — for tied-embedding models that reuse
+        the committed embedding table as the LM head (quantizing a
+        transposed LM-head copy would be wasted work there)."""
+        return quantize_to_field(self._load_raw("model.norm.weight"), self.S)
+
     def load_final_weights(self) -> Dict[str, torch.Tensor]:
         """Final RmsNorm gain + LM head, read directly from safetensors. Falls
         back to the (tied) embedding for the LM head if the checkpoint has no
@@ -232,7 +238,7 @@ class LazyHFLoader:
         lm_name = ("lm_head.weight" if self.has_separate_lm_head()
                    else "model.embed_tokens.weight")
         return {
-            "final_norm_w": quantize_to_field(self._load_raw("model.norm.weight"), self.S),
+            "final_norm_w": self.load_final_norm(),
             "W_lm_head": quantize_to_field(self._load_raw(lm_name).T.contiguous(), self.S),
         }
 
@@ -310,12 +316,27 @@ def free_model_cache():
 
 
 def tokenize_prompt(model_id_or_path: str, prompt: str) -> torch.Tensor:
-    """Tokenize `prompt` using Llama-2-7B's tokenizer. Returns a 1-D int64 CUDA
+    """Tokenize `prompt` using the model's tokenizer. Returns a 1-D int64 CUDA
     tensor of token ids (integer indices into the embedding table)."""
     from transformers import AutoTokenizer
     tok = AutoTokenizer.from_pretrained(model_id_or_path)
     ids = tok(prompt, return_tensors="pt").input_ids[0].to("cuda")
     return ids
+
+
+def tokenize_chat_prompt(model_id_or_path: str, user_message: str) -> list:
+    """Render a single-turn chat via the model's chat template (Instruct
+    header tokens, auto system block, trailing generation prompt) and
+    tokenize. Returns a plain list of ids. Rendered to TEXT first, then
+    tokenized — apply_chat_template(tokenize=True)'s return type varies
+    across tokenizers versions (list vs Encoding objects).
+    add_special_tokens=False: the template already emits <|begin_of_text|>."""
+    from transformers import AutoTokenizer
+    tok = AutoTokenizer.from_pretrained(model_id_or_path)
+    text = tok.apply_chat_template(
+        [{"role": "user", "content": user_message}],
+        tokenize=False, add_generation_prompt=True)
+    return [int(t) for t in tok(text, add_special_tokens=False).input_ids]
 
 
 def _self_test():
