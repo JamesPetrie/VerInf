@@ -254,53 +254,53 @@
 
 <div class="wrap">
   <p class="eyebrow">VerInf · Ligero prover · cost model</p>
-  <h1>Что определяет время прувинга — как граф</h1>
-  <p class="thesis">Каждая ручка (форма модели, параметры Ligero, квантование s/R) течёт через производные величины в <b>пять термов стоимости</b>, а те складываются в итоговое время:</p>
+  <h1>What determines proving time — as a graph</h1>
+  <p class="thesis">Every knob (model shape, Ligero parameters, s/R quantization) flows through derived quantities into <b>five cost terms</b>, which add up to the total time:</p>
   <ul class="terms">
-    <li><b>witness</b> — пересчёт прогона модели (4 прохода). Доминирует на проде: <b>57%</b>.</li>
-    <li><b>streaming</b> — кодирование строк (NTT) и хеш Меркла.</li>
-    <li><b>quad</b> — проверка квадратичных ограничений (Фрайвальдс, LogUp).</li>
-    <li><b>lin</b> — проверка линейных ограничений.</li>
-    <li><b>overhead</b> — фиксированная цена на строку (~22 мкс). На 400B это <b>0.4%</b>, но на toy-моделях именно он держит floor.</li>
+    <li><b>witness</b> — re-running the model forward pass (4 passes). Dominates in production: <b>57%</b>.</li>
+    <li><b>streaming</b> — row encoding (NTT) and Merkle hashing.</li>
+    <li><b>quad</b> — checking quadratic constraints (Freivalds, LogUp).</li>
+    <li><b>lin</b> — checking linear constraints.</li>
+    <li><b>overhead</b> — a fixed per-row cost (~22 µs). At 400B it is <b>0.4%</b>, but on toy models it is what holds the floor.</li>
   </ul>
-  <p class="thesis" style="margin-bottom:6px">Поле — <b>не свободный вход</b>: BabyBear возможен, только если ширина аккумулятора <span class="mono">b</span> помещается в 31 бит. Ниже — те же зависимости как граф; формула на каждом узле, цвет = роль.</p>
+  <p class="thesis" style="margin-bottom:6px">The field is <b>not a free input</b>: BabyBear is possible only if the accumulator width <span class="mono">b</span> fits in 31 bits. Below — the same dependencies as a graph; a formula on every node, color = role.</p>
 
   <section>
-    <h2>Как это работает — и откуда берутся зависимости</h2>
+    <h2>How it works — and where the dependencies come from</h2>
     <div class="prose">
-      <p><b>Что вообще доказывается.</b> Владелец GPU («прувер») убеждает проверяющего («верификатор» — например, инспектор по договору), что он честно прогнал <b>конкретную</b> модель на <b>конкретном</b> входе — при этом <b>не раскрывая ни веса модели, ни сами токены</b>. Публично видно ровно одно число (насколько выход «объясняется» разрешённой моделью). Это доказательство с нулевым разглашением (zero-knowledge): верификатор убеждается в честности, но ничего лишнего не узнаёт.</p>
+      <p><b>What is being proved.</b> The GPU owner (the “prover”) convinces a checker (the “verifier” — e.g., a contract inspector) that they honestly ran a <b>specific</b> model on a <b>specific</b> input — while <b>revealing neither the model weights nor the tokens</b>. Exactly one number is public (how well the output is “explained” by the permitted model). This is a zero-knowledge proof: the verifier is convinced of honesty but learns nothing else.</p>
 
-      <h3>Шаг 1 · Witness — весь прогон превращается в числа</h3>
-      <p>Каждое промежуточное значение прогона (выходы всех матричных умножений, softmax, SiLU, нормировок) переводится в целое число в <b>конечном поле</b> <span class="mono">F</span> — множестве из <span class="mono">p ≈ 2⁶⁴</span> чисел, где сложение и умножение идут «по кругу» (по модулю p). Весь этот длинный список чисел и называется <b>witness</b> — именно его корректность доказывается. Для 400-миллиардной модели он весит <b>~7.5 ТБ</b>.</p>
+      <h3>Step 1 · Witness — the whole run becomes numbers</h3>
+      <p>Every intermediate value of the run (outputs of all matrix multiplications, softmax, SiLU, normalizations) is mapped to an integer in a <b>finite field</b> <span class="mono">F</span> — a set of <span class="mono">p ≈ 2⁶⁴</span> numbers where addition and multiplication wrap around (mod p). This long list of numbers is the <b>witness</b> — it is its correctness that gets proved. For a 400-billion-parameter model it weighs <b>~7.5 TB</b>.</p>
 
-      <h3>Шаг 2 · Ограничения вместо поэлементной проверки</h3>
-      <p>Верить пруверу нельзя, значит нужно проверить, что witness действительно получен честным прогоном. Это выражается списком <b>ограничений</b>. Матричное умножение <span class="mono">C = A·B</span> проверять поэлементно нельзя (это <span class="mono">m·n·k</span> равенств — неподъёмно), поэтому берут <b>рандомизированный тест Фрайвальдса</b>: вместо всей матрицы сверяют одну случайную проекцию <span class="mono">λ·C·ρ = λ·(A·B)·ρ</span> — если <span class="mono">C</span> подделан, проекция почти наверняка не сойдётся. Диапазоны и таблицы (softmax, SiLU) доказывают приёмом <b>LogUp</b>. Отсюда счётчики <span class="mono">Q</span> (квадратичные ограничения) и <span class="mono">L_lin</span> (линейные).</p>
+      <h3>Step 2 · Constraints instead of element-by-element checking</h3>
+      <p>The prover cannot be trusted, so one must check that the witness really came from an honest run. That is expressed as a list of <b>constraints</b>. A matrix product <span class="mono">C = A·B</span> cannot be checked element by element (that is <span class="mono">m·n·k</span> equalities — unaffordable), so one uses the <b>randomized Freivalds test</b>: instead of the whole matrix, compare one random projection <span class="mono">λ·C·ρ = λ·(A·B)·ρ</span> — if <span class="mono">C</span> is forged, the projection almost surely disagrees. Ranges and tables (softmax, SiLU) are proved with <b>LogUp</b>. Hence the counters <span class="mono">Q</span> (quadratic constraints) and <span class="mono">L_lin</span> (linear ones).</p>
 
-      <h3>Шаг 3 · Ligero — кодирование и выборочное открытие</h3>
-      <p>Witness раскладывают на строки. Каждую строку кодируют как <b>кодовое слово Рида-Соломона</b>: строят полином и вычисляют его в <span class="mono">N = ρ·K</span> точках (то есть добавляют избыточность в <span class="mono">ρ</span>=4 раза). Смысл избыточности: если прувер соврал хоть в одном месте, ошибка «размазывается» на заметную долю столбцов. Столбцы хешируют в <b>дерево Меркла</b>, и один его корень намертво фиксирует весь witness. Затем все ограничения сворачивают в несколько коротких тест-полиномов случайными коэффициентами, верификатор называет <span class="mono">T</span> <b>случайных столбцов</b>, прувер открывает их вместе с путями Меркла, и верификатор проверяет согласованность. Кодирование строк — это <b>NTT</b> (то же, что FFT, но в поле); цена одной ячейки — <span class="mono">c(n)</span>.</p>
+      <h3>Step 3 · Ligero — encoding and selective opening</h3>
+      <p>The witness is laid out in rows. Each row is encoded as a <b>Reed–Solomon codeword</b>: build a polynomial and evaluate it at <span class="mono">N = ρ·K</span> points (i.e., add <span class="mono">ρ</span>=4× redundancy). The point of the redundancy: if the prover lied anywhere, the error “smears” over a noticeable fraction of columns. The columns are hashed into a <b>Merkle tree</b>, and its single root pins the entire witness. Then all constraints are folded into a few short test polynomials with random coefficients, the verifier names <span class="mono">T</span> <b>random columns</b>, the prover opens them with their Merkle paths, and the verifier checks consistency. Row encoding is an <b>NTT</b> (same as FFT, but in the field); the cost of one cell is <span class="mono">c(n)</span>.</p>
 
-      <h3>Шаг 4 · Четыре раунда — почему witness считается 4 раза</h3>
-      <p>Протокол интерактивный и идёт в 4 раунда: зафиксировать witness → получить случайный вызов → зафиксировать вспомогательные данные → вызов → тест-полиномы → вызов (какие столбцы) → открыть. Каждая фиксация делается <b>до</b> следующего вызова — иначе прувер подогнал бы witness под уже увиденный вызов (на этом и держится надёжность). Но witness нужен на каждом раунде, а хранить 7.5 ТБ негде — поэтому его <b>пересчитывают заново все 4 раза</b>. Именно эти 4 пересчёта forward pass — самая дорогая часть (~57% времени), и по ним бьют GPU-softmax и spill.</p>
+      <h3>Step 4 · Four rounds — why the witness is computed 4 times</h3>
+      <p>The protocol is interactive and runs in 4 rounds: commit the witness → receive a random challenge → commit auxiliary data → challenge → test polynomials → challenge (which columns) → open. Every commitment happens <b>before</b> the next challenge — otherwise the prover would fit the witness to a challenge it has already seen (that is what soundness rests on). But the witness is needed in every round, and there is nowhere to keep 7.5 TB — so it is <b>recomputed all 4 times</b>. These 4 forward-pass recomputations are the most expensive part (~57% of the time), and GPU-softmax and spill attack exactly them.</p>
 
-      <h3>Куда это ведёт по зависимостям (то, что на графе)</h3>
+      <h3>Where this leads in the dependencies (what the graph shows)</h3>
       <ul>
-        <li><b>WITNESS</b> = 4 × время forward pass. Растёт с размером модели и длиной контекста (softmax — квадратично по длине).</li>
-        <li><b>STREAMING</b> — кодирование NTT + хеш Меркла; растёт с числом строк (<span class="mono">W/ELL</span>) и ценой NTT <span class="mono">c(n)</span>.</li>
-        <li><b>QUAD / LIN</b> — стоимость проверки квадратичных и линейных ограничений (из тестов Фрайвальдса и LogUp).</li>
-        <li><b>OVERHEAD</b> — фиксированная цена запуска ядра/диспетча на каждую строку (~22 мкс). Асимптотика выше её не видит, поэтому на toy-моделях она и держит floor; на большом масштабе она насыщается (GPU заполнен) и становится пренебрежимой. Единственный член, который <b>убывает</b> в доле с ростом модели.</li>
-        <li><b>Поле</b> держит два условия сразу: значения не должны переполнить <span class="mono">|F|</span> (нужно ≥ <span class="mono">b</span> бит) <b>и</b> надёжность требует, чтобы поле было сильно больше числа столбцов и запросов (<span class="mono">|F| ≫ N, M</span>). Поэтому маленькое поле (BabyBear) не проходит на масштабе — рушится не переполнение, а надёжность.</li>
-        <li><b>Надёжность</b>: открывая <span class="mono">T</span> случайных столбцов, верификатор ловит обман с вероятностью <span class="mono">(1−1/ρ)^T</span>. Больше <span class="mono">T</span> → надёжнее, но тяжелее доказательство и его проверка.</li>
+        <li><b>WITNESS</b> = 4 × forward-pass time. Grows with model size and context length (softmax — quadratic in length).</li>
+        <li><b>STREAMING</b> — NTT encoding + Merkle hashing; grows with the row count (<span class="mono">W/ELL</span>) and the NTT cost <span class="mono">c(n)</span>.</li>
+        <li><b>QUAD / LIN</b> — the cost of checking quadratic and linear constraints (from the Freivalds and LogUp tests).</li>
+        <li><b>OVERHEAD</b> — a fixed kernel-launch/dispatch cost per row (~22 µs). The asymptotics above do not see it, so on toy models it is what holds the floor; at large scale it saturates (the GPU is full) and becomes negligible. The only term whose share <b>shrinks</b> as the model grows.</li>
+        <li><b>The field</b> holds two conditions at once: values must not overflow <span class="mono">|F|</span> (needs ≥ <span class="mono">b</span> bits) <b>and</b> soundness requires the field to be much larger than the column and query counts (<span class="mono">|F| ≫ N, M</span>). That is why a small field (BabyBear) fails at scale — it is soundness that collapses, not overflow.</li>
+        <li><b>Soundness</b>: by opening <span class="mono">T</span> random columns the verifier catches cheating with probability <span class="mono">(1−1/ρ)^T</span>. Larger T → sounder, but the proof and its verification get heavier.</li>
       </ul>
     </div>
   </section>
 
   <section>
-    <h2>Граф зависимостей</h2>
+    <h2>Dependency graph</h2>
     <ul class="legend">
-      <li><span class="sw knob"></span>ручка (вход)</li>
-      <li><span class="sw der"></span>производная величина</li>
-      <li><span class="sw term"></span>терм стоимости (секунды)</li>
-      <li><span class="sw tot"></span>итог</li>
+      <li><span class="sw knob"></span>knob (input)</li>
+      <li><span class="sw der"></span>derived quantity</li>
+      <li><span class="sw term"></span>cost term (seconds)</li>
+      <li><span class="sw tot"></span>total</li>
     </ul>
     <div class="gwrap">
       <svg id="gsvg" viewBox="0 0 1360 560" preserveAspectRatio="xMidYMid meet">
@@ -312,13 +312,13 @@
         <g id="groot"></g>
       </svg>
       <div class="gctrls">
-        <button class="gbtn" id="gZin" title="приблизить">+</button>
-        <button class="gbtn" id="gZout" title="отдалить">−</button>
-        <button class="gbtn w" id="gReset" title="сбросить вид и раскладку">сброс</button>
+        <button class="gbtn" id="gZin" title="zoom in">+</button>
+        <button class="gbtn" id="gZout" title="zoom out">−</button>
+        <button class="gbtn w" id="gReset" title="reset view and layout">reset</button>
       </div>
-      <div class="ghint">тяни фон — двигать · колесо — зум · тяни узел — переставить</div>
+      <div class="ghint">drag background — pan · wheel — zoom · drag a node — rearrange</div>
     </div>
-    <div class="draft-cap">ручки → производные → термы → итог. Рёбра = «влияет на». <b style="color:#8C52D6">Фиолетовый</b> — надёжность верификации (§5.4): её кормят T,ρ,N и размер поля |F|.</div>
+    <div class="draft-cap">knobs → derived → terms → total. Edges = “feeds into”. <b style="color:#8C52D6">Purple</b> — verification soundness (§5.4): fed by T,ρ,N and the field size |F|.</div>
   </section>
 
   <script>
@@ -330,29 +330,29 @@
       ovh:['#EFDEE9','#B07AA1','#4A2A40'],
       tot:['#131820','#1591AC','#F6F8FA']};
     var DEF={
-      MODEL:{x:420,y:14,w:180,h:38,cls:'knob',l:['Форма модели','d·S·L·d_ff·H·vocab']},
+      MODEL:{x:420,y:14,w:180,h:38,cls:'knob',l:['Model shape','d·S·L·d_ff·H·vocab']},
       LIG:{x:635,y:14,w:170,h:38,cls:'knob',l:['Ligero','ELL·K·ρ·N=ρK·T_q']},
-      SCALE:{x:835,y:14,w:150,h:38,cls:'knob',l:['Квантование','s · R']},
+      SCALE:{x:835,y:14,w:150,h:38,cls:'knob',l:['Quantization','s · R']},
       W:{x:150,y:104,w:190,h:38,cls:'der',l:['W — witness','∝L(S·d+S²·H+S·d_ff)']},
-      B:{x:420,y:98,w:210,h:52,cls:'der',l:['b — биты аккум.','log₂k+2log₂s','+2log₂R+1']},
-      CN:{x:665,y:104,w:170,h:38,cls:'der',l:['c(n) — цена NTT','∝log₂n · 2¹²–2²⁴']},
-      Q:{x:855,y:104,w:160,h:38,cls:'der',l:['Q — quad произв.','∝ L·S·d²']},
-      LL:{x:1035,y:104,w:120,h:38,cls:'der',l:['L_lin','лин. огранич.']},
+      B:{x:420,y:98,w:210,h:52,cls:'der',l:['b — accum. bits','log₂k+2log₂s','+2log₂R+1']},
+      CN:{x:665,y:104,w:170,h:38,cls:'der',l:['c(n) — NTT cost','∝log₂n · 2¹²–2²⁴']},
+      Q:{x:855,y:104,w:160,h:38,cls:'der',l:['Q — quad products','∝ L·S·d²']},
+      LL:{x:1035,y:104,w:120,h:38,cls:'der',l:['L_lin','lin. constraints']},
       TW:{x:20,y:212,w:160,h:38,cls:'der',l:['T_wit','forward pass']},
       M:{x:200,y:212,w:150,h:38,cls:'der',l:['m_total','= W / ELL']},
-      FIELD:{x:420,y:212,w:170,h:38,cls:'field',l:['Поле |F|','2⁶⁴ Gold / 2³¹ BB']},
-      SOUND:{x:625,y:206,w:200,h:46,cls:'sound',l:['Надёжность (бит)','min(IRS,field,LogUp)']},
+      FIELD:{x:420,y:212,w:170,h:38,cls:'field',l:['Field |F|','2⁶⁴ Gold / 2³¹ BB']},
+      SOUND:{x:625,y:206,w:200,h:46,cls:'sound',l:['Soundness (bits)','min(IRS,field,LogUp)']},
       WIT:{x:100,y:322,w:180,h:38,cls:'wit',l:['WITNESS','4·T_wit · 16288s']},
       STR:{x:320,y:314,w:270,h:52,cls:'str',l:['STREAMING','rows·[K·c(K)+N·c(N)','+4K·c(2K)+N⁄8·hash] · 9272s']},
       QD:{x:650,y:322,w:210,h:38,cls:'qd',l:['QUAD','(Q/ELL)·τ·2K·c(2K) · 2995s']},
       LN:{x:920,y:322,w:120,h:38,cls:'lin',l:['LIN','112s']},
-      OVH:{x:1065,y:314,w:170,h:52,cls:'ovh',l:['OVERHEAD','22мкс·min(m,5·10⁶)','110s · toy-floor']},
-      TOT:{x:390,y:445,w:320,h:46,cls:'tot',l:['PROVE_TOTAL = W+S+Q+L+O','28778s ≈ 7.99 ч (400B)']}
+      OVH:{x:1065,y:314,w:170,h:52,cls:'ovh',l:['OVERHEAD','22µs·min(m,5·10⁶)','110s · toy-floor']},
+      TOT:{x:390,y:445,w:320,h:46,cls:'tot',l:['PROVE_TOTAL = W+S+Q+L+O','28778s ≈ 7.99 h (400B)']}
     };
     var EDG=[['MODEL','W'],['MODEL','Q'],['MODEL','TW'],['MODEL','LL'],['MODEL','B','k,R'],
       ['SCALE','B','s,R'],['W','M','÷ELL'],['LIG','CN'],['LIG','STR'],['LIG','QD'],['LIG','SOUND','T,ρ,N'],
       ['MODEL','SOUND','M~W (LogUp)'],
-      ['M','STR'],['CN','STR'],['CN','QD'],['Q','QD'],['LL','LN'],['TW','WIT','×4'],['M','OVH','×22мкс'],
+      ['M','STR'],['CN','STR'],['CN','QD'],['Q','QD'],['LL','LN'],['TW','WIT','×4'],['M','OVH','×22µs'],
       ['B','FIELD'],['FIELD','SOUND','|F|'],['FIELD','WIT','×0.5'],['FIELD','STR','×0.5'],
       ['WIT','TOT'],['STR','TOT'],['QD','TOT'],['LN','TOT'],['OVH','TOT']];
     var N={}, view={tx:0,ty:0,k:1};
@@ -406,152 +406,152 @@
   </script>
 
   <section>
-    <h2>Словарь обозначений</h2>
+    <h2>Glossary</h2>
     <table class="gtbl">
-      <tr><th class="grp" colspan="2">что доказывается</th></tr>
-      <tr><td class="term">witness</td><td class="def">все промежуточные числа прогона модели, записанные как элементы поля — то, чью корректность доказывают</td></tr>
-      <tr><td class="term">F, |F|</td><td class="def">конечное поле — множество из <span class="mono">p</span> чисел, вся арифметика по модулю <span class="mono">p</span>. Goldilocks: <span class="mono">p = 2⁶⁴−2³²+1</span>. |F| — размер поля</td></tr>
-      <tr><td class="term">W</td><td class="def">сколько всего чисел в witness. У 400B-модели ≈ 9.4·10¹¹ (7.5 ТБ)</td></tr>
-      <tr><td class="term">S</td><td class="def">длина контекста (число токенов), которую доказываем</td></tr>
-      <tr><td class="term">d, d_ff, H, L</td><td class="def">форма трансформера: ширина, размер MLP, число голов внимания, число слоёв</td></tr>
-      <tr><td class="term">E, MoE-доля</td><td class="def">число экспертов и доля слоёв, где MLP — Mixture-of-Experts</td></tr>
+      <tr><th class="grp" colspan="2">what is being proved</th></tr>
+      <tr><td class="term">witness</td><td class="def">all intermediate numbers of the model run, written as field elements — the thing whose correctness is proved</td></tr>
+      <tr><td class="term">F, |F|</td><td class="def">finite field — a set of <span class="mono">p</span> numbers, all arithmetic mod <span class="mono">p</span>. Goldilocks: <span class="mono">p = 2⁶⁴−2³²+1</span>. |F| — field size</td></tr>
+      <tr><td class="term">W</td><td class="def">how many numbers the witness holds. For the 400B model ≈ 9.4·10¹¹ (7.5 TB)</td></tr>
+      <tr><td class="term">S</td><td class="def">context length (token count) being proved</td></tr>
+      <tr><td class="term">d, d_ff, H, L</td><td class="def">transformer shape: width, MLP size, attention heads, layer count</td></tr>
+      <tr><td class="term">E, MoE fraction</td><td class="def">expert count and the fraction of layers whose MLP is Mixture-of-Experts</td></tr>
 
-      <tr><th class="grp" colspan="2">Ligero — упаковка и кодирование</th></tr>
-      <tr><td class="term">ELL</td><td class="def">сколько чисел witness кладут в одну строку (длина «сообщения»)</td></tr>
-      <tr><td class="term">m_total</td><td class="def">сколько всего строк = <span class="mono">W / ELL</span></td></tr>
-      <tr><td class="term">K</td><td class="def">степень полинома Рида-Соломона — предел длины строки до избыточности</td></tr>
-      <tr><td class="term">ρ (rho)</td><td class="def">во сколько раз раздувают строку избыточностью (inverse rate). Обычно 4</td></tr>
-      <tr><td class="term">N</td><td class="def">длина кодового слова = число столбцов = <span class="mono">ρ·K</span></td></tr>
-      <tr><td class="term">NTT</td><td class="def">быстрое преобразование (как FFT, но в поле) — превращает строку в кодовое слово</td></tr>
-      <tr><td class="term">c(n)</td><td class="def">измеренная цена ячейки NTT (нс/элемент) при длине <span class="mono">n</span>; ~логарифм., калибр. 2¹²–2²⁴</td></tr>
-      <tr><td class="term">Merkle</td><td class="def">дерево хешей столбцов; один корень фиксирует весь witness</td></tr>
-      <tr><td class="term">T (T_q)</td><td class="def">сколько случайных столбцов открывает верификатор. Главный «диал» надёжности</td></tr>
+      <tr><th class="grp" colspan="2">Ligero — packing and encoding</th></tr>
+      <tr><td class="term">ELL</td><td class="def">how many witness numbers go into one row (the “message” length)</td></tr>
+      <tr><td class="term">m_total</td><td class="def">total row count = <span class="mono">W / ELL</span></td></tr>
+      <tr><td class="term">K</td><td class="def">Reed–Solomon polynomial degree — the row-length limit before redundancy</td></tr>
+      <tr><td class="term">ρ (rho)</td><td class="def">how much the row is blown up by redundancy (inverse rate). Usually 4</td></tr>
+      <tr><td class="term">N</td><td class="def">codeword length = column count = <span class="mono">ρ·K</span></td></tr>
+      <tr><td class="term">NTT</td><td class="def">fast transform (like FFT, but in the field) — turns a row into a codeword</td></tr>
+      <tr><td class="term">c(n)</td><td class="def">measured NTT cell cost (ns/element) at length <span class="mono">n</span>; ~logarithmic, calibrated 2¹²–2²⁴</td></tr>
+      <tr><td class="term">Merkle</td><td class="def">hash tree over the columns; one root pins the entire witness</td></tr>
+      <tr><td class="term">T (T_q)</td><td class="def">how many random columns the verifier opens. The main soundness dial</td></tr>
 
-      <tr><th class="grp" colspan="2">ограничения и время</th></tr>
-      <tr><td class="term">T_wit</td><td class="def">время одного forward pass модели (генерация witness). Пересчитывается 4 раза</td></tr>
-      <tr><td class="term">P</td><td class="def">число проходов witness (= раундов). В базовом протоколе 4; spill целится снизить</td></tr>
-      <tr><td class="term">Q</td><td class="def">число квадратичных ограничений (Фрайвальдс + range/lookup)</td></tr>
-      <tr><td class="term">L_lin</td><td class="def">число линейных ограничений</td></tr>
-      <tr><td class="term">Freivalds</td><td class="def">проверка матричного умножения одной проекцией вместо всех <span class="mono">m·n·k</span> произведений</td></tr>
-      <tr><td class="term">LogUp</td><td class="def">доказать диапазоны и таблицы (softmax, SiLU) через логарифмическую производную</td></tr>
-      <tr><td class="term">η (эта)</td><td class="def">накладные расходы прувинга: <span class="mono">1/(1−0.045) ≈ 1.047</span></td></tr>
-      <tr><td class="term">overhead</td><td class="def">цена диспетча/запуска на каждую строку (~22 мкс), которую асимптотика c(n)·размер не видит; насыщается на ~5 млн строк. Главный член floor на toy-моделях, 0.4% на 400B</td></tr>
-      <tr><td class="term">τ, β, h</td><td class="def">калибр. константы: трансформов/строку в quad; нс/линейное огранич.; нс/хеш-сжатие</td></tr>
+      <tr><th class="grp" colspan="2">constraints and time</th></tr>
+      <tr><td class="term">T_wit</td><td class="def">time of one model forward pass (witness generation). Recomputed 4 times</td></tr>
+      <tr><td class="term">P</td><td class="def">number of witness passes (= rounds). 4 in the base protocol; spill aims to lower it</td></tr>
+      <tr><td class="term">Q</td><td class="def">number of quadratic constraints (Freivalds + range/lookup)</td></tr>
+      <tr><td class="term">L_lin</td><td class="def">number of linear constraints</td></tr>
+      <tr><td class="term">Freivalds</td><td class="def">check a matrix product by one projection instead of all <span class="mono">m·n·k</span> products</td></tr>
+      <tr><td class="term">LogUp</td><td class="def">prove ranges and tables (softmax, SiLU) via the logarithmic derivative</td></tr>
+      <tr><td class="term">η (eta)</td><td class="def">proving overhead: <span class="mono">1/(1−0.045) ≈ 1.047</span></td></tr>
+      <tr><td class="term">overhead</td><td class="def">per-row dispatch/launch cost (~22 µs) that the c(n)·size asymptotics do not see; saturates at ~5M rows. The main floor term on toy models, 0.4% at 400B</td></tr>
+      <tr><td class="term">τ, β, h</td><td class="def">calibrated constants: transforms/row in quad; ns/linear constraint; ns/hash compression</td></tr>
 
-      <tr><th class="grp" colspan="2">поле и точность</th></tr>
-      <tr><td class="term">s</td><td class="def">масштаб fixed-point: <span class="mono">x → round(s·x)</span>. Больше s = точнее, но крупнее числа</td></tr>
-      <tr><td class="term">R</td><td class="def">граница величины активаций (клип): насколько большими бывают значения</td></tr>
-      <tr><td class="term">b</td><td class="def">сколько бит нужно аккумулятору в худшем случае, чтобы не переполнить поле</td></tr>
-      <tr><td class="term">M</td><td class="def">число lookup-запросов (LogUp); растёт с моделью, ≈ 10¹⁰ на 400B</td></tr>
-      <tr><td class="term">Goldilocks / BabyBear</td><td class="def">большое (<span class="mono">2⁶⁴</span>) и маленькое (<span class="mono">2³¹</span>) поля</td></tr>
+      <tr><th class="grp" colspan="2">field and precision</th></tr>
+      <tr><td class="term">s</td><td class="def">fixed-point scale: <span class="mono">x → round(s·x)</span>. Larger s = more precise, but bigger numbers</td></tr>
+      <tr><td class="term">R</td><td class="def">activation magnitude bound (clip): how large values get</td></tr>
+      <tr><td class="term">b</td><td class="def">how many bits the accumulator needs in the worst case to not overflow the field</td></tr>
+      <tr><td class="term">M</td><td class="def">number of lookup queries (LogUp); grows with the model, ≈ 10¹⁰ at 400B</td></tr>
+      <tr><td class="term">Goldilocks / BabyBear</td><td class="def">the large (<span class="mono">2⁶⁴</span>) and small (<span class="mono">2³¹</span>) fields</td></tr>
 
-      <tr><th class="grp" colspan="2">надёжность верификации</th></tr>
-      <tr><td class="term">надёжность (бит)</td><td class="def"><span class="mono">−log₂ε</span>, ε — вероятность, что жулик пройдёт проверку. 16 бит = 1 шанс из ~65 000</td></tr>
-      <tr><td class="term">IRS</td><td class="def">тест «строки близки к кодовым словам»; ошибка <span class="mono">(1−1/ρ)^T</span> — падает с ростом T</td></tr>
-      <tr><td class="term">field / LogUp термы</td><td class="def">ошибки от размера поля: <span class="mono">N/|F|</span> и <span class="mono">(M+T)/|F|</span> — малы, пока поле велико</td></tr>
-      <tr><td class="term">proof / verify</td><td class="def">размер доказательства (ГБ) и время проверки (ч); растут с <span class="mono">T</span> и числом строк</td></tr>
+      <tr><th class="grp" colspan="2">verification soundness</th></tr>
+      <tr><td class="term">soundness (bits)</td><td class="def"><span class="mono">−log₂ε</span>, ε — the probability a cheater passes. 16 bits = 1 chance in ~65,000</td></tr>
+      <tr><td class="term">IRS</td><td class="def">the “rows are close to codewords” test; error <span class="mono">(1−1/ρ)^T</span> — falls as T grows</td></tr>
+      <tr><td class="term">field / LogUp terms</td><td class="def">field-size errors: <span class="mono">N/|F|</span> and <span class="mono">(M+T)/|F|</span> — small while the field is large</td></tr>
+      <tr><td class="term">proof / verify</td><td class="def">proof size (GB) and verification time (h); grow with <span class="mono">T</span> and the row count</td></tr>
     </table>
   </section>
 
   <section>
-    <h2>Итоговая формула оценки затрат</h2>
+    <h2>Master cost formula</h2>
     <div class="mf">
       <div class="eq">
-        <span class="row"><span class="lhs">PROVE_s</span> <span class="op">= η · [</span> <span class="t-wit">P · T_wit</span> <span class="op">]</span> <span class="tag">← WITNESS (P = 4 прохода)</span></span>
+        <span class="row"><span class="lhs">PROVE_s</span> <span class="op">= η · [</span> <span class="t-wit">P · T_wit</span> <span class="op">]</span> <span class="tag">← WITNESS (P = 4 passes)</span></span>
         <span class="row"><span class="op">+ (η / 10⁹) · </span><span class="t-str">[ (W_p/ELL)·(2·enc + 4K·c(2K) + (N/8)·h) + (W_w/ELL)·(enc + 4K·c(2K) + (N/8)·h + enc/wl) ]</span> <span class="tag">← STREAMING · enc = K·c(K)+N·c(N)</span></span>
         <span class="row"><span class="op">+ (η / 10⁹) · </span><span class="t-qd">(Q/ELL) · τ · 2K·c(2K)</span> <span class="tag">← QUAD</span></span>
         <span class="row"><span class="op">+ (η / 10⁹) · </span><span class="t-lin">β · L_lin</span> <span class="tag">← LIN</span></span>
-        <span class="row"><span class="op">+ 22 мкс · </span><span class="t-ovh">min(m_total, 5·10⁶)</span> <span class="tag">← OVERHEAD (диспетч на строку)</span></span>
+        <span class="row"><span class="op">+ 22 µs · </span><span class="t-ovh">min(m_total, 5·10⁶)</span> <span class="tag">← OVERHEAD (per-row dispatch)</span></span>
       </div>
-      <div class="eta">η = 1 / (1 − E) ≈ <span class="mono"><b>1.047</b></span> — overhead прувинга (E = 0.045). Первые четыре члена — асимптотика (c(n)·размер); они верны на большом масштабе, но <b>недооценивают floor в 2–6× на toy-моделях</b>, потому что не учитывают фиксированную цену запуска на каждую строку. Пятый член, <b>OVERHEAD</b> (≈22 мкс/строку, выведен из 39 сохранённых прогонов), это и есть та цена: он <b>доминирует floor на toy-масштабе</b> и насыщается, когда GPU заполнен (≈5 млн строк), поэтому на 400B он всего 110 s (0.4%). floor+overhead ложится в ±30% от замеренного floor на всём диапазоне.</div>
+      <div class="eta">η = 1 / (1 − E) ≈ <span class="mono"><b>1.047</b></span> — proving overhead (E = 0.045). The first four terms are asymptotics (c(n)·size); they are right at large scale but <b>understate the floor 2–6× on toy models</b>, because they ignore the fixed launch cost of every row. The fifth term, <b>OVERHEAD</b> (≈22 µs/row, derived from 39 saved runs), is exactly that cost: it <b>dominates the floor at toy scale</b> and saturates once the GPU is full (≈5M rows), so at 400B it is only 110 s (0.4%). floor+overhead lands within ±30% of the measured floor across the whole range.</div>
       <div class="where">
-        <span><b>W</b> элементы witness</span>
-        <span><b>W_p</b> proof-часть · <b>W_w</b> веса (перманентны)</span>
-        <span><b>wl</b> переиспользование весов = pad/T</span>
-        <span><b>m_total</b> строк = W/ELL</span>
-        <span><b>ELL</b> длина строки Ligero</span>
-        <span><b>K</b> степень · <b>N</b>=ρK кодовое слово</span>
-        <span><b>c(n)</b> цена ячейки NTT (∝ log₂n)</span>
-        <span><b>h</b> HASH_NS / сжатие</span>
-        <span><b>Q</b> квадратичные произвед.</span>
+        <span><b>W</b> witness elements</span>
+        <span><b>W_p</b> proof part · <b>W_w</b> weights (persistent)</span>
+        <span><b>wl</b> weight reuse = pad/T</span>
+        <span><b>m_total</b> rows = W/ELL</span>
+        <span><b>ELL</b> Ligero row length</span>
+        <span><b>K</b> degree · <b>N</b>=ρK codeword</span>
+        <span><b>c(n)</b> NTT cell cost (∝ log₂n)</span>
+        <span><b>h</b> HASH_NS / compression</span>
+        <span><b>Q</b> quadratic products</span>
         <span><b>τ</b> QUAD_TRANSFORMS / row</span>
-        <span><b>β</b> B_NS / CID · <b>L_lin</b> лин. огранич.</span>
-        <span><b>T_wit</b> один forward pass (сек)</span>
+        <span><b>β</b> B_NS / CID · <b>L_lin</b> lin. constraints</span>
+        <span><b>T_wit</b> one forward pass (s)</span>
         <span><b>P</b> witness_passes = 4</span>
       </div>
       <div class="eval">
-        <div>подставляем 400B (<span class="mono">--S 1093 --witness-mode notebook</span>):</div>
+        <div>substituting 400B (<span class="mono">--S 1093 --witness-mode notebook</span>):</div>
         <div><span class="t-wit">η·4·T_wit</span> = 1.047 · 4 · 3888.8 = <b>16 288 s</b> &nbsp;·&nbsp; <span class="t-str">streaming</span> 9 272 &nbsp;·&nbsp; <span class="t-qd">quad</span> 2 995 &nbsp;·&nbsp; <span class="t-lin">lin</span> 112 &nbsp;·&nbsp; <span class="t-ovh">overhead</span> 110</div>
-        <div class="res">PROVE_s = 16 288 + 9 272 + 2 995 + 112 + 110 = 28 778 s ≈ 7.99 ч</div>
-        <div style="margin-top:6px;color:var(--muted)">Демонстрированный запуск — floor+witness = 28 668 s; overhead (диспетч на строку) добавляет 0.4% на этом масштабе. Ровно этот член на toy-модели (m_total ~340k) даёт 7.5 s из ~9.6 s замеренного floor — там он <b>главный</b>.</div>
+        <div class="res">PROVE_s = 16 288 + 9 272 + 2 995 + 112 + 110 = 28 778 s ≈ 7.99 h</div>
+        <div style="margin-top:6px;color:var(--muted)">The demonstrated run — floor+witness = 28 668 s; overhead (per-row dispatch) adds 0.4% at this scale. On a toy model (m_total ~340k) exactly this term contributes 7.5 s of the ~9.6 s measured floor — there it is <b>the main one</b>.</div>
       </div>
       <div class="eta" style="margin-top:14px;border-top:1px dashed var(--hair);padding-top:12px">
-        <b>Надёжность верификации (§5.4)</b> = −log₂ε, binding — самый слабый терм:
+        <b>Verification soundness (§5.4)</b> = −log₂ε, binding — the weakest term:
         <span class="mono">ε = min[ (1−1/ρ)ᵀ · N/|F| · (M+T+1)/|F| ]</span> (IRS · field · LogUp).
-        Дефолт T=40, ρ=4, |F|=2⁶⁴ → <b>16.6 бит</b> (binding IRS). ↑T → надёжнее, но растут proof и verify. BabyBear (|F|=2³¹) рушит field/LogUp при M≈10¹⁰ — вот почему малое поле на масштабе не проходит по надёжности, а не только по аккумулятору.</div>
+        Default T=40, ρ=4, |F|=2⁶⁴ → <b>16.6 bits</b> (binding IRS). ↑T → sounder, but proof and verify grow. BabyBear (|F|=2³¹) wrecks field/LogUp at M≈10¹⁰ — that is why a small field fails at scale on soundness, not just the accumulator.</div>
     </div>
   </section>
 
   <section>
-    <h2>Ручка — крути параметры, оценка пересчитывается вживую</h2>
+    <h2>The knob — turn the parameters, the estimate recomputes live</h2>
     <div class="calc">
       <div class="cpanel cctrls">
-        <div class="dsc" style="margin-bottom:4px;color:var(--ink);font-weight:600">архитектура модели — одна модель, подставляй варианты:</div>
+        <div class="dsc" style="margin-bottom:4px;color:var(--ink);font-weight:600">model architecture — one model, swap in variants:</div>
         <div class="crow" style="grid-template-columns:1fr 1fr 1fr;gap:6px">
           <button class="creset" id="pQwen">Qwen-0.5B</button>
           <button class="creset" id="pLlama">Llama-1B</button>
           <button class="creset" id="pMav">Maverick-400B</button>
         </div>
         <div class="crow">
-          <div class="ctrl"><div class="lab"><span class="nm">d — ширина</span><span class="vl" id="vD">5120</span></div><input type="range" id="cD" min="256" max="16384" step="128" value="5120"></div>
-          <div class="ctrl"><div class="lab"><span class="nm">seq — контекст</span><span class="vl" id="vSeq">1093</span></div><input type="range" id="cSeq" min="16" max="8192" step="16" value="1093"></div>
+          <div class="ctrl"><div class="lab"><span class="nm">d — width</span><span class="vl" id="vD">5120</span></div><input type="range" id="cD" min="256" max="16384" step="128" value="5120"></div>
+          <div class="ctrl"><div class="lab"><span class="nm">seq — context</span><span class="vl" id="vSeq">1093</span></div><input type="range" id="cSeq" min="16" max="8192" step="16" value="1093"></div>
         </div>
         <div class="crow">
-          <div class="ctrl"><div class="lab"><span class="nm">L — слои</span><span class="vl" id="vL">48</span></div><input type="range" id="cL" min="1" max="200" step="1" value="48"></div>
+          <div class="ctrl"><div class="lab"><span class="nm">L — layers</span><span class="vl" id="vL">48</span></div><input type="range" id="cL" min="1" max="200" step="1" value="48"></div>
           <div class="ctrl"><div class="lab"><span class="nm">d_ff</span><span class="vl" id="vFF">8192</span></div><input type="range" id="cFF" min="256" max="53248" step="256" value="8192"></div>
         </div>
         <div class="crow">
-          <div class="ctrl"><div class="lab"><span class="nm">H — головы</span><span class="vl" id="vH">40</span></div><input type="range" id="cH" min="1" max="128" step="1" value="40"></div>
+          <div class="ctrl"><div class="lab"><span class="nm">H — heads</span><span class="vl" id="vH">40</span></div><input type="range" id="cH" min="1" max="128" step="1" value="40"></div>
           <div class="ctrl"><div class="lab"><span class="nm">vocab</span><span class="vl" id="vV">202k</span></div><input type="range" id="cV" min="1024" max="262144" step="1024" value="202048"></div>
         </div>
         <div class="crow">
-          <div class="ctrl"><div class="lab"><span class="nm">E — эксперты MoE</span><span class="vl" id="vE">128</span></div><input type="range" id="cE" min="1" max="256" step="1" value="128"></div>
-          <div class="ctrl"><div class="lab"><span class="nm">MoE-слоёв (доля)</span><span class="vl" id="vMoe">0.5</span></div><input type="range" id="cMoe" min="0" max="1" step="0.05" value="0.5"></div>
+          <div class="ctrl"><div class="lab"><span class="nm">E — MoE experts</span><span class="vl" id="vE">128</span></div><input type="range" id="cE" min="1" max="256" step="1" value="128"></div>
+          <div class="ctrl"><div class="lab"><span class="nm">MoE layers (fraction)</span><span class="vl" id="vMoe">0.5</span></div><input type="range" id="cMoe" min="0" max="1" step="0.05" value="0.5"></div>
         </div>
-        <div class="dsc">W/Q/L выводятся из архитектуры: веса точно + активации×G (gadget-витнесы), MoE через E экспертов. G калибр. на 400B-якорь.</div>
+        <div class="dsc">W/Q/L are derived from the architecture: weights exactly + activations×G (gadget witnesses), MoE via E experts. G calibrated on the 400B anchor.</div>
         <div class="crow">
-          <div class="ctrl"><div class="lab"><span class="nm">K — степень</span></div>
+          <div class="ctrl"><div class="lab"><span class="nm">K — degree</span></div>
             <select id="cK"><option>2048</option><option>4096</option><option>8192</option><option selected>16384</option><option>32768</option><option>65536</option><option>131072</option><option>262144</option><option>524288</option><option>1048576</option></select></div>
           <div class="ctrl"><div class="lab"><span class="nm">ρ — blowup</span></div>
             <select id="cRho"><option>2</option><option selected>4</option><option>8</option></select></div>
         </div>
         <div class="crow">
           <div class="ctrl"><div class="lab"><span class="nm">ELL = 2ˣ (≥ d, ≤ K)</span><span class="vl" id="vELL">8192</span></div><input type="range" id="cELL" min="9" max="20" step="1" value="13"></div>
-          <div class="ctrl"><div class="lab"><span class="nm">T — запросы</span><span class="vl" id="vT">40</span></div><input type="range" id="cT" min="8" max="128" step="1" value="40"></div>
+          <div class="ctrl"><div class="lab"><span class="nm">T — queries</span><span class="vl" id="vT">40</span></div><input type="range" id="cT" min="8" max="128" step="1" value="40"></div>
         </div>
         <div class="crow">
-          <div class="ctrl"><div class="lab"><span class="nm">s — масштаб</span><span class="vl" id="vSc">2¹²</span></div><input type="range" id="cScale" min="2" max="14" step="1" value="12"></div>
-          <div class="ctrl"><div class="lab"><span class="nm">R — клип</span><span class="vl" id="vR">32</span></div><input type="range" id="cR" min="1" max="256" step="1" value="32"></div>
+          <div class="ctrl"><div class="lab"><span class="nm">s — scale</span><span class="vl" id="vSc">2¹²</span></div><input type="range" id="cScale" min="2" max="14" step="1" value="12"></div>
+          <div class="ctrl"><div class="lab"><span class="nm">R — clip</span><span class="vl" id="vR">32</span></div><input type="range" id="cR" min="1" max="256" step="1" value="32"></div>
         </div>
         <div class="crow">
-          <div class="ctrl"><div class="lab"><span class="nm">P — проходы</span><span class="vl" id="vP">4</span></div><input type="range" id="cP" min="1" max="4" step="1" value="4"></div>
+          <div class="ctrl"><div class="lab"><span class="nm">P — passes</span><span class="vl" id="vP">4</span></div><input type="range" id="cP" min="1" max="4" step="1" value="4"></div>
           <div class="ctrl"><div class="lab"><span class="nm">witness</span></div>
             <select id="cWmode"><option value="notebook">notebook</option><option value="measured">measured</option></select></div>
         </div>
-        <label class="chk"><input type="checkbox" id="cBB"> целюсь в BabyBear <span class="dsc" style="font-size:10.5px">(×0.5 к witness/streaming/quad)</span></label>
+        <label class="chk"><input type="checkbox" id="cBB"> target BabyBear <span class="dsc" style="font-size:10.5px">(×0.5 on witness/streaming/quad)</span></label>
         <div class="bbstat" id="bbStat"></div>
 
         <div class="optblock">
-          <div class="optlab">оптимизации <span class="dsc">— промоделированы, не замерены на проде</span></div>
-          <label class="chk"><input type="checkbox" id="cSpill"> witness spill <span class="dsc" style="font-size:10.5px">(1 пересчёт + 3 чтения вместо 4 — режет 57%-й терм)</span></label>
-          <div class="ctrl" style="margin-top:6px"><div class="lab"><span class="nm">хранилище для spill</span></div>
-            <select id="cBw"><option value="3.5">NVMe 3.5 ГБ/с</option><option value="7">NVMe fast 7 ГБ/с</option><option value="11" selected>RAID/PCIe 11 ГБ/с</option></select></div>
-          <label class="chk" style="margin-top:8px"><input type="checkbox" id="cCoset"> coset-NTT <span class="dsc" style="font-size:10.5px">(режет encode; выигрыш только при K≥2¹⁸)</span></label>
-          <label class="chk" style="margin-top:8px"><input type="checkbox" id="cProj"> routed projection (MoE-матмулы) <span class="dsc" style="font-size:10.5px">(W×0.107 · Q×0.245 · L×0.191; 5 активных свипов вместо P полных; веса → персист. q_lin-фолд + открытия)</span></label>
-          <div class="optnote">GPU-порт softmax/silu уже вшит в базовую линию (T_wit). claim-streaming 4→1 и BabyBear на масштабе — заблокированы по надёжности. Projection: множители и якоря — леджер 400B S=1000 из routed_projected_4h_model.py; применяется только в notebook-режиме.</div>
+          <div class="optlab">optimizations <span class="dsc">— modeled, not measured in production</span></div>
+          <label class="chk"><input type="checkbox" id="cSpill"> witness spill <span class="dsc" style="font-size:10.5px">(1 recompute + 3 reads instead of 4 — cuts the 57% term)</span></label>
+          <div class="ctrl" style="margin-top:6px"><div class="lab"><span class="nm">spill storage</span></div>
+            <select id="cBw"><option value="3.5">NVMe 3.5 GB/s</option><option value="7">NVMe fast 7 GB/s</option><option value="11" selected>RAID/PCIe 11 GB/s</option></select></div>
+          <label class="chk" style="margin-top:8px"><input type="checkbox" id="cCoset"> coset-NTT <span class="dsc" style="font-size:10.5px">(cuts encode; wins only at K≥2¹⁸)</span></label>
+          <label class="chk" style="margin-top:8px"><input type="checkbox" id="cProj"> routed projection (MoE matmuls) <span class="dsc" style="font-size:10.5px">(W×0.107 · Q×0.245 · L×0.191; 5 active sweeps instead of P full; weights → persistent q_lin fold + opens)</span></label>
+          <div class="optnote">The GPU softmax/silu port is already baked into the baseline (T_wit). claim-streaming 4→1 and BabyBear at scale are blocked on soundness. Projection: multipliers and anchors — the 400B S=1000 ledger from routed_projected_4h_model.py; applies only in notebook mode.</div>
         </div>
 
-        <button class="creset" id="cReset">сброс к 400B</button>
+        <button class="creset" id="cReset">reset to 400B</button>
       </div>
 
       <div class="cpanel out">
@@ -559,7 +559,7 @@
           <div class="big" id="oTotal">—</div>
           <div class="sub" id="oTotalH"></div>
         </div>
-        <div class="oterms-head">время прувинга по термам · секунды и доля от итога</div>
+        <div class="oterms-head">proving time by term · seconds and share of total</div>
         <div class="oterms">
           <div class="oterm"><span class="chip cw"></span><span class="nm">WITNESS</span><span class="bw"><span class="bar cw" id="bWit"></span></span><span class="sec" id="sWit"></span></div>
           <div class="oterm"><span class="chip cs"></span><span class="nm">STREAMING</span><span class="bw"><span class="bar cs" id="bStr"></span></span><span class="sec" id="sStr"></span></div>
@@ -568,11 +568,11 @@
           <div class="oterm"><span class="chip co"></span><span class="nm">OVERHEAD</span><span class="bw"><span class="bar co" id="bOvh"></span></span><span class="sec" id="sOvh"></span></div>
         </div>
         <div class="snd">
-          <div class="snd-head">Надёжность верификации <b id="oSoundBits">—</b> бит<span class="snd-bind" id="oSoundBind"></span></div>
+          <div class="snd-head">Verification soundness <b id="oSoundBits">—</b> bits<span class="snd-bind" id="oSoundBind"></span></div>
           <div class="snd-terms">
             <div class="sterm" id="stIRS"><span class="snm">IRS (¾)ᵀ<br>← T, ρ</span><span class="sval" id="vIRS"></span></div>
-            <div class="sterm" id="stFld"><span class="snm">field N/|F|<br>← ρ,K, поле</span><span class="sval" id="vFld"></span></div>
-            <div class="sterm" id="stLog"><span class="snm">LogUp (M+T)/|F|<br>← M~W, поле</span><span class="sval" id="vLog"></span></div>
+            <div class="sterm" id="stFld"><span class="snm">field N/|F|<br>← ρ,K, field</span><span class="sval" id="vFld"></span></div>
+            <div class="sterm" id="stLog"><span class="snm">LogUp (M+T)/|F|<br>← M~W, field</span><span class="sval" id="vLog"></span></div>
           </div>
         </div>
         <div class="oderived">
@@ -582,8 +582,8 @@
           <span>L_lin <b id="dL">—</b></span>
           <span>N=ρK <b id="dN">—</b></span>
           <span>ELL <b id="dELL">—</b></span>
-          <span>b (акк. бит) <b id="dB">—</b></span>
-          <span>поле <b id="dField">—</b></span>
+          <span>b (accum. bits) <b id="dB">—</b></span>
+          <span>field <b id="dField">—</b></span>
           <span>M (lookup) <b id="dMq">—</b></span>
           <span>proof <b id="dProof">—</b></span>
           <span>verify <b id="dVerify">—</b></span>
@@ -594,37 +594,37 @@
   </section>
 
   <section>
-    <h2>Итоговая формула оценки затрат — после проекции</h2>
+    <h2>Master cost formula — after projection</h2>
     <div class="prose">
-      <p>Есть оптимизация — проекция MoE-матмулов (RoutedProjected-MoE), подробнее:
+      <p>There is an optimization — projection of the MoE matmuls (RoutedProjected-MoE), detailed here:
         <a href="https://claude.ai/code/artifact/4478fd6b-b774-44f9-9481-26f973a4309f">routed-projection-note</a>.</p>
     </div>
 
     <div class="mf">
       <div class="eq">
-        <span class="row"><span class="lhs">PROVE_s′</span> <span class="op">= η · [</span> <span class="t-wit">5 · T_wit^act</span> <span class="op">]</span> <span class="tag">← WITNESS: 5 активных свипов (5-раундовый транскрипт с фазой-3); форвард активной модели, не всех экспертов</span></span>
-        <span class="row"><span class="op">+ (η / 10⁹) · </span><span class="t-str">[ (W′_p/ELL)·(2·enc + 4K·c(2K) + (N/8)·h) + fold_qlin(W_w) + open(W_w) ]</span> <span class="tag">← STREAMING: W′ = 0.107·W; веса не стримятся — персистентный q_lin-фолд + открытия по леджеру</span></span>
+        <span class="row"><span class="lhs">PROVE_s′</span> <span class="op">= η · [</span> <span class="t-wit">5 · T_wit^act</span> <span class="op">]</span> <span class="tag">← WITNESS: 5 active sweeps (5-round transcript with phase 3); active-model forward, not all experts</span></span>
+        <span class="row"><span class="op">+ (η / 10⁹) · </span><span class="t-str">[ (W′_p/ELL)·(2·enc + 4K·c(2K) + (N/8)·h) + fold_qlin(W_w) + open(W_w) ]</span> <span class="tag">← STREAMING: W′ = 0.107·W; weights are not streamed — persistent q_lin fold + ledger openings</span></span>
         <span class="row"><span class="op">+ (η / 10⁹) · </span><span class="t-qd">(Q′/ELL) · τ · 2K·c(2K)</span> <span class="tag">← QUAD: Q′ = 0.245·Q</span></span>
         <span class="row"><span class="op">+ (η / 10⁹) · </span><span class="t-lin">β · L′_lin</span> <span class="tag">← LIN: L′ = 0.191·L</span></span>
-        <span class="row"><span class="op">+ 22 мкс · </span><span class="t-ovh">min(m′_total, 5·10⁶)</span> <span class="tag">← OVERHEAD: m′ = W′/ELL — падает вместе с witness</span></span>
+        <span class="row"><span class="op">+ 22 µs · </span><span class="t-ovh">min(m′_total, 5·10⁶)</span> <span class="tag">← OVERHEAD: m′ = W′/ELL — falls with the witness</span></span>
       </div>
       <div class="where">
         <span><b>W′</b> = 95.21G = 10.72% W <b>(×9.33)</b></span>
         <span><b>L′_lin</b> = 31.06G = 19.15% L <b>(×5.22)</b></span>
         <span><b>Q′</b> = 42.39G = 24.49% Q <b>(×4.08)</b></span>
-        <span><b>T_wit^act</b> — форвард только активной модели (top-1 маршруты)</span>
-        <span><b>5 свипов</b> — R1 · R2 · R3(p3) · тесты · открытия</span>
-        <span><b>fold_qlin / open</b> — персистентные веса вместо flat-commit</span>
+        <span><b>T_wit^act</b> — forward of the active model only (top-1 routes)</span>
+        <span><b>5 sweeps</b> — R1 · R2 · R3(p3) · tests · openings</span>
+        <span><b>fold_qlin / open</b> — persistent weights instead of flat commit</span>
       </div>
       <div class="eval">
-        <div>подстановка per-kernel (<span class="mono">routed_projected_4h_model.py</span>, S=1000, без глобального калибровочного множителя):</div>
-        <div><span class="t-wit">5 активных свипов</span> 3 609 &nbsp;·&nbsp; <span class="t-str">персист. q_lin-фолд</span> 3 625 &nbsp;·&nbsp; <span class="t-str">открытия (персист.+fresh)</span> 2 262 &nbsp;·&nbsp; <span class="t-str">fresh commit+fold</span> 950 &nbsp;·&nbsp; <span class="t-qd">quad</span> 765 &nbsp;·&nbsp; <span class="t-lin">lin</span> 114 &nbsp;·&nbsp; hash 140 · load 400 · egress 481 · RTT+tail 100 · refresh 600</div>
-        <div class="res">PROVE_s′ = 13 046 s = 3.62 ч &nbsp;·&nbsp; «до» (формула выше) = 28 778 s ≈ 7.99 ч &nbsp;→&nbsp; ≈×2.2 конец-в-конец</div>
-        <div style="margin-top:6px;color:var(--muted)">×9.33 по witness-ячейкам не превращается в ×9.33
-          по времени: «после» несёт пятый свип, персистентный вес-фолд и полный per-kernel учёт (egress,
-          RTT, refresh), которых асимптотическая формула «до» не видит. «До» посчитано при S=1093,
-          «после» — при S=1000: сравнение честное по порядку величины, не по третьему знаку.
-          Цена по надёжности: ε_new ≤ ε_Ligero + 3/|F| + ε_hash.</div>
+        <div>per-kernel substitution (<span class="mono">routed_projected_4h_model.py</span>, S=1000, no global calibration multiplier):</div>
+        <div><span class="t-wit">5 active sweeps</span> 3 609 &nbsp;·&nbsp; <span class="t-str">persistent q_lin fold</span> 3 625 &nbsp;·&nbsp; <span class="t-str">opens (persistent+fresh)</span> 2 262 &nbsp;·&nbsp; <span class="t-str">fresh commit+fold</span> 950 &nbsp;·&nbsp; <span class="t-qd">quad</span> 765 &nbsp;·&nbsp; <span class="t-lin">lin</span> 114 &nbsp;·&nbsp; hash 140 · load 400 · egress 481 · RTT+tail 100 · refresh 600</div>
+        <div class="res">PROVE_s′ = 13 046 s = 3.62 h &nbsp;·&nbsp; “before” (the formula above) = 28 778 s ≈ 7.99 h &nbsp;→&nbsp; ≈×2.2 end-to-end</div>
+        <div style="margin-top:6px;color:var(--muted)">×9.33 in witness cells does not become ×9.33
+          in time: “after” carries the fifth sweep, the persistent weight fold and full per-kernel
+          accounting (egress, RTT, refresh) that the asymptotic “before” formula does not see.
+          “Before” is computed at S=1093, “after” at S=1000: the comparison is honest to the order
+          of magnitude, not to the third digit. Soundness price: ε_new ≤ ε_Ligero + 3/|F| + ε_hash.</div>
       </div>
     </div>
   </section>
@@ -682,7 +682,7 @@
       var projOn=$('cProj').checked, proj=projOn&&wmode==='notebook', persistS=0;
       if(proj){ persistS=5437*(Ww/4.00e11); W=0.1072*W; Q=0.2449*Q; Llin=0.1915*Llin; Ww=0; }
       var ELLexp=+$('cELL').value, maxELL=K-8, ELLcap=Math.pow(2,ELLexp)>maxELL, ELL=cl(Math.pow(2,ELLexp),512,maxELL);
-      $('vELL').textContent='2'+sup(ELLexp)+(ELLcap?' → '+eng(ELL)+' (потолок K−8)':' = '+eng(ELL));
+      $('vELL').textContent='2'+sup(ELLexp)+(ELLcap?' → '+eng(ELL)+' (cap K−8)':' = '+eng(ELL));
       var N=rho*K,pad=K-ELL,ELLw=ELL,ELLp=ELL,Wp2=Math.max(W-Ww,0);
       var rowsW=Ww/ELLw,rowsP=Wp2/ELLp,rows=rowsW+rowsP,mtot=rows;
       var enc=K*c(K)+N*c(N),fold=4*K*c(2*K),hsh=(N/8)*HASH;
@@ -722,8 +722,8 @@
 
       var sum=total;                                 // formula sum (for the bars/breakdown)
       $('oTotal').textContent='PROVE ≈ '+fmtS(total)+' s';
-      var saved=total0-total, hdr='≈ '+(total/3600).toFixed(2)+' ч';
-      if(saved>1) hdr+='  ·  −'+fmtS(saved)+' s (−'+(100*saved/total0).toFixed(0)+'%) от базы '+fmtS(total0)+' s';
+      var saved=total0-total, hdr='≈ '+(total/3600).toFixed(2)+' h';
+      if(saved>1) hdr+='  ·  −'+fmtS(saved)+' s (−'+(100*saved/total0).toFixed(0)+'%) vs base '+fmtS(total0)+' s';
       $('oTotalH').textContent=hdr;
       function set(sid,bid,v){ $(sid).textContent=fmtS(v)+' s ('+(100*v/(sum||1e-9)).toFixed(0)+'%)';
         $(bid).style.width=(100*v/(sum||1e-9)).toFixed(1)+'%'; }
@@ -743,37 +743,37 @@
       $('dM').textContent=eng(mtot); $('dW').textContent=eng(W); $('dQ').textContent=eng(Q); $('dL').textContent=eng(Llin);
       $('dN').textContent=eng(N); $('dELL').textContent=ELL; $('dB').textContent=b.toFixed(1);
       $('dField').textContent = useBB ? 'BabyBear ✓ (×0.5)'
-        : !wantBB ? (bbAccOK&&bbSoundOK ? 'Goldilocks (BB возможен)' : 'Goldilocks')
-        : !bbSoundOK ? 'Goldilocks (BB невозможен: масштаб)'
-        : 'Goldilocks (BB: снизь s/R)';
-      // live status right at the checkbox — почему галка меняет время или нет.
-      // Порядок важен: надёжность НЕ зависит от s/R (это про масштаб модели, не
-      // про точность), поэтому она — первый и жёсткий барьер. Только если она ОК,
-      // а мешает лишь аккумулятор, даём чинибельную подсказку про s/R.
+        : !wantBB ? (bbAccOK&&bbSoundOK ? 'Goldilocks (BB possible)' : 'Goldilocks')
+        : !bbSoundOK ? 'Goldilocks (BB impossible: scale)'
+        : 'Goldilocks (BB: lower s/R)';
+      // live status right at the checkbox — why the toggle changes the time or not.
+      // Order matters: soundness does NOT depend on s/R (it is about model scale,
+      // not precision), so it is the first, hard barrier. Only when it passes and
+      // just the accumulator blocks do we give the fixable s/R hint.
       var bbEl=$('bbStat');
       if(!wantBB){ bbEl.className='bbstat idle';
-        bbEl.textContent='выкл · поле Goldilocks (2⁶⁴)'; }
+        bbEl.textContent='off · Goldilocks field (2⁶⁴)'; }
       else if(useBB){ bbEl.className='bbstat on';
-        bbEl.textContent='✓ ×0.5 применён к witness/streaming/quad'; }
+        bbEl.textContent='✓ ×0.5 applied to witness/streaming/quad'; }
       else if(!bbSoundOK){ bbEl.className='bbstat off';
-        bbEl.textContent='Чтобы включить BabyBear: уменьши d, L или seq, пока W не упадёт ниже 2.0·10¹¹ (сейчас W='+eng(W)+'). Тогда число lookup-запросов M влезет в поле 2³¹. s/R тут ни при чём — они про аккумулятор, не про надёжность.'; }
+        bbEl.textContent='To enable BabyBear: lower d, L or seq until W drops below 2.0·10¹¹ (now W='+eng(W)+'). Then the lookup-query count M fits the 2³¹ field. s/R are irrelevant here — they are about the accumulator, not soundness.'; }
       else { bbEl.className='bbstat off';
-        bbEl.textContent='Чтобы включить BabyBear: снизь s (сейчас 2'+sup(sExp)+') или R (сейчас '+R+'), пока аккумулятор b не станет < 31 (сейчас b='+b.toFixed(1)+'). Надёжность уже проходит.'; }
+        bbEl.textContent='To enable BabyBear: lower s (now 2'+sup(sExp)+') or R (now '+R+') until the accumulator b is < 31 (now b='+b.toFixed(1)+'). Soundness already passes.'; }
       $('dMq').textContent=eng(M);
-      $('dProof').textContent=(proof_b/1e9).toFixed(1)+' GB'; $('dVerify').textContent=(verify_s/3600).toFixed(1)+' ч';
+      $('dProof').textContent=(proof_b/1e9).toFixed(1)+' GB'; $('dVerify').textContent=(verify_s/3600).toFixed(1)+' h';
 
       var w=[];
-      if(Math.round(Math.log2(2*K))>24||Math.round(Math.log2(N))>24||Math.round(Math.log2(K))<12) w.push('⚠ K/N вне калибровки c(n) 2¹²–2²⁴ → клампится.');
+      if(Math.round(Math.log2(2*K))>24||Math.round(Math.log2(N))>24||Math.round(Math.log2(K))<12) w.push('⚠ K/N outside the c(n) calibration 2¹²–2²⁴ → clamped.');
       if(ELL<d) w.push(ELLcap
-        ? '⚠ ELL &lt; d — embedding-lookup требует ELL ≥ d; ELL упёрся в потолок K−8='+eng(maxELL)+', ручка ELL дальше не действует — подними K (сейчас '+eng(K)+').'
-        : '⚠ ELL &lt; d — embedding-lookup требует ELL ≥ d (подними ELL).');
-      if(wmode==='measured'&&!(604267<=mtot&&mtot<=2747117)) w.push('⚠ measured-fit валиден 604k–2.75M m_total; здесь экстраполяция.');
-      if(spillOn&&wmode!=='notebook') w.push('⚠ spill моделируется только в notebook (prod) режиме — при measured не применяется.');
-      if(cosetOn&&K<262144) w.push('⚠ coset-NTT: выигрыша нет при K&lt;2¹⁸ (сейчас K='+eng(K)+') — микробенч показал 0 in-prove.');
-      if(projOn&&wmode!=='notebook') w.push('⚠ projection моделируется только в notebook (prod) режиме — при measured не применяется.');
-      if(proj&&spillOn) w.push('⚠ spill не суммируется с projection: 5 активных свипов уже заменяют полные пересчёты — spill игнорируется.');
-      // BabyBear-статус целиком живёт под самой галкой (#bbStat) — почему время
-      // меняется или нет; здесь его не дублируем.
+        ? '⚠ ELL &lt; d — the embedding lookup needs ELL ≥ d; ELL is pinned at the K−8 cap ('+eng(maxELL)+'), the ELL knob has no further effect — raise K (now '+eng(K)+').'
+        : '⚠ ELL &lt; d — the embedding lookup needs ELL ≥ d (raise ELL).');
+      if(wmode==='measured'&&!(604267<=mtot&&mtot<=2747117)) w.push('⚠ the measured fit is valid for 604k–2.75M m_total; this is extrapolation.');
+      if(spillOn&&wmode!=='notebook') w.push('⚠ spill is modeled only in notebook (prod) mode — not applied under measured.');
+      if(cosetOn&&K<262144) w.push('⚠ coset-NTT: no win at K&lt;2¹⁸ (now K='+eng(K)+') — the microbench showed 0 in-prove.');
+      if(projOn&&wmode!=='notebook') w.push('⚠ projection is modeled only in notebook (prod) mode — not applied under measured.');
+      if(proj&&spillOn) w.push('⚠ spill does not stack with projection: 5 active sweeps already replace the full recomputes — spill is ignored.');
+      // The BabyBear status lives under its own checkbox (#bbStat) — why the time
+      // changes or not; not duplicated here.
       $('cWarn').innerHTML=w.join('<br>');
     }
     function preset(o){ for(var kk in o){ var el=$(kk); if(el){ if(el.type==='checkbox') el.checked=o[kk]; else el.value=o[kk]; } } compute(); }
