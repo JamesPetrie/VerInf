@@ -593,54 +593,19 @@
   </section>
 
   <section>
-    <h2>Проекция маршрутизированных матмулов — модель до / после</h2>
+    <h2>Итоговая формула оценки затрат — после проекции</h2>
     <div class="prose">
-      <p><b>Идея.</b> Экспертный матмул <span class="mono">Y = X·W_e</span> — главный источник
-        witness-ячеек: прямой трейс пишет каждое скалярное произведение. Вместо этого верификатор
-        сэмплит <span class="mono">ρ ∈ F^J</span> <b>после</b> коммитов на <span class="mono">W</span>
-        и <span class="mono">Y</span>, прувер публикует проекцию весов
-        <span class="mono">P_e = W_e·ρ</span> (линейная связь с закоммиченным
-        <span class="mono">W_e</span>), и вся проверка сворачивается в один отпечаток:
-        <span class="mono">y_t·ρ = x_t·(W_e·ρ) = x_t·P_e</span>. Ложный выход
-        <span class="mono">Y′</span> проходит, только если его ошибка попала в ядро случайного
-        <span class="mono">ρ</span> — вероятность ≤ <span class="mono">1/|F|</span>.
-        Полный разбор с диаграммами и выводом — в отдельной ноте:
+      <p>Экспертные матмулы доказываются проекцией (RoutedProjected-MoE): верификатор сэмплит
+        <span class="mono">ρ</span> после коммитов на <span class="mono">W</span> и
+        <span class="mono">Y</span>, и проверка сворачивается в отпечаток
+        <span class="mono">y·ρ = x·(W·ρ)</span> ценой ≤ <span class="mono">3/|F|</span> по надёжности.
+        Разбор, диаграммы и числовой пример — в ноте:
         <a href="https://claude.ai/code/artifact/4478fd6b-b774-44f9-9481-26f973a4309f">routed-projection-note</a>
-        (исходник: <span class="mono">analysis/routed-projection-note.html</span> / <span class="mono">.tex</span>).</p>
+        (исходник <span class="mono">analysis/routed-projection-note.html</span> /
+        <span class="mono">.tex</span>; леджеры печатает
+        <span class="mono">analysis/routed_projected_4h_model.py</span>).</p>
     </div>
-    <div class="mf" style="margin-top:12px">
-      <div class="eq">
-        <span class="row"><span class="lhs">Числовой пример</span><span class="tag">← сжатие 6 произведений в 1 отпечаток</span></span>
-        <span class="row">X = [2 3] &nbsp; W = [1 4 2; 5 0 6] &nbsp;→&nbsp; Y = X·W = [17 8 22]</span>
-        <span class="row">ρ = [7 11 19]ᵀ <span class="op">(сэмплится после фиксации W и Y)</span> &nbsp;→&nbsp; P = W·ρ = [89 149]ᵀ</span>
-        <span class="row">Y·ρ = 17·7 + 8·11 + 22·19 = <span class="lhs">625</span> &nbsp;=&nbsp; 2·89 + 3·149 = X·P <span class="t-qd">✓</span></span>
-      </div>
-      <div class="eq" style="margin-top:14px;border-top:1px dashed var(--hair);padding-top:12px">
-        <span class="row"><span class="lhs">На токен, один матмул K×J</span></span>
-        <span class="row"><span class="t-ovh">до:</span> w_dir = K·J + J, &nbsp; q_dir = K·J <span class="tag">← произведения + выходы</span></span>
-        <span class="row"><span class="t-qd">после:</span> w_proj = 2K + 1, &nbsp; q_proj = K <span class="tag">← строки H = X⊙Q, Q = M·P и скаляр y^ρ</span></span>
-        <span class="row"><span class="op">+ K ячеек на эксперта (амортизировано): P_e = W_e·ρ — линейная связь, без quad-ячеек</span></span>
-        <span class="row">сжатие: w_dir/w_proj ≈ <span class="lhs">J/2</span>, &nbsp; q_dir/q_proj = <span class="lhs">J</span> <span class="tag">← при (K,J)=(5120,8192): quad ×8192</span></span>
-      </div>
-      <div class="eta">Скрытие маршрута бьёт по сторонам асимметрично: <b>до</b> — спрятать
-        <span class="mono">e_t</span> значит материализовать трейсы всех E экспертов (×E по
-        доминирующему члену); <b>после</b> — одна матрица <span class="mono">P</span> уже покрывает все
-        E экспертов ценой <span class="mono">E·K</span> ячеек на слой, ×E платится только за
-        проектированные веса, никогда за трейсы.</div>
-      <div class="eq" style="margin-top:14px;border-top:1px dashed var(--hair);padding-top:12px">
-        <span class="row"><span class="lhs">Maverick, S = 1000</span> <span class="op">· L=24 MoE-слоя · E=128 · d=5120 · f=8192 · 3L=72 матмула</span></span>
-        <span class="row">N = L·S·(2d+f) = 442 368 000 &nbsp;·&nbsp; R = L·E·(2d+f) = 56 623 104</span>
-        <span class="row">W_route = 2N + R + 4·72·ELL = 943 718 400 &nbsp;·&nbsp; L_route = R + 2·72·S + 72(2E+1) = 56 785 608 &nbsp;·&nbsp; Q_route = N + 72E = 442 377 216</span>
-      </div>
-      <div class="eval">
-        <div>леджеры целиком (печатает <span class="mono">analysis/routed_projected_4h_model.py</span>):</div>
-        <div><span class="t-wit">witness W</span>&nbsp; 888 249 981 888 → 95 205 646 976 &nbsp;=&nbsp; 10.72% &nbsp;·&nbsp; <b>×9.33</b></div>
-        <div><span class="t-lin">linear L</span>&nbsp;&nbsp; 162 237 276 010 → 31 064 630 194 &nbsp;=&nbsp; 19.15% &nbsp;·&nbsp; <b>×5.22</b></div>
-        <div><span class="t-qd">quad Q</span>&nbsp;&nbsp;&nbsp; 173 106 423 296 → 42 394 577 408 &nbsp;=&nbsp; 24.49% &nbsp;·&nbsp; <b>×4.08</b></div>
-      </div>
-    </div>
-
-    <h2 style="margin-top:28px">Итоговая формула оценки затрат — после проекции</h2>
+    
     <div class="mf">
       <div class="eq">
         <span class="row"><span class="lhs">PROVE_s′</span> <span class="op">= η · [</span> <span class="t-wit">5 · T_wit^act</span> <span class="op">]</span> <span class="tag">← WITNESS: 5 активных свипов (5-раундовый транскрипт с фазой-3); форвард активной модели, не всех экспертов</span></span>
@@ -714,8 +679,8 @@
       var K=+$('cK').value,rho=+$('cRho').value,T=+$('cT').value,P=+$('cP').value,wmode=$('cWmode').value;
       var sExp=+$('cScale').value,s=Math.pow(2,sExp),R=+$('cR').value;
       $('vT').textContent=T; $('vP').textContent=P; $('vSc').textContent='2'+sup(sExp); $('vR').textContent=R;
-      var ELLexp=+$('cELL').value, ELL=cl(Math.pow(2,ELLexp),512,K-8);
-      $('vELL').textContent='2'+sup(ELLexp)+(ELL!==Math.pow(2,ELLexp)?' → '+eng(ELL)+' (кламп ≤K)':' = '+eng(ELL));
+      var ELLexp=+$('cELL').value, maxELL=K-8, ELLcap=Math.pow(2,ELLexp)>maxELL, ELL=cl(Math.pow(2,ELLexp),512,maxELL);
+      $('vELL').textContent='2'+sup(ELLexp)+(ELLcap?' → '+eng(ELL)+' (потолок K−8)':' = '+eng(ELL));
       var N=rho*K,pad=K-ELL,ELLw=ELL,ELLp=ELL,Wp2=Math.max(W-Ww,0);
       var rowsW=Ww/ELLw,rowsP=Wp2/ELLp,rows=rowsW+rowsP,mtot=rows;
       var enc=K*c(K)+N*c(N),fold=4*K*c(2*K),hsh=(N/8)*HASH;
@@ -797,7 +762,9 @@
 
       var w=[];
       if(Math.round(Math.log2(2*K))>24||Math.round(Math.log2(N))>24||Math.round(Math.log2(K))<12) w.push('⚠ K/N вне калибровки c(n) 2¹²–2²⁴ → клампится.');
-      if(ELL<d) w.push('⚠ ELL &lt; d — embedding-lookup требует ELL ≥ d (подними ELL/K).');
+      if(ELL<d) w.push(ELLcap
+        ? '⚠ ELL &lt; d — embedding-lookup требует ELL ≥ d; ELL упёрся в потолок K−8='+eng(maxELL)+', ручка ELL дальше не действует — подними K (сейчас '+eng(K)+').'
+        : '⚠ ELL &lt; d — embedding-lookup требует ELL ≥ d (подними ELL).');
       if(wmode==='measured'&&!(604267<=mtot&&mtot<=2747117)) w.push('⚠ measured-fit валиден 604k–2.75M m_total; здесь экстраполяция.');
       if(spillOn&&wmode!=='notebook') w.push('⚠ spill моделируется только в notebook (prod) режиме — при measured не применяется.');
       if(cosetOn&&K<262144) w.push('⚠ coset-NTT: выигрыша нет при K&lt;2¹⁸ (сейчас K='+eng(K)+') — микробенч показал 0 in-prove.');
