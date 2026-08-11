@@ -1,0 +1,801 @@
+<style>
+  :root{
+    --ground:#F4F7FA; --panel:#FFFFFF; --ink:#131820; --muted:#5A6472;
+    --hair:#E0E6ED; --hair2:#EDF1F6; --cyan:#1591AC; --lever:#8C52D6;
+    --caution:#C24E12;
+    --wit:#E69F00; --str:#2E7FB8; --qd:#009E73; --lin:#8A9099; --ovh:#B07AA1;
+    --wit-b:#FBE7C6; --str-b:#DCE7F6; --qd-b:#CFEEE2; --lin-b:#E7E9EC;
+    --wit-t:#9A6A00; --str-t:#215D89; --qd-t:#00745A; --lin-t:#6B7178;
+    --draft:#EAEFF5; --draft-grid:#D3DBE6; --draft-ink:#141A22;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --shadow:0 1px 2px rgba(20,30,45,.06),0 6px 20px rgba(20,30,45,.05);
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --ground:#0E131A; --panel:#161C25; --ink:#E8EDF3; --muted:#96A1AF;
+      --hair:#242C38; --hair2:#1C232E; --cyan:#3BC1DB; --lever:#B18BEA;
+      --caution:#F0813C;
+      --wit-b:#3a2f18; --str-b:#16304a; --qd-b:#0e3a2d; --lin-b:#2a2f38;
+      --wit-t:#E6A93A; --str-t:#5FA6E0; --qd-t:#2FC79E; --lin-t:#9AA4B0;
+      --ovh:#C58FB6;
+    }
+  }
+  :root[data-theme="light"]{
+    --ground:#F4F7FA; --panel:#FFFFFF; --ink:#131820; --muted:#5A6472;
+    --hair:#E0E6ED; --hair2:#EDF1F6; --cyan:#1591AC; --lever:#8C52D6; --caution:#C24E12;
+    --wit-b:#FBE7C6; --str-b:#DCE7F6; --qd-b:#CFEEE2; --lin-b:#E7E9EC;
+    --wit-t:#9A6A00; --str-t:#215D89; --qd-t:#00745A; --lin-t:#6B7178;
+  }
+  :root[data-theme="dark"]{
+    --ground:#0E131A; --panel:#161C25; --ink:#E8EDF3; --muted:#96A1AF;
+    --hair:#242C38; --hair2:#1C232E; --cyan:#3BC1DB; --lever:#B18BEA; --caution:#F0813C;
+    --wit-b:#3a2f18; --str-b:#16304a; --qd-b:#0e3a2d; --lin-b:#2a2f38;
+    --wit-t:#E6A93A; --str-t:#5FA6E0; --qd-t:#2FC79E; --lin-t:#9AA4B0;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--sans);
+    line-height:1.55;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1080px;margin:0 auto;padding:40px 24px 72px}
+  .mono{font-family:var(--mono)}
+  a{color:var(--cyan)}
+  ::selection{background:color-mix(in oklab,var(--cyan) 30%,transparent)}
+
+  /* header */
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--cyan);margin:0 0 10px}
+  h1{font-size:clamp(28px,4.4vw,44px);line-height:1.08;margin:0 0 12px;text-wrap:balance;
+    letter-spacing:-.015em;font-weight:680}
+  .thesis{font-size:17px;color:var(--muted);max-width:64ch;margin:0 0 22px}
+  .legend{display:flex;flex-wrap:wrap;gap:8px 14px;padding:0;margin:0 0 4px;list-style:none;
+    font-family:var(--mono);font-size:12px}
+  .legend li{display:flex;align-items:center;gap:7px;color:var(--muted)}
+  .sw{width:13px;height:13px;border-radius:3px;border:1.5px solid}
+  .sw.knob{background:var(--panel);border-color:var(--cyan)}
+  .sw.der{background:var(--hair2);border-color:var(--muted)}
+  .sw.term{background:var(--wit-b);border-color:var(--wit)}
+  .sw.tot{background:var(--ink);border-color:var(--cyan)}
+  .terms{margin:0 0 20px;max-width:72ch;padding-left:22px;list-style:disc}
+  .terms li{font-size:15px;color:var(--ink);line-height:1.5;margin-bottom:7px}
+  .terms li::marker{color:var(--muted)}
+
+  section{margin-top:44px}
+  h2{font-size:13px;font-family:var(--mono);letter-spacing:.1em;text-transform:uppercase;
+    color:var(--muted);margin:0 0 16px;display:flex;align-items:center;gap:10px}
+  h2::after{content:"";flex:1;height:1px;background:var(--hair)}
+
+  /* drafting panel with the graph */
+  .draft{background:var(--draft);
+    background-image:radial-gradient(var(--draft-grid) 1px,transparent 1px);
+    background-size:18px 18px;border:1px solid var(--hair);border-radius:14px;
+    padding:14px;overflow-x:auto;box-shadow:var(--shadow)}
+  .draft .mermaid{display:flex;justify-content:center;min-width:640px}
+  .draft-cap{font-family:var(--mono);font-size:11.5px;color:var(--draft-ink);opacity:.6;
+    padding:2px 6px 10px}
+  /* interactive graph */
+  .gwrap{position:relative;background:var(--draft);
+    background-image:radial-gradient(var(--draft-grid) 1px,transparent 1px);background-size:20px 20px;
+    border:1px solid var(--hair);border-radius:14px;box-shadow:var(--shadow);overflow:hidden;
+    height:540px;touch-action:none;user-select:none}
+  #gsvg{width:100%;height:100%;cursor:grab;display:block}
+  #gsvg.grab{cursor:grabbing}
+  .gnode{cursor:grab}
+  .gnode:active{cursor:grabbing}
+  .gnode text{font-family:var(--mono);pointer-events:none}
+  .gedge{fill:none;stroke:#9AA6B4;stroke-width:1.4}
+  .gelabel{font-family:var(--mono);font-size:10.5px;fill:#5B6675;pointer-events:none}
+  .gctrls{position:absolute;top:10px;right:10px;display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;max-width:220px}
+  .gbtn{font-family:var(--mono);font-size:15px;min-width:32px;height:32px;border-radius:8px;
+    border:1px solid var(--hair);background:var(--panel);color:var(--ink);cursor:pointer;
+    display:flex;align-items:center;justify-content:center;line-height:1}
+  .gbtn.w{min-width:auto;padding:0 11px;font-size:11px}
+  .gbtn:hover{border-color:var(--cyan);color:var(--cyan)}
+  .ghint{position:absolute;bottom:8px;left:12px;font-family:var(--mono);font-size:10.5px;
+    color:var(--draft-ink);opacity:.55;pointer-events:none}
+
+  /* term cards */
+  .terms{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}
+  .card{background:var(--panel);border:1px solid var(--hair);border-radius:12px;padding:16px 16px 14px;
+    box-shadow:var(--shadow);position:relative;overflow:hidden}
+  .card .rail{position:absolute;left:0;top:0;bottom:0;width:4px}
+  .card h3{margin:0 0 2px;font-size:14px;font-family:var(--mono);letter-spacing:.02em}
+  .card .pct{font-size:26px;font-weight:680;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+  .card .secs{font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:10px}
+  .card .form{font-family:var(--mono);font-size:12px;line-height:1.5;color:var(--ink);
+    background:var(--hair2);border-radius:7px;padding:8px 9px;word-break:break-word}
+  .rail.wit{background:var(--wit)} .rail.str{background:var(--str)}
+  .rail.qd{background:var(--qd)} .rail.lin{background:var(--lin)}
+
+  /* share bar */
+  .share{display:flex;gap:2px;height:34px;margin:16px 0 6px;border-radius:8px;overflow:hidden}
+  .share span{display:flex;align-items:center;justify-content:center;color:#fff;
+    font-family:var(--mono);font-size:12.5px;font-weight:600;min-width:0;white-space:nowrap}
+  .share .s-wit{background:var(--wit)} .share .s-str{background:var(--str)}
+  .share .s-qd{background:var(--qd)} .share .s-lin{background:var(--lin);flex-basis:6px}
+  .share-key{display:flex;flex-wrap:wrap;gap:6px 16px;font-family:var(--mono);font-size:12px;color:var(--muted)}
+  .share-key b{color:var(--ink);font-weight:600}
+
+  /* levers */
+  .lev{display:grid;grid-template-columns:1fr;gap:10px}
+  .lrow{display:grid;grid-template-columns:150px 1fr auto;gap:14px;align-items:center;
+    background:var(--panel);border:1px solid var(--hair);border-radius:11px;padding:12px 15px;
+    box-shadow:var(--shadow)}
+  .lrow .lname{font-family:var(--mono);font-weight:600;font-size:13.5px}
+  .lrow .larr{font-family:var(--mono);font-size:12.5px;color:var(--muted)}
+  .lrow .larr b{color:var(--ink)}
+  .pill{font-family:var(--mono);font-size:11px;font-weight:600;padding:4px 9px;border-radius:999px;
+    white-space:nowrap;letter-spacing:.02em;border:1px solid}
+  .pill.meas{color:var(--qd);border-color:var(--qd);background:color-mix(in oklab,var(--qd) 12%,transparent)}
+  .pill.model{color:var(--str);border-color:var(--str);background:color-mix(in oklab,var(--str) 12%,transparent)}
+  .pill.block{color:var(--caution);border-color:var(--caution);background:color-mix(in oklab,var(--caution) 12%,transparent)}
+  .tgt{font-family:var(--mono);font-size:11px;font-weight:700;padding:2px 6px;border-radius:5px;color:#fff}
+  .tgt.wit{background:var(--wit)} .tgt.str{background:var(--str)}
+  .tgt.tw{background:var(--wit)} .tgt.fld{background:var(--lever)}
+
+  /* accuracy */
+  .acc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px}
+  .acc{background:var(--panel);border:1px solid var(--hair);border-radius:12px;padding:16px;
+    box-shadow:var(--shadow)}
+  .acc h3{margin:0 0 8px;font-size:13.5px;font-family:var(--mono);display:flex;align-items:center;gap:8px}
+  .acc p{margin:0;font-size:14px;color:var(--muted)}
+  .acc p b,.acc p .mono{color:var(--ink)}
+  .dot{width:9px;height:9px;border-radius:50%;flex:none}
+  .dot.c{background:var(--caution)} .dot.k{background:var(--cyan)} .dot.g{background:var(--qd)}
+  .invert{display:flex;gap:0;align-items:stretch;margin:12px 0 4px;border-radius:9px;overflow:hidden;
+    border:1px solid var(--hair);font-family:var(--mono);font-size:12px}
+  .invert>div{padding:10px 12px;flex:1}
+  .invert .toy{background:var(--str-b)} .invert .prod{background:var(--wit-b)}
+  .invert .lbl{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:3px}
+  .invert .big{font-size:20px;font-weight:680;color:var(--ink);font-variant-numeric:tabular-nums}
+  .invert .arw{flex:none;display:flex;align-items:center;padding:0 10px;color:var(--muted);background:var(--panel)}
+
+  /* master formula */
+  .mf{background:var(--panel);border:1px solid var(--hair);border-radius:14px;
+    padding:22px 22px 18px;box-shadow:var(--shadow)}
+  .mf .eq{font-family:var(--mono);font-size:14px;line-height:1.35;overflow-x:auto;
+    white-space:nowrap;padding-bottom:6px}
+  .mf .eq .row{display:block;padding:3px 0}
+  .mf .eq .op{color:var(--muted)}
+  .mf .eq .lhs{color:var(--ink);font-weight:680}
+  .mf .eq .tag{color:var(--muted);font-size:11px;padding-left:12px}
+  .t-wit{color:var(--wit-t);font-weight:600} .t-str{color:var(--str-t);font-weight:600}
+  .t-qd{color:var(--qd-t);font-weight:600} .t-lin{color:var(--lin-t);font-weight:600}
+  .t-ovh{color:var(--ovh);font-weight:600}
+  .mf .where{margin-top:16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));
+    gap:5px 22px;font-family:var(--mono);font-size:12px;color:var(--muted)}
+  .mf .where span b{color:var(--ink);font-weight:600}
+  .mf .eval{margin-top:16px;padding-top:14px;border-top:1px dashed var(--hair);
+    font-family:var(--mono);font-size:12.5px;line-height:1.9;overflow-x:auto}
+  .mf .eval .res{color:var(--ink);font-weight:680;font-size:14.5px}
+  .mf .eta{margin-top:12px;font-size:12.5px;color:var(--muted)}
+  .mf .eta .mono b{color:var(--ink)}
+  /* live calculator (the knob) */
+  .calc{display:grid;grid-template-columns:minmax(250px,320px) 1fr;gap:18px;align-items:start}
+  .cpanel{background:var(--panel);border:1px solid var(--hair);border-radius:14px;padding:18px;
+    box-shadow:var(--shadow)}
+  .cctrls{display:flex;flex-direction:column;gap:14px}
+  .ctrl{display:flex;flex-direction:column;gap:5px}
+  .ctrl .lab{display:flex;justify-content:space-between;align-items:baseline;font-family:var(--mono);font-size:12px}
+  .ctrl .lab .nm{color:var(--ink);font-weight:600}
+  .ctrl .lab .vl{color:var(--cyan);font-weight:700;font-variant-numeric:tabular-nums}
+  .ctrl .dsc{font-size:10.5px;color:var(--muted);font-family:var(--mono)}
+  input[type=range]{width:100%;accent-color:var(--cyan);height:20px;cursor:pointer}
+  select{font-family:var(--mono);font-size:13px;background:var(--hair2);color:var(--ink);
+    border:1px solid var(--hair);border-radius:7px;padding:6px 8px;cursor:pointer}
+  .crow{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .chk{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:12px;color:var(--ink);cursor:pointer}
+  .chk input{accent-color:var(--lever);width:16px;height:16px;cursor:pointer}
+  .bbstat{font-family:var(--mono);font-size:11px;line-height:1.4;margin:6px 0 2px;min-height:15px}
+  .bbstat.on{color:var(--qd)} .bbstat.off{color:var(--caution)} .bbstat.idle{color:var(--muted)}
+  .optblock{margin-top:12px;padding:11px 12px;border:1px solid var(--hair);border-radius:8px;background:var(--hair2)}
+  .optlab{font-family:var(--mono);font-size:12px;color:var(--ink);margin-bottom:8px;font-weight:600}
+  .optnote{font-family:var(--mono);font-size:10.5px;color:var(--muted);line-height:1.45;margin-top:8px}
+  .creset{font-family:var(--mono);font-size:11px;color:var(--cyan);background:none;border:1px solid var(--hair);
+    border-radius:7px;padding:6px 10px;cursor:pointer;align-self:flex-start}
+  .creset:hover{border-color:var(--cyan)}
+  input:focus-visible,select:focus-visible,button:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+
+  .out-total .big{font-family:var(--mono);font-size:clamp(30px,5vw,42px);font-weight:700;letter-spacing:-.02em;
+    font-variant-numeric:tabular-nums;color:var(--ink);line-height:1.05}
+  .out-total .sub{font-family:var(--mono);font-size:13px;color:var(--muted);margin-top:2px}
+  .oterms{display:flex;flex-direction:column;gap:8px;margin:16px 0 4px}
+  .oterm{display:grid;grid-template-columns:13px 82px 1fr 74px;gap:10px;align-items:center;
+    font-family:var(--mono);font-size:12.5px}
+  .oterm .chip{width:12px;height:12px;border-radius:3px}
+  .oterm .nm{color:var(--muted)}
+  .oterm .sec{color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums;text-align:right}
+  .oterm .bw{background:var(--hair2);border-radius:4px;height:10px;overflow:hidden}
+  .oterm .bar{display:block;height:100%;width:0;border-radius:4px;transition:width .18s ease}
+  .cw{background:var(--wit)} .cs{background:var(--str)} .cq{background:var(--qd)} .cl2{background:var(--lin)} .co{background:var(--ovh)}
+  .oterms-head{font-family:var(--mono);font-size:11px;color:var(--muted);margin:14px 0 2px}
+  .snd{background:var(--hair2);border-radius:11px;padding:12px 14px;margin:16px 0 4px}
+  .snd-head{font-family:var(--mono);font-size:13px;color:var(--ink);font-weight:600;margin-bottom:9px}
+  .snd-head b{font-size:19px}
+  .snd-bind{font-size:11px;color:var(--muted);font-weight:400}
+  .snd-terms{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+  .sterm{background:var(--panel);border:1px solid var(--hair);border-radius:8px;padding:8px 6px;
+    font-family:var(--mono);text-align:center}
+  .sterm .snm{color:var(--muted);display:block;margin-bottom:4px;font-size:9.5px;line-height:1.3}
+  .sterm .sval{color:var(--ink);font-weight:700;font-size:15px;font-variant-numeric:tabular-nums}
+  .sterm.binding{border-color:var(--qd);background:color-mix(in oklab,var(--qd) 12%,var(--panel))}
+  .sterm.binding .sval{color:var(--qd)}
+  .sterm.bad .sval{color:var(--caution)}
+  .oderived{display:grid;grid-template-columns:1fr 1fr;gap:6px 18px;font-family:var(--mono);font-size:11.5px;
+    color:var(--muted);border-top:1px dashed var(--hair);padding-top:12px;margin-top:12px}
+  .oderived b{color:var(--ink)}
+  .cwarn{font-family:var(--mono);font-size:11.5px;color:var(--caution);margin-top:10px;line-height:1.6}
+  @media (prefers-reduced-motion:reduce){.oterm .bar{transition:none}}
+  @media (max-width:720px){.calc{grid-template-columns:1fr}}
+  /* prose + glossary */
+  .prose{max-width:72ch}
+  .prose p{margin:0 0 14px;font-size:15px;color:var(--muted);line-height:1.62}
+  .prose p b,.prose li b{color:var(--ink);font-weight:600}
+  .prose h3{font-family:var(--mono);font-size:12.5px;color:var(--cyan);margin:24px 0 9px;
+    letter-spacing:.02em;font-weight:600}
+  .prose ul{margin:8px 0 0;padding-left:20px}
+  .prose li{font-size:14.5px;color:var(--muted);margin-bottom:8px;line-height:1.55}
+  .prose .mono,.prose code{background:var(--hair2);border-radius:4px;padding:1px 5px;font-size:.9em;color:var(--ink)}
+  .gtbl{width:100%;border-collapse:collapse;font-size:14px}
+  .gtbl th.grp{text-align:left;font-family:var(--mono);font-size:11.5px;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--cyan);padding:22px 0 9px;font-weight:600;border-bottom:2px solid var(--hair)}
+  .gtbl td{padding:12px 18px 12px 0;border-top:1px solid var(--hair2);vertical-align:baseline;line-height:1.55}
+  .gtbl td.term{font-family:var(--mono);font-weight:700;color:var(--ink);white-space:nowrap;
+    width:170px;font-size:13.5px}
+  .gtbl td.def{color:var(--ink)}
+  .note{font-size:13px;color:var(--muted);margin-top:14px;font-style:normal}
+  .foot{margin-top:52px;padding-top:18px;border-top:1px solid var(--hair);
+    font-family:var(--mono);font-size:11.5px;color:var(--muted);line-height:1.7}
+  .foot b{color:var(--ink)}
+  @media (max-width:560px){
+    .lrow{grid-template-columns:1fr;gap:8px}
+    .invert{flex-direction:column}
+  }
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">VerInf · Ligero prover · cost model</p>
+  <h1>Что определяет время прувинга — как граф</h1>
+  <p class="thesis">Каждая ручка (форма модели, параметры Ligero, квантование s/R) течёт через производные величины в <b>пять термов стоимости</b>, а те складываются в итоговое время:</p>
+  <ul class="terms">
+    <li><b>witness</b> — пересчёт прогона модели (4 прохода). Доминирует на проде: <b>57%</b>.</li>
+    <li><b>streaming</b> — кодирование строк (NTT) и хеш Меркла.</li>
+    <li><b>quad</b> — проверка квадратичных ограничений (Фрайвальдс, LogUp).</li>
+    <li><b>lin</b> — проверка линейных ограничений.</li>
+    <li><b>overhead</b> — фиксированная цена на строку (~22 мкс). На 400B это <b>0.4%</b>, но на toy-моделях именно он держит floor.</li>
+  </ul>
+  <p class="thesis" style="margin-bottom:6px">Поле — <b>не свободный вход</b>: BabyBear возможен, только если ширина аккумулятора <span class="mono">b</span> помещается в 31 бит. Ниже — те же зависимости как граф; формула на каждом узле, цвет = роль.</p>
+
+  <section>
+    <h2>Как это работает — и откуда берутся зависимости</h2>
+    <div class="prose">
+      <p><b>Что вообще доказывается.</b> Владелец GPU («прувер») убеждает проверяющего («верификатор» — например, инспектор по договору), что он честно прогнал <b>конкретную</b> модель на <b>конкретном</b> входе — при этом <b>не раскрывая ни веса модели, ни сами токены</b>. Публично видно ровно одно число (насколько выход «объясняется» разрешённой моделью). Это доказательство с нулевым разглашением (zero-knowledge): верификатор убеждается в честности, но ничего лишнего не узнаёт.</p>
+
+      <h3>Шаг 1 · Witness — весь прогон превращается в числа</h3>
+      <p>Каждое промежуточное значение прогона (выходы всех матричных умножений, softmax, SiLU, нормировок) переводится в целое число в <b>конечном поле</b> <span class="mono">F</span> — множестве из <span class="mono">p ≈ 2⁶⁴</span> чисел, где сложение и умножение идут «по кругу» (по модулю p). Весь этот длинный список чисел и называется <b>witness</b> — именно его корректность доказывается. Для 400-миллиардной модели он весит <b>~7.5 ТБ</b>.</p>
+
+      <h3>Шаг 2 · Ограничения вместо поэлементной проверки</h3>
+      <p>Верить пруверу нельзя, значит нужно проверить, что witness действительно получен честным прогоном. Это выражается списком <b>ограничений</b>. Матричное умножение <span class="mono">C = A·B</span> проверять поэлементно нельзя (это <span class="mono">m·n·k</span> равенств — неподъёмно), поэтому берут <b>рандомизированный тест Фрайвальдса</b>: вместо всей матрицы сверяют одну случайную проекцию <span class="mono">λ·C·ρ = λ·(A·B)·ρ</span> — если <span class="mono">C</span> подделан, проекция почти наверняка не сойдётся. Диапазоны и таблицы (softmax, SiLU) доказывают приёмом <b>LogUp</b>. Отсюда счётчики <span class="mono">Q</span> (квадратичные ограничения) и <span class="mono">L_lin</span> (линейные).</p>
+
+      <h3>Шаг 3 · Ligero — кодирование и выборочное открытие</h3>
+      <p>Witness раскладывают на строки. Каждую строку кодируют как <b>кодовое слово Рида-Соломона</b>: строят полином и вычисляют его в <span class="mono">N = ρ·K</span> точках (то есть добавляют избыточность в <span class="mono">ρ</span>=4 раза). Смысл избыточности: если прувер соврал хоть в одном месте, ошибка «размазывается» на заметную долю столбцов. Столбцы хешируют в <b>дерево Меркла</b>, и один его корень намертво фиксирует весь witness. Затем все ограничения сворачивают в несколько коротких тест-полиномов случайными коэффициентами, верификатор называет <span class="mono">T</span> <b>случайных столбцов</b>, прувер открывает их вместе с путями Меркла, и верификатор проверяет согласованность. Кодирование строк — это <b>NTT</b> (то же, что FFT, но в поле); цена одной ячейки — <span class="mono">c(n)</span>.</p>
+
+      <h3>Шаг 4 · Четыре раунда — почему witness считается 4 раза</h3>
+      <p>Протокол интерактивный и идёт в 4 раунда: зафиксировать witness → получить случайный вызов → зафиксировать вспомогательные данные → вызов → тест-полиномы → вызов (какие столбцы) → открыть. Каждая фиксация делается <b>до</b> следующего вызова — иначе прувер подогнал бы witness под уже увиденный вызов (на этом и держится надёжность). Но witness нужен на каждом раунде, а хранить 7.5 ТБ негде — поэтому его <b>пересчитывают заново все 4 раза</b>. Именно эти 4 пересчёта forward pass — самая дорогая часть (~57% времени), и по ним бьют GPU-softmax и spill.</p>
+
+      <h3>Куда это ведёт по зависимостям (то, что на графе)</h3>
+      <ul>
+        <li><b>WITNESS</b> = 4 × время forward pass. Растёт с размером модели и длиной контекста (softmax — квадратично по длине).</li>
+        <li><b>STREAMING</b> — кодирование NTT + хеш Меркла; растёт с числом строк (<span class="mono">W/ELL</span>) и ценой NTT <span class="mono">c(n)</span>.</li>
+        <li><b>QUAD / LIN</b> — стоимость проверки квадратичных и линейных ограничений (из тестов Фрайвальдса и LogUp).</li>
+        <li><b>OVERHEAD</b> — фиксированная цена запуска ядра/диспетча на каждую строку (~22 мкс). Асимптотика выше её не видит, поэтому на toy-моделях она и держит floor; на большом масштабе она насыщается (GPU заполнен) и становится пренебрежимой. Единственный член, который <b>убывает</b> в доле с ростом модели.</li>
+        <li><b>Поле</b> держит два условия сразу: значения не должны переполнить <span class="mono">|F|</span> (нужно ≥ <span class="mono">b</span> бит) <b>и</b> надёжность требует, чтобы поле было сильно больше числа столбцов и запросов (<span class="mono">|F| ≫ N, M</span>). Поэтому маленькое поле (BabyBear) не проходит на масштабе — рушится не переполнение, а надёжность.</li>
+        <li><b>Надёжность</b>: открывая <span class="mono">T</span> случайных столбцов, верификатор ловит обман с вероятностью <span class="mono">(1−1/ρ)^T</span>. Больше <span class="mono">T</span> → надёжнее, но тяжелее доказательство и его проверка.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <h2>Граф зависимостей</h2>
+    <ul class="legend">
+      <li><span class="sw knob"></span>ручка (вход)</li>
+      <li><span class="sw der"></span>производная величина</li>
+      <li><span class="sw term"></span>терм стоимости (секунды)</li>
+      <li><span class="sw tot"></span>итог</li>
+    </ul>
+    <div class="gwrap">
+      <svg id="gsvg" viewBox="0 0 1360 560" preserveAspectRatio="xMidYMid meet">
+        <defs>
+          <marker id="garr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#9AA6B4"></path>
+          </marker>
+        </defs>
+        <g id="groot"></g>
+      </svg>
+      <div class="gctrls">
+        <button class="gbtn" id="gZin" title="приблизить">+</button>
+        <button class="gbtn" id="gZout" title="отдалить">−</button>
+        <button class="gbtn w" id="gReset" title="сбросить вид и раскладку">сброс</button>
+      </div>
+      <div class="ghint">тяни фон — двигать · колесо — зум · тяни узел — переставить</div>
+    </div>
+    <div class="draft-cap">ручки → производные → термы → итог. Рёбра = «влияет на». <b style="color:#8C52D6">Фиолетовый</b> — надёжность верификации (§5.4): её кормят T,ρ,N и размер поля |F|.</div>
+  </section>
+
+  <script>
+  (function(){
+    var COL={knob:['#ffffff','#1591AC','#131820'],der:['#F0F3F7','#6B7684','#131820'],
+      field:['#F0F3F7','#8C52D6','#33244A'],sound:['#EBDCF8','#8C52D6','#3B1E63'],
+      wit:['#FBE7C6','#E69F00','#5A3E00'],str:['#DCE7F6','#2E7FB8','#153650'],
+      qd:['#CFEEE2','#009E73','#0C3D2E'],lin:['#E7E9EC','#8A9099','#33383F'],
+      ovh:['#EFDEE9','#B07AA1','#4A2A40'],
+      tot:['#131820','#1591AC','#F6F8FA']};
+    var DEF={
+      MODEL:{x:420,y:14,w:180,h:38,cls:'knob',l:['Форма модели','d·S·L·d_ff·H·vocab']},
+      LIG:{x:635,y:14,w:170,h:38,cls:'knob',l:['Ligero','ELL·K·ρ·N=ρK·T_q']},
+      SCALE:{x:835,y:14,w:150,h:38,cls:'knob',l:['Квантование','s · R']},
+      W:{x:150,y:104,w:190,h:38,cls:'der',l:['W — witness','∝L(S·d+S²·H+S·d_ff)']},
+      B:{x:420,y:98,w:210,h:52,cls:'der',l:['b — биты аккум.','log₂k+2log₂s','+2log₂R+1']},
+      CN:{x:665,y:104,w:170,h:38,cls:'der',l:['c(n) — цена NTT','∝log₂n · 2¹²–2²⁴']},
+      Q:{x:855,y:104,w:160,h:38,cls:'der',l:['Q — quad произв.','∝ L·S·d²']},
+      LL:{x:1035,y:104,w:120,h:38,cls:'der',l:['L_lin','лин. огранич.']},
+      TW:{x:20,y:212,w:160,h:38,cls:'der',l:['T_wit','forward pass']},
+      M:{x:200,y:212,w:150,h:38,cls:'der',l:['m_total','= W / ELL']},
+      FIELD:{x:420,y:212,w:170,h:38,cls:'field',l:['Поле |F|','2⁶⁴ Gold / 2³¹ BB']},
+      SOUND:{x:625,y:206,w:200,h:46,cls:'sound',l:['Надёжность (бит)','min(IRS,field,LogUp)']},
+      WIT:{x:100,y:322,w:180,h:38,cls:'wit',l:['WITNESS','4·T_wit · 16288s']},
+      STR:{x:320,y:314,w:270,h:52,cls:'str',l:['STREAMING','rows·[K·c(K)+N·c(N)','+4K·c(2K)+N⁄8·hash] · 9272s']},
+      QD:{x:650,y:322,w:210,h:38,cls:'qd',l:['QUAD','(Q/ELL)·τ·2K·c(2K) · 2995s']},
+      LN:{x:920,y:322,w:120,h:38,cls:'lin',l:['LIN','112s']},
+      OVH:{x:1065,y:314,w:170,h:52,cls:'ovh',l:['OVERHEAD','22мкс·min(m,5·10⁶)','110s · toy-floor']},
+      TOT:{x:390,y:445,w:320,h:46,cls:'tot',l:['PROVE_TOTAL = W+S+Q+L+O','28778s ≈ 7.99 ч (400B)']}
+    };
+    var EDG=[['MODEL','W'],['MODEL','Q'],['MODEL','TW'],['MODEL','LL'],['MODEL','B','k,R'],
+      ['SCALE','B','s,R'],['W','M','÷ELL'],['LIG','CN'],['LIG','STR'],['LIG','QD'],['LIG','SOUND','T,ρ,N'],
+      ['MODEL','SOUND','M~W (LogUp)'],
+      ['M','STR'],['CN','STR'],['CN','QD'],['Q','QD'],['LL','LN'],['TW','WIT','×4'],['M','OVH','×22мкс'],
+      ['B','FIELD'],['FIELD','SOUND','|F|'],['FIELD','WIT','×0.5'],['FIELD','STR','×0.5'],
+      ['WIT','TOT'],['STR','TOT'],['QD','TOT'],['LN','TOT'],['OVH','TOT']];
+    var N={}, view={tx:0,ty:0,k:1};
+    function reset(){for(var id in DEF){N[id]={};for(var kk in DEF[id])N[id][kk]=DEF[id][kk];} view={tx:0,ty:0,k:1}; render(); applyView();}
+    function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+    function cen(n){return {x:n.x+n.w/2,y:n.y+n.h/2};}
+    function bord(n,tx,ty){var c=cen(n),dx=tx-c.x,dy=ty-c.y;if(!dx&&!dy)return c;
+      var sx=dx?(n.w/2)/Math.abs(dx):1e9,sy=dy?(n.h/2)/Math.abs(dy):1e9,t=Math.min(sx,sy);
+      return {x:c.x+dx*t,y:c.y+dy*t};}
+    function render(){
+      var s='';
+      EDG.forEach(function(e){var a=N[e[0]],b=N[e[1]];if(!a||!b)return;
+        var ca=cen(a),cb=cen(b),p1=bord(a,cb.x,cb.y),p2=bord(b,ca.x,ca.y);
+        s+='<line class="gedge" x1="'+p1.x.toFixed(1)+'" y1="'+p1.y.toFixed(1)+'" x2="'+p2.x.toFixed(1)+'" y2="'+p2.y.toFixed(1)+'" marker-end="url(#garr)"></line>';
+        if(e[2]){var mx=(p1.x+p2.x)/2,my=(p1.y+p2.y)/2;
+          s+='<text class="gelabel" x="'+mx.toFixed(1)+'" y="'+(my-2).toFixed(1)+'" text-anchor="middle">'+esc(e[2])+'</text>';}
+      });
+      for(var id in N){var n=N[id],c=COL[n.cls];
+        s+='<g class="gnode" data-id="'+id+'" transform="translate('+n.x+','+n.y+')">'
+          +'<rect width="'+n.w+'" height="'+n.h+'" rx="8" fill="'+c[0]+'" stroke="'+c[1]+'" stroke-width="1.6"></rect>';
+        n.l.forEach(function(ln,i){s+='<text x="'+(n.w/2)+'" y="'+(15+i*13)+'" text-anchor="middle" font-size="'+(i===0?11:10)+'" font-weight="'+(i===0?700:400)+'" fill="'+c[2]+'">'+esc(ln)+'</text>';});
+        s+='</g>';
+      }
+      document.getElementById('groot').innerHTML=s;
+    }
+    var svg=document.getElementById('gsvg'),root=document.getElementById('groot');
+    function applyView(){root.setAttribute('transform','translate('+view.tx+','+view.ty+') scale('+view.k+')');}
+    function sc(){return 1360/(svg.clientWidth||1360);}   // viewBox units per screen px
+    var drag=null;
+    svg.addEventListener('mousedown',function(ev){
+      var g=ev.target.closest?ev.target.closest('.gnode'):null;
+      if(g){drag={id:g.getAttribute('data-id'),mx:ev.clientX,my:ev.clientY,ox:N[g.getAttribute('data-id')].x,oy:N[g.getAttribute('data-id')].y};}
+      else {drag={pan:1,mx:ev.clientX,my:ev.clientY,ox:view.tx,oy:view.ty};svg.classList.add('grab');}
+      ev.preventDefault();
+    });
+    window.addEventListener('mousemove',function(ev){
+      if(!drag)return;var f=sc();
+      if(drag.pan){view.tx=drag.ox+(ev.clientX-drag.mx)*f;view.ty=drag.oy+(ev.clientY-drag.my)*f;applyView();}
+      else{var n=N[drag.id];n.x=drag.ox+(ev.clientX-drag.mx)*f/view.k;n.y=drag.oy+(ev.clientY-drag.my)*f/view.k;render();}
+    });
+    window.addEventListener('mouseup',function(){drag=null;svg.classList.remove('grab');});
+    function zoomAt(cx,cy,factor){var nk=Math.max(0.35,Math.min(3,view.k*factor));
+      view.tx=cx-(cx-view.tx)*(nk/view.k);view.ty=cy-(cy-view.ty)*(nk/view.k);view.k=nk;applyView();}
+    svg.addEventListener('wheel',function(ev){ev.preventDefault();var r=svg.getBoundingClientRect(),f=sc();
+      zoomAt((ev.clientX-r.left)*f,(ev.clientY-r.top)*f,ev.deltaY<0?1.12:0.893);},{passive:false});
+    document.getElementById('gZin').addEventListener('click',function(){zoomAt(680,280,1.2);});
+    document.getElementById('gZout').addEventListener('click',function(){zoomAt(680,280,0.833);});
+    document.getElementById('gReset').addEventListener('click',reset);
+    reset();
+  })();
+  </script>
+
+  <section>
+    <h2>Словарь обозначений</h2>
+    <table class="gtbl">
+      <tr><th class="grp" colspan="2">что доказывается</th></tr>
+      <tr><td class="term">witness</td><td class="def">все промежуточные числа прогона модели, записанные как элементы поля — то, чью корректность доказывают</td></tr>
+      <tr><td class="term">F, |F|</td><td class="def">конечное поле — множество из <span class="mono">p</span> чисел, вся арифметика по модулю <span class="mono">p</span>. Goldilocks: <span class="mono">p = 2⁶⁴−2³²+1</span>. |F| — размер поля</td></tr>
+      <tr><td class="term">W</td><td class="def">сколько всего чисел в witness. У 400B-модели ≈ 9.4·10¹¹ (7.5 ТБ)</td></tr>
+      <tr><td class="term">S</td><td class="def">длина контекста (число токенов), которую доказываем</td></tr>
+      <tr><td class="term">d, d_ff, H, L</td><td class="def">форма трансформера: ширина, размер MLP, число голов внимания, число слоёв</td></tr>
+      <tr><td class="term">E, MoE-доля</td><td class="def">число экспертов и доля слоёв, где MLP — Mixture-of-Experts</td></tr>
+
+      <tr><th class="grp" colspan="2">Ligero — упаковка и кодирование</th></tr>
+      <tr><td class="term">ELL</td><td class="def">сколько чисел witness кладут в одну строку (длина «сообщения»)</td></tr>
+      <tr><td class="term">m_total</td><td class="def">сколько всего строк = <span class="mono">W / ELL</span></td></tr>
+      <tr><td class="term">K</td><td class="def">степень полинома Рида-Соломона — предел длины строки до избыточности</td></tr>
+      <tr><td class="term">ρ (rho)</td><td class="def">во сколько раз раздувают строку избыточностью (inverse rate). Обычно 4</td></tr>
+      <tr><td class="term">N</td><td class="def">длина кодового слова = число столбцов = <span class="mono">ρ·K</span></td></tr>
+      <tr><td class="term">NTT</td><td class="def">быстрое преобразование (как FFT, но в поле) — превращает строку в кодовое слово</td></tr>
+      <tr><td class="term">c(n)</td><td class="def">измеренная цена ячейки NTT (нс/элемент) при длине <span class="mono">n</span>; ~логарифм., калибр. 2¹²–2²⁴</td></tr>
+      <tr><td class="term">Merkle</td><td class="def">дерево хешей столбцов; один корень фиксирует весь witness</td></tr>
+      <tr><td class="term">T (T_q)</td><td class="def">сколько случайных столбцов открывает верификатор. Главный «диал» надёжности</td></tr>
+
+      <tr><th class="grp" colspan="2">ограничения и время</th></tr>
+      <tr><td class="term">T_wit</td><td class="def">время одного forward pass модели (генерация witness). Пересчитывается 4 раза</td></tr>
+      <tr><td class="term">P</td><td class="def">число проходов witness (= раундов). В базовом протоколе 4; spill целится снизить</td></tr>
+      <tr><td class="term">Q</td><td class="def">число квадратичных ограничений (Фрайвальдс + range/lookup)</td></tr>
+      <tr><td class="term">L_lin</td><td class="def">число линейных ограничений</td></tr>
+      <tr><td class="term">Freivalds</td><td class="def">проверка матричного умножения одной проекцией вместо всех <span class="mono">m·n·k</span> произведений</td></tr>
+      <tr><td class="term">LogUp</td><td class="def">доказать диапазоны и таблицы (softmax, SiLU) через логарифмическую производную</td></tr>
+      <tr><td class="term">η (эта)</td><td class="def">накладные расходы прувинга: <span class="mono">1/(1−0.045) ≈ 1.047</span></td></tr>
+      <tr><td class="term">overhead</td><td class="def">цена диспетча/запуска на каждую строку (~22 мкс), которую асимптотика c(n)·размер не видит; насыщается на ~5 млн строк. Главный член floor на toy-моделях, 0.4% на 400B</td></tr>
+      <tr><td class="term">τ, β, h</td><td class="def">калибр. константы: трансформов/строку в quad; нс/линейное огранич.; нс/хеш-сжатие</td></tr>
+
+      <tr><th class="grp" colspan="2">поле и точность</th></tr>
+      <tr><td class="term">s</td><td class="def">масштаб fixed-point: <span class="mono">x → round(s·x)</span>. Больше s = точнее, но крупнее числа</td></tr>
+      <tr><td class="term">R</td><td class="def">граница величины активаций (клип): насколько большими бывают значения</td></tr>
+      <tr><td class="term">b</td><td class="def">сколько бит нужно аккумулятору в худшем случае, чтобы не переполнить поле</td></tr>
+      <tr><td class="term">M</td><td class="def">число lookup-запросов (LogUp); растёт с моделью, ≈ 10¹⁰ на 400B</td></tr>
+      <tr><td class="term">Goldilocks / BabyBear</td><td class="def">большое (<span class="mono">2⁶⁴</span>) и маленькое (<span class="mono">2³¹</span>) поля</td></tr>
+
+      <tr><th class="grp" colspan="2">надёжность верификации</th></tr>
+      <tr><td class="term">надёжность (бит)</td><td class="def"><span class="mono">−log₂ε</span>, ε — вероятность, что жулик пройдёт проверку. 16 бит = 1 шанс из ~65 000</td></tr>
+      <tr><td class="term">IRS</td><td class="def">тест «строки близки к кодовым словам»; ошибка <span class="mono">(1−1/ρ)^T</span> — падает с ростом T</td></tr>
+      <tr><td class="term">field / LogUp термы</td><td class="def">ошибки от размера поля: <span class="mono">N/|F|</span> и <span class="mono">(M+T)/|F|</span> — малы, пока поле велико</td></tr>
+      <tr><td class="term">proof / verify</td><td class="def">размер доказательства (ГБ) и время проверки (ч); растут с <span class="mono">T</span> и числом строк</td></tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>Итоговая формула оценки затрат</h2>
+    <div class="mf">
+      <div class="eq">
+        <span class="row"><span class="lhs">PROVE_s</span> <span class="op">= η · [</span> <span class="t-wit">P · T_wit</span> <span class="op">]</span> <span class="tag">← WITNESS (P = 4 прохода)</span></span>
+        <span class="row"><span class="op">+ (η / 10⁹) · </span><span class="t-str">[ (W_p/ELL)·(2·enc + 4K·c(2K) + (N/8)·h) + (W_w/ELL)·(enc + 4K·c(2K) + (N/8)·h + enc/wl) ]</span> <span class="tag">← STREAMING · enc = K·c(K)+N·c(N)</span></span>
+        <span class="row"><span class="op">+ (η / 10⁹) · </span><span class="t-qd">(Q/ELL) · τ · 2K·c(2K)</span> <span class="tag">← QUAD</span></span>
+        <span class="row"><span class="op">+ (η / 10⁹) · </span><span class="t-lin">β · L_lin</span> <span class="tag">← LIN</span></span>
+        <span class="row"><span class="op">+ 22 мкс · </span><span class="t-ovh">min(m_total, 5·10⁶)</span> <span class="tag">← OVERHEAD (диспетч на строку)</span></span>
+      </div>
+      <div class="eta">η = 1 / (1 − E) ≈ <span class="mono"><b>1.047</b></span> — overhead прувинга (E = 0.045). Первые четыре члена — асимптотика (c(n)·размер); они верны на большом масштабе, но <b>недооценивают floor в 2–6× на toy-моделях</b>, потому что не учитывают фиксированную цену запуска на каждую строку. Пятый член, <b>OVERHEAD</b> (≈22 мкс/строку, выведен из 39 сохранённых прогонов), это и есть та цена: он <b>доминирует floor на toy-масштабе</b> и насыщается, когда GPU заполнен (≈5 млн строк), поэтому на 400B он всего 110 s (0.4%). floor+overhead ложится в ±30% от замеренного floor на всём диапазоне.</div>
+      <div class="where">
+        <span><b>W</b> элементы witness</span>
+        <span><b>W_p</b> proof-часть · <b>W_w</b> веса (перманентны)</span>
+        <span><b>wl</b> переиспользование весов = pad/T</span>
+        <span><b>m_total</b> строк = W/ELL</span>
+        <span><b>ELL</b> длина строки Ligero</span>
+        <span><b>K</b> степень · <b>N</b>=ρK кодовое слово</span>
+        <span><b>c(n)</b> цена ячейки NTT (∝ log₂n)</span>
+        <span><b>h</b> HASH_NS / сжатие</span>
+        <span><b>Q</b> квадратичные произвед.</span>
+        <span><b>τ</b> QUAD_TRANSFORMS / row</span>
+        <span><b>β</b> B_NS / CID · <b>L_lin</b> лин. огранич.</span>
+        <span><b>T_wit</b> один forward pass (сек)</span>
+        <span><b>P</b> witness_passes = 4</span>
+      </div>
+      <div class="eval">
+        <div>подставляем 400B (<span class="mono">--S 1093 --witness-mode notebook</span>):</div>
+        <div><span class="t-wit">η·4·T_wit</span> = 1.047 · 4 · 3888.8 = <b>16 288 s</b> &nbsp;·&nbsp; <span class="t-str">streaming</span> 9 272 &nbsp;·&nbsp; <span class="t-qd">quad</span> 2 995 &nbsp;·&nbsp; <span class="t-lin">lin</span> 112 &nbsp;·&nbsp; <span class="t-ovh">overhead</span> 110</div>
+        <div class="res">PROVE_s = 16 288 + 9 272 + 2 995 + 112 + 110 = 28 778 s ≈ 7.99 ч</div>
+        <div style="margin-top:6px;color:var(--muted)">Демонстрированный запуск — floor+witness = 28 668 s; overhead (диспетч на строку) добавляет 0.4% на этом масштабе. Ровно этот член на toy-модели (m_total ~340k) даёт 7.5 s из ~9.6 s замеренного floor — там он <b>главный</b>.</div>
+      </div>
+      <div class="eta" style="margin-top:14px;border-top:1px dashed var(--hair);padding-top:12px">
+        <b>Надёжность верификации (§5.4)</b> = −log₂ε, binding — самый слабый терм:
+        <span class="mono">ε = min[ (1−1/ρ)ᵀ · N/|F| · (M+T+1)/|F| ]</span> (IRS · field · LogUp).
+        Дефолт T=40, ρ=4, |F|=2⁶⁴ → <b>16.6 бит</b> (binding IRS). ↑T → надёжнее, но растут proof и verify. BabyBear (|F|=2³¹) рушит field/LogUp при M≈10¹⁰ — вот почему малое поле на масштабе не проходит по надёжности, а не только по аккумулятору.</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Ручка — крути параметры, оценка пересчитывается вживую</h2>
+    <div class="calc">
+      <div class="cpanel cctrls">
+        <div class="dsc" style="margin-bottom:4px;color:var(--ink);font-weight:600">архитектура модели — одна модель, подставляй варианты:</div>
+        <div class="crow" style="grid-template-columns:1fr 1fr 1fr;gap:6px">
+          <button class="creset" id="pQwen">Qwen-0.5B</button>
+          <button class="creset" id="pLlama">Llama-1B</button>
+          <button class="creset" id="pMav">Maverick-400B</button>
+        </div>
+        <div class="crow">
+          <div class="ctrl"><div class="lab"><span class="nm">d — ширина</span><span class="vl" id="vD">5120</span></div><input type="range" id="cD" min="256" max="16384" step="128" value="5120"></div>
+          <div class="ctrl"><div class="lab"><span class="nm">seq — контекст</span><span class="vl" id="vSeq">1093</span></div><input type="range" id="cSeq" min="16" max="8192" step="16" value="1093"></div>
+        </div>
+        <div class="crow">
+          <div class="ctrl"><div class="lab"><span class="nm">L — слои</span><span class="vl" id="vL">48</span></div><input type="range" id="cL" min="1" max="200" step="1" value="48"></div>
+          <div class="ctrl"><div class="lab"><span class="nm">d_ff</span><span class="vl" id="vFF">8192</span></div><input type="range" id="cFF" min="256" max="53248" step="256" value="8192"></div>
+        </div>
+        <div class="crow">
+          <div class="ctrl"><div class="lab"><span class="nm">H — головы</span><span class="vl" id="vH">40</span></div><input type="range" id="cH" min="1" max="128" step="1" value="40"></div>
+          <div class="ctrl"><div class="lab"><span class="nm">vocab</span><span class="vl" id="vV">202k</span></div><input type="range" id="cV" min="1024" max="262144" step="1024" value="202048"></div>
+        </div>
+        <div class="crow">
+          <div class="ctrl"><div class="lab"><span class="nm">E — эксперты MoE</span><span class="vl" id="vE">128</span></div><input type="range" id="cE" min="1" max="256" step="1" value="128"></div>
+          <div class="ctrl"><div class="lab"><span class="nm">MoE-слоёв (доля)</span><span class="vl" id="vMoe">0.5</span></div><input type="range" id="cMoe" min="0" max="1" step="0.05" value="0.5"></div>
+        </div>
+        <div class="dsc">W/Q/L выводятся из архитектуры: веса точно + активации×G (gadget-витнесы), MoE через E экспертов. G калибр. на 400B-якорь.</div>
+        <div class="crow">
+          <div class="ctrl"><div class="lab"><span class="nm">K — степень</span></div>
+            <select id="cK"><option>2048</option><option>4096</option><option>8192</option><option selected>16384</option><option>32768</option><option>65536</option><option>131072</option><option>262144</option><option>524288</option><option>1048576</option></select></div>
+          <div class="ctrl"><div class="lab"><span class="nm">ρ — blowup</span></div>
+            <select id="cRho"><option>2</option><option selected>4</option><option>8</option></select></div>
+        </div>
+        <div class="crow">
+          <div class="ctrl"><div class="lab"><span class="nm">ELL = 2ˣ (≥ d, ≤ K)</span><span class="vl" id="vELL">8192</span></div><input type="range" id="cELL" min="9" max="20" step="1" value="13"></div>
+          <div class="ctrl"><div class="lab"><span class="nm">T — запросы</span><span class="vl" id="vT">40</span></div><input type="range" id="cT" min="8" max="128" step="1" value="40"></div>
+        </div>
+        <div class="crow">
+          <div class="ctrl"><div class="lab"><span class="nm">s — масштаб</span><span class="vl" id="vSc">2¹²</span></div><input type="range" id="cScale" min="2" max="14" step="1" value="12"></div>
+          <div class="ctrl"><div class="lab"><span class="nm">R — клип</span><span class="vl" id="vR">32</span></div><input type="range" id="cR" min="1" max="256" step="1" value="32"></div>
+        </div>
+        <div class="crow">
+          <div class="ctrl"><div class="lab"><span class="nm">P — проходы</span><span class="vl" id="vP">4</span></div><input type="range" id="cP" min="1" max="4" step="1" value="4"></div>
+          <div class="ctrl"><div class="lab"><span class="nm">witness</span></div>
+            <select id="cWmode"><option value="notebook">notebook</option><option value="measured">measured</option></select></div>
+        </div>
+        <label class="chk"><input type="checkbox" id="cBB"> целюсь в BabyBear <span class="dsc" style="font-size:10.5px">(×0.5 к witness/streaming/quad)</span></label>
+        <div class="bbstat" id="bbStat"></div>
+
+        <div class="optblock">
+          <div class="optlab">оптимизации <span class="dsc">— промоделированы, не замерены на проде</span></div>
+          <label class="chk"><input type="checkbox" id="cSpill"> witness spill <span class="dsc" style="font-size:10.5px">(1 пересчёт + 3 чтения вместо 4 — режет 57%-й терм)</span></label>
+          <div class="ctrl" style="margin-top:6px"><div class="lab"><span class="nm">хранилище для spill</span></div>
+            <select id="cBw"><option value="3.5">NVMe 3.5 ГБ/с</option><option value="7">NVMe fast 7 ГБ/с</option><option value="11" selected>RAID/PCIe 11 ГБ/с</option></select></div>
+          <label class="chk" style="margin-top:8px"><input type="checkbox" id="cCoset"> coset-NTT <span class="dsc" style="font-size:10.5px">(режет encode; выигрыш только при K≥2¹⁸)</span></label>
+          <div class="optnote">GPU-порт softmax/silu уже вшит в базовую линию (T_wit). claim-streaming 4→1 и BabyBear на масштабе — заблокированы по надёжности.</div>
+        </div>
+
+        <button class="creset" id="cReset">сброс к 400B</button>
+      </div>
+
+      <div class="cpanel out">
+        <div class="out-total">
+          <div class="big" id="oTotal">—</div>
+          <div class="sub" id="oTotalH"></div>
+        </div>
+        <div class="oterms-head">время прувинга по термам · секунды и доля от итога</div>
+        <div class="oterms">
+          <div class="oterm"><span class="chip cw"></span><span class="nm">WITNESS</span><span class="bw"><span class="bar cw" id="bWit"></span></span><span class="sec" id="sWit"></span></div>
+          <div class="oterm"><span class="chip cs"></span><span class="nm">STREAMING</span><span class="bw"><span class="bar cs" id="bStr"></span></span><span class="sec" id="sStr"></span></div>
+          <div class="oterm"><span class="chip cq"></span><span class="nm">QUAD</span><span class="bw"><span class="bar cq" id="bQd"></span></span><span class="sec" id="sQd"></span></div>
+          <div class="oterm"><span class="chip cl2"></span><span class="nm">LIN</span><span class="bw"><span class="bar cl2" id="bLn"></span></span><span class="sec" id="sLn"></span></div>
+          <div class="oterm"><span class="chip co"></span><span class="nm">OVERHEAD</span><span class="bw"><span class="bar co" id="bOvh"></span></span><span class="sec" id="sOvh"></span></div>
+        </div>
+        <div class="snd">
+          <div class="snd-head">Надёжность верификации <b id="oSoundBits">—</b> бит<span class="snd-bind" id="oSoundBind"></span></div>
+          <div class="snd-terms">
+            <div class="sterm" id="stIRS"><span class="snm">IRS (¾)ᵀ<br>← T, ρ</span><span class="sval" id="vIRS"></span></div>
+            <div class="sterm" id="stFld"><span class="snm">field N/|F|<br>← ρ,K, поле</span><span class="sval" id="vFld"></span></div>
+            <div class="sterm" id="stLog"><span class="snm">LogUp (M+T)/|F|<br>← M~W, поле</span><span class="sval" id="vLog"></span></div>
+          </div>
+        </div>
+        <div class="oderived">
+          <span>m_total <b id="dM">—</b></span>
+          <span>W <b id="dW">—</b></span>
+          <span>Q <b id="dQ">—</b></span>
+          <span>L_lin <b id="dL">—</b></span>
+          <span>N=ρK <b id="dN">—</b></span>
+          <span>ELL <b id="dELL">—</b></span>
+          <span>b (акк. бит) <b id="dB">—</b></span>
+          <span>поле <b id="dField">—</b></span>
+          <span>M (lookup) <b id="dMq">—</b></span>
+          <span>proof <b id="dProof">—</b></span>
+          <span>verify <b id="dVerify">—</b></span>
+        </div>
+        <div class="cwarn" id="cWarn"></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Проекция маршрутизированных матмулов — модель до / после</h2>
+    <div class="prose">
+      <p><b>Идея.</b> Экспертный матмул <span class="mono">Y = X·W_e</span> — главный источник
+        witness-ячеек: прямой трейс пишет каждое скалярное произведение. Вместо этого верификатор
+        сэмплит <span class="mono">ρ ∈ F^J</span> <b>после</b> коммитов на <span class="mono">W</span>
+        и <span class="mono">Y</span>, прувер публикует проекцию весов
+        <span class="mono">P_e = W_e·ρ</span> (линейная связь с закоммиченным
+        <span class="mono">W_e</span>), и вся проверка сворачивается в один отпечаток:
+        <span class="mono">y_t·ρ = x_t·(W_e·ρ) = x_t·P_e</span>. Ложный выход
+        <span class="mono">Y′</span> проходит, только если его ошибка попала в ядро случайного
+        <span class="mono">ρ</span> — вероятность ≤ <span class="mono">1/|F|</span>.</p>
+    </div>
+    <div class="mf" style="margin-top:12px">
+      <div class="eq">
+        <span class="row"><span class="lhs">Числовой пример</span><span class="tag">← сжатие 6 произведений в 1 отпечаток</span></span>
+        <span class="row">X = [2 3] &nbsp; W = [1 4 2; 5 0 6] &nbsp;→&nbsp; Y = X·W = [17 8 22]</span>
+        <span class="row">ρ = [7 11 19]ᵀ <span class="op">(сэмплится после фиксации W и Y)</span> &nbsp;→&nbsp; P = W·ρ = [89 149]ᵀ</span>
+        <span class="row">Y·ρ = 17·7 + 8·11 + 22·19 = <span class="lhs">625</span> &nbsp;=&nbsp; 2·89 + 3·149 = X·P <span class="t-qd">✓</span></span>
+      </div>
+      <div class="eq" style="margin-top:14px;border-top:1px dashed var(--hair);padding-top:12px">
+        <span class="row"><span class="lhs">На токен, один матмул K×J</span></span>
+        <span class="row"><span class="t-ovh">до:</span> w_dir = K·J + J, &nbsp; q_dir = K·J <span class="tag">← произведения + выходы</span></span>
+        <span class="row"><span class="t-qd">после:</span> w_proj = 2K + 1, &nbsp; q_proj = K <span class="tag">← строки H = X⊙Q, Q = M·P и скаляр y^ρ</span></span>
+        <span class="row"><span class="op">+ K ячеек на эксперта (амортизировано): P_e = W_e·ρ — линейная связь, без quad-ячеек</span></span>
+        <span class="row">сжатие: w_dir/w_proj ≈ <span class="lhs">J/2</span>, &nbsp; q_dir/q_proj = <span class="lhs">J</span> <span class="tag">← при (K,J)=(5120,8192): quad ×8192</span></span>
+      </div>
+      <div class="eta">Скрытие маршрута бьёт по сторонам асимметрично: <b>до</b> — спрятать
+        <span class="mono">e_t</span> значит материализовать трейсы всех E экспертов (×E по
+        доминирующему члену); <b>после</b> — одна матрица <span class="mono">P</span> уже покрывает все
+        E экспертов ценой <span class="mono">E·K</span> ячеек на слой, ×E платится только за
+        проектированные веса, никогда за трейсы.</div>
+      <div class="eq" style="margin-top:14px;border-top:1px dashed var(--hair);padding-top:12px">
+        <span class="row"><span class="lhs">Maverick, S = 1000</span> <span class="op">· L=24 MoE-слоя · E=128 · d=5120 · f=8192 · 3L=72 матмула</span></span>
+        <span class="row">N = L·S·(2d+f) = 442 368 000 &nbsp;·&nbsp; R = L·E·(2d+f) = 56 623 104</span>
+        <span class="row">W_route = 2N + R + 4·72·ELL = 943 718 400 &nbsp;·&nbsp; L_route = R + 2·72·S + 72(2E+1) = 56 785 608 &nbsp;·&nbsp; Q_route = N + 72E = 442 377 216</span>
+      </div>
+      <div class="eval">
+        <div>леджеры целиком (печатает <span class="mono">analysis/routed_projected_4h_model.py</span>):</div>
+        <div><span class="t-wit">witness W</span>&nbsp; 888 249 981 888 → 95 205 646 976 &nbsp;=&nbsp; 10.72% &nbsp;·&nbsp; <b>×9.33</b></div>
+        <div><span class="t-lin">linear L</span>&nbsp;&nbsp; 162 237 276 010 → 31 064 630 194 &nbsp;=&nbsp; 19.15% &nbsp;·&nbsp; <b>×5.22</b></div>
+        <div><span class="t-qd">quad Q</span>&nbsp;&nbsp;&nbsp; 173 106 423 296 → 42 394 577 408 &nbsp;=&nbsp; 24.49% &nbsp;·&nbsp; <b>×4.08</b></div>
+        <div class="res" style="margin-top:8px">admission-модель «после»: t_prove ≤ 13 046 s = 3.624 ч при S=1000 — внутри 4-часового конверта</div>
+        <div style="margin-top:6px;color:var(--muted)">Каждый этап прувера линеен по своим ячейкам
+          (t = Σ cᵢ·nᵢ(W,L,Q), константы — замеренные per-kernel), поэтому per-stage ускорение равно
+          отношению ячеек: witness-этапы ×9.33, линейные фолды ×5.22, квадратичные ×4.08. Цена по
+          надёжности: ε_new ≤ ε_Ligero + 3/|F| + ε_hash.</div>
+      </div>
+      <div class="eta" style="margin-top:14px;border-top:1px dashed var(--hair);padding-top:12px">
+        <b>Что с чем сравниваем.</b> «До» — full-witness пайплайн из мастер-формулы выше (те самые
+        28 778 s ≈ 7.99 ч на 400B: веса в витнесе + пострим всех экспертов). «После» — протокол
+        RoutedProjected-MoE (<span class="mono">analysis/routed-projected-protocol.md</span>), оценка —
+        из его собственной per-kernel admission-модели при S=1000, это не пересчёт формулы выше.
+        Обе стороны — один и тот же код и одна структура затрат Ligero; никакие посторонние
+        оптимизации ни в одну из сторон не входят.</div>
+    </div>
+  </section>
+
+  <script>
+  (function(){
+    var C={12:.112,13:.127,14:.149,15:.170,16:.142,17:.214,18:.234,19:.273,20:.381,21:.523,22:.643,23:.754,24:.889};
+    var SCALE=0.42/0.170,E=0.045,HASH=0.5,QT=8.9,BNS=0.6,TWIT=3888.8,WW=4.00e11,FB=8;
+    var VNS=14.0*3600*1e9/(30*115235029);
+    var cl=function(x,a,b){return Math.max(a,Math.min(b,x));};
+    function c(n){return SCALE*C[cl(Math.round(Math.log2(n)),12,24)];}
+    function W_of(S){return 4.00e11+4.48e8*S+40320*S*S;}
+    function Q_of(S){return 5.93e7+1.54e8*S+19200*S*S;}
+    function L_of(S){return 1.19e8+1.50e8*S+12480*S*S;}
+    var $=function(id){return document.getElementById(id);};
+    function fmtS(x){return x>=1000?Math.round(x).toLocaleString('en-US'):x.toFixed(1);}
+    function fmtBig(x){return x.toLocaleString('en-US',{maximumFractionDigits:0});}
+
+    function sup(n){var m={'0':'⁰','1':'¹','2':'²','3':'³','4':'⁴','5':'⁵','6':'⁶','7':'⁷','8':'⁸','9':'⁹'};return (''+n).split('').map(function(ch){return m[ch]||ch;}).join('');}
+    function eng(x){if(x>=1e12)return (x/1e12).toFixed(2)+'e12';if(x>=1e9)return (x/1e9).toFixed(1)+'e9';if(x>=1e6)return (x/1e6).toFixed(1)+'e6';return Math.round(x).toLocaleString('en-US');}
+
+    function compute(){
+      // ── ONE world model: architecture -> (W,Q,L). No modes. ──────────────────
+      var d=+$('cD').value, seq=+$('cSeq').value, L=+$('cL').value, dff=+$('cFF').value,
+          H=+$('cH').value, vocab=+$('cV').value, Ex=+$('cE').value, moe=+$('cMoe').value;
+      $('vD').textContent=d; $('vSeq').textContent=seq; $('vL').textContent=L; $('vFF').textContent=dff;
+      $('vH').textContent=H; $('vV').textContent=(vocab/1000).toFixed(0)+'k'; $('vE').textContent=Ex; $('vMoe').textContent=moe.toFixed(2);
+      // Committed witness DERIVED PER OP TYPE from the real tape — each coefficient
+      // is a specific gadget's measured footprint (witness_elems/primary on the Qwen
+      // tape), NOT a single fudge factor. Per-op shares on Qwen: matmul 37%, SiLU 22%,
+      // RmsNorm 21%, softmax 12%, rope/had/add/emb 8%.
+      //   matmul   : C + rescale(high+low) + Freivalds aux  ≈ 3.1 × outputs
+      //   SiLU     : decomposition a0..a4 + tables          ≈ 23.0 × (seq·d_ff)
+      //   RmsNorm  : isqrt y-search + word decomps          ≈ 55.6 × (seq·d)
+      //   softmax  : causal aux                             ≈ 16.6 × (H·seq²)
+      // Dense models reproduce their tape EXACTLY (Qwen: 1.00). MoE routing / expert
+      // Freivalds-combine is the ONE term we can't derive without a MoE tape — pinned
+      // to the 400B anchor (×8.1·Lm·E·seq·d_ff), closing 400B's 24% MoE residual.
+      var Lm=Math.round(L*moe), Ld=L-Lm;
+      var Ww = L*4*d*d + Ld*3*d*dff + Lm*Ex*3*d*dff + 2*vocab*d;   // weights (exact params)
+      var mm_out = L*(5*seq*d + H*seq*seq) + Ld*(2*seq*dff+seq*d) + Lm*Ex*(2*seq*dff+seq*d) + seq*vocab;
+      var acts = 3.1*mm_out + 23.0*(L*seq*dff) + 55.6*((2*L+1)*seq*d) + 16.6*(L*H*seq*seq)
+               + 4.0*(L*2*seq*d) + 4.0*(L*(seq*dff+2*seq*d)) + 1.0*(L*2*seq*d) + 2.0*((2*L+1)*seq*d)
+               + 8.1*(Lm*Ex*seq*dff);   // MoE-combine (anchor-pinned; the one un-derived term)
+      var W = Ww + acts, Q = 0.204*W, Llin = 0.190*W;
+      var K=+$('cK').value,rho=+$('cRho').value,T=+$('cT').value,P=+$('cP').value,wmode=$('cWmode').value;
+      var sExp=+$('cScale').value,s=Math.pow(2,sExp),R=+$('cR').value;
+      $('vT').textContent=T; $('vP').textContent=P; $('vSc').textContent='2'+sup(sExp); $('vR').textContent=R;
+      var ELLexp=+$('cELL').value, ELL=cl(Math.pow(2,ELLexp),512,K-8);
+      $('vELL').textContent='2'+sup(ELLexp)+(ELL!==Math.pow(2,ELLexp)?' → '+eng(ELL)+' (кламп ≤K)':' = '+eng(ELL));
+      var N=rho*K,pad=K-ELL,ELLw=ELL,ELLp=ELL,Wp2=Math.max(W-Ww,0);
+      var rowsW=Ww/ELLw,rowsP=Wp2/ELLp,rows=rowsW+rowsP,mtot=rows;
+      var enc=K*c(K)+N*c(N),fold=4*K*c(2*K),hsh=(N/8)*HASH;
+      // coset-NTT: ρ length-K NTTs instead of one length-N — modeled ~1.2× on the
+      // encode, and only at K≥2¹⁸ (below that the microbench showed no in-prove win).
+      var cosetOn=$('cCoset').checked, cosetGain=(cosetOn&&K>=262144)?1.2:1, encC=enc/cosetGain;
+      var wl=Math.max(1,Math.floor(pad/T));
+      var streaming_ns =rowsP*(encC+encC+fold+hsh)+rowsW*(encC+fold+hsh+encC/wl);
+      var streaming0_ns=rowsP*(enc +enc +fold+hsh)+rowsW*(enc +fold+hsh+enc /wl);
+      var quad_ns=(Q/ELLp)*QT*2*K*c(2*K), lin_ns=BNS*Llin;
+      var toS=function(ns){return ns/1e9/(1-E);};
+      var strS=toS(streaming_ns),strS0=toS(streaming0_ns),qdS=toS(quad_ns),lnS=toS(lin_ns);
+      var witS0 = wmode==='notebook' ? P*TWIT/(1-E) : Math.max(0,74.57e-6*mtot-42.13);
+      var witS=witS0;
+      // witness spill: 1 recompute + 1 write + (P-1) reads of the 7.5TB witness,
+      // instead of P recomputes. Read/write capped by PCIe ~11 GB/s. Only in the
+      // notebook (prod) regime. Matches analysis/bench/spill_costmodel_prod.py.
+      // At P=1 there is no reuse to spill (nothing to re-read), so it degrades to a
+      // single recompute — no write, no reads. Only P>=2 pays 1 write + (P-1) reads.
+      var spillOn=$('cSpill').checked, bw=+$('cBw').value;
+      if(spillOn&&wmode==='notebook'){ var tio=(W*8)/(Math.min(bw,11)*1e9); witS=TWIT+(P>=2?P*tio:0); }
+      var k=d, b=Math.log2(k)+2*Math.log2(s)+2*Math.log2(R)+1, bbAccOK=b<31;
+      var M=W*1.06e-2;   // lookup queries (est: ~1e10 at 400B W=9.4e11)
+      function snd(fb){var irs=T*Math.log2(rho/(rho-1)),fld=fb-Math.log2(N),lg=fb-Math.log2(M+T+1),mn=Math.min(irs,fld,lg);
+        return {irs:irs,fld:fld,lg:lg,min:mn,bind:(mn===irs?'IRS (T,ρ)':(mn===lg?'LogUp (M)':'field (N)'))};}
+      var sGold=snd(64), sBB=snd(31), bbSoundOK=sBB.min>0;
+      var wantBB=$('cBB').checked, useBB=wantBB&&bbAccOK&&bbSoundOK, SND=useBB?sBB:sGold;
+      if(useBB){strS*=0.5; qdS*=0.5; witS*=0.5; strS0*=0.5; witS0*=0.5;}
+      // per-row OVERHEAD (Python dispatch + kernel launch per committed row) — the
+      // term the asymptotic c(n)·size floor omits. ~22 µs/row, saturating once the
+      // GPU fills (5M rows): DOMINATES the floor at toy scale, negligible at 400B.
+      // Fit to 39 saved runs; floor+overhead lands within ±30% of measured. NOT
+      // byte-dependent, so BabyBear does not halve it.
+      var ovhS=22e-6*Math.min(mtot,5e6);
+      var total=witS+strS+qdS+lnS+ovhS;
+      var total0=witS0+strS0+qdS+lnS+ovhS;           // baseline (opts off) for the delta
+
+      var sum=total;                                 // formula sum (for the bars/breakdown)
+      $('oTotal').textContent='PROVE ≈ '+fmtS(total)+' s';
+      var saved=total0-total, hdr='≈ '+(total/3600).toFixed(2)+' ч';
+      if(saved>1) hdr+='  ·  −'+fmtS(saved)+' s (−'+(100*saved/total0).toFixed(0)+'%) от базы '+fmtS(total0)+' s';
+      $('oTotalH').textContent=hdr;
+      function set(sid,bid,v){ $(sid).textContent=fmtS(v)+' s ('+(100*v/(sum||1e-9)).toFixed(0)+'%)';
+        $(bid).style.width=(100*v/(sum||1e-9)).toFixed(1)+'%'; }
+      set('sWit','bWit',witS); set('sStr','bStr',strS); set('sQd','bQd',qdS); set('sLn','bLn',lnS); set('sOvh','bOvh',ovhS);
+
+      // soundness — headline min + all three terms, binding highlighted (responsive)
+      $('oSoundBits').textContent=SND.min.toFixed(1);
+      $('oSoundBits').style.color=SND.min>=16?'var(--qd)':'var(--caution)';
+      $('oSoundBind').textContent=' (ε ≈ 2^-'+SND.min.toFixed(1)+' · binding: '+SND.bind+')';
+      function sset(rid,vid,val,isB){ $(vid).textContent=val.toFixed(1);
+        $(rid).className='sterm'+(isB?' binding':'')+(val<=0?' bad':''); }
+      sset('stIRS','vIRS',SND.irs,SND.bind.indexOf('IRS')===0);
+      sset('stFld','vFld',SND.fld,SND.bind.indexOf('field')===0);
+      sset('stLog','vLog',SND.lg,SND.bind.indexOf('LogUp')===0);
+
+      var proof_b=T*rows*FB+(4*K+ELLp)*FB, verify_s=T*rows*VNS/1e9;
+      $('dM').textContent=eng(mtot); $('dW').textContent=eng(W); $('dQ').textContent=eng(Q); $('dL').textContent=eng(Llin);
+      $('dN').textContent=eng(N); $('dELL').textContent=ELL; $('dB').textContent=b.toFixed(1);
+      $('dField').textContent = useBB ? 'BabyBear ✓ (×0.5)'
+        : !wantBB ? (bbAccOK&&bbSoundOK ? 'Goldilocks (BB возможен)' : 'Goldilocks')
+        : !bbSoundOK ? 'Goldilocks (BB невозможен: масштаб)'
+        : 'Goldilocks (BB: снизь s/R)';
+      // live status right at the checkbox — почему галка меняет время или нет.
+      // Порядок важен: надёжность НЕ зависит от s/R (это про масштаб модели, не
+      // про точность), поэтому она — первый и жёсткий барьер. Только если она ОК,
+      // а мешает лишь аккумулятор, даём чинибельную подсказку про s/R.
+      var bbEl=$('bbStat');
+      if(!wantBB){ bbEl.className='bbstat idle';
+        bbEl.textContent='выкл · поле Goldilocks (2⁶⁴)'; }
+      else if(useBB){ bbEl.className='bbstat on';
+        bbEl.textContent='✓ ×0.5 применён к witness/streaming/quad'; }
+      else if(!bbSoundOK){ bbEl.className='bbstat off';
+        bbEl.textContent='Чтобы включить BabyBear: уменьши d, L или seq, пока W не упадёт ниже 2.0·10¹¹ (сейчас W='+eng(W)+'). Тогда число lookup-запросов M влезет в поле 2³¹. s/R тут ни при чём — они про аккумулятор, не про надёжность.'; }
+      else { bbEl.className='bbstat off';
+        bbEl.textContent='Чтобы включить BabyBear: снизь s (сейчас 2'+sup(sExp)+') или R (сейчас '+R+'), пока аккумулятор b не станет < 31 (сейчас b='+b.toFixed(1)+'). Надёжность уже проходит.'; }
+      $('dMq').textContent=eng(M);
+      $('dProof').textContent=(proof_b/1e9).toFixed(1)+' GB'; $('dVerify').textContent=(verify_s/3600).toFixed(1)+' ч';
+
+      var w=[];
+      if(Math.round(Math.log2(2*K))>24||Math.round(Math.log2(N))>24||Math.round(Math.log2(K))<12) w.push('⚠ K/N вне калибровки c(n) 2¹²–2²⁴ → клампится.');
+      if(ELL<d) w.push('⚠ ELL &lt; d — embedding-lookup требует ELL ≥ d (подними ELL/K).');
+      if(wmode==='measured'&&!(604267<=mtot&&mtot<=2747117)) w.push('⚠ measured-fit валиден 604k–2.75M m_total; здесь экстраполяция.');
+      if(spillOn&&wmode!=='notebook') w.push('⚠ spill моделируется только в notebook (prod) режиме — при measured не применяется.');
+      if(cosetOn&&K<262144) w.push('⚠ coset-NTT: выигрыша нет при K&lt;2¹⁸ (сейчас K='+eng(K)+') — микробенч показал 0 in-prove.');
+      // BabyBear-статус целиком живёт под самой галкой (#bbStat) — почему время
+      // меняется или нет; здесь его не дублируем.
+      $('cWarn').innerHTML=w.join('<br>');
+    }
+    function preset(o){ for(var kk in o){ var el=$(kk); if(el){ if(el.type==='checkbox') el.checked=o[kk]; else el.value=o[kk]; } } compute(); }
+    ['cD','cSeq','cL','cFF','cH','cV','cE','cMoe','cK','cRho','cELL','cT','cScale','cR','cP','cWmode','cBB','cSpill','cBw','cCoset'].forEach(function(id){
+      var el=$(id); if(el) el.addEventListener('input',compute);
+    });
+    $('pQwen').addEventListener('click',function(){preset({cD:896,cSeq:256,cL:24,cFF:4864,cH:14,cV:151936,cE:1,cMoe:0,cK:'2048',cELL:10,cT:16,cWmode:'measured',cScale:12,cR:32,cP:4,cRho:'4'});});
+    $('pLlama').addEventListener('click',function(){preset({cD:2048,cSeq:256,cL:16,cFF:8192,cH:32,cV:128256,cE:1,cMoe:0,cK:'4096',cELL:11,cT:16,cWmode:'measured',cScale:12,cR:32,cP:4,cRho:'4'});});
+    $('pMav').addEventListener('click',function(){preset({cD:5120,cSeq:1093,cL:48,cFF:8192,cH:40,cV:202048,cE:128,cMoe:0.5,cK:'16384',cELL:13,cT:40,cWmode:'notebook',cScale:12,cR:32,cP:4,cRho:'4'});});
+    $('cReset').addEventListener('click',function(){$('pMav').click();});
+    compute();
+  })();
+  </script>
+
+
+</div>
