@@ -1,0 +1,6 @@
+paper-body.tex
+paper-arxiv.tex
+paper-arxiv.pdf
+*.log
+*.aux
+*.out

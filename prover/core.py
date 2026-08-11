@@ -1082,6 +1082,32 @@ class WeightCommitment:
         assert cur[0] == self.root, "levels do not build the stored root"
 
 
+
+def _opened_columns_match_leaves(opened: Dict[int, torch.Tensor],
+                                 Q_cols: List[int],
+                                 art: CommitArtifact,
+                                 n_total_rows: int) -> bool:
+    """Prover self-check: re-hash the T extracted columns and compare each
+    digest against the commit-round leaf. Detects witness-regeneration drift
+    between the commit sweep and the round-4 column extraction (the PRG-seeded
+    ZK padding must reproduce bit for bit) without rebuilding the tree. Feeds
+    the same accumulator the commit used, in row blocks, so no second full
+    column matrix is ever resident."""
+    if n_total_rows == 0 or not Q_cols:
+        return True
+    acc = _make_merkle_acc(len(Q_cols), n_total_rows)
+    step = 1 << 20
+    for lo in range(0, n_total_rows, step):
+        hi = min(lo + step, n_total_rows)
+        # ColumnSink serves the openings from pre-sized HOST buffers; the
+        # merkle accumulator hashes on the GPU, so move each row block over.
+        acc.update(torch.stack([opened[j][lo:hi] for j in Q_cols], dim=1)
+                   .to("cuda", non_blocking=True))
+    digests = acc.finalize().cpu().numpy()
+    return all(bytes(digests[k].tolist()) == art.column_hashes[j]
+               for k, j in enumerate(Q_cols))
+
+
 # Optional prove-time phase breakdown (env LIGERO_PHASE_TIMING=1). cuda-synced
 # wall-clock buckets accumulated across the sweep, printed at prove end. Pure
 # diagnostic: a no-op when off (zero overhead, no behavior change). The syncs
@@ -3346,9 +3372,12 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
 
     # FOUR blocks (analysis/persistent-weights.md, layout B): blinding tree,
     # W tree (persistent weights), p1 tree (activations), p2 tree (aux). All of
-    # blind/W/p1 are phase-1 (committed in R1); p2 in R2. R4 re-commits and
-    # extracts the opened columns. R_W is context-independent (W at the fixed
-    # offset), so it matches commit_weights.
+    # blind/W/p1 are phase-1 (committed in R1); p2 in R2. Roots, trees, and
+    # opening paths all come from the R1/R2 commits (the trees are a few MB
+    # and are kept); R4 only re-extracts the challenged columns, whose
+    # identity is not known until the round-3 column challenge. R_W is
+    # context-independent (W at the fixed offset), so it matches
+    # commit_weights.
     has_w = bool(s['n_w_total'])
     # P3: reference a persisted W commitment — skip the R1 weight commit + R4
     # weight rebuild, take root_w and the opening paths from it. Guard that it
@@ -3486,28 +3515,13 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
     col_p1 = ColumnSink(s['n_p1_total'], Q_cols, _p1_base)
     col_p2 = ColumnSink(s['n_p2_total'], Q_cols, s['m_p1_rows'])
     col_p3 = ColumnSink(s['n_p3_total'], Q_cols, s['m_p2_rows'])
-    merkle_blindb = _acc(s['n_blind_total'])                           # R5: columns + paths
-    merkle_wb = None if wc is not None else _acc(s['n_w_total'])        #   (referenced → no rebuild)
-    merkle_wnewb = _acc(s['n_wnew_total'])
-    merkle_p1b = _acc(s['n_p1_total'])
-    merkle_p2b = _make_merkle_acc(cfg.N_LIG, s['n_p2_total'])
-    merkle_p3b = _acc(s['n_p3_total'])
-    sweep(want_aux=True, merkle_blind=merkle_blindb, merkle_w=merkle_wb,
-          merkle_wnew=merkle_wnewb, merkle_p1=merkle_p1b,
-          merkle_p2=merkle_p2b, merkle_p3=merkle_p3b,
-          col_blind=col_blind, col_w=col_w,
+    # Opening round: columns only. Roots, trees and opening paths all come
+    # from the R1/R2/R3 commits (the trees are a few MB and are kept); this
+    # sweep only re-extracts the challenged columns, whose identity is not
+    # known until s_col.
+    sweep(want_aux=True, col_blind=col_blind, col_w=col_w,
           col_wnew=col_wnew, col_p1=col_p1, col_p2=col_p2, col_p3=col_p3,
           Q_cols=Q_cols, p1_prefix=s['p1_prefix'])
-    path_art_blind = _finalize_merkle_artifact(merkle_blindb)
-    path_art_p2 = _finalize_merkle_artifact(merkle_p2b)
-    path_art_w = _finalize_merkle_artifact(merkle_wb) if merkle_wb is not None else None
-    path_art_wnew = _finalize_merkle_artifact(merkle_wnewb) if merkle_wnewb is not None else None
-    path_art_p1 = _finalize_merkle_artifact(merkle_p1b) if merkle_p1b is not None else None
-    path_art_p3 = _finalize_merkle_artifact(merkle_p3b) if merkle_p3b is not None else None
-    repro = (art_blind.root == path_art_blind.root)
-    if has_p3:
-        assert path_art_p3.root == root_p3, (
-            "phase-3 tree not reproducible between R3 and the opening round")
 
     def _opened(colbuf):
         if isinstance(colbuf, ColumnSink):
@@ -3516,18 +3530,42 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
                     else torch.empty(0, dtype=torch.uint64, device="cuda")) for j in Q_cols}
     def _paths(art):
         return {j: merkle_path(art.levels, j) for j in Q_cols} if art is not None else {}
+    opened_blind = _opened(col_blind)
+    opened_w     = _opened(col_w) if has_w else {}
+    opened_wnew  = _opened(col_wnew) if has_wnew else {}
+    opened_p1    = _opened(col_p1)
+    opened_p2    = _opened(col_p2)
+    opened_p3    = _opened(col_p3) if has_p3 else {}
     # W block root + opening paths: from the referenced commitment (P3) or the
-    # in-proof W tree. Either way opened_w is the re-extracted weight columns,
-    # which reproduce the committed leaves (context-independent R_W).
+    # in-proof W tree kept from R1. Either way opened_w is the re-extracted
+    # weight columns, which reproduce the committed leaves (context-independent
+    # R_W; under a refreshed seed, the P5 padding rule).
     if wc is not None:
         root_w = wc.root
         paths_w = {j: merkle_path(wc.levels, j) for j in Q_cols}
+        w_leaf_art = CommitArtifact(root=wc.root, levels=wc.levels,
+                                    column_hashes=wc.levels[0], matrix=None)
     else:
         root_w = art_w.root if has_w else None
-        paths_w = _paths(path_art_w) if has_w else {}
+        paths_w = _paths(art_w) if has_w else {}
+        w_leaf_art = art_w
+    # Cross-round consistency self-check, replacing the old full opening-round
+    # tree rebuild + root comparison: the re-extracted columns must hash to
+    # the leaves committed in R1/R2/R3 (for a referenced W block, to the
+    # persisted commitment's leaves). Same witness-regeneration-drift
+    # detection on exactly the data being served, now covering every block
+    # including phases 2 and 3, at T column hashes per block instead of N_LIG.
+    # NOTE: q_irs/q_lin/p_0 were already blinding-mixed BEFORE s_col above —
+    # the s_col coin must hash the polynomials the verifier receives.
+    repro = (_opened_columns_match_leaves(opened_blind, Q_cols, art_blind, s['n_blind_total'])
+             and (not has_w or _opened_columns_match_leaves(opened_w, Q_cols, w_leaf_art, s['n_w_total']))
+             and (not has_wnew or _opened_columns_match_leaves(opened_wnew, Q_cols, art_wnew, s['n_wnew_total']))
+             and _opened_columns_match_leaves(opened_p1, Q_cols, art_p1, s['n_p1_total'])
+             and _opened_columns_match_leaves(opened_p2, Q_cols, art_p2, s['n_p2_total'])
+             and (not has_p3 or _opened_columns_match_leaves(opened_p3, Q_cols, art_p3, s['n_p3_total'])))
     peak = torch.cuda.max_memory_allocated() / 1e9
-    print(f"  [stream-sound] {5 if has_p3 else 4} rounds done; blind root "
-          f"reproducible across rounds: {repro}; W-block rows {s['n_w_total']}; "
+    print(f"  [stream-sound] {5 if has_p3 else 4} rounds done; opened columns "
+          f"match committed leaves: {repro}; W-block rows {s['n_w_total']}; "
           f"W-ref {wc is not None}; Wnew rows {s['n_wnew_total']}; "
           f"p3 rows {s['n_p3_total']}; peak {peak:.2f} GB", flush=True)
     if _PHASE_ON and _PHASE_TIMES:
@@ -3552,17 +3590,17 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
         q_irs=q_irs, q_lin=q_lin, p_0=p_0, blocks=blocks,
         seeds={"s_op": s_op, "s_bind": s_bind, "s_comb": s_comb, "s_col": s_col},
         statement_digest=stmt_digest, claims_bytes=claims_bytes, Q_cols=Q_cols,
-        root_blind=art_blind.root, opened_blind=_opened(col_blind), paths_blind=_paths(path_art_blind),
+        root_blind=art_blind.root, opened_blind=opened_blind, paths_blind=_paths(art_blind),
         root_w=root_w,
-        opened_w=(_opened(col_w) if has_w else {}), paths_w=paths_w,
+        opened_w=opened_w, paths_w=paths_w,
         root_wnew=(art_wnew.root if has_wnew else None),
-        opened_wnew=(_opened(col_wnew) if has_wnew else {}),
-        paths_wnew=(_paths(path_art_wnew) if has_wnew else {}),
-        root_p1=art_p1.root, opened_p1=_opened(col_p1), paths_p1=_paths(path_art_p1),
-        root_p2=art_p2.root, opened_p2=_opened(col_p2), paths_p2=_paths(path_art_p2),
+        opened_wnew=opened_wnew,
+        paths_wnew=(_paths(art_wnew) if has_wnew else {}),
+        root_p1=art_p1.root, opened_p1=opened_p1, paths_p1=_paths(art_p1),
+        root_p2=art_p2.root, opened_p2=opened_p2, paths_p2=_paths(art_p2),
         root_p3=(root_p3 if has_p3 else None),
-        opened_p3=(_opened(col_p3) if has_p3 else {}),
-        paths_p3=(_paths(path_art_p3) if has_p3 else {}))
+        opened_p3=(opened_p3 if has_p3 else {}),
+        paths_p3=(_paths(art_p3) if has_p3 else {}))
 
 
 class _PhaseLogger:

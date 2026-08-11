@@ -51,7 +51,6 @@ SEED = b"maverick-block-demo"
 EPS_INT = round(1e-5 * S * S)                 # rms_norm_eps from the GGUF metadata
 Z_NONZERO_REAL = 40000 / 4096
 Z_MAX = round(Z_NONZERO_REAL * S)
-RMS_SLACK_N_CHUNKS = 4
 H, HKV, DH = 40, 8, 128
 
 
@@ -113,7 +112,6 @@ def build_attn_chain(tape, x, attn, *, T, d, theta, use_rope):
     (resid1, norm2_g)."""
     mm = dict(s_a=S, s_b=S, s_out=S, output_width=OUTPUT_WIDTH)
     n1 = tape.rmsnorm(x, d=d, s=S, eps_int=EPS_INT,
-                       slack_n_chunks=RMS_SLACK_N_CHUNKS,
                        s_out=S, output_width=OUTPUT_WIDTH)
     n1g = tape.hadamard_broadcast(n1, attn["g_attn_wt"], SEQ=T, d=d,
                                    s_a=S, s_b=S, s_out=S,
@@ -134,7 +132,6 @@ def build_attn_chain(tape, x, attn, *, T, d, theta, use_rope):
     proj = tape.matmul(att, attn["W_O_wt"], **mm)
     resid1 = x + proj
     n2 = tape.rmsnorm(resid1, d=d, s=S, eps_int=EPS_INT,
-                       slack_n_chunks=RMS_SLACK_N_CHUNKS,
                        s_out=S, output_width=OUTPUT_WIDTH)
     n2g = tape.hadamard_broadcast(n2, attn["g_ffn_wt"], SEQ=T, d=d,
                                    s_a=S, s_b=S, s_out=S,

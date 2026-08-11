@@ -1,15 +1,17 @@
-"""Llama-2-7B weight loading for the Ligero prover — quantize HF BF16 weights to
-Q3.12 Goldilocks field-rep uint64 CUDA tensors, ready to commit into a Tape.
+"""Dense-Llama HF weight loading for the Ligero prover — quantize HF BF16
+weights to Q3.12 Goldilocks field-rep uint64 CUDA tensors, ready to commit
+into a Tape. Dims come from the checkpoint's own config.json (ModelConfig);
+Llama-2-7B and Llama-3.2-1B are the same code path.
 
 (Merged from the former llama_loader.py + lazy_loader.py.)
 
-Two modes:
-  - Eager: `load_layer_weights()` loads + quantizes a whole transformer block via
-    a per-process cached HF model (`_get_model`).
-  - Lazy: `LazyHFLoader` reads one tensor at a time from .safetensors shards and
-    quantizes on demand — used when the setup must not hold all 32 layers
-    (~50 GB) at once (the SEQ=1000 / unified-memory path; at most one ~360 MB
-    weight resolved at a time).
+Two modes, one weight-spec table (`layer_specs`) driving both:
+  - Eager: `load_layer_weights()` reads + quantizes a whole transformer
+    block's tensors from the safetensors shards.
+  - Lazy: `LazyHFLoader.make_loader` returns per-weight callables that read
+    one tensor at a time and quantize on demand — used when the setup must
+    not hold all layers (~50 GB for the 7B) at once (the SEQ=1000 /
+    unified-memory path; at most one weight resolved at a time).
 
 Concerns handled (both modes):
   1. Layout: HF nn.Linear weight is (out, in); Tape.matmul wants the right
@@ -18,6 +20,14 @@ Concerns handled (both modes):
      Goldilocks field elements (negatives → P − |v|).
   3. The 1/√d_h factor on attention scores is folded into W_Q at quantization
      time (see demo_llama7b.py); the loader applies it via `divide_by`.
+  4. GQA (n_kv_heads < n_heads): each KV head's columns are replicated
+     kv_groups× after transpose (`replicate_kv_cols`) so K/V commit at full
+     (d, n_heads·d_h) width and attention proves as plain MHA — a public
+     weight transform, zero new claims (same pattern as the Maverick demo).
+  5. Tied embeddings (tie_word_embeddings): checkpoints with no separate
+     lm_head.weight fall back to the embedding matrix, detected from the
+     actual tensor keys (NOT the shard count — single-shard tied models
+     like Llama-3.2-1B have no lm_head.weight anywhere).
 
 KNOWN GAP: per-channel RmsNorm gains ("rms_pre_*_w") are returned but not yet
 consumed by RmsNormClaim — loading them is bookkeeping until RmsNormClaim (or a
@@ -30,23 +40,13 @@ from __future__ import annotations
 import json
 import math
 import os
+from dataclasses import dataclass
 from typing import Callable, Dict, Optional, Tuple
 
 import torch
 
 from cuda_primitives import P, gl_sub
-
-
-_MODEL_CACHE: Dict[str, object] = {}
-
-
-def _get_model(model_id_or_path: str):
-    """Return a (cached) HF model. Loading is heavy (10s+); cache by path."""
-    if model_id_or_path not in _MODEL_CACHE:
-        from transformers import AutoModelForCausalLM
-        _MODEL_CACHE[model_id_or_path] = AutoModelForCausalLM.from_pretrained(
-            model_id_or_path, torch_dtype=torch.bfloat16)
-    return _MODEL_CACHE[model_id_or_path]
+from model_config import ModelConfig, find_model_dir
 
 
 def _signed_to_field(t_int: torch.Tensor) -> torch.Tensor:
@@ -70,50 +70,64 @@ def quantize_to_field(t: torch.Tensor, scale: int, *,
     return _signed_to_field(t_int)
 
 
+def replicate_kv_cols(w_t: torch.Tensor, *, d_h: int,
+                       groups: int) -> torch.Tensor:
+    """GQA public weight transform: (d, n_kv·d_h) → (d, n_kv·groups·d_h),
+    repeating each KV head's d_h-column block `groups`× so K/V commit at
+    full query-head width and attention proves as plain MHA — zero new
+    claims. Exact bit-copy on the field tensor (int64 view; uint64 lacks
+    repeat_interleave on CUDA). groups=1 is the identity."""
+    if groups == 1:
+        return w_t
+    d, kv_width = w_t.shape
+    n_kv = kv_width // d_h
+    assert n_kv * d_h == kv_width, (
+        f"replicate_kv_cols: kv width {kv_width} not a multiple of d_h={d_h}")
+    v = w_t.view(torch.int64).view(d, n_kv, d_h)
+    return (v.repeat_interleave(groups, dim=1).contiguous()
+             .view(d, n_kv * groups * d_h).view(torch.uint64))
+
+
+@dataclass(frozen=True)
+class WeightSpec:
+    """Per-weight load recipe: HF tensor name + the public transforms applied
+    before commit. One table of these (layer_specs) drives BOTH the eager and
+    lazy paths, so they can't drift."""
+    hf_name: str
+    transpose: bool = False
+    divide_by: float = 1.0
+    kv_groups: int = 1          # >1 ⇒ replicate_kv_cols after transpose (GQA)
+
+
 def load_layer_weights(model_id_or_path: str, layer_idx: int, *,
                         S: int = 2 ** 12,
-                        d_h: int = 128,
+                        d_h: Optional[int] = None,
                         fold_inv_sqrt_d_h_into_W_Q: bool = True,
                         extra_q_k_shrink: float = 1.0,
                         ) -> Dict[str, torch.Tensor]:
-    """Load one Llama-2-7B transformer block's weights (eager, via the cached HF
-    model), quantize to scale S, return a dict of CUDA uint64 field tensors.
+    """Load one transformer block's weights (eager), quantize to scale S,
+    return a dict of CUDA uint64 field tensors shaped per `layer_shapes`.
 
-    `extra_q_k_shrink` folds an extra √N into BOTH W_Q and W_K (a stand-in for
-    softmax magnitude control — see the original note). Keys/shapes:
-      W_Q W_K W_V W_O (d,d) [W_Q has 1/√d_h folded] · W_gate W_up (d,d_ff) ·
-      W_down (d_ff,d) · rms_pre_attn_w rms_pre_ffn_w (d,) per-channel gains.
+    Thin wrapper over LazyHFLoader — same spec table, same transforms
+    (transpose, 1/√d_h fold into W_Q, GQA KV replication), just resolved
+    immediately. `d_h` defaults to the checkpoint's config.json value.
+
+    `extra_q_k_shrink` folds an extra √N into BOTH W_Q and W_K (a stand-in
+    for softmax magnitude control — see the original note). Keys/shapes:
+      W_Q W_K W_V W_O (d, n_heads·d_h)/(n_heads·d_h, d) [W_Q has 1/√d_h
+      folded; K/V replicated to full width under GQA] · W_gate W_up (d,d_ff)
+      · W_down (d_ff,d) · rms_pre_attn_w rms_pre_ffn_w (d,) gains.
     """
-    model = _get_model(model_id_or_path)
-    layer = model.model.layers[layer_idx]
-
-    sqrt_d_h = math.sqrt(d_h)
-    qk_shrink = math.sqrt(extra_q_k_shrink)
-    Q_div = (sqrt_d_h if fold_inv_sqrt_d_h_into_W_Q else 1.0) * qk_shrink
-    K_div = qk_shrink
-
-    # HF nn.Linear weight is (out_features, in_features). Our matmul expects the
-    # right-operand at (k=in_features, n=out_features), so we transpose.
-    out = {
-        "W_Q":    quantize_to_field(
-            layer.self_attn.q_proj.weight.T.contiguous(), S, divide_by=Q_div),
-        "W_K":    quantize_to_field(
-            layer.self_attn.k_proj.weight.T.contiguous(), S, divide_by=K_div),
-        "W_V":    quantize_to_field(
-            layer.self_attn.v_proj.weight.T.contiguous(), S),
-        "W_O":    quantize_to_field(
-            layer.self_attn.o_proj.weight.T.contiguous(), S),
-        "W_gate": quantize_to_field(
-            layer.mlp.gate_proj.weight.T.contiguous(), S),
-        "W_up":   quantize_to_field(
-            layer.mlp.up_proj.weight.T.contiguous(), S),
-        "W_down": quantize_to_field(
-            layer.mlp.down_proj.weight.T.contiguous(), S),
-        "rms_pre_attn_w": quantize_to_field(
-            layer.input_layernorm.weight, S),
-        "rms_pre_ffn_w":  quantize_to_field(
-            layer.post_attention_layernorm.weight, S),
-    }
+    ldr = LazyHFLoader(model_id_or_path, S=S, d_h=d_h,
+                       fold_inv_sqrt_d_h_into_W_Q=fold_inv_sqrt_d_h_into_W_Q,
+                       extra_q_k_shrink=extra_q_k_shrink)
+    shapes = ldr.layer_shapes()
+    out = {}
+    for short, spec in ldr.layer_specs(layer_idx).items():
+        flat = ldr.make_loader(spec.hf_name, transpose=spec.transpose,
+                               divide_by=spec.divide_by,
+                               kv_groups=spec.kv_groups)()
+        out[short] = flat.view(shapes[short])
     return out
 
 
@@ -124,38 +138,49 @@ class LazyHFLoader:
 
     def __init__(self, model_id_or_path: str, *,
                   S: int = 2 ** 12,
-                  d_h: int = 128,
+                  d_h: Optional[int] = None,
                   fold_inv_sqrt_d_h_into_W_Q: bool = True,
                   extra_q_k_shrink: float = 1.0):
         self.model_id = model_id_or_path
         self.S = S
-        sqrt_d_h = math.sqrt(d_h)
+        self.model_dir = find_model_dir(model_id_or_path)
+        self.config = ModelConfig.from_hf(self.model_dir)
+        self.d_h = self.config.d_h if d_h is None else d_h
+        sqrt_d_h = math.sqrt(self.d_h)
         qk_shrink = math.sqrt(extra_q_k_shrink)
         self.Q_div = (sqrt_d_h if fold_inv_sqrt_d_h_into_W_Q else 1.0) * qk_shrink
         self.K_div = qk_shrink
 
-        self.model_dir = self._find_model_dir(model_id_or_path)
         self.shard_map = self._load_shard_map()
-
-    @staticmethod
-    def _find_model_dir(model_id_or_path: str) -> str:
-        if os.path.isdir(model_id_or_path):
-            return model_id_or_path
-        from transformers.utils import cached_file
-        config_file = cached_file(model_id_or_path, "config.json")
-        return os.path.dirname(config_file)
 
     def _load_shard_map(self):
         index_file = os.path.join(self.model_dir, "model.safetensors.index.json")
         if os.path.exists(index_file):
             with open(index_file) as f:
                 return json.load(f)["weight_map"]
+        single = os.path.join(self.model_dir, "model.safetensors")
+        if not os.path.exists(single):
+            raise FileNotFoundError(
+                f"no model.safetensors[.index.json] under {self.model_dir} — "
+                f"download the checkpoint first (huggingface-cli download)")
         return None   # single-shard model
 
     def _shard_for(self, param_name: str) -> str:
         if self.shard_map is None:
             return os.path.join(self.model_dir, "model.safetensors")
         return os.path.join(self.model_dir, self.shard_map[param_name])
+
+    def has_tensor(self, param_name: str) -> bool:
+        """Whether the checkpoint actually contains `param_name` — from the
+        shard index when present, else the single shard's real key set (a
+        single-shard TIED model has no lm_head.weight; inferring presence
+        from shard count crashes on exactly those checkpoints)."""
+        if self.shard_map is not None:
+            return param_name in self.shard_map
+        from safetensors import safe_open
+        with safe_open(self._shard_for(param_name), framework="pt",
+                       device="cpu") as f:
+            return param_name in f.keys()
 
     def _load_raw(self, param_name: str) -> torch.Tensor:
         """Load a single tensor in its native dtype (bf16 for HF Llama)."""
@@ -170,17 +195,22 @@ class LazyHFLoader:
 
     def make_loader(self, param_name: str, *,
                      transpose: bool = False,
-                     divide_by: float = 1.0) -> Callable[[], torch.Tensor]:
+                     divide_by: float = 1.0,
+                     kv_groups: int = 1) -> Callable[[], torch.Tensor]:
         """Return a closure that reads `param_name`, optionally transposes,
-        quantizes to scale self.S, and returns a flat CUDA uint64 tensor. No
-        caching — each call hits disk."""
-        S = self.S
+        quantizes to scale self.S, replicates KV columns kv_groups× (GQA;
+        1 = no-op), and returns a flat CUDA uint64 tensor. No caching — each
+        call hits disk."""
+        S, d_h = self.S, self.d_h
 
         def load() -> torch.Tensor:
             t = self._load_raw(param_name)
             if transpose:
                 t = t.T.contiguous()
-            return quantize_to_field(t, S, divide_by=divide_by).view(-1)
+            q = quantize_to_field(t, S, divide_by=divide_by)
+            if kv_groups > 1:
+                q = replicate_kv_cols(q, d_h=d_h, groups=kv_groups)
+            return q.reshape(-1)
 
         return load
 
@@ -190,42 +220,67 @@ class LazyHFLoader:
         emb = self._load_raw("model.embed_tokens.weight")
         return quantize_to_field(emb.contiguous(), self.S, divide_by=divide_by)
 
+    def has_separate_lm_head(self) -> bool:
+        """False for tied-embedding checkpoints (tie_word_embeddings), which
+        ship no lm_head.weight tensor at all — e.g. Llama-3.2-1B."""
+        return self.has_tensor("lm_head.weight")
+
+    def load_final_norm(self) -> torch.Tensor:
+        """Final RmsNorm gain only — for tied-embedding models that reuse
+        the committed embedding table as the LM head (quantizing a
+        transposed LM-head copy would be wasted work there)."""
+        return quantize_to_field(self._load_raw("model.norm.weight"), self.S)
+
     def load_final_weights(self) -> Dict[str, torch.Tensor]:
         """Final RmsNorm gain + LM head, read directly from safetensors. Falls
         back to the (tied) embedding for the LM head if the checkpoint has no
-        separate lm_head.weight."""
-        has_lm = self.shard_map is None or "lm_head.weight" in self.shard_map
-        lm_name = "lm_head.weight" if has_lm else "model.embed_tokens.weight"
+        separate lm_head.weight — detected from the actual tensor keys."""
+        lm_name = ("lm_head.weight" if self.has_separate_lm_head()
+                   else "model.embed_tokens.weight")
         return {
-            "final_norm_w": quantize_to_field(self._load_raw("model.norm.weight"), self.S),
+            "final_norm_w": self.load_final_norm(),
             "W_lm_head": quantize_to_field(self._load_raw(lm_name).T.contiguous(), self.S),
         }
 
-    def layer_specs(self, layer_idx: int) -> Dict[str, Tuple[str, bool, float]]:
-        """Per-weight metadata for one transformer layer:
-        {short_name: (hf_param_name, transpose, divide_by)}. Matches the keys +
-        transpose convention of load_layer_weights."""
+    def layer_specs(self, layer_idx: int) -> Dict[str, WeightSpec]:
+        """Per-weight load recipes for one transformer layer — the ONE table
+        both the eager and lazy paths consume. K/V carry the GQA replication
+        factor (1 on MHA models like Llama-2-7B, where it is a no-op)."""
         p = f"model.layers.{layer_idx}"
+        g = self.config.kv_groups
         return {
-            "W_Q":            (f"{p}.self_attn.q_proj.weight",         True,  self.Q_div),
-            "W_K":            (f"{p}.self_attn.k_proj.weight",         True,  self.K_div),
-            "W_V":            (f"{p}.self_attn.v_proj.weight",         True,  1.0),
-            "W_O":            (f"{p}.self_attn.o_proj.weight",         True,  1.0),
-            "W_gate":         (f"{p}.mlp.gate_proj.weight",            True,  1.0),
-            "W_up":           (f"{p}.mlp.up_proj.weight",              True,  1.0),
-            "W_down":         (f"{p}.mlp.down_proj.weight",            True,  1.0),
-            "rms_pre_attn_w": (f"{p}.input_layernorm.weight",          False, 1.0),
-            "rms_pre_ffn_w":  (f"{p}.post_attention_layernorm.weight", False, 1.0),
+            "W_Q":            WeightSpec(f"{p}.self_attn.q_proj.weight", True, self.Q_div),
+            "W_K":            WeightSpec(f"{p}.self_attn.k_proj.weight", True, self.K_div, kv_groups=g),
+            "W_V":            WeightSpec(f"{p}.self_attn.v_proj.weight", True, 1.0, kv_groups=g),
+            "W_O":            WeightSpec(f"{p}.self_attn.o_proj.weight", True),
+            "W_gate":         WeightSpec(f"{p}.mlp.gate_proj.weight",    True),
+            "W_up":           WeightSpec(f"{p}.mlp.up_proj.weight",      True),
+            "W_down":         WeightSpec(f"{p}.mlp.down_proj.weight",    True),
+            "rms_pre_attn_w": WeightSpec(f"{p}.input_layernorm.weight"),
+            "rms_pre_ffn_w":  WeightSpec(f"{p}.post_attention_layernorm.weight"),
         }
 
-    def layer_shapes(self, d: int, d_ff: int) -> Dict[str, Tuple[int, ...]]:
-        """Layout shapes for the matmul/hadamard claims, matching
-        load_layer_weights' transposed convention (k=in, n=out)."""
+    def layer_shapes(self, d: Optional[int] = None,
+                     d_ff: Optional[int] = None) -> Dict[str, Tuple[int, ...]]:
+        """COMMITTED layout shapes for the matmul/hadamard claims, matching
+        load_layer_weights' transposed convention (k=in, n=out). K/V are the
+        post-replication (full query-head width) shapes under GQA. `d`/`d_ff`
+        default from config.json; passing them cross-checks the caller's dims
+        against the checkpoint's."""
+        cfg = self.config
+        if d is None:
+            d = cfg.d
+        if d_ff is None:
+            d_ff = cfg.d_ff
+        assert (d, d_ff) == (cfg.d, cfg.d_ff), (
+            f"caller dims (d={d}, d_ff={d_ff}) != checkpoint config "
+            f"(d={cfg.d}, d_ff={cfg.d_ff})")
+        qw = cfg.n_heads * self.d_h        # committed Q/K/V width
         return {
-            "W_Q":    (d, d),
-            "W_K":    (d, d),
-            "W_V":    (d, d),
-            "W_O":    (d, d),
+            "W_Q":    (d, qw),
+            "W_K":    (d, qw),
+            "W_V":    (d, qw),
+            "W_O":    (qw, d),
             "W_gate": (d, d_ff),
             "W_up":   (d, d_ff),
             "W_down": (d_ff, d),
@@ -253,19 +308,35 @@ def load_token_embedding(model_id_or_path: str, *,
 
 
 def free_model_cache():
-    """Drop cached models; call before phases that need the GPU memory."""
-    global _MODEL_CACHE
-    _MODEL_CACHE.clear()
+    """Release cached GPU memory; call before phases that need it. (The old
+    per-process HF model cache is gone — the eager path now reads tensors
+    straight from safetensors — but callers still use this as a memory
+    checkpoint.)"""
     torch.cuda.empty_cache()
 
 
 def tokenize_prompt(model_id_or_path: str, prompt: str) -> torch.Tensor:
-    """Tokenize `prompt` using Llama-2-7B's tokenizer. Returns a 1-D int64 CUDA
+    """Tokenize `prompt` using the model's tokenizer. Returns a 1-D int64 CUDA
     tensor of token ids (integer indices into the embedding table)."""
     from transformers import AutoTokenizer
     tok = AutoTokenizer.from_pretrained(model_id_or_path)
     ids = tok(prompt, return_tensors="pt").input_ids[0].to("cuda")
     return ids
+
+
+def tokenize_chat_prompt(model_id_or_path: str, user_message: str) -> list:
+    """Render a single-turn chat via the model's chat template (Instruct
+    header tokens, auto system block, trailing generation prompt) and
+    tokenize. Returns a plain list of ids. Rendered to TEXT first, then
+    tokenized — apply_chat_template(tokenize=True)'s return type varies
+    across tokenizers versions (list vs Encoding objects).
+    add_special_tokens=False: the template already emits <|begin_of_text|>."""
+    from transformers import AutoTokenizer
+    tok = AutoTokenizer.from_pretrained(model_id_or_path)
+    text = tok.apply_chat_template(
+        [{"role": "user", "content": user_message}],
+        tokenize=False, add_generation_prompt=True)
+    return [int(t) for t in tok(text, add_special_tokens=False).input_ids]
 
 
 def _self_test():

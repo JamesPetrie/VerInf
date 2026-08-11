@@ -73,7 +73,7 @@ def build_rmsnorm():
     inputs keep slacks within one 16-bit chunk."""
     tape = Tape(CFG, lazy=True)
     x = tape.commit("rx", _t([3, 1, 4, 2, 5, 2, 6, 1]), (8,))
-    tape.rmsnorm(x, d=4, s=4, eps_int=1, slack_n_chunks=1, s_in=8, s_out=4,
+    tape.rmsnorm(x, d=4, s=4, eps_int=1, s_in=8, s_out=4,
                  output_width=16)
     return tape, "RmsNormClaim"
 

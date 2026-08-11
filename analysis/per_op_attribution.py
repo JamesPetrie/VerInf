@@ -64,7 +64,7 @@ def run_shadow_layer(model_id: str, prompt: str, seq: int,
         tok_ids = tok_ids + [0] * (seq - len(tok_ids))
 
     E_full = load_token_embedding(model_id, S=demo.S)
-    d = demo.d
+    d = demo.RANDOM_WEIGHTS_CFG.d       # 7B shapes (this script is 7B-specific)
     unique = sorted(set(tok_ids))
     id_to_subset = {tid: i for i, tid in enumerate(unique)}
     unique_t = torch.tensor(unique, dtype=torch.int64, device="cuda")
@@ -77,7 +77,7 @@ def run_shadow_layer(model_id: str, prompt: str, seq: int,
     del E_full
     torch.cuda.empty_cache()
 
-    H = d // demo.d_h
+    H = d // demo.RANDOM_WEIGHTS_CFG.d_h
 
     # Per layer: fresh ShadowTape, feed the residual's data + its scale.
     # Local-error model means we don't need to carry a chain FP shadow

@@ -108,15 +108,49 @@ impl Build {
     }
 }
 
-// _rope_cos_sin_real: c,s integer tables at scale s_x, indexed seq·(d_h/2)+k.
-fn rope_cos_sin(seq: usize, d_h: usize, s_x: u64, base: f64, pos_off: usize) -> (Vec<u64>, Vec<u64>) {
+// rope_scaled_inv_freq: inverse frequency for dim-pair k under the Llama-3
+// wavelength ramp (rope_scaling, rope_type "llama3"). MIRROR of the prover's
+// claims.py _rope_scaled_inv_freq — must stay line-for-line identical, in the
+// same f64 expression order, or every RoPE constraint diverges. Golden
+// vectors: rope_scaling_tests below + prover tests/test_rope_scaling.py.
+fn rope_scaled_inv_freq(base: f64, d_h: usize, k: usize, scale_factor: f64,
+                        low_freq_factor: f64, high_freq_factor: f64,
+                        original_max_pos: f64) -> f64 {
+    let inv_freq = 1.0 / base.powf(2.0 * k as f64 / d_h as f64);
+    let wavelen = 2.0 * std::f64::consts::PI / inv_freq;
+    let low_wl = original_max_pos / low_freq_factor;
+    let high_wl = original_max_pos / high_freq_factor;
+    if wavelen > low_wl {
+        return inv_freq / scale_factor;
+    }
+    if wavelen < high_wl {
+        return inv_freq;
+    }
+    let smooth = (original_max_pos / wavelen - low_freq_factor)
+        / (high_freq_factor - low_freq_factor);
+    (1.0 - smooth) * inv_freq / scale_factor + smooth * inv_freq
+}
+
+// _rope_cos_sin mirror: c,s integer tables at scale s_x, indexed seq·(d_h/2)+k.
+// The unscaled path (original_max_pos == 0) keeps the original p/denominator
+// form untouched (NOT p·inv_freq, which rounds differently in the last ulp)
+// so tables from pre-scaling dumps stay identical.
+fn rope_cos_sin(seq: usize, d_h: usize, s_x: u64, base: f64, pos_off: usize,
+                scale_factor: f64, low_freq_factor: f64, high_freq_factor: f64,
+                original_max_pos: f64) -> (Vec<u64>, Vec<u64>) {
     let half = d_h / 2;
     let mut cos = Vec::new();
     let mut sin = Vec::new();
     for s in 0..seq {
         let p = (s + pos_off) as f64;
         for k in 0..half {
-            let theta = p / base.powf(2.0 * k as f64 / d_h as f64);
+            let theta = if original_max_pos == 0.0 {
+                p / base.powf(2.0 * k as f64 / d_h as f64)
+            } else {
+                p * rope_scaled_inv_freq(base, d_h, k, scale_factor,
+                                         low_freq_factor, high_freq_factor,
+                                         original_max_pos)
+            };
             cos.push(((theta.cos() * s_x as f64).round() as i128).rem_euclid(P as i128) as u64);
             sin.push(((theta.sin() * s_x as f64).round() as i128).rem_euclid(P as i128) as u64);
         }
@@ -217,7 +251,15 @@ fn compile_op(cl: &Claim, ci: usize, s_op: &[u8], s_bind: Option<&[u8]>,
             let pos_off = cl.cfg_int("config", "position_offset") as usize;
             // θ from the claim (Maverick: 500000); 10000.0 default for old dumps.
             let rope_base = cl.cfg_f64_or("config", "base", 10000.0);
-            let (cos, sin) = rope_cos_sin(seq, d_h, s_x, rope_base, pos_off);
+            // Llama-3 rope_scaling ramp; defaults (original_max_pos=0 = OFF)
+            // match RoPEConfig's, so pre-scaling dumps verify unchanged.
+            // (serde as_f64 reads the int-serialized original_max_pos fine.)
+            let (cos, sin) = rope_cos_sin(
+                seq, d_h, s_x, rope_base, pos_off,
+                cl.cfg_f64_or("config", "scale_factor", 1.0),
+                cl.cfg_f64_or("config", "low_freq_factor", 1.0),
+                cl.cfg_f64_or("config", "high_freq_factor", 1.0),
+                cl.cfg_f64_or("config", "original_max_pos", 0.0));
             let (cos, sin) = (Arc::new(cos), Arc::new(sin));   // share one table across all rows
             b.push_family(target, ell, Expander::RopeXrot { base, h, d_h });
             let x = cl.var("x");
@@ -406,6 +448,52 @@ fn compile_routed_projected(cl: &Claim, ci: usize, s_op: &[u8],
     b.emit_quad(cl.var("f_u"), cl.var("f_y"), cl.var("f_p"), P - 1, 0, e, ell);
 }
 
+fn isqrt_u128(n: u128) -> u128 {
+    if n < 2 { return n; }
+    let mut x = 1u128 << ((128 - n.leading_zeros() + 1) / 2);
+    loop {
+        let y = (x + n / x) / 2;
+        if y >= x { return x; }
+        x = y;
+    }
+}
+
+fn bitlen_u128(n: u128) -> u32 { 128 - n.leading_zeros() }
+
+// S_total limb width / count — the single S_total-headroom knob (must equal
+// claims.RMS_LIMB_W / RMS_N_LIMBS; the compile is positional across sides).
+const RMS_LIMB_W: u32 = 18;
+const RMS_N_LIMBS: usize = 3;
+
+/// 16-bit chunks plus one narrow top chunk (mirrors claims._chunk_widths).
+fn rms_chunk_widths(total_bits: u32) -> Vec<u32> {
+    let mut ws = vec![16u32; (total_bits / 16) as usize];
+    if total_bits % 16 != 0 { ws.push(total_bits % 16); }
+    if ws.is_empty() { ws.push(1); }
+    ws
+}
+
+/// Derived range-window widths of the wrap-free rmsnorm bracket, computed
+/// INDEPENDENTLY from the public config (mirrors RmsNormConfig's properties
+/// — the prover cannot widen a window). See rmsnorm-bracket-fix.md.
+struct RmsWidths { y: u32, slack: u32, g0h: u32, g1h: u32, g2: u32 }
+
+fn rms_widths(d: u64, eps_int: u64, magic: u64) -> RmsWidths {
+    let s_min = d as u128 * eps_int as u128;
+    assert!(s_min >= 1, "rmsnorm needs eps_int >= 1");
+    let m = magic as u128;
+    let mut y = std::cmp::max(1, isqrt_u128(m / s_min));
+    while y * y * s_min < m { y += 1; }
+    let yw = std::cmp::max(1, bitlen_u128(y - 1));
+    assert!(2 * yw + RMS_LIMB_W <= 63, "rmsnorm y_width too wide for wrap-free limbs");
+    let cap: u128 = 1 << (RMS_LIMB_W * RMS_N_LIMBS as u32);
+    let sw = bitlen_u128(2 * isqrt_u128(m * cap) + cap);
+    assert!(m + (1u128 << sw) < P as u128, "rmsnorm slack window admits wrapped negatives");
+    let g2 = std::cmp::max(1, bitlen_u128((m + (1u128 << sw)) >> (2 * RMS_LIMB_W)));
+    assert!(g2 + 2 * RMS_LIMB_W <= 62, "rmsnorm G2 window would wrap");
+    RmsWidths { y: yw, slack: sw, g0h: 2 * yw, g1h: 2 * yw + 1, g2 }
+}
+
 fn compile_rmsnorm(cl: &Claim, ci: usize, s_op: &[u8], b: &mut Build, cfg: &Config) {
     let ell = cfg.ell as usize;
     let bsz = cl.cfg_int("config", "B") as usize;
@@ -419,9 +507,9 @@ fn compile_rmsnorm(cl: &Claim, ci: usize, s_op: &[u8], b: &mut Build, cfg: &Conf
     let rho = op_vec(s_op, ci, "rho", d);
     let neg_rho: Vec<u64> = rho.iter().map(|&r| (P - r % P) % P).collect();
     let neg_ones_d = vec![P - 1; d];
-    let scw = cl.cfg_int("config", "slack_chunk_width");
-    let snc = cl.cfg_int("config", "slack_n_chunks") as usize;
-    let chunk_strides: Vec<u64> = (0..snc).map(|n| 1u64 << (n as u64 * scw)).collect();
+    let w = rms_widths(d as u64, eps_int, magic);
+    let slack_widths = rms_chunk_widths(w.slack);
+    let chunk_strides: Vec<u64> = (0..slack_widths.len()).map(|n| 1u64 << (16 * n)).collect();
 
     let base = b.nxt;
     b.emit_id(cl.var("S_total"), base, 1, ell); b.emit_id(cl.var("S"), base, P - 1, ell);
@@ -445,30 +533,130 @@ fn compile_rmsnorm(cl: &Claim, ci: usize, s_op: &[u8], b: &mut Build, cfg: &Conf
     for (n, &chunk) in hi_chunks.iter().enumerate() {
         b.emit_id(chunk, f7, (P - chunk_strides[n] % P) % P, ell);
     }
-    let mut cur = base + 7 * bsz;
+
+    // F8: y_m1 tight decomposition; F9: S_total limb decomposition.
+    let f8 = base + 7 * bsz;
+    b.emit_id(cl.var("y_m1"), f8, 1, ell);
+    let ym1_chunks = cl.var_list("ym1_chunks");
+    for (n, &chunk) in ym1_chunks.iter().enumerate() {
+        b.emit_id(chunk, f8, (P - (1u64 << (16 * n)) % P) % P, ell);
+    }
+    let f9 = base + 8 * bsz;
+    b.emit_id(cl.var("S_total"), f9, 1, ell);
+    let s_limbs = cl.var_list("S_limbs");
+    for (n, &limb) in s_limbs.iter().enumerate() {
+        b.emit_id(limb, f9, (P - (1u64 << (RMS_LIMB_W * n as u32)) % P) % P, ell);
+    }
+
+    // F10..F13 / F14..F17: wrap-free bracket carry chains
+    // (rmsnorm-bracket-fix.md); mirrors claims.rmsnorm_compile.emit_bracket.
+    // Limbs + carry lows are LIMB_W-wide (stride 2^Lw); the carry highs
+    // g0h/g1h/G2 use 16-bit internal chunk strides.
+    let lw = RMS_LIMB_W;
+    let emit_bracket = |b: &mut Build, f0: usize, h: &[Var], gl: &[Var],
+                            g0h: &[Var], g1h: &[Var], g2: &[Var],
+                            slack: Var, slack_coef: u64| {
+        b.emit_id(h[0], f0, 1, ell);
+        b.emit_id(gl[0], f0, P - 1, ell);
+        for (j, &ch) in g0h.iter().enumerate() {
+            b.emit_id(ch, f0, (P - (1u64 << (lw + 16 * j as u32)) % P) % P, ell);
+        }
+        let f1_ = f0 + bsz;
+        b.emit_id(h[1], f1_, 1, ell);
+        for (j, &ch) in g0h.iter().enumerate() {
+            b.emit_id(ch, f1_, (1u64 << (16 * j)) % P, ell);
+        }
+        b.emit_id(gl[1], f1_, P - 1, ell);
+        for (j, &ch) in g1h.iter().enumerate() {
+            b.emit_id(ch, f1_, (P - (1u64 << (lw + 16 * j as u32)) % P) % P, ell);
+        }
+        let f2_ = f0 + 2 * bsz;
+        b.emit_id(h[2], f2_, 1, ell);
+        for (j, &ch) in g1h.iter().enumerate() {
+            b.emit_id(ch, f2_, (1u64 << (16 * j)) % P, ell);
+        }
+        for (j, &ch) in g2.iter().enumerate() {
+            b.emit_id(ch, f2_, (P - (1u64 << (16 * j)) % P) % P, ell);
+        }
+        let f3_ = f0 + 3 * bsz;
+        for (j, &ch) in g2.iter().enumerate() {
+            b.emit_id(ch, f3_, (1u64 << (2 * lw + 16 * j as u32)) % P, ell);
+        }
+        b.emit_id(gl[1], f3_, (1u64 << lw) % P, ell);
+        b.emit_id(gl[0], f3_, 1, ell);
+        b.emit_id(slack, f3_, slack_coef, ell);
+    };
+    let (lo_h, lo_gl) = (cl.var_list("lo_H"), cl.var_list("lo_gl"));
+    let (lo_g0h, lo_g1h, lo_g2) = (cl.var_list("lo_g0h_chunks"),
+        cl.var_list("lo_g1h_chunks"), cl.var_list("lo_G2_chunks"));
+    let (hi_h, hi_gl) = (cl.var_list("hi_H"), cl.var_list("hi_gl"));
+    let (hi_g0h, hi_g1h, hi_g2) = (cl.var_list("hi_g0h_chunks"),
+        cl.var_list("hi_g1h_chunks"), cl.var_list("hi_G2_chunks"));
+    emit_bracket(b, base + 9 * bsz, &lo_h, &lo_gl, &lo_g0h, &lo_g1h, &lo_g2,
+                 cl.var("s_lo"), P - 1);
+    emit_bracket(b, base + 13 * bsz, &hi_h, &hi_gl, &hi_g0h, &hi_g1h, &hi_g2,
+                 cl.var("s_hi"), 1);
+    let mut cur = base + 17 * bsz;
 
     // QUAD ORDER load-bearing (combiner indexed by position): op quads (arithmetic
-    // + slack range checks) FIRST, rescale range quads LAST — matching the prover.
+    // + slack range checks + limb range checks) FIRST, rescale range quads LAST —
+    // matching the prover.
     b.emit_quad(cl.var("x"), cl.var("x"), cl.var("X_sq"), P - 1, 0, l, ell);
     b.emit_quad(cl.var("y"), cl.var("y"), cl.var("q1"), P - 1, 0, bsz, ell);
     b.emit_quad(cl.var("y_m1"), cl.var("y_m1"), cl.var("q2"), P - 1, 0, bsz, ell);
-    b.emit_quad(cl.var("q1"), cl.var("S_total"), cl.var("s_lo"), P - 1, magic, bsz, ell);
-    b.emit_quad(cl.var("q2"), cl.var("S_total"), cl.var("s_hi"), 1, sub(magic, 1), bsz, ell);
+    for k in 0..RMS_N_LIMBS {
+        b.emit_quad(cl.var("q1"), s_limbs[k], lo_h[k], P - 1, 0, bsz, ell);
+    }
+    for k in 0..RMS_N_LIMBS {
+        b.emit_quad(cl.var("q2"), s_limbs[k], hi_h[k], P - 1, 0, bsz, ell);
+    }
     b.emit_quad(cl.var("y"), cl.var("u"), cl.var("p"), P - 1, 0, bsz, ell);
     let alpha_t = cl.table("range_slack").alpha;
+    let alpha_limb = cl.table("range_limb").alpha;
+    let slack_top_alpha = if w.slack % 16 != 0 || w.slack < 16 {
+        cl.table("range_slack_top").alpha } else { alpha_t };
+    let slack_alpha = |n: usize| if slack_widths[n] == 16 { alpha_t } else { slack_top_alpha };
     let lo_z = cl.var_list("z_lo_chunks");
-    for (chunk, z) in lo_chunks.iter().zip(lo_z.iter()) {
-        b.emit_quad(*chunk, *z, *z, (P - alpha_t) % P, P - 1, bsz, ell);
+    for (n, (chunk, z)) in lo_chunks.iter().zip(lo_z.iter()).enumerate() {
+        b.emit_quad(*chunk, *z, *z, (P - slack_alpha(n)) % P, P - 1, bsz, ell);
     }
     let hi_z = cl.var_list("z_hi_chunks");
-    for (chunk, z) in hi_chunks.iter().zip(hi_z.iter()) {
-        b.emit_quad(*chunk, *z, *z, (P - alpha_t) % P, P - 1, bsz, ell);
+    for (n, (chunk, z)) in hi_chunks.iter().zip(hi_z.iter()).enumerate() {
+        b.emit_quad(*chunk, *z, *z, (P - slack_alpha(n)) % P, P - 1, bsz, ell);
+    }
+    // Limb range checks, in the frozen _rms_limb_range_groups order.
+    let top_alpha = |width: u32, tbl: &str| -> u64 {
+        if width % 16 != 0 || width < 16 { cl.table(tbl).alpha } else { alpha_t }
+    };
+    let group_alphas = |widths: &[u32], tbl: &str| -> Vec<u64> {
+        widths.iter().map(|&cw| if cw == 16 { alpha_t } else { top_alpha(cw, tbl) }).collect()
+    };
+    let yw_chunks = rms_chunk_widths(w.y);
+    let g0w_chunks = rms_chunk_widths(w.g0h);
+    let g1w_chunks = rms_chunk_widths(w.g1h);
+    let g2w_chunks = rms_chunk_widths(w.g2);
+    let groups: Vec<(Vec<Var>, Vec<Var>, Vec<u64>)> = vec![
+        (ym1_chunks.clone(), cl.var_list("z_ym1_chunks"), group_alphas(&yw_chunks, "range_y_top")),
+        (s_limbs.clone(), cl.var_list("z_S_limbs"), vec![alpha_limb; RMS_N_LIMBS]),
+        (lo_gl.clone(), cl.var_list("z_lo_gl"), vec![alpha_limb; 2]),
+        (lo_g0h.clone(), cl.var_list("z_lo_g0h"), group_alphas(&g0w_chunks, "range_g0h_top")),
+        (lo_g1h.clone(), cl.var_list("z_lo_g1h"), group_alphas(&g1w_chunks, "range_g1h_top")),
+        (lo_g2.clone(), cl.var_list("z_lo_G2"), group_alphas(&g2w_chunks, "range_G2_top")),
+        (hi_gl.clone(), cl.var_list("z_hi_gl"), vec![alpha_limb; 2]),
+        (hi_g0h.clone(), cl.var_list("z_hi_g0h"), group_alphas(&g0w_chunks, "range_g0h_top")),
+        (hi_g1h.clone(), cl.var_list("z_hi_g1h"), group_alphas(&g1w_chunks, "range_g1h_top")),
+        (hi_g2.clone(), cl.var_list("z_hi_G2"), group_alphas(&g2w_chunks, "range_G2_top")),
+    ];
+    for (vars_, zs, alphas) in &groups {
+        for ((v, z), a) in vars_.iter().zip(zs.iter()).zip(alphas.iter()) {
+            b.emit_quad(*v, *z, *z, (P - a) % P, P - 1, bsz, ell);
+        }
     }
 
     if in_rs > 0 {
         cur = b.emit_rescale(cur, cl.var("x"), cl.var("x_low"), cl.var("x_in"),
             cl.var("x_shifted"), cl.var("z_x_low"), cl.var("z_x_shifted"),
-            in_rs as u32, scw as u32,
+            in_rs as u32, 16u32,
             cl.table("range_rescale").alpha, cl.table("range_slack").alpha, l, ell);
     }
     if out_rs > 0 {
@@ -478,7 +666,8 @@ fn compile_rmsnorm(cl: &Claim, ci: usize, s_op: &[u8], b: &mut Build, cfg: &Conf
             cl.table("range_output_rescale").alpha, cl.table("range_output").alpha, l, ell);
     }
     b.nxt = cur;
-    b.add_rhs(base, &[(0, bsz, (d as u64 * eps_int) % P), (bsz, bsz, P - 1)]);
+    b.add_rhs(base, &[(0, bsz, (d as u64 * eps_int) % P), (bsz, bsz, P - 1),
+                      (12 * bsz, bsz, magic % P), (16 * bsz, bsz, sub(magic, 1))]);
 }
 
 fn compile_silu(cl: &Claim, b: &mut Build, cfg: &Config) {
@@ -1010,4 +1199,59 @@ pub fn compile_claims_bound(cs: &mut ClaimSet, s_op: &[u8], s_bind: Option<&[u8]
         settle_table(&by_id[&tid], &mut b, ell);
     }
     Constraints { families: b.families, rhs: b.rhs, quadratic: b.quad, m_total: mt }
+}
+
+#[cfg(test)]
+mod rope_scaling_tests {
+    //! Golden vectors shared bit-for-bit with the prover's
+    //! tests/test_rope_scaling.py (generated from the Python implementation).
+    //! If either side's table computation drifts, this fails here instead of
+    //! rejecting whole proofs with no diagnostic. Config A (d_h=8) exercises
+    //! all three ramp branches; config B is the Llama-3.2-1B head dim.
+    use super::rope_cos_sin;
+    use crate::field::P;
+
+    // factor, low_freq_factor, high_freq_factor, original_max_pos
+    const SC: (f64, f64, f64, f64) = (32.0, 1.0, 4.0, 8192.0);
+
+    const A_COS: [u64; 12] = [4096, 4096, 4096, 4096, 2213, 4093, 4096, 4096,
+                              18446744069414582616, 4084, 4096, 4096];
+    const A_SIN: [u64; 12] = [0, 0, 0, 0, 3447, 154, 2, 0, 3724, 308, 4, 0];
+    const B_COS: [u64; 32] = [18446744069414580266, 18446744069414582651, 1012,
+                              2620, 3422, 3795, 3962, 4037, 4070, 4085, 4091,
+                              4094, 4095, 4096, 4096, 4096, 4096, 4096, 4096,
+                              4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096,
+                              4096, 4096, 4096, 4096, 4096];
+    const B_SIN: [u64; 32] = [578, 3740, 3969, 3148, 2251, 1542, 1038, 693,
+                              461, 306, 203, 135, 90, 59, 39, 16, 5, 1, 0, 0,
+                              0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
+    #[test]
+    fn golden_vectors_match_python() {
+        let (c, s) = rope_cos_sin(3, 8, 4096, 500000.0, 0, SC.0, SC.1, SC.2, SC.3);
+        assert_eq!(c, A_COS.to_vec(), "config A cos drifted");
+        assert_eq!(s, A_SIN.to_vec(), "config A sin drifted");
+        let (c, s) = rope_cos_sin(1, 64, 4096, 500000.0, 3, SC.0, SC.1, SC.2, SC.3);
+        assert_eq!(c, B_COS.to_vec(), "config B cos drifted");
+        assert_eq!(s, B_SIN.to_vec(), "config B sin drifted");
+    }
+
+    #[test]
+    fn unscaled_path_is_legacy() {
+        // original_max_pos=0 disables the ramp: must equal the ORIGINAL
+        // p/denominator expression byte-for-byte (old dumps verify unchanged).
+        let (seq, d_h, s_x, base, off) = (5usize, 8usize, 4096u64, 10000.0f64, 2usize);
+        let (c, s) = rope_cos_sin(seq, d_h, s_x, base, off, 1.0, 1.0, 1.0, 0.0);
+        let (mut ec, mut es) = (Vec::new(), Vec::new());
+        for sq in 0..seq {
+            let p = (sq + off) as f64;
+            for k in 0..d_h / 2 {
+                let theta = p / base.powf(2.0 * k as f64 / d_h as f64);
+                ec.push(((theta.cos() * s_x as f64).round() as i128).rem_euclid(P as i128) as u64);
+                es.push(((theta.sin() * s_x as f64).round() as i128).rem_euclid(P as i128) as u64);
+            }
+        }
+        assert_eq!(c, ec);
+        assert_eq!(s, es);
+    }
 }
