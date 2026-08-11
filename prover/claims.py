@@ -2189,25 +2189,64 @@ class RoPEConfig:
 
     Multi-head: when heads > 1, x and x_rot have logical shape (SEQ, H, d_h)
     flat at seq*(H*d_h) + h*d_h + k. The same (c, s) table indexed by
-    (seq, k) is applied to every head. heads=1 reduces to single-head."""
+    (seq, k) is applied to every head. heads=1 reduces to single-head.
+
+    The four `*_factor` / `original_max_pos` fields are the Llama-3-style
+    rope_scaling wavelength ramp (config.json `rope_scaling`, rope_type
+    "llama3"). Defaults mean NO scaling — original_max_pos=0 disables the
+    ramp entirely, so pre-scaling proof dumps verify unchanged and the
+    unscaled cos/sin expression stays byte-identical to before."""
     SEQ: int
     d_h: int                       # head dim; must be even
     s_x: int                       # input integer scale
     base: float = 10000.0          # RoPE frequency base (Llama default)
     position_offset: int = 0
     heads: int = 1                 # H; cos/sin shared across heads
+    # Llama-3 rope_scaling (all-defaults = disabled):
+    scale_factor: float = 1.0      # rope_scaling.factor
+    low_freq_factor: float = 1.0
+    high_freq_factor: float = 1.0
+    original_max_pos: int = 0      # original_max_position_embeddings; 0 = off
+
+
+def _rope_scaled_inv_freq(cfg: RoPEConfig, k: int) -> float:
+    """Inverse frequency for dim-pair k under the Llama-3 wavelength ramp
+    (transformers _compute_llama3_parameters, scalarized): wavelengths short
+    of original_ctx/high_freq_factor keep their frequency, wavelengths beyond
+    original_ctx/low_freq_factor divide by `scale_factor`, and the band in
+    between interpolates smoothly. MIRRORED line-for-line in the Rust
+    verifier (handlers.rs rope_scaled_inv_freq) — any change here must change
+    there identically, in the same f64 expression order, or every RoPE
+    constraint diverges. Golden vectors: tests/test_rope_scaling.py and the
+    rope_scaling test mod in handlers.rs."""
+    inv_freq = 1.0 / (cfg.base ** (2 * k / cfg.d_h))
+    wavelen = 2.0 * math.pi / inv_freq
+    low_wl = cfg.original_max_pos / cfg.low_freq_factor
+    high_wl = cfg.original_max_pos / cfg.high_freq_factor
+    if wavelen > low_wl:
+        return inv_freq / cfg.scale_factor
+    if wavelen < high_wl:
+        return inv_freq
+    smooth = (cfg.original_max_pos / wavelen - cfg.low_freq_factor) / (
+        cfg.high_freq_factor - cfg.low_freq_factor)
+    return (1.0 - smooth) * inv_freq / cfg.scale_factor + smooth * inv_freq
 
 
 def _rope_cos_sin(cfg: RoPEConfig) -> Tuple[List[int], List[int]]:
     """Build c, s integer tables at scale s_x, indexed by seq·(d_h/2)+k.
     Both prover and verifier compute these identically; the cross-claim
-    soundness of RoPE relies on the same expression here."""
+    soundness of RoPE relies on the same expression here. The unscaled
+    path keeps the original pos/denominator form untouched (NOT pos·inv_freq,
+    which rounds differently in the last ulp) so old tables stay identical."""
     half = cfg.d_h // 2
     c_l, s_l = [], []
     for seq in range(cfg.SEQ):
         pos = seq + cfg.position_offset
         for k in range(half):
-            theta_k = pos / (cfg.base ** (2 * k / cfg.d_h))
+            if cfg.original_max_pos == 0:
+                theta_k = pos / (cfg.base ** (2 * k / cfg.d_h))
+            else:
+                theta_k = pos * _rope_scaled_inv_freq(cfg, k)
             c_l.append(int(round(math.cos(theta_k) * cfg.s_x)) % P)
             s_l.append(int(round(math.sin(theta_k) * cfg.s_x)) % P)
     return c_l, s_l

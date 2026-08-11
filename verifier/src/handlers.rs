@@ -108,15 +108,49 @@ impl Build {
     }
 }
 
-// _rope_cos_sin_real: c,s integer tables at scale s_x, indexed seq·(d_h/2)+k.
-fn rope_cos_sin(seq: usize, d_h: usize, s_x: u64, base: f64, pos_off: usize) -> (Vec<u64>, Vec<u64>) {
+// rope_scaled_inv_freq: inverse frequency for dim-pair k under the Llama-3
+// wavelength ramp (rope_scaling, rope_type "llama3"). MIRROR of the prover's
+// claims.py _rope_scaled_inv_freq — must stay line-for-line identical, in the
+// same f64 expression order, or every RoPE constraint diverges. Golden
+// vectors: rope_scaling_tests below + prover tests/test_rope_scaling.py.
+fn rope_scaled_inv_freq(base: f64, d_h: usize, k: usize, scale_factor: f64,
+                        low_freq_factor: f64, high_freq_factor: f64,
+                        original_max_pos: f64) -> f64 {
+    let inv_freq = 1.0 / base.powf(2.0 * k as f64 / d_h as f64);
+    let wavelen = 2.0 * std::f64::consts::PI / inv_freq;
+    let low_wl = original_max_pos / low_freq_factor;
+    let high_wl = original_max_pos / high_freq_factor;
+    if wavelen > low_wl {
+        return inv_freq / scale_factor;
+    }
+    if wavelen < high_wl {
+        return inv_freq;
+    }
+    let smooth = (original_max_pos / wavelen - low_freq_factor)
+        / (high_freq_factor - low_freq_factor);
+    (1.0 - smooth) * inv_freq / scale_factor + smooth * inv_freq
+}
+
+// _rope_cos_sin mirror: c,s integer tables at scale s_x, indexed seq·(d_h/2)+k.
+// The unscaled path (original_max_pos == 0) keeps the original p/denominator
+// form untouched (NOT p·inv_freq, which rounds differently in the last ulp)
+// so tables from pre-scaling dumps stay identical.
+fn rope_cos_sin(seq: usize, d_h: usize, s_x: u64, base: f64, pos_off: usize,
+                scale_factor: f64, low_freq_factor: f64, high_freq_factor: f64,
+                original_max_pos: f64) -> (Vec<u64>, Vec<u64>) {
     let half = d_h / 2;
     let mut cos = Vec::new();
     let mut sin = Vec::new();
     for s in 0..seq {
         let p = (s + pos_off) as f64;
         for k in 0..half {
-            let theta = p / base.powf(2.0 * k as f64 / d_h as f64);
+            let theta = if original_max_pos == 0.0 {
+                p / base.powf(2.0 * k as f64 / d_h as f64)
+            } else {
+                p * rope_scaled_inv_freq(base, d_h, k, scale_factor,
+                                         low_freq_factor, high_freq_factor,
+                                         original_max_pos)
+            };
             cos.push(((theta.cos() * s_x as f64).round() as i128).rem_euclid(P as i128) as u64);
             sin.push(((theta.sin() * s_x as f64).round() as i128).rem_euclid(P as i128) as u64);
         }
@@ -216,7 +250,15 @@ fn compile_op(cl: &Claim, ci: usize, s_op: &[u8], b: &mut Build, cfg: &Config) {
             let pos_off = cl.cfg_int("config", "position_offset") as usize;
             // θ from the claim (Maverick: 500000); 10000.0 default for old dumps.
             let rope_base = cl.cfg_f64_or("config", "base", 10000.0);
-            let (cos, sin) = rope_cos_sin(seq, d_h, s_x, rope_base, pos_off);
+            // Llama-3 rope_scaling ramp; defaults (original_max_pos=0 = OFF)
+            // match RoPEConfig's, so pre-scaling dumps verify unchanged.
+            // (serde as_f64 reads the int-serialized original_max_pos fine.)
+            let (cos, sin) = rope_cos_sin(
+                seq, d_h, s_x, rope_base, pos_off,
+                cl.cfg_f64_or("config", "scale_factor", 1.0),
+                cl.cfg_f64_or("config", "low_freq_factor", 1.0),
+                cl.cfg_f64_or("config", "high_freq_factor", 1.0),
+                cl.cfg_f64_or("config", "original_max_pos", 0.0));
             let (cos, sin) = (Arc::new(cos), Arc::new(sin));   // share one table across all rows
             b.push_family(target, ell, Expander::RopeXrot { base, h, d_h });
             let x = cl.var("x");
@@ -1057,4 +1099,59 @@ pub fn compile_claims(cs: &mut ClaimSet, s_op: &[u8]) -> Constraints {
         settle_table(&by_id[&tid], &mut b, ell);
     }
     Constraints { families: b.families, rhs: b.rhs, quadratic: b.quad, m_total: mt }
+}
+
+#[cfg(test)]
+mod rope_scaling_tests {
+    //! Golden vectors shared bit-for-bit with the prover's
+    //! tests/test_rope_scaling.py (generated from the Python implementation).
+    //! If either side's table computation drifts, this fails here instead of
+    //! rejecting whole proofs with no diagnostic. Config A (d_h=8) exercises
+    //! all three ramp branches; config B is the Llama-3.2-1B head dim.
+    use super::rope_cos_sin;
+    use crate::field::P;
+
+    // factor, low_freq_factor, high_freq_factor, original_max_pos
+    const SC: (f64, f64, f64, f64) = (32.0, 1.0, 4.0, 8192.0);
+
+    const A_COS: [u64; 12] = [4096, 4096, 4096, 4096, 2213, 4093, 4096, 4096,
+                              18446744069414582616, 4084, 4096, 4096];
+    const A_SIN: [u64; 12] = [0, 0, 0, 0, 3447, 154, 2, 0, 3724, 308, 4, 0];
+    const B_COS: [u64; 32] = [18446744069414580266, 18446744069414582651, 1012,
+                              2620, 3422, 3795, 3962, 4037, 4070, 4085, 4091,
+                              4094, 4095, 4096, 4096, 4096, 4096, 4096, 4096,
+                              4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096,
+                              4096, 4096, 4096, 4096, 4096];
+    const B_SIN: [u64; 32] = [578, 3740, 3969, 3148, 2251, 1542, 1038, 693,
+                              461, 306, 203, 135, 90, 59, 39, 16, 5, 1, 0, 0,
+                              0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
+    #[test]
+    fn golden_vectors_match_python() {
+        let (c, s) = rope_cos_sin(3, 8, 4096, 500000.0, 0, SC.0, SC.1, SC.2, SC.3);
+        assert_eq!(c, A_COS.to_vec(), "config A cos drifted");
+        assert_eq!(s, A_SIN.to_vec(), "config A sin drifted");
+        let (c, s) = rope_cos_sin(1, 64, 4096, 500000.0, 3, SC.0, SC.1, SC.2, SC.3);
+        assert_eq!(c, B_COS.to_vec(), "config B cos drifted");
+        assert_eq!(s, B_SIN.to_vec(), "config B sin drifted");
+    }
+
+    #[test]
+    fn unscaled_path_is_legacy() {
+        // original_max_pos=0 disables the ramp: must equal the ORIGINAL
+        // p/denominator expression byte-for-byte (old dumps verify unchanged).
+        let (seq, d_h, s_x, base, off) = (5usize, 8usize, 4096u64, 10000.0f64, 2usize);
+        let (c, s) = rope_cos_sin(seq, d_h, s_x, base, off, 1.0, 1.0, 1.0, 0.0);
+        let (mut ec, mut es) = (Vec::new(), Vec::new());
+        for sq in 0..seq {
+            let p = (sq + off) as f64;
+            for k in 0..d_h / 2 {
+                let theta = p / base.powf(2.0 * k as f64 / d_h as f64);
+                ec.push(((theta.cos() * s_x as f64).round() as i128).rem_euclid(P as i128) as u64);
+                es.push(((theta.sin() * s_x as f64).round() as i128).rem_euclid(P as i128) as u64);
+            }
+        }
+        assert_eq!(c, ec);
+        assert_eq!(s, es);
+    }
 }
