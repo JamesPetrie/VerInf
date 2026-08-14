@@ -108,5 +108,7 @@ cheaper dev geometry, random weights, a stale report or missing policy.
 | [routed-projected-protocol.md](analysis/routed-projected-protocol.md) | Normative construction and security reduction |
 | [routed-projected-status.md](analysis/routed-projected-status.md) | The only authority on what is implemented |
 | [routed_projected_4h_model.py](analysis/routed_projected_4h_model.py) | Operation ledger and the envelope |
+| [routed-projection-note](https://claude.ai/code/artifact/4478fd6b-b774-44f9-9481-26f973a4309f) | Illustrated explainer: why projection, worked example, before/after cost model ([source](analysis/routed-projection-note.html), [LaTeX](analysis/routed-projection-note.tex)) |
+| [prove-time graph & calculator](https://claude.ai/code/artifact/21556b18-1b64-42a4-ab7a-7d60c196bce3) | Interactive cost model: dependency graph, live knobs incl. the projection toggle ([source](analysis/bench/prove_time_graph.html)) |
 | `prover/routed_projected.py`, `verifier/src/handlers.rs` | The claim and its independent Rust twin |
 | `prover/admission.py` | Fail-closed startup gate |
