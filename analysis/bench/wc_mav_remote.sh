@@ -20,7 +20,9 @@ MIN_MBPS="${MIN_MBPS:-40}"
 mkdir -p "$OUT" "$MODEL_DIR"
 export HF_HUB_ENABLE_HF_TRANSFER=1
 step() { echo "=== [$(date -u +%H:%M:%S)] $* ==="; }
-fail() { echo "WCMAV-ABORT: $*"; echo "{\"aborted\":\"$*\"}" > "$OUT/campaign_results.json"; exit 1; }
+fail() { echo "WCMAV-ABORT: $*"
+  tail -n 200 /workspace/suite.log > "$OUT/abort_tail.txt" 2>/dev/null || true
+  echo "{\"aborted\":\"$*\"}" > "$OUT/campaign_results.json"; exit 1; }
 
 step "0. network probe"
 URL="https://huggingface.co/$REPO/resolve/main/$QUANT/${BASE}-00001-of-0000${SHARDS}.gguf"

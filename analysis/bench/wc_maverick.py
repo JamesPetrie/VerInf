@@ -45,7 +45,12 @@ from cuda_primitives import P, gl_axpy, gl_matvec, ntt_forward_batched, poly_eva
 from loader import MAVERICK_MOE_TENSORS, _gguf_by_name, quantize_to_field
 
 SCALE = 1 << 12
-POLY_CHUNK = 4096          # NTT batch rows (VRAM cap ~ POLY_CHUNK*N_w*8B = 1 GB)
+POLY_CHUNK = 4096
+STAGE = {"dequant": 0.0, "pack_ntt": 0.0, "merkle_gather": 0.0}
+# widths above this take the LEAN path: no (B x width) GPU buffer — the
+# lm-head/embed group (width 202048) needs 24.8 GB for that buffer alone,
+# which is exactly what OOM'd the first full run on a 48 GB card.
+WIDE_LIMIT = int(os.environ.get("WC_WIDE_LIMIT", 32768))
 
 
 def sync():
@@ -88,12 +93,13 @@ def enumerate_units(gguf_path, n_layers, n_experts, lm_head):
 
 
 def load_unit_field(gguf_path, name, expert):
-    """Dequantize one unit to (d_out, d_in) uint64 field rows on the GPU.
+    """[timed: STAGE['dequant']] Dequantize one unit to (d_out, d_in) uint64 field rows on the GPU.
     Stacked-expert tensors are sliced on the RAW quantized memmap first
     (loader's convention), so no full-tensor dequant ever happens.  K-quants
     take the fused GPU path (kquant_to_field) — the CPU numpy dequant of a
     245 GB GGUF three times over would dominate all three passes."""
     from gguf.quants import dequantize
+    t0 = time.time()
     t = _gguf_by_name(gguf_path)[name]
     qt = t.tensor_type.name
     if qt in ("Q4_K", "Q5_K", "Q6_K"):
@@ -102,16 +108,67 @@ def load_unit_field(gguf_path, name, expert):
         d_out = int(raw.shape[0])
         raw = np.ascontiguousarray(raw.reshape(d_out, -1))
         w = kquant_to_field(torch.from_numpy(raw).cuda(), qt, SCALE)
+        torch.cuda.synchronize(); STAGE["dequant"] += time.time() - t0
         return w.view(d_out, w.numel() // d_out)
     if expert is not None:
         arr = dequantize(t.data[expert:expert + 1], t.tensor_type)[0]
     else:
         arr = dequantize(t.data, t.tensor_type)
     w = torch.from_numpy(np.ascontiguousarray(arr)).cuda()
-    return quantize_to_field(w, SCALE)      # (d_out, d_in) uint64
+    out = quantize_to_field(w, SCALE)       # (d_out, d_in) uint64
+    torch.cuda.synchronize(); STAGE["dequant"] += time.time() - t0
+    return out
 
 
 # ── width-group streaming ────────────────────────────────────────────────────
+
+class WideGroup:
+    """Lean row stream for very wide output groups (width > WIDE_LIMIT).
+    Units are parked on CPU u64; blocks of B input rows exist only as
+    (unit, row-span) bookkeeping, and consumers receive block descriptors
+    instead of a materialized (B, width) tensor.  Poly-chunks are then
+    assembled straight from the unit slices (VRAM = one chunk)."""
+
+    def __init__(self, width, params):
+        self.width, self.params = width, params
+        self.parts = []                    # (unit_cpu (d_out,d_in), row0_in_group)
+        self.total_rows = 0
+
+    def feed_unit(self, w_gpu):
+        self.parts.append((w_gpu.cpu(), self.total_rows))
+        self.total_rows += w_gpu.size(1)
+
+    @property
+    def blocks(self):
+        return -(-self.total_rows // self.params.B) if self.total_rows else 0
+
+    def block_parts(self, block):
+        """Yield (unit_cpu, unit_col0, block_col0, ncols) for block's rows."""
+        lo, hi = block * self.params.B, (block + 1) * self.params.B
+        for w_cpu, r0 in self.parts:
+            d_in = w_cpu.size(1)
+            a, b = max(lo, r0), min(hi, r0 + d_in)
+            if a < b:
+                yield w_cpu, a - r0, a - lo, b - a
+
+
+def wide_block_codewords(grp, block, mask_seed, params):
+    """Poly-chunked coefficient rows for one WideGroup block, no B x width
+    buffer: coeffs[:, blockcol : blockcol+ncols] = unit[j0:j1, col0:...]."""
+    n = grp.width
+    masks = block_masks(mask_seed, n, block, params)
+    for j0 in range(0, n, POLY_CHUNK):
+        j1 = min(j0 + POLY_CHUNK, n)
+        t0 = time.time()
+        coeffs = torch.zeros(j1 - j0, params.N_w, dtype=torch.uint64,
+                             device="cuda")
+        for w_cpu, c0, bc0, ncols in grp.block_parts(block):
+            coeffs[:, bc0:bc0 + ncols] = w_cpu[j0:j1, c0:c0 + ncols].cuda()
+        coeffs[:, params.B:params.K_w] = masks[j0:j1]
+        ntt_forward_batched(coeffs)
+        torch.cuda.synchronize(); STAGE["pack_ntt"] += time.time() - t0
+        yield j0, j1, coeffs
+
 
 class GroupStream:
     """Per-width row stream: input-coord rows of all maps of one output
@@ -148,18 +205,31 @@ class GroupStream:
             self.fill = 0
 
 
-def stream_all(gguf_path, units, params, consume, groups=None):
-    """Drive every unit through its width group in manifest order."""
-    groups = {} if groups is None else groups
+def stream_all(gguf_path, units, params, consume, wide_consume=None):
+    """Drive every unit through its width group in manifest order.  Narrow
+    groups materialize (B, width) blocks; wide groups (width > WIDE_LIMIT)
+    are parked on CPU and delivered as block descriptors to wide_consume."""
+    groups = {}
     for name, e, d_out, d_in in units:
         w = load_unit_field(gguf_path, name, e)          # (d_out, d_in)
+        if d_out > WIDE_LIMIT:
+            groups.setdefault(d_out, WideGroup(d_out, params)).feed_unit(w)
+            del w
+            continue
         g = groups.setdefault(d_out, GroupStream(d_out, params))
         # rows of the group stream are INPUT coords: feed W^T in chunks
         for lo in range(0, d_in, params.B):
-            g.feed(w[:, lo:lo + params.B].T.contiguous(), consume)
+            # uint64 transpose via the bit-preserving int64 view
+            g.feed(w[:, lo:lo + params.B].view(torch.int64).T.contiguous()
+                    .view(torch.uint64), consume)
         del w
     for width in sorted(groups):
-        groups[width].flush(consume)
+        g = groups[width]
+        if isinstance(g, WideGroup):
+            for blk in range(g.blocks):
+                wide_consume(g, width, blk)
+        else:
+            g.flush(consume)
     return groups
 
 
@@ -179,9 +249,12 @@ def block_codewords(rows, width, block, mask_seed, params):
         j1 = min(j0 + POLY_CHUNK, width)
         coeffs = torch.zeros(j1 - j0, params.N_w, dtype=torch.uint64,
                              device="cuda")
-        coeffs[:, :params.B] = rows[:, j0:j1].T
+        t0 = time.time()
+        coeffs[:, :params.B] = (rows[:, j0:j1].view(torch.int64).T
+                                .contiguous().view(torch.uint64))
         coeffs[:, params.B:params.K_w] = masks[j0:j1]
         ntt_forward_batched(coeffs)
+        torch.cuda.synchronize(); STAGE["pack_ntt"] += time.time() - t0
         yield j0, j1, coeffs                 # (chunk, N_w) evaluations
 
 
@@ -209,6 +282,8 @@ def main():
     n_weights = sum(o * i for _, _, o, i in units)
     print(f"units={len(units)}  weights={n_weights:,}  "
           f"widths={sorted(set(o for _, _, o, _ in units))}")
+    for u in units[:12]:
+        print("  unit:", u)
 
     # pre-scan: poly counts per width (blocks known only from row totals)
     rows_per_width = {}
@@ -233,14 +308,20 @@ def main():
             acc.update(cw)
         order_check.append((width, block))
 
+    def wide_a(grp, width, block):
+        for j0, j1, cw in wide_block_codewords(grp, block, mask_seed, params):
+            acc.update(cw)
+        order_check.append((width, block))
+
     # feed strictly in (width-sorted, block) order so poly indices are
     # reproducible: stream into per-width SPOOLS first is too big — instead
     # stream units grouped by width via two-phase unit ordering
     units_by_width = sorted(units, key=lambda u: (u[2], units.index(u)))
-    stream_all(args.gguf, units_by_width, params, consume_a)
+    stream_all(args.gguf, units_by_width, params, consume_a, wide_a)
     art = _finalize_merkle_artifact(acc)
     sync(); tA = time.time() - tA
-    print(f"pass A (enroll): {tA:.1f} s  root={art.root.hex()[:16]}…")
+    print(f"pass A (enroll): {tA:.1f} s  root={art.root.hex()[:16]}…  "
+          f"stages: {dict((k, round(v,1)) for k,v in STAGE.items())}")
 
     # ── coins after R1 ──────────────────────────────────────────────────────
     s_rho = pr.fs_seed("wc/rho", s_r1, art.root, manifest_digest,
@@ -261,10 +342,26 @@ def main():
         p = gl_matvec(rows.contiguous(), rho_t[width])            # (B,)
         p_trace[width][block * params.B:(block + 1) * params.B] = p.cpu()
         masks = block_masks(mask_seed, width, block, params)      # (n, lam)
-        pi[width][block] = gl_matvec(masks.T.contiguous(),
-                                     rho_t[width]).cpu()
+        pi[width][block] = gl_matvec(masks.view(torch.int64).T.contiguous()
+                                     .view(torch.uint64), rho_t[width]).cpu()
 
-    stream_all(args.gguf, units_by_width, params, consume_b)
+    def wide_b(grp, width, block):
+        # P[block rows] = sum_j rho_j W[j, :] per unit slice, chunked over j
+        pb = torch.zeros(params.B, dtype=torch.uint64, device="cuda")
+        for w_cpu, c0, bc0, ncols in grp.block_parts(block):
+            seg = torch.zeros(ncols, dtype=torch.uint64, device="cuda")
+            for j0 in range(0, width, POLY_CHUNK):
+                j1 = min(j0 + POLY_CHUNK, width)
+                wt = (w_cpu[j0:j1, c0:c0 + ncols].cuda()
+                      .view(torch.int64).T.contiguous().view(torch.uint64))
+                gl_axpy(seg, 1, gl_matvec(wt, rho_t[width][j0:j1]))
+            pb[bc0:bc0 + ncols] = seg
+        p_trace[width][block * params.B:(block + 1) * params.B] = pb.cpu()
+        masks = block_masks(mask_seed, width, block, params)
+        pi[width][block] = gl_matvec(masks.view(torch.int64).T.contiguous()
+                                     .view(torch.uint64), rho_t[width]).cpu()
+
+    stream_all(args.gguf, units_by_width, params, consume_b, wide_b)
     r2 = hashlib.sha256(b"wc-r2")
     for n in widths:
         r2.update(p_trace[n].numpy().tobytes())
@@ -302,7 +399,14 @@ def main():
             opened[base + j0:base + j1] = cols.cpu()
             chk.update(cols)
 
-    stream_all(args.gguf, units_by_width, params, consume_c)
+    def wide_c(grp, width, block):
+        base = poly_base[width] + block * width
+        for j0, j1, cw in wide_block_codewords(grp, block, mask_seed, params):
+            cols = cw.view(torch.int64)[:, idx_t].view(torch.uint64)
+            opened[base + j0:base + j1] = cols.cpu()
+            chk.update(cols)
+
+    stream_all(args.gguf, units_by_width, params, consume_c, wide_c)
     chk_digests = chk.finalize().cpu().numpy()
     drift = any(bytes(chk_digests[k].tolist()) != art.column_hashes[i]
                 for k, i in enumerate(eta_idx))
@@ -365,7 +469,9 @@ def main():
           f"{params.q_w}/{params.lam} mask points")
     if args.json:
         json.dump({"weights": n_weights, "polys": total_polys,
-                   "units": len(units), "root": art.root.hex(),
+                   "units": len(units),
+                   "unit_list": [[n, e, o, i] for n, e, o, i in units],
+                   "stages": STAGE, "root": art.root.hex(),
                    "t_enroll": tA, "t_bridge": tB, "t_columns": tC,
                    "t_verify": t_ver, "accept": ok, "fails": fails,
                    "ns_per_param_enroll": tA / n_weights * 1e9,
