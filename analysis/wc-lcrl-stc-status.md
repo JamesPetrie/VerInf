@@ -44,11 +44,27 @@ Spec: [wc-lcrl-stc-spec.md](wc-lcrl-stc-spec.md). Branch: `wc-lcrl-stc`
   gain-block groups; enrollment-from-GGUF (current enrollment takes
   already-decoded tensors and does not verify them against a GGUF digest).
 
+## Remote validation (vast, 2026-08-14)
+
+Quadro RTX 8000 ($0.241/h, instance 47736613, 445 s wall ≈ $0.03,
+destroyed after download). `wc_remote.sh`: gate_failures = 0
+(wc_bridge 8/8 + fiat_shamir + routed_projected on the box). Production
+geometry, growing slices:
+
+| slice | weights | enroll ns/param | bridge prove ns/param |
+|---|---|---|---|
+| 4096 × 1 blk | 62.9M | 62.9 | 1.00 |
+| 4096 × 4 blk | 251.7M | 50.6 | 0.41 |
+| 4096+11008 × 2 blk | 464.0M | 49.3 | 0.38 |
+
+Per-param cost still falling with slice size (fixed overhead amortizes),
+so linear extrapolation from the largest slice is an upper bound.
+
 ## Modeled (not measured) production numbers
 
-Linear extrapolation of the V100 slice: 400B enrollment ≈ 29.5k s
-(one-time, mostly CPU Merkle — a GPU hash cuts this hard), bridge prove
-≈ 453 s/proof. What it would replace in the current admission model:
-persistent q_lin fold 3 625 s + persistent openings 1 812 s per proof.
-Both sides are models until the integrated pipeline exists; treat the
-delta as a hypothesis, not a result.
+From the 464M-slice rates: 400B enrollment ≈ 19.7k s one-time (dominated
+by the CPU sha256 Merkle — a GPU BLAKE3 accumulator cuts this hard),
+bridge prove ≈ 150 s/proof. What it would replace in the current
+admission model: persistent q_lin fold 3 625 s + persistent openings
+1 812 s per proof. Both sides are models until the integrated pipeline
+exists; treat the delta as a hypothesis, not a result.

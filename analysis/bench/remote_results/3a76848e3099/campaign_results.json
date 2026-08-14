@@ -1,0 +1,48 @@
+{
+  "kind": "wc_bridge_validation",
+  "gate_failures": 0,
+  "runs": {
+    "wc_bench_4096_b1.json": {
+      "params": {
+        "widths": "4096",
+        "blocks": 1,
+        "toy": false,
+        "json": "analysis/bench/remote_results/3a76848e3099/wc_bench_4096_b1.json"
+      },
+      "n_params": 62914560,
+      "t_enroll": 3.954557418823242,
+      "t_prove": 0.06289148330688477,
+      "t_verify": 0.20270204544067383,
+      "ns_per_param_enroll": 62.85599738475866,
+      "ns_per_param_prove": 0.9996332058411402
+    },
+    "wc_bench_4096_b4.json": {
+      "params": {
+        "widths": "4096",
+        "blocks": 4,
+        "toy": false,
+        "json": "analysis/bench/remote_results/3a76848e3099/wc_bench_4096_b4.json"
+      },
+      "n_params": 251658240,
+      "t_enroll": 12.742367267608643,
+      "t_prove": 0.10196208953857422,
+      "t_verify": 0.388608455657959,
+      "ns_per_param_enroll": 50.633618305558535,
+      "ns_per_param_prove": 0.4051609418335526
+    },
+    "wc_bench_4096x11008_b2.json": {
+      "params": {
+        "widths": "4096,11008",
+        "blocks": 2,
+        "toy": false,
+        "json": "analysis/bench/remote_results/3a76848e3099/wc_bench_4096x11008_b2.json"
+      },
+      "n_params": 463994880,
+      "t_enroll": 22.88086223602295,
+      "t_prove": 0.17452526092529297,
+      "t_verify": 0.6540212631225586,
+      "ns_per_param_enroll": 49.31274723553619,
+      "ns_per_param_prove": 0.37613617832440943
+    }
+  }
+}
