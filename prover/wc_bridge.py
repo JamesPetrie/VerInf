@@ -62,6 +62,56 @@ class WcParams:
         the N_w sampled distinct points."""
         return math.comb(self.K_w - 1, self.q_w) / math.comb(self.N_w, self.q_w)
 
+    @staticmethod
+    def min_qw_for_tau(tau: int) -> int:
+        """Review §7: the bridge must never be weaker than the fresh Ligero
+        part — at rate 1/2 each eta point buys ~1.0001 bits vs (3/4)^tau's
+        0.415 bits per audited column, so q_w >= ceil(0.416 * tau)."""
+        return math.ceil(0.416 * tau)
+
+
+def _params_bytes(params: WcParams) -> bytes:
+    """Geometry pinned into every transcript coin (review §5.5): a proof
+    produced under different (B, lam, N_w, q_w) derives different coins and
+    cannot be replayed against this verifier's parameters."""
+    return b"wc-geom" + b"".join(
+        v.to_bytes(8, "little")
+        for v in (params.B, params.lam, params.N_w, params.q_w))
+
+
+class LedgerExhausted(Exception):
+    """Enrollment mask budget would be exceeded (review §4.1)."""
+
+
+@dataclass
+class EnrollmentLedger:
+    """Prover-side union of all eta points ever opened against one
+    enrollment root.  Up to lam DISTINCT points the Vandermonde mask system
+    is underdetermined (perfect hiding); from point lam+1 every opening is a
+    linear equation on the weight coefficients.  The margin rule refuses a
+    proof attempt when fewer than q_w unspent points remain — a refresh
+    (re-enrollment with fresh masks, deterministically re-verified against
+    the same canonical model) resets the budget."""
+    lam: int
+    spent: set = field(default_factory=set)
+
+    def remaining(self) -> int:
+        return self.lam - len(self.spent)
+
+    def precheck(self, q_w: int):
+        if self.remaining() < q_w:
+            raise LedgerExhausted(
+                f"enrollment mask budget: {self.remaining()} points remain "
+                f"< q_w={q_w}; refresh the enrollment before proving")
+
+    def charge(self, eta_idx):
+        new = self.spent | set(eta_idx)
+        if len(new) > self.lam:
+            raise LedgerExhausted(
+                f"enrollment mask budget exceeded: {len(new)} distinct "
+                f"points > lam={self.lam}")
+        self.spent = new
+
 
 def _coeffs_to_codewords(coeffs: torch.Tensor, params: WcParams) -> torch.Tensor:
     """(m, K_w) COEFFICIENT rows -> (m, N_w) evaluations on the NTT domain.
@@ -208,13 +258,19 @@ def _commit_r2(p_trace: Dict[int, torch.Tensor],
     return h.digest()
 
 
-def prove_bridge(enr: Enrollment, s_r1: bytes) -> BridgeProof:
+def prove_bridge(enr: Enrollment, s_r1: bytes,
+                 ledger: Optional[EnrollmentLedger] = None) -> BridgeProof:
     """s_r1: transcript seed AFTER R1 (all semantic outputs fixed) — rho must
     not be derivable earlier (spec §0.2).  alpha/eta are derived only after
-    the R2 commitment of P_trace and pi (spec §0.4)."""
+    the R2 commitment of P_trace and pi (spec §0.4).  With a ledger, the
+    mask budget is prechecked before any work and charged with the drawn
+    eta set (review §4.1)."""
     params = enr.params
+    if ledger is not None:
+        ledger.precheck(params.q_w)
     # --- coins after R1: one shared rho per output width --------------------
-    s_rho = pr.fs_seed("wc/rho", s_r1, enr.root, enr.manifest_digest)
+    s_rho = pr.fs_seed("wc/rho", s_r1, enr.root, enr.manifest_digest,
+                       _params_bytes(params))
     rho: Dict[int, List[int]] = {}
     for gi, n in enumerate(sorted(enr.groups)):
         rho[n] = pr.op_vec(s_rho, gi, "rho", n)
@@ -241,6 +297,8 @@ def prove_bridge(enr: Enrollment, s_r1: bytes) -> BridgeProof:
             bi += 1
     eta_idx = pr.random_columns_n(pr.fs_seed("wc/eta", s_late),
                                   params.q_w, params.N_w)
+    if ledger is not None:
+        ledger.charge(eta_idx)
     domain = _rs_domain(params)
     # uint64 CUDA tensors lack fancy indexing; gather via a bit-preserving
     # int64 view (values are raw 64-bit field words either way).
@@ -255,6 +313,47 @@ def prove_bridge(enr: Enrollment, s_r1: bytes) -> BridgeProof:
                        eta_idx, opened, paths)
 
 
+class ChainError(Exception):
+    """Spec §0.8: a persistent block is not in exactly one
+    GGUF -> F -> W rho -> P_trace -> terminal-constraint chain."""
+
+
+class ChainRegistry:
+    """Compile-time enforcement of the §0.8 invariant.  Terminal constraints
+    register the P_trace slice they consume; the SAME tensor object the
+    bridge committed must be passed — an unlinked copy (different storage)
+    is the classic bridge bug and raises immediately.  finalize() fails
+    closed if any block was consumed zero or more than one times."""
+
+    def __init__(self, enr: Enrollment, proof: BridgeProof):
+        self._B = enr.params.B
+        self._canon = {n: proof.p_trace[n] for n in enr.groups}
+        self._blocks = {n: enr.groups[n].n_blocks for n in enr.groups}
+        self._consumed: Dict[Tuple[int, int], int] = {}
+
+    def consume(self, width: int, block: int, tensor: torch.Tensor):
+        canon = self._canon[width]
+        if tensor.data_ptr() != canon.data_ptr():
+            raise ChainError(
+                f"terminal constraint for width {width} reads an UNLINKED "
+                f"COPY of P_trace (different storage) — spec 0.3 forbids it")
+        if not (0 <= block < self._blocks[width]):
+            raise ChainError(f"width {width} has no block {block}")
+        key = (width, block)
+        self._consumed[key] = self._consumed.get(key, 0) + 1
+        if self._consumed[key] > 1:
+            raise ChainError(
+                f"P_trace block {key} consumed twice — not exactly one chain")
+
+    def finalize(self):
+        missing = [(n, a) for n in self._blocks for a in range(self._blocks[n])
+                   if (n, a) not in self._consumed]
+        if missing:
+            raise ChainError(
+                f"persistent blocks outside any chain: {missing[:4]}"
+                f"{'...' if len(missing) > 4 else ''} — compile must fail")
+
+
 # ---------------------------------------------------------------------------
 # Bridge — verifier side (CPU, python ints; mirrors the future Rust twin)
 # ---------------------------------------------------------------------------
@@ -263,14 +362,20 @@ def verify_bridge(root: bytes, manifest_digest: bytes,
                   group_meta: Dict[int, Tuple[int, int]],   # width->(blocks,n)
                   proof: BridgeProof, s_r1: bytes,
                   params: WcParams) -> Tuple[bool, str]:
-    # recompute every coin — none is trusted from the proof (spec §0.4)
-    s_rho = pr.fs_seed("wc/rho", s_r1, root, manifest_digest)
+    # recompute every coin — none is trusted from the proof (spec §0.4);
+    # the geometry is part of every coin (review §5.5)
+    s_rho = pr.fs_seed("wc/rho", s_r1, root, manifest_digest,
+                       _params_bytes(params))
     for gi, n in enumerate(sorted(group_meta)):
         if proof.rho[n] != pr.op_vec(s_rho, gi, "rho", n):
             return False, "rho mismatch"
     s_late = pr.fs_seed("wc/late", s_rho, _commit_r2(proof.p_trace, proof.pi))
     eta_idx = pr.random_columns_n(pr.fs_seed("wc/eta", s_late),
                                   params.q_w, params.N_w)
+    # H_qw assumes sampling WITHOUT replacement (review §5.3) — check the
+    # CLAIMED set first so the reject reason is precise
+    if len(set(proof.eta_idx)) != params.q_w:
+        return False, "eta not distinct"
     if eta_idx != proof.eta_idx:
         return False, "eta mismatch"
     # c must aggregate exactly the committed P_trace|pi blocks

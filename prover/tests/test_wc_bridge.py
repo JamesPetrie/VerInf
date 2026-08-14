@@ -125,3 +125,136 @@ def test_zero_pad_tail_is_bound():
     ok, _ = wc.verify_bridge(enr.root, enr.manifest_digest, meta,
                              proof, S_R1, PARAMS)
     assert not ok, "padded tail is not bound"
+
+
+# ---- review tests (analysis/wc-lcrl-stc-review checklist §5/§7) ------------
+
+def test_tampered_pi_rejects():
+    """A cheater that substitutes projected masks and honestly recomputes
+    c/v (masks from a different seed, same claimed root) fails the bridge."""
+    enr, meta = _toy_enrollment()
+    enr_fake = wc.build_enrollment(
+        {n: g.weights[:g.n_rows].clone() for n, g in enr.groups.items()},
+        b"other-mask-seed", b"manifest-v1", PARAMS)   # pi != z^T rho for root
+    proof = wc.prove_bridge(enr_fake, S_R1)
+    ok, why = wc.verify_bridge(enr.root, enr.manifest_digest, meta,
+                               proof, S_R1, PARAMS)
+    assert not ok, "substituted masks accepted"
+
+
+def test_geometry_is_bound():
+    """Review §5.5: a proof made under different (B, lam, N_w, q_w) must not
+    verify — the geometry is hashed into every coin."""
+    enr, meta = _toy_enrollment()
+    proof = wc.prove_bridge(enr, S_R1)
+    other = wc.WcParams(B=48, lam=16, N_w=256, q_w=8)   # same K_w, bigger N_w
+    ok, why = wc.verify_bridge(enr.root, enr.manifest_digest, meta,
+                               proof, S_R1, other)
+    assert not ok, "geometry downgrade accepted"
+
+
+def test_duplicate_eta_rejects():
+    """H_40 assumes distinct points; a proof claiming duplicates is rejected
+    before anything else."""
+    enr, meta = _toy_enrollment()
+    proof = wc.prove_bridge(enr, S_R1)
+    proof.eta_idx = [proof.eta_idx[0]] * PARAMS.q_w
+    ok, why = wc.verify_bridge(enr.root, enr.manifest_digest, meta,
+                               proof, S_R1, PARAMS)
+    assert not ok and "distinct" in why, why
+
+
+def test_ledger_margin_and_overflow():
+    """Review §4.1: refuse to prove when fewer than q_w unspent mask points
+    remain; refuse to charge past lam distinct points."""
+    enr, meta = _toy_enrollment()
+    lg = wc.EnrollmentLedger(lam=PARAMS.lam)
+    proof = wc.prove_bridge(enr, S_R1, ledger=lg)       # spends q_w of lam
+    assert len(lg.spent) == PARAMS.q_w
+    # margin: leave q_w-1 remaining -> precheck refuses before any work
+    lg2 = wc.EnrollmentLedger(lam=PARAMS.lam,
+                              spent=set(range(PARAMS.lam - PARAMS.q_w + 1)))
+    try:
+        wc.prove_bridge(enr, S_R1, ledger=lg2)
+        assert False, "prove ran with an exhausted mask budget"
+    except wc.LedgerExhausted:
+        pass
+    # overflow: direct charge past lam distinct points
+    lg3 = wc.EnrollmentLedger(lam=4, spent={0, 1, 2})
+    try:
+        lg3.charge([3, 4])
+        assert False, "charge exceeded lam"
+    except wc.LedgerExhausted:
+        pass
+
+
+def test_chain_registry_enforces_exactly_one_chain():
+    """Spec §0.8 / review §5.1: every block in exactly one chain; an
+    unlinked COPY of P_trace is a build error."""
+    enr, meta = _toy_enrollment()
+    proof = wc.prove_bridge(enr, S_R1)
+    reg = wc.ChainRegistry(enr, proof)
+    for n in enr.groups:
+        for a in range(enr.groups[n].n_blocks):
+            reg.consume(n, a, proof.p_trace[n])
+    reg.finalize()                                      # all chains closed
+    # unlinked copy -> immediate ChainError
+    reg2 = wc.ChainRegistry(enr, proof)
+    try:
+        reg2.consume(4, 0, proof.p_trace[4].clone())
+        assert False, "unlinked copy accepted"
+    except wc.ChainError:
+        pass
+    # double consumption -> ChainError
+    reg3 = wc.ChainRegistry(enr, proof)
+    reg3.consume(4, 0, proof.p_trace[4])
+    try:
+        reg3.consume(4, 0, proof.p_trace[4])
+        assert False, "double consumption accepted"
+    except wc.ChainError:
+        pass
+    # missing block -> finalize fails closed
+    reg4 = wc.ChainRegistry(enr, proof)
+    reg4.consume(4, 0, proof.p_trace[4])
+    try:
+        reg4.finalize()
+        assert False, "missing chains passed finalize"
+    except wc.ChainError:
+        pass
+
+
+def test_mask_vandermonde_full_rank():
+    """Review §4.1 hiding argument: the q_w x lam mask system (columns
+    eta^{B+h}) has full row rank over F, so <= lam opened points give a
+    perfectly hidden (underdetermined) system for the weight coefficients."""
+    enr, meta = _toy_enrollment()
+    proof = wc.prove_bridge(enr, S_R1)
+    dom = wc._rs_domain(PARAMS).cpu().tolist()
+    rows = [[pow(dom[i], PARAMS.B + h, P) for h in range(PARAMS.lam)]
+            for i in proof.eta_idx]
+    # Gaussian elimination mod P
+    rank, cols = 0, PARAMS.lam
+    m = [r[:] for r in rows]
+    for col in range(cols):
+        piv = next((r for r in range(rank, len(m)) if m[r][col] % P), None)
+        if piv is None:
+            continue
+        m[rank], m[piv] = m[piv], m[rank]
+        inv = pow(m[rank][col], P - 2, P)
+        m[rank] = [(x * inv) % P for x in m[rank]]
+        for r in range(len(m)):
+            if r != rank and m[r][col] % P:
+                f = m[r][col]
+                m[r] = [(a - f * b) % P for a, b in zip(m[r], m[rank])]
+        rank += 1
+        if rank == len(m):
+            break
+    assert rank == PARAMS.q_w, f"mask Vandermonde rank {rank} < q_w"
+
+
+def test_qw_scaling_rule():
+    """Review §7: q_w >= ceil(0.416 tau) keeps the bridge at least as strong
+    as the fresh part; the production q_w=40 covers tau up to 96."""
+    assert wc.WcParams.min_qw_for_tau(54) == 23
+    assert wc.WcParams.min_qw_for_tau(96) == 40
+    assert wc.WcParams().q_w >= wc.WcParams.min_qw_for_tau(96)
