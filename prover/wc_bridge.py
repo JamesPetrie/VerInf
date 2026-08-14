@@ -1,0 +1,320 @@
+"""WC-LCRL-STC part 1+2: coefficient-RS weight enrollment and the late
+coefficient bridge (analysis/wc-lcrl-stc-spec.md, §0.1–§0.4).
+
+The enrollment replaces online authentication of persistent weights: every
+fixed linear map is packed, per output width n, into blocks of B input
+coordinates; block a / output coordinate j becomes the polynomial
+
+    F_{n,a,j}(X) = sum_{b<B} W[aB+b, j] X^b + sum_{h<lam} z[a,j,h] X^{B+h}
+
+with lam independent random mask coefficients on top (K_w = B + lam), RS-coded
+on a domain of N_w points, stored column-major and bound by one Merkle root.
+
+The bridge (post-R2 coins): one shared rho per output width, per-block alpha,
+q_w distinct RS-domain points eta.  The prover commits the semantic projection
+P_trace = W rho and the projected masks pi = z^T rho, aggregates
+U = P_trace|pi over blocks into c = sum alpha_a U_a, and sends c plus
+v_l = c(eta_l).  The verifier opens the enrollment columns at the same eta_l
+and checks  v_l = sum_a alpha_a sum_j rho_j F_{a,j}(eta_l)  against the root.
+A wrong P_trace survives with probability <= 1/p (alpha) plus
+H_qw = C(K_w-1, q_w)/C(N_w, q_w)  (all q_w points hit a nonzero polynomial of
+degree < K_w) — 8.86e-13 at the production geometry.
+
+This module is deliberately self-contained (own transcript labels, CPU
+verifier mirroring the future Rust twin); wiring it into the 5-round
+prove_streaming transcript and the message cache is part 3.
+"""
+from __future__ import annotations
+
+import hashlib
+import math
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple
+
+import torch
+
+import protocol as pr
+from cuda_primitives import (P, gl_axpy, gl_matvec, ntt_forward,
+                             ntt_forward_batched, poly_eval)
+
+
+# Production geometry (spec §0.1).  Tests shrink these; every function takes
+# the params object, nothing reads the module constants directly.
+@dataclass(frozen=True)
+class WcParams:
+    B: int = 15360          # weight coefficients per block
+    lam: int = 1024         # random mask coefficients per (block, j)
+    N_w: int = 32768        # RS domain size
+    q_w: int = 40           # opened domain points
+
+    @property
+    def K_w(self) -> int:   # polynomial length; must be a power of two for NTT
+        return self.B + self.lam
+
+    def __post_init__(self):
+        k = self.B + self.lam
+        assert k & (k - 1) == 0, "K_w = B + lam must be a power of two"
+        assert self.N_w & (self.N_w - 1) == 0 and self.N_w > k, \
+            "N_w must be a power of two above K_w"
+
+    def soundness_bound(self) -> float:
+        """H_qw: a nonzero polynomial of degree < K_w vanishes on all q_w of
+        the N_w sampled distinct points."""
+        return math.comb(self.K_w - 1, self.q_w) / math.comb(self.N_w, self.q_w)
+
+
+def _coeffs_to_codewords(coeffs: torch.Tensor, params: WcParams) -> torch.Tensor:
+    """(m, K_w) COEFFICIENT rows -> (m, N_w) evaluations on the NTT domain.
+    NOTE: rs_encode_rows is evaluation-based (Ligero messages) and is the
+    wrong primitive here; coefficient-RS is zero-pad + forward NTT."""
+    m = coeffs.size(0)
+    padded = torch.zeros(m, params.N_w, dtype=torch.uint64, device="cuda")
+    padded[:, :params.K_w] = coeffs
+    ntt_forward_batched(padded)
+    return padded
+
+
+def _rs_domain(params: WcParams) -> torch.Tensor:
+    """The NTT evaluation domain IN OUTPUT ORDER, read off by transforming
+    the polynomial X: its evaluations are exactly the domain points.  Immune
+    to whatever ordering (natural / bit-reversed) the kernel uses, because
+    prover and verifier both work in codeword index space."""
+    x = torch.zeros(params.N_w, dtype=torch.uint64, device="cuda")
+    x[1] = 1
+    ntt_forward(x)
+    return x
+
+
+def _leaf(column_u64: torch.Tensor) -> bytes:
+    return hashlib.sha256(b"wc-leaf" + column_u64.cpu().numpy().tobytes()).digest()
+
+
+def _tree(leaves: List[bytes]) -> List[List[bytes]]:
+    levels = [leaves]
+    while len(levels[-1]) > 1:
+        lo = levels[-1]
+        if len(lo) & 1:
+            lo = lo + [lo[-1]]
+        levels.append([hashlib.sha256(lo[i] + lo[i + 1]).digest()
+                       for i in range(0, len(lo), 2)])
+    return levels
+
+
+def _path(levels: List[List[bytes]], idx: int) -> List[Tuple[bytes, int]]:
+    out = []
+    for lvl in levels[:-1]:
+        sib = idx ^ 1
+        if sib >= len(lvl):
+            sib = idx
+        out.append((lvl[sib], idx & 1))
+        idx >>= 1
+    return out
+
+
+def _verify_path(leaf: bytes, path: List[Tuple[bytes, int]], root: bytes) -> bool:
+    h = leaf
+    for sib, is_right in path:
+        h = hashlib.sha256((sib + h) if is_right else (h + sib)).digest()
+    return h == root
+
+
+@dataclass
+class EnrolledGroup:
+    width: int                     # n — output width shared by the group
+    n_rows: int                    # concatenated input coords (pre-padding)
+    n_blocks: int
+    weights: torch.Tensor          # (rows_padded, n) uint64 cuda — decoded W
+    masks: torch.Tensor            # (n_blocks, n, lam) uint64 cuda
+    codewords: torch.Tensor        # (n_blocks * n, N_w) uint64 cuda
+
+
+@dataclass
+class Enrollment:
+    params: WcParams
+    groups: Dict[int, EnrolledGroup]      # width -> group, iterated sorted
+    root: bytes
+    levels: List[List[bytes]] = field(repr=False)
+    manifest_digest: bytes = b""
+
+    def poly_count(self) -> int:
+        return sum(g.n_blocks * g.width for g in self.groups.values())
+
+
+def build_enrollment(weight_groups: Dict[int, torch.Tensor],
+                     mask_seed: bytes,
+                     manifest: bytes,
+                     params: WcParams) -> Enrollment:
+    """weight_groups: width n -> (rows, n) uint64 CUDA tensor of decoded
+    weights (input coords concatenated across all maps of that width, spec
+    §0.1).  Rows are zero-padded to a multiple of B — the manifest records
+    the true row count, so padding is not free weight material."""
+    groups: Dict[int, EnrolledGroup] = {}
+    for gi, n in enumerate(sorted(weight_groups)):
+        W = weight_groups[n]
+        assert W.dim() == 2 and W.size(1) == n and W.is_cuda
+        rows = W.size(0)
+        n_blocks = -(-rows // params.B)
+        pad = n_blocks * params.B - rows
+        if pad:
+            W = torch.cat([W, torch.zeros(pad, n, dtype=torch.uint64,
+                                          device="cuda")])
+        # independent masks, PRG-seeded so enrollment is reproducible
+        g = torch.Generator(device="cpu")
+        g.manual_seed(int.from_bytes(
+            hashlib.sha256(mask_seed + b"masks" + n.to_bytes(8, "little"))
+            .digest()[:8], "little"))
+        masks = (torch.randint(0, 1 << 62, (n_blocks, n, params.lam),
+                               generator=g, dtype=torch.int64)
+                 .to(torch.uint64)).cuda()  # < 2^62 < P
+        # coefficient rows: one polynomial per (block a, output j)
+        coeffs = torch.empty(n_blocks * n, params.K_w, dtype=torch.uint64,
+                             device="cuda")
+        for a in range(n_blocks):
+            blk = W[a * params.B:(a + 1) * params.B]          # (B, n)
+            coeffs[a * n:(a + 1) * n, :params.B] = blk.T      # (n, B)
+            coeffs[a * n:(a + 1) * n, params.B:] = masks[a]   # (n, lam)
+        codewords = _coeffs_to_codewords(coeffs, params)
+        groups[n] = EnrolledGroup(n, rows, n_blocks, W, masks, codewords)
+
+    all_cw = torch.cat([groups[n].codewords for n in sorted(groups)])
+    leaves = [_leaf(all_cw[:, i]) for i in range(params.N_w)]
+    levels = _tree(leaves)
+    return Enrollment(params, groups, levels[-1][0], levels,
+                      hashlib.sha256(manifest).digest())
+
+
+# ---------------------------------------------------------------------------
+# Bridge — prover side
+# ---------------------------------------------------------------------------
+
+@dataclass
+class BridgeProof:
+    rho: Dict[int, List[int]]              # width -> rho^(n)
+    p_trace: Dict[int, torch.Tensor]       # width -> (rows_padded,) = W rho
+    pi: Dict[int, torch.Tensor]            # width -> (n_blocks, lam)
+    c: List[int]                           # aggregated coefficients, len K_w
+    v: List[int]                           # c(eta_l), len q_w
+    eta_idx: List[int]                     # opened domain indices
+    opened: Dict[int, List[int]]           # domain idx -> full column values
+    paths: Dict[int, List[Tuple[bytes, int]]]
+
+
+def _commit_r2(p_trace: Dict[int, torch.Tensor],
+               pi: Dict[int, torch.Tensor]) -> bytes:
+    h = hashlib.sha256(b"wc-r2")
+    for n in sorted(p_trace):
+        h.update(p_trace[n].cpu().numpy().tobytes())
+        h.update(pi[n].cpu().numpy().tobytes())
+    return h.digest()
+
+
+def prove_bridge(enr: Enrollment, s_r1: bytes) -> BridgeProof:
+    """s_r1: transcript seed AFTER R1 (all semantic outputs fixed) — rho must
+    not be derivable earlier (spec §0.2).  alpha/eta are derived only after
+    the R2 commitment of P_trace and pi (spec §0.4)."""
+    params = enr.params
+    # --- coins after R1: one shared rho per output width --------------------
+    s_rho = pr.fs_seed("wc/rho", s_r1, enr.root, enr.manifest_digest)
+    rho: Dict[int, List[int]] = {}
+    for gi, n in enumerate(sorted(enr.groups)):
+        rho[n] = pr.op_vec(s_rho, gi, "rho", n)
+    # --- R2: semantic projections and projected masks -----------------------
+    p_trace, pi = {}, {}
+    for n, g in enr.groups.items():
+        rho_t = torch.tensor(rho[n], dtype=torch.uint64, device="cuda")
+        p_trace[n] = gl_matvec(g.weights, rho_t)              # (rows_padded,)
+        # pi[a,h] = sum_j masks[a,j,h] * rho_j
+        pi[n] = torch.stack([
+            gl_matvec(g.masks[a].T.contiguous(), rho_t)       # (lam,)
+            for a in range(g.n_blocks)])
+    # --- coins after R2: alpha per block, q_w distinct eta ------------------
+    s_late = pr.fs_seed("wc/late", s_rho, _commit_r2(p_trace, pi))
+    c = torch.zeros(params.K_w, dtype=torch.uint64, device="cuda")
+    bi = 0
+    for n in sorted(enr.groups):
+        g = enr.groups[n]
+        for a in range(g.n_blocks):
+            alpha = pr.challenge(s_late, bi, "alpha")
+            u = torch.cat([p_trace[n][a * params.B:(a + 1) * params.B],
+                           pi[n][a]])                          # (K_w,)
+            gl_axpy(c, alpha, u)                               # c += alpha*u mod P
+            bi += 1
+    eta_idx = pr.random_columns_n(pr.fs_seed("wc/eta", s_late),
+                                  params.q_w, params.N_w)
+    domain = _rs_domain(params)
+    # uint64 CUDA tensors lack fancy indexing; gather via a bit-preserving
+    # int64 view (values are raw 64-bit field words either way).
+    idx = torch.tensor(eta_idx, dtype=torch.long, device="cuda")
+    eta_pts = domain.view(torch.int64)[idx].view(torch.uint64)
+    v = poly_eval(c, eta_pts).cpu().tolist()
+    # --- openings ------------------------------------------------------------
+    all_cw = torch.cat([enr.groups[n].codewords for n in sorted(enr.groups)])
+    opened = {i: all_cw[:, i].cpu().tolist() for i in eta_idx}
+    paths = {i: _path(enr.levels, i) for i in eta_idx}
+    return BridgeProof(rho, p_trace, pi, c.cpu().tolist(), v,
+                       eta_idx, opened, paths)
+
+
+# ---------------------------------------------------------------------------
+# Bridge — verifier side (CPU, python ints; mirrors the future Rust twin)
+# ---------------------------------------------------------------------------
+
+def verify_bridge(root: bytes, manifest_digest: bytes,
+                  group_meta: Dict[int, Tuple[int, int]],   # width->(blocks,n)
+                  proof: BridgeProof, s_r1: bytes,
+                  params: WcParams) -> Tuple[bool, str]:
+    # recompute every coin — none is trusted from the proof (spec §0.4)
+    s_rho = pr.fs_seed("wc/rho", s_r1, root, manifest_digest)
+    for gi, n in enumerate(sorted(group_meta)):
+        if proof.rho[n] != pr.op_vec(s_rho, gi, "rho", n):
+            return False, "rho mismatch"
+    s_late = pr.fs_seed("wc/late", s_rho, _commit_r2(proof.p_trace, proof.pi))
+    eta_idx = pr.random_columns_n(pr.fs_seed("wc/eta", s_late),
+                                  params.q_w, params.N_w)
+    if eta_idx != proof.eta_idx:
+        return False, "eta mismatch"
+    # c must aggregate exactly the committed P_trace|pi blocks
+    c = [0] * params.K_w
+    bi = 0
+    for n in sorted(group_meta):
+        n_blocks, _ = group_meta[n]
+        pt = proof.p_trace[n].cpu().tolist()
+        pim = proof.pi[n].cpu().tolist()
+        for a in range(n_blocks):
+            alpha = pr.challenge(s_late, bi, "alpha")
+            for k in range(params.B):
+                c[k] = (c[k] + alpha * pt[a * params.B + k]) % P
+            for h in range(params.lam):
+                c[params.B + h] = (c[params.B + h] + alpha * pim[a][h]) % P
+            bi += 1
+    if c != [x % P for x in proof.c]:
+        return False, "c does not aggregate the committed P_trace/pi"
+    # v = c(eta) and the enrollment side of the bridge
+    domain = _rs_domain(params).cpu().tolist()
+    for l, i in enumerate(eta_idx):
+        col = proof.opened[i]
+        if not _verify_path(_leaf(torch.tensor(col, dtype=torch.uint64)),
+                            proof.paths[i], root):
+            return False, f"merkle path fails at eta[{l}]"
+        # v_l = c(eta_l)
+        x, acc = domain[i], 0
+        for k in reversed(range(params.K_w)):
+            acc = (acc * x + c[k]) % P
+        if acc != proof.v[l] % P:
+            return False, f"v[{l}] != c(eta_{l})"
+        # enrollment side: sum_a alpha_a sum_j rho_j F_{a,j}(eta_l)
+        rhs, bi, off = 0, 0, 0
+        for n in sorted(group_meta):
+            n_blocks, width = group_meta[n]
+            rho = proof.rho[n]
+            for a in range(n_blocks):
+                alpha = pr.challenge(s_late, bi, "alpha")
+                s = 0
+                for j in range(width):
+                    s = (s + rho[j] * col[off + a * width + j]) % P
+                rhs = (rhs + alpha * s) % P
+                bi += 1
+            off += n_blocks * width
+        if rhs != proof.v[l] % P:
+            return False, f"bridge equation fails at eta[{l}]"
+    return True, "ACCEPT"
