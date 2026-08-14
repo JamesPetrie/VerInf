@@ -1,0 +1,23 @@
+{
+  "D": 896,
+  "SEQ": 256,
+  "NL": 24,
+  "DFF": 4864,
+  "spilldir": "analysis/bench/remote_results/local_bwtest/spill",
+  "gpu": "Tesla V100-SXM3-32GB",
+  "spill_fstype": "ext2/ext3",
+  "bw_cache_dropped": true,
+  "disk_write_GBps": 0.67,
+  "disk_read_GBps": 1.54,
+  "min_read_required": 0.0,
+  "noSpill_s": 207.96,
+  "noSpill_peak": 13.568,
+  "hostSpill_s": 228.06,
+  "hostSpill_peak": 7.903,
+  "diskSpill_s": 860.06,
+  "diskSpill_peak": 7.904,
+  "actual_fastest": "no-spill",
+  "disk_spill_vs_recompute_%": 313.6,
+  "host_spill_vs_recompute_%": 9.7,
+  "disk_spill_accept": true
+}

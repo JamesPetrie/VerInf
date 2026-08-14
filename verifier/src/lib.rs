@@ -7,6 +7,7 @@
 //! prover- or Python-supplied ones).
 
 pub mod field;
+pub mod fs;       // sequential Fiat-Shamir: the verifier recomputes every coin
 pub mod protocol;
 pub mod claim;
 pub mod compile;

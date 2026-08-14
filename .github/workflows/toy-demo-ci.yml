@@ -1,0 +1,55 @@
+name: toy-demo CI
+
+# Lint + format check for the toy-transformer demo, via uv (matches the
+# for-all-dev/aisec-invariants-mlir leak-check-ci.yml pattern: path-scoped so
+# it only runs when this file or the workflow changes, since the rest of the
+# repo — prover/, verifier/, analysis/ — isn't ruff/ty-clean yet and needs
+# its own opt-in pass rather than inheriting this gate.
+#
+# No GPU on GitHub-hosted runners, so this only checks static analysis, not
+# an actual prove+verify run (that needs CUDA; see README for the local
+# `uv run python demo/demo_toy_transformer.py --engine` + verify_proof flow).
+#
+# `ty` is intentionally NOT run here: it can't resolve the sys.path-based
+# local imports (protocol, proof_dump) this demo shares with demo_llama7b.py,
+# and false-positives heavily on torch's dynamic attribute typing — the same
+# class of false positive the reference repo excludes for its torch-nn files.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "demo/demo_toy_transformer.py"
+      - "pyproject.toml"
+      - ".github/workflows/toy-demo-ci.yml"
+  pull_request:
+    paths:
+      - "demo/demo_toy_transformer.py"
+      - "pyproject.toml"
+      - ".github/workflows/toy-demo-ci.yml"
+
+concurrency:
+  group: toy-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      # Dev-only sync: torch/CUDA aren't needed for static analysis, and the
+      # cu126 GPU wheel is large + irrelevant on a GPU-less runner.
+      - name: Sync dev tools
+        run: uv sync --only-group dev
+
+      - name: Format check (ruff format)
+        run: uv run --no-sync ruff format --check demo/demo_toy_transformer.py
+
+      - name: Lint (ruff check)
+        run: uv run --no-sync ruff check demo/demo_toy_transformer.py

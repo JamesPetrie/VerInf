@@ -159,7 +159,8 @@ fn rope_cos_sin(seq: usize, d_h: usize, s_x: u64, base: f64, pos_off: usize,
 }
 
 // ---- the 8 op handlers (dispatch by op name) ----
-fn compile_op(cl: &Claim, ci: usize, s_op: &[u8], b: &mut Build, cfg: &Config) {
+fn compile_op(cl: &Claim, ci: usize, s_op: &[u8], s_bind: Option<&[u8]>,
+              b: &mut Build, cfg: &Config) {
     let ell = cfg.ell as usize;
     match cl.op.as_str() {
         "AddClaim" => {
@@ -305,6 +306,20 @@ fn compile_op(cl: &Claim, ci: usize, s_op: &[u8], b: &mut Build, cfg: &Config) {
         "MaskedCombineClaim" => compile_masked_combine(cl, b, cfg),
         "ConcatClaim" => compile_concat(cl, b, cfg),
         "FreivaldsCombineClaim" => compile_freivalds_combine(cl, ci, s_op, b, cfg),
+        "RoutedProjectedMatmulClaim" =>
+            compile_routed_projected(cl, ci, s_op, s_bind, b, cfg),
+        // Standalone signed-floor rescale — the same two linears and two range
+        // LogUps the in-matmul rescale emits, so it reuses emit_rescale.
+        "RescaleClaim" => {
+            let l = cl.scalar("length") as usize;
+            let cur = b.nxt;
+            b.nxt = b.emit_rescale(cur, cl.var("x"), cl.var("x_low"),
+                cl.var("x_full"), cl.var("x_shifted"), cl.var("z_low"),
+                cl.var("z_shifted"), cl.scalar("rescale_bits") as u32,
+                cl.scalar("output_width") as u32,
+                cl.table("range_rescale").alpha, cl.table("range_output").alpha,
+                l, cfg.ell as usize);
+        }
         other => panic!("compile_claims: {} not ported", other),
     }
 }
@@ -354,6 +369,83 @@ fn compile_matmul(cl: &Claim, ci: usize, s_op: &[u8], b: &mut Build, cfg: &Confi
             rescale_bits as u32, cl.scalar("output_width") as u32,
             cl.table("range_rescale").alpha, cl.table("range_output").alpha, l_out, ell);
     }
+}
+
+/// RoutedProjectedMatmulClaim — the routed MoE matmul proved by projection
+/// (analysis/routed-projected-protocol.md). The verifier's independent twin of
+/// prover/routed_projected.py: same six constraint families, same ids, same
+/// two quadratic families, with rho re-derived from s_op and (sigma, lambda)
+/// from s_bind — never read from the proof.
+///
+///   [0,             E*K)             P    = W rho
+///   [E*K,           E*K + T)         yr   = Y rho
+///   [E*K + T,       E*K + 2T)        sum_k H = yr
+///   [E*K + 2T,      E*K + 2T + E)    f_y  = P sigma
+///   [E*K + 2T + E,  E*K + 2T + 2E)   f_u  = lambda^T M
+///   [E*K + 2T + 2E, +1)              sum_e f_p = sum_{t,k} lambda_t Q sigma_k
+fn compile_routed_projected(cl: &Claim, ci: usize, s_op: &[u8],
+                            s_bind: Option<&[u8]>, b: &mut Build, cfg: &Config) {
+    let ell = cfg.ell as usize;
+    let (t, k, j, e) = (cl.scalar("T") as usize, cl.scalar("K") as usize,
+                        cl.scalar("J") as usize, cl.scalar("E") as usize);
+    let s_bind = s_bind.expect(
+        "RoutedProjectedMatmulClaim needs the R2 coin s_bind: its late Freivalds \
+         challenges must not be derivable before P and Q are committed");
+
+    let rho = op_vec(s_op, ci, "rho", j);
+    let neg_rho = Arc::new(rho.iter().map(|&v| (P - v % P) % P).collect::<Vec<u64>>());
+    let sig = Arc::new(op_vec(s_bind, ci, "sig", k));
+    let lam = Arc::new(op_vec(s_bind, ci, "lam", t));
+    let neg_sig = Arc::new(sig.iter().map(|&v| (P - v % P) % P).collect::<Vec<u64>>());
+    let neg_lam = Arc::new(lam.iter().map(|&v| (P - v % P) % P).collect::<Vec<u64>>());
+
+    let b_p = b.nxt;
+    let b_yr = b_p + e * k;
+    let b_sum = b_yr + t;
+    let b_fy = b_sum + t;
+    let b_fu = b_fy + e;
+    let b_fin = b_fu + e;
+    b.nxt = b_fin + 1;
+
+    // P = W rho, one band per expert shard: expert x owns constraint ids
+    // [b_p + x*K, b_p + (x+1)*K), so the prover can stream shard by shard and
+    // never holds a whole layer's experts (~43 GB at Maverick shapes).
+    b.emit_id(cl.var("Pj"), b_p, 1, ell);
+    let w_experts = cl.var_list("W");
+    assert_eq!(w_experts.len(), e, "expected one weight variable per expert");
+    for (x, wv) in w_experts.iter().enumerate() {
+        b.push_family(*wv, ell, Expander::FreivaldsB {
+            base: b_p + x * k, k, n: j, h: 1, kk: k,
+            transpose_b: false, neg_rho: neg_rho.clone() });
+    }
+    // yr = Y rho
+    b.emit_id(cl.var("yr"), b_yr, 1, ell);
+    b.push_family(cl.var("Y"), ell, Expander::FreivaldsB {
+        base: b_yr, k: t, n: j, h: 1, kk: t,
+        transpose_b: false, neg_rho: neg_rho.clone() });
+    // sum_k H[t,k] - yr[t] = 0
+    b.push_family(cl.var("Hd"), ell,
+        Expander::RowsumConst { cid_base: b_sum, stride: k, coef: 1 });
+    b.emit_id(cl.var("yr"), b_sum, P - 1, ell);
+    // f_y = P sigma
+    b.emit_id(cl.var("f_y"), b_fy, 1, ell);
+    b.push_family(cl.var("Pj"), ell, Expander::FreivaldsB {
+        base: b_fy, k: e, n: k, h: 1, kk: e,
+        transpose_b: false, neg_rho: neg_sig.clone() });
+    // f_u = lambda^T M  (FreivaldsB with transpose_b, as compile_matmul's LF2)
+    b.emit_id(cl.var("f_u"), b_fu, 1, ell);
+    b.push_family(cl.var("M"), ell, Expander::FreivaldsB {
+        base: b_fu, k: e, n: t, h: 1, kk: e,
+        transpose_b: true, neg_rho: neg_lam.clone() });
+    // sum_e f_p = sum_{t,k} lambda_t Q[t,k] sigma_k
+    b.push_family(cl.var("f_p"), ell,
+        Expander::RowsumConst { cid_base: b_fin, stride: e, coef: 1 });
+    b.push_family(cl.var("Qm"), ell, Expander::FreivaldsC {
+        base: b_fin, m: t, n: k, h: 1, lam: lam.clone(), rho: sig.clone() });
+
+    // Quadratic, in the prover's order: H = X*Q first, then f_p = f_u*f_y.
+    b.emit_quad(cl.var("X"), cl.var("Qm"), cl.var("Hd"), P - 1, 0, t * k, ell);
+    b.emit_quad(cl.var("f_u"), cl.var("f_y"), cl.var("f_p"), P - 1, 0, e, ell);
 }
 
 fn isqrt_u128(n: u128) -> u128 {
@@ -1067,6 +1159,14 @@ fn m_total(cs: &ClaimSet) -> usize {
 /// quadratic sides). Each (variable, role) becomes one spanning `Family`; the
 /// verifier's row fold windows them. Bounded memory — no per-row materialization.
 pub fn compile_claims(cs: &mut ClaimSet, s_op: &[u8]) -> Constraints {
+    compile_claims_bound(cs, s_op, None)
+}
+
+/// `s_bind` is the R2 coin. Claims with a phase-3 stage (RoutedProjected)
+/// derive their late challenges from it; passing None is only valid for a
+/// claim set that has none, and such a claim panics rather than silently
+/// compiling a relation the transcript never bound.
+pub fn compile_claims_bound(cs: &mut ClaimSet, s_op: &[u8], s_bind: Option<&[u8]>) -> Constraints {
     let cfg = cs.cfg;
     let ell = cfg.ell as usize;
     let mt = m_total(cs);
@@ -1091,7 +1191,7 @@ pub fn compile_claims(cs: &mut ClaimSet, s_op: &[u8]) -> Constraints {
     // Pass 1: operations.
     for ci in 0..cs.claims.len() {
         let cl = &cs.claims[ci];
-        compile_op(cl, ci, s_op, &mut b, &cfg);
+        compile_op(cl, ci, s_op, s_bind, &mut b, &cfg);
     }
     // Pass 2: settle tables in table_order.
     let by_id = cs.tables_by_id();

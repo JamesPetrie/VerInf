@@ -164,6 +164,85 @@ def op_vec(s_op, claim_index: int, label: str, n: int) -> List[int]:
     order both sides agree on."""
     return [challenge(s_op, i, f"op{claim_index}:{label}") for i in range(n)]
 
+# ----------------------------------------------------------------------
+# Sequential Fiat-Shamir transcript (analysis/routed-projected-protocol.md).
+#
+# Every verifier coin is the hash of the transcript UP TO the preceding prover
+# message, so no coin can be derived before the message it must follow. This
+# replaces `round_seeds(base)` (below), which pre-derived all three coins from
+# one base seed — fine for a test driver, NOT a production Fiat-Shamir.
+#
+# The framing is length-prefixed so no concatenation of two different item
+# lists can collide, and is mirrored byte-for-byte by the Rust verifier
+# (verifier/src/fs.rs), which recomputes every coin itself and never trusts a
+# seed that arrives inside the proof.
+# ----------------------------------------------------------------------
+FS_DOMAIN = b"VerInf-FS-v1"
+
+
+def fs_frame(item) -> bytes:
+    """len(item) as u64 LE || item. `item` is bytes or a str (utf-8)."""
+    b = item.encode() if isinstance(item, str) else bytes(item)
+    return len(b).to_bytes(8, "little") + b
+
+
+def fs_seed(label: str, *items) -> bytes:
+    """blake3(FS_DOMAIN || frame(label) || frame(item) ...) — one coin."""
+    h = blake3.blake3(FS_DOMAIN + fs_frame(label))
+    for it in items:
+        h.update(fs_frame(it))
+    return h.digest()
+
+
+def u64_bytes(values) -> bytes:
+    """Field-vector framing: each element as u64 LE. Accepts raw bytes, a numpy
+    array (fast path via tobytes) or any iterable of ints. Torch tensors are
+    converted by the caller (core.py owns torch; this module stays torch-free)."""
+    if isinstance(values, (bytes, bytearray, memoryview)):
+        return bytes(values)
+    tb = getattr(values, "tobytes", None)
+    if tb is not None:
+        return tb()
+    return b"".join(int(v).to_bytes(8, "little") for v in values)
+
+
+def statement_digest(claims_bytes: bytes, block_order=None) -> bytes:
+    """The trusted static statement digest: a hash of the EXACT claim-set bytes
+    the proof carries, plus the row-block layout it must be opened in.
+
+    The verifier recomputes it from what it read and compares against the
+    digest supplied as POLICY, so a proof can choose neither its own claim set
+    nor its own block order. The claim bytes carry no per-proof challenge
+    (see _ser_table), so the digest is stable across proofs of one statement."""
+    return fs_seed("statement", claims_bytes, ",".join(block_order or []))
+
+
+def fs_s_op(stmt_digest: bytes, block_order: List[str], roots_r1: List[bytes]) -> bytes:
+    """Coin after R1 (commitments of blinding, weights and phase-1 rows)."""
+    return fs_seed("s_op", stmt_digest, ",".join(block_order), *roots_r1)
+
+
+def fs_s_bind(s_op: bytes, root_p2: bytes) -> bytes:
+    """Coin after R2 (phase-2 commitment) — the LATE challenges (sigma, lambda
+    of the routed-projected Freivalds check). Sampling it here, and not with
+    s_op, is the whole point of the fifth message: Q = M·P has two inputs that
+    were not both fixed in R1."""
+    return fs_seed("s_bind", s_op, root_p2)
+
+
+def fs_s_comb(s_bind: bytes, root_p3: bytes) -> bytes:
+    """Coin after R3 (phase-3 commitment). A tape with no late-stage claim
+    still frames the round, with EMPTY_COMMIT_ROOT as root_p3, so a proof
+    cannot silently drop a message from the transcript."""
+    return fs_seed("s_comb", s_bind, root_p3)
+
+
+def fs_s_col(s_comb: bytes, q_irs, q_lin, p_0) -> bytes:
+    """Coin after the test polynomials are sent — the column challenge."""
+    return fs_seed("s_col", s_comb, u64_bytes(q_irs), u64_bytes(q_lin),
+                   u64_bytes(p_0))
+
+
 def round_seeds(base, n: int = 3) -> List[bytes]:
     """Derive n per-round verifier seeds from one base seed. Both prover and
     verifier must derive these identically, so it is shared/trusted here.
@@ -254,8 +333,11 @@ def _ser_table(t, _cache=None):
         "mult_var": _ser_var(t.mult_var),
         "w_var":    _ser_var(t.w_var),
         "z_vars":   [_ser_var(z) for z in t.z_vars],
-        "alpha": int(t.alpha),
-        "beta":  int(t.beta),
+        # alpha/beta are NOT part of the statement. They are per-proof LogUp
+        # challenges the verifier re-derives from s_op (and overwrites on the
+        # parsed table anyway), and they MUTATE on the tape after the first
+        # proof — carrying them would make the "static" statement digest
+        # differ between two proofs of the same claim set.
     }
     if not is_range:                       # fallback: explicit domain (unused today)
         out["T"] = Tl
@@ -318,3 +400,13 @@ def claims_to_json(claim_list, cfg: Config) -> dict:
                     "N_LIG": cfg.N_LIG, "T_QUERIES": cfg.T_QUERIES},
             "claims": out,
             "table_order": table_order}
+
+
+def claims_canonical_bytes(claim_list, cfg: Config) -> bytes:
+    """The claim set as the EXACT bytes the proof file carries — the thing the
+    statement digest is taken over. `json.dumps` here and `f.write` in
+    proof_dump must produce the same bytes, so the writer emits this buffer
+    verbatim rather than re-serializing (and the Rust verifier hashes the raw
+    sub-document it read, via serde's RawValue)."""
+    import json
+    return json.dumps(claims_to_json(claim_list, cfg)).encode()

@@ -1,0 +1,60 @@
+[maverick-full] layers=48 E=128 T=1000 V=202048 T_QUERIES=54 witness_only=False
+[maverick-full] input bound: all 1000 tokens hidden (442 prompt + 558 continuation)
+/workspace/VerInf/demo/demo_maverick_block.py:89: UserWarning: The given NumPy array is not writable, and PyTorch does not support non-writable tensors. This means writing to this tensor will result in undefined behavior. You may want to copy the array to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at /__w/pytorch/pytorch/torch/csrc/utils/tensor_numpy.cpp:213.)
+  w = kquant_to_field(torch.from_numpy(
+[maverick-full] layer 0 built (dense, rope=True) — 28 claims so far
+[maverick-full] layer 1 built (moe E=128, rope=True) — 68 claims so far
+[maverick-full] layer 2 built (dense, rope=True) — 90 claims so far
+[maverick-full] layer 3 built (moe E=128, rope=False) — 128 claims so far
+[maverick-full] layer 4 built (dense, rope=True) — 150 claims so far
+[maverick-full] layer 5 built (moe E=128, rope=True) — 190 claims so far
+[maverick-full] layer 6 built (dense, rope=True) — 212 claims so far
+[maverick-full] layer 7 built (moe E=128, rope=False) — 250 claims so far
+[maverick-full] layer 8 built (dense, rope=True) — 272 claims so far
+[maverick-full] layer 9 built (moe E=128, rope=True) — 312 claims so far
+[maverick-full] layer 10 built (dense, rope=True) — 334 claims so far
+[maverick-full] layer 11 built (moe E=128, rope=False) — 372 claims so far
+[maverick-full] layer 12 built (dense, rope=True) — 394 claims so far
+[maverick-full] layer 13 built (moe E=128, rope=True) — 434 claims so far
+[maverick-full] layer 14 built (dense, rope=True) — 456 claims so far
+[maverick-full] layer 15 built (moe E=128, rope=False) — 494 claims so far
+[maverick-full] layer 16 built (dense, rope=True) — 516 claims so far
+[maverick-full] layer 17 built (moe E=128, rope=True) — 556 claims so far
+[maverick-full] layer 18 built (dense, rope=True) — 578 claims so far
+[maverick-full] layer 19 built (moe E=128, rope=False) — 616 claims so far
+[maverick-full] layer 20 built (dense, rope=True) — 638 claims so far
+[maverick-full] layer 21 built (moe E=128, rope=True) — 678 claims so far
+[maverick-full] layer 22 built (dense, rope=True) — 700 claims so far
+[maverick-full] layer 23 built (moe E=128, rope=False) — 738 claims so far
+[maverick-full] layer 24 built (dense, rope=True) — 760 claims so far
+[maverick-full] layer 25 built (moe E=128, rope=True) — 800 claims so far
+[maverick-full] layer 26 built (dense, rope=True) — 822 claims so far
+[maverick-full] layer 27 built (moe E=128, rope=False) — 860 claims so far
+[maverick-full] layer 28 built (dense, rope=True) — 882 claims so far
+[maverick-full] layer 29 built (moe E=128, rope=True) — 922 claims so far
+[maverick-full] layer 30 built (dense, rope=True) — 944 claims so far
+[maverick-full] layer 31 built (moe E=128, rope=False) — 982 claims so far
+[maverick-full] layer 32 built (dense, rope=True) — 1004 claims so far
+[maverick-full] layer 33 built (moe E=128, rope=True) — 1044 claims so far
+[maverick-full] layer 34 built (dense, rope=True) — 1066 claims so far
+[maverick-full] layer 35 built (moe E=128, rope=False) — 1104 claims so far
+[maverick-full] layer 36 built (dense, rope=True) — 1126 claims so far
+[maverick-full] layer 37 built (moe E=128, rope=True) — 1166 claims so far
+[maverick-full] layer 38 built (dense, rope=True) — 1188 claims so far
+[maverick-full] layer 39 built (moe E=128, rope=False) — 1226 claims so far
+[maverick-full] layer 40 built (dense, rope=True) — 1248 claims so far
+[maverick-full] layer 41 built (moe E=128, rope=True) — 1288 claims so far
+[maverick-full] layer 42 built (dense, rope=True) — 1310 claims so far
+[maverick-full] layer 43 built (moe E=128, rope=False) — 1348 claims so far
+[maverick-full] layer 44 built (dense, rope=True) — 1370 claims so far
+[maverick-full] layer 45 built (moe E=128, rope=True) — 1410 claims so far
+[maverick-full] layer 46 built (dense, rope=True) — 1432 claims so far
+[maverick-full] layer 47 built (moe E=128, rope=False) — 1470 claims so far
+[maverick-full] LM head from output.weight (untied)
+[maverick-full] UI claim over 558 continuation positions; 2596 claims total
+[maverick-full] build 39.8s, 2596 claims
+/workspace/VerInf/prover/core.py:641: UserWarning: The given buffer is not writable, and PyTorch does not support non-writable tensors. This means you can write to the underlying (supposedly non-writable) buffer using the tensor. You may want to copy the buffer to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at /__w/pytorch/pytorch/torch/csrc/utils/tensor_new.cpp:1556.)
+  return torch.frombuffer(bytes(master_seed), dtype=torch.uint8).cuda()
+[maverick-full] enrolled 49160720 weight rows in 1401.2s
+root=e3983d6bde089ad3a7a2486a61807d2fd16ae7d66611296252b8cada4577263f
+[maverick-full] record this root in verifier policy; enrollment is not a proof stage and the proof command will not rebuild it

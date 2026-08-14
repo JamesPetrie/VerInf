@@ -1,0 +1,210 @@
+<title>Прувер VerInf — статус оптимизаций</title>
+<style>
+  :root {
+    --bg: #f5f7f9; --surface: #ffffff; --surface-2: #eef1f5; --border: #dce1e8;
+    --text: #0f151b; --text-2: #47535f; --muted: #78838f;
+    --accent: #0d6f9e; --accent-soft: #0d6f9e1a;
+    --good: #17845172; --good-ink: #0d7a4c; --good-bg: #17845118;
+    --warn-ink: #b07c10; --warn-bg: #c98a1218;
+    --bad-ink: #b0524f; --bad-bg: #b0524f18;
+    --idle-ink: #667180; --idle-bg: #66718018;
+    --track: #e4e8ee;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0d1116; --surface: #151b22; --surface-2: #1b232c; --border: #28313b;
+      --text: #eef2f6; --text-2: #aab6c1; --muted: #7b8793;
+      --accent: #35a9df; --accent-soft: #35a9df1f;
+      --good-ink: #46c78d; --good-bg: #46c78d1c;
+      --warn-ink: #e2ac44; --warn-bg: #e2ac441c;
+      --bad-ink: #dd8785; --bad-bg: #dd87851c;
+      --idle-ink: #8b97a3; --idle-bg: #8b97a31c;
+      --track: #232c35;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0d1116; --surface: #151b22; --surface-2: #1b232c; --border: #28313b;
+    --text: #eef2f6; --text-2: #aab6c1; --muted: #7b8793;
+    --accent: #35a9df; --accent-soft: #35a9df1f;
+    --good-ink: #46c78d; --good-bg: #46c78d1c;
+    --warn-ink: #e2ac44; --warn-bg: #e2ac441c;
+    --bad-ink: #dd8785; --bad-bg: #dd87851c;
+    --idle-ink: #8b97a3; --idle-bg: #8b97a31c;
+    --track: #232c35;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    line-height: 1.5; -webkit-font-smoothing: antialiased;
+  }
+  .mono { font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace; }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 2.4rem 1.3rem 4rem; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: .6rem 1rem; margin-bottom: .3rem; }
+  h1 { font-size: 1.5rem; font-weight: 680; letter-spacing: -.01em; margin: 0; text-wrap: balance; }
+  .updated { font-size: .74rem; color: var(--muted); letter-spacing: .02em; }
+  .lede { color: var(--text-2); font-size: .95rem; max-width: 62ch; margin: .1rem 0 2rem; }
+  h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .09em; color: var(--muted);
+       font-weight: 620; margin: 2.4rem 0 .9rem; }
+
+  .kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: .8rem; }
+  .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1rem 1.1rem; }
+  .kpi .label { font-size: .72rem; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .kpi .val { font-size: 1.72rem; font-weight: 660; margin: .28rem 0 .1rem; letter-spacing: -.02em; }
+  .kpi .val.pos { color: var(--good-ink); }
+  .kpi .note { font-size: .78rem; color: var(--text-2); }
+
+  .frontier { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.1rem 1.2rem; }
+  .fbar { display: flex; height: 30px; border-radius: 7px; overflow: hidden; margin: .1rem 0 .8rem; }
+  .fbar > span { display: flex; align-items: center; justify-content: center; font-size: .72rem; font-weight: 600;
+                 color: #fff; white-space: nowrap; }
+  .flegend { display: flex; flex-wrap: wrap; gap: .5rem 1.2rem; font-size: .8rem; color: var(--text-2); }
+  .flegend b { color: var(--text); font-weight: 600; }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: .4rem; vertical-align: baseline; }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+          padding: 1rem 1.15rem; margin-bottom: .7rem; border-left: 3px solid var(--stripe, var(--border)); }
+  .card.good { --stripe: var(--good-ink); }
+  .card.warn { --stripe: var(--warn-ink); }
+  .card.bad  { --stripe: var(--bad-ink); }
+  .card.idle { --stripe: var(--idle-ink); }
+  .card .top { display: flex; flex-wrap: wrap; align-items: center; gap: .55rem; margin-bottom: .35rem; }
+  .card .name { font-weight: 640; font-size: 1rem; }
+  .pill { font-size: .68rem; font-weight: 660; text-transform: uppercase; letter-spacing: .04em;
+          padding: .16rem .5rem; border-radius: 999px; white-space: nowrap; }
+  .pill.good { color: var(--good-ink); background: var(--good-bg); }
+  .pill.warn { color: var(--warn-ink); background: var(--warn-bg); }
+  .pill.bad  { color: var(--bad-ink);  background: var(--bad-bg); }
+  .pill.idle { color: var(--idle-ink); background: var(--idle-bg); }
+  .card p { margin: .2rem 0; font-size: .88rem; color: var(--text-2); }
+  .card .meta { font-size: .76rem; color: var(--muted); margin-top: .4rem; }
+  .card .meta .flag { color: var(--accent); }
+
+  .tbl-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; }
+  table { border-collapse: collapse; width: 100%; font-size: .86rem; }
+  th, td { text-align: left; padding: .55rem .8rem; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { font-size: .7rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 620; background: var(--surface-2); }
+  tr:last-child td { border-bottom: none; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .bump { color: var(--good-ink); font-weight: 620; }
+
+  .note { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1rem 1.2rem; }
+  .note p { margin: .35rem 0; font-size: .88rem; color: var(--text-2); }
+  .note b { color: var(--text); }
+  code { font-family: ui-monospace, Menlo, monospace; font-size: .84em; background: var(--surface-2);
+         padding: .08rem .34rem; border-radius: 5px; }
+  footer { margin-top: 2.6rem; padding-top: 1.1rem; border-top: 1px solid var(--border);
+           font-size: .78rem; color: var(--muted); }
+  footer code { font-size: .82em; }
+  @media (max-width: 620px) { .kpis { grid-template-columns: 1fr; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Прувер VerInf — статус оптимизаций</h1>
+    <span class="updated mono">обновлено 2026-07-23</span>
+  </header>
+  <p class="lede">Что реально ускоряет доказательство, что — только на тесте, и что ещё не сделано.
+    Единственная метрика, которая важна: <b>переносится ли это на настоящий 400B-прогон</b>.
+    Микробенч ≠ выигрыш в реальном prove; выигрыш на тесте ≠ выигрыш на production.</p>
+
+  <div class="kpis">
+    <div class="kpi">
+      <div class="label">prove, seq1024 (тест)</div>
+      <div class="val pos">218 → 60 с</div>
+      <div class="note">3.6× — но бо́льшая часть это тест-масштабный кэш, который на 400B не работает</div>
+    </div>
+    <div class="kpi">
+      <div class="label">Переносится на 400B</div>
+      <div class="val">1 из 3</div>
+      <div class="note">только GPU-softmax; кэш — тест-only, coset-NTT — не подтверждён</div>
+    </div>
+    <div class="kpi">
+      <div class="label">Главный нерешённый член</div>
+      <div class="val">57%</div>
+      <div class="note">4× пересчёт witness — режется только claim-streaming (тяжело, soundness)</div>
+    </div>
+  </div>
+
+  <h2>Где время на реальном 400B (по cost-модели)</h2>
+  <div class="frontier">
+    <div class="fbar mono" role="img" aria-label="witness 57%, encode 32%, quad 10%, linear 0.4%">
+      <span style="width:57%;background:#7a5cc0">witness 57%</span>
+      <span style="width:32%;background:var(--accent)">encode 32%</span>
+      <span style="width:10%;background:#c98a12">quad 10%</span>
+      <span style="width:1%;background:var(--muted)" title="linear 0.4%"></span>
+    </div>
+    <div class="flegend">
+      <span><span class="swatch" style="background:#7a5cc0"></span><b>witness</b> — 4× прогон forward-pass → claim-streaming</span>
+      <span><span class="swatch" style="background:var(--accent)"></span><b>encode</b> — NTT-кодирование → coset-NTT</span>
+      <span><span class="swatch" style="background:#c98a12"></span><b>quad</b> — Freivalds</span>
+    </div>
+    <p style="font-size:.8rem;color:var(--muted);margin:.7rem 0 0">
+      Важно: на <b>тесте</b> фронт другой (quad 25%, encode 23%, witness 6% после оптимизаций) —
+      бить по тестовому #1 = ловушка. Целимся в production-фронт.</p>
+  </div>
+
+  <h2>Реестр рычагов по статусу</h2>
+
+  <div class="card good">
+    <div class="top"><span class="name">GPU-порт softmax</span><span class="pill good">доказано · переносится</span></div>
+    <p>Witness softmax (O(SEQ²) causal бинарный поиск) считается на GPU field-операциях вместо CPU-numpy.</p>
+    <p>seq1024: witness 44→3.5 с; в изоляции ~95× на операции. Растёт с длиной контекста.</p>
+    <p class="meta">Почему переносится: меняет <b>где</b> считается, а не влезает ли witness в память — ускоряет каждый из 4 пересчётов на любом масштабе. · <span class="flag mono">LIGERO_GPU_SOFTMAX</span> · <span class="mono">compute_fns.py</span></p>
+  </div>
+
+  <div class="card warn">
+    <div class="top"><span class="name">coset-NTT (кодирование)</span><span class="pill warn">корректно · in-situ не подтверждён</span></div>
+    <p>Кодирование через ρ коротких NTT вместо одного длинного. Доказательство побитово идентично + Rust ACCEPT.</p>
+    <p>Изолированный бенч: 1.2× при K≥2¹⁶. <b>Но in-situ на K=2¹⁶ (малая модель): выигрыша НЕТ, +1.4 ГБ памяти</b> — encode там не упирается в NTT, микробенч завысил.</p>
+    <p class="meta">Production-выигрыш (K≥2¹⁸, witness 7 ТБ) — предсказание cost-модели, не измерение. Дефолт <b>off</b>, opt-in. · <span class="flag mono">LIGERO_COSET_NTT</span> · <span class="mono">core.py</span></p>
+  </div>
+
+  <div class="card bad">
+    <div class="top"><span class="name">Кэш witness</span><span class="pill bad">реально на тесте · НЕ переносится</span></div>
+    <p>Переиспользовать softmax/silu между 4 свипами вместо пересчёта. Доказательство идентично + ACCEPT.</p>
+    <p>seq1024: 218→97 с на тесте. <b>На 400B бесполезен</b>: работает лишь потому, что witness влезает в память, а на 400B он 7 ТБ — сама причина, по которой 4× пересчёт вообще существует.</p>
+    <p class="meta">Это был самый громкий заголовок цикла, но это тест-артефакт — не выдавать за production-win. · <span class="flag mono">LIGERO_WITNESS_CACHE</span> · <span class="mono">core.py</span></p>
+  </div>
+
+  <div class="card idle">
+    <div class="top"><span class="name">GPU-порт silu + rmsnorm</span><span class="pill idle">известно · не сделано</span></div>
+    <p>Тот же приём, что с softmax, для двух оставшихся CPU-numpy функций.</p>
+    <p class="meta">Ценность НИЗКАЯ: silu ~0.48 с, rmsnorm ~0.24 с, и обе O(SEQ·d) линейны (не O(SEQ²)) → малы даже на длинном контексте. Риск низкий, приём тот же.</p>
+  </div>
+
+  <div class="card idle">
+    <div class="top"><span class="name">claim-streaming (witness_passes 4→1)</span><span class="pill idle">известно · не сделано</span></div>
+    <p>Убрать 4× пересчёт witness <b>без хранения</b> witness — настоящий фикс главного production-члена (57%).</p>
+    <p class="meta">Ценность ВЫСОКАЯ, риск ВЫСОКИЙ / soundness-критично: глубокая перестройка 4-раундового протокола. Открытое сомнение: challenge раунда N зависит от глобального commitment раунда N−1 (Fiat-Shamir) — «доделать все раунды одного claim» может ломать надёжность. Сначала разбор §9 блокнота, потом код. Не спешить.</p>
+  </div>
+
+  <h2>Замеренные ускорения prove (тест, все правки вкл.)</h2>
+  <div class="tbl-wrap">
+    <table class="mono">
+      <thead><tr><th>конфиг (SEQ, слои)</th><th class="num">было</th><th class="num">стало</th><th class="num">×</th><th>что дало</th></tr></thead>
+      <tbody>
+        <tr><td>seq256, L4</td><td class="num">17.84 с</td><td class="num">12.12 с</td><td class="num bump">1.47</td><td>кэш</td></tr>
+        <tr><td>seq384, L4</td><td class="num">36.17 с</td><td class="num">21.39 с</td><td class="num bump">1.69</td><td>кэш</td></tr>
+        <tr><td>seq512, L4</td><td class="num">62.13 с</td><td class="num">24.44 с</td><td class="num bump">2.54</td><td>кэш + GPU-softmax</td></tr>
+        <tr><td>seq1024, L4</td><td class="num">218.28 с</td><td class="num">59.92 с</td><td class="num bump">3.64</td><td>кэш + GPU-softmax</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p style="font-size:.78rem;color:var(--muted);margin-top:.5rem">
+    На 400B из этих цифр переносится только softmax-часть. Все правки: доказательство побитово идентично + Rust ACCEPT.</p>
+
+  <h2>Что НЕ поможет (запаяно математикой)</h2>
+  <div class="note">
+    <p><b>bf16 / другая кодировка модели.</b> Прувер считает точную целочисленную арифметику поля (mod p) — на float нельзя точное mod p, а без побитовой точности доказательство невалидно. Модель уже кодируется в fixed-point <code>s=2¹²</code> — оптимум по точности И переполнению.</p>
+    <p><b>Меньшее поле (M31/BabyBear, было бы ~2× по всей крипте).</b> Запрещено: ширина ≈ <code>log₂k + 2·log₂s + 2·log₂R + 1 ≈ 46 бит</code> — больше любого 31-битного поля даже при <code>s=2⁶</code>. Goldilocks-64 вынужден.</p>
+    <p><b>TensorRT.</b> Ускоряет приближённый float/int8, не 64-битную модульную арифметику. Его роль тут уже выполняют кастомные CUDA-ядра (<code>gl_mul</code>, NTT, BLAKE3) — они на GPU. Правильный аналог — порт CPU-функций на эти ядра (как сделали с softmax).</p>
+  </div>
+
+  <footer>
+    Источник и как обновлять: правьте <code>analysis/bench/dashboard.html</code> и переопубликуйте тем же путём.
+    Первичные данные — <code>analysis/bench/optimization_registry.md</code>, <code>research_journal.md</code>,
+    <code>prove_runs.jsonl</code> (смотреть: <code>python3 analysis/bench/show_runs.py</code>).
+    Все правки прувера незакоммичены (без git по договорённости).
+  </footer>
+</div>

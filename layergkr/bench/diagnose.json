@@ -1,0 +1,272 @@
+{
+  "fit": {
+    "coef": {
+      "mul": -3.542057842634999e-06,
+      "mul_defer": -5.7205064486439e-06,
+      "add": 5.754639662279863e-06,
+      "hash_bytes": 7.445355159544985e-07
+    },
+    "r2": 0.9911036214085135,
+    "n": 28
+  },
+  "micro": {
+    "mul": 170.57216027751565,
+    "mul_defer": 62.66269949264825,
+    "add": 95.02376429736614,
+    "hash_bytes": 145036833.23785487
+  },
+  "phases": [
+    {
+      "run": "toy-xs",
+      "phase": "prove.logup",
+      "seconds": 0.026401719078421593,
+      "mul": 17530,
+      "mul_defer": 173312,
+      "add": 162298,
+      "hash_bytes": 193152
+    },
+    {
+      "run": "toy-xs",
+      "phase": "prove.gates",
+      "seconds": 0.004438725067302585,
+      "mul": 10158,
+      "mul_defer": 0,
+      "add": 6839,
+      "hash_bytes": 0
+    },
+    {
+      "run": "toy-xs",
+      "phase": "prove.matmuls",
+      "seconds": 0.007456243969500065,
+      "mul": 351,
+      "mul_defer": 17376,
+      "add": 15818,
+      "hash_bytes": 101312
+    },
+    {
+      "run": "toy-xs",
+      "phase": "prove.open",
+      "seconds": 0.00029813405126333237,
+      "mul": 0,
+      "mul_defer": 0,
+      "add": 0,
+      "hash_bytes": 0
+    },
+    {
+      "run": "toy-s",
+      "phase": "prove.logup",
+      "seconds": 0.11406358797103167,
+      "mul": 40826,
+      "mul_defer": 1559552,
+      "add": 1487706,
+      "hash_bytes": 820096
+    },
+    {
+      "run": "toy-s",
+      "phase": "prove.gates",
+      "seconds": 0.02799357706680894,
+      "mul": 79206,
+      "mul_defer": 0,
+      "add": 53351,
+      "hash_bytes": 0
+    },
+    {
+      "run": "toy-s",
+      "phase": "prove.matmuls",
+      "seconds": 0.030612096888944507,
+      "mul": 1323,
+      "mul_defer": 133248,
+      "add": 126962,
+      "hash_bytes": 312640
+    },
+    {
+      "run": "toy-s",
+      "phase": "prove.open",
+      "seconds": 0.0006520261522382498,
+      "mul": 0,
+      "mul_defer": 0,
+      "add": 0,
+      "hash_bytes": 0
+    },
+    {
+      "run": "toy-moe",
+      "phase": "prove.logup",
+      "seconds": 0.11081571807153523,
+      "mul": 40826,
+      "mul_defer": 1559552,
+      "add": 1487706,
+      "hash_bytes": 820096
+    },
+    {
+      "run": "toy-moe",
+      "phase": "prove.gates",
+      "seconds": 0.027501113945618272,
+      "mul": 79206,
+      "mul_defer": 0,
+      "add": 53351,
+      "hash_bytes": 0
+    },
+    {
+      "run": "toy-moe",
+      "phase": "prove.matmuls",
+      "seconds": 0.036876897094771266,
+      "mul": 1323,
+      "mul_defer": 174208,
+      "add": 165362,
+      "hash_bytes": 345216
+    },
+    {
+      "run": "toy-moe",
+      "phase": "prove.open",
+      "seconds": 0.0005502710118889809,
+      "mul": 0,
+      "mul_defer": 0,
+      "add": 0,
+      "hash_bytes": 0
+    },
+    {
+      "run": "small-1",
+      "phase": "prove.logup",
+      "seconds": 0.5384177709929645,
+      "mul": 76442,
+      "mul_defer": 11427840,
+      "add": 11119242,
+      "hash_bytes": 2938240
+    },
+    {
+      "run": "small-1",
+      "phase": "prove.gates",
+      "seconds": 0.1528461640700698,
+      "mul": 464694,
+      "mul_defer": 0,
+      "add": 313055,
+      "hash_bytes": 0
+    },
+    {
+      "run": "small-1",
+      "phase": "prove.matmuls",
+      "seconds": 0.19150946522131562,
+      "mul": 3897,
+      "mul_defer": 1276928,
+      "add": 1242662,
+      "hash_bytes": 992256
+    },
+    {
+      "run": "small-1",
+      "phase": "prove.open",
+      "seconds": 0.0015692738816142082,
+      "mul": 0,
+      "mul_defer": 0,
+      "add": 0,
+      "hash_bytes": 0
+    },
+    {
+      "run": "small-2",
+      "phase": "prove.logup",
+      "seconds": 0.9608704519923776,
+      "mul": 133786,
+      "mul_defer": 20078592,
+      "add": 19536522,
+      "hash_bytes": 5100928
+    },
+    {
+      "run": "small-2",
+      "phase": "prove.gates",
+      "seconds": 0.20626793894916773,
+      "mul": 604902,
+      "mul_defer": 0,
+      "add": 407543,
+      "hash_bytes": 0
+    },
+    {
+      "run": "small-2",
+      "phase": "prove.matmuls",
+      "seconds": 0.29455440514720976,
+      "mul": 4995,
+      "mul_defer": 2025984,
+      "add": 1969922,
+      "hash_bytes": 1379840
+    },
+    {
+      "run": "small-2",
+      "phase": "prove.open",
+      "seconds": 0.0020774949807673693,
+      "mul": 0,
+      "mul_defer": 0,
+      "add": 0,
+      "hash_bytes": 0
+    },
+    {
+      "run": "large-1",
+      "phase": "prove.logup",
+      "seconds": 5.622255869908258,
+      "mul": 255642,
+      "mul_defer": 151519232,
+      "add": 149315466,
+      "hash_bytes": 19103104
+    },
+    {
+      "run": "large-1",
+      "phase": "prove.gates",
+      "seconds": 0.45378342387266457,
+      "mul": 1214566,
+      "mul_defer": 0,
+      "add": 818295,
+      "hash_bytes": 0
+    },
+    {
+      "run": "large-1",
+      "phase": "prove.matmuls",
+      "seconds": 1.6202553170733154,
+      "mul": 10179,
+      "mul_defer": 12015616,
+      "add": 11842178,
+      "hash_bytes": 3208896
+    },
+    {
+      "run": "large-1",
+      "phase": "prove.open",
+      "seconds": 0.004667789908125997,
+      "mul": 0,
+      "mul_defer": 0,
+      "add": 0,
+      "hash_bytes": 0
+    },
+    {
+      "run": "large-2",
+      "phase": "prove.logup",
+      "seconds": 6.377201896859333,
+      "mul": 275802,
+      "mul_defer": 163495936,
+      "add": 161117994,
+      "hash_bytes": 20600192
+    },
+    {
+      "run": "large-2",
+      "phase": "prove.gates",
+      "seconds": 1.17933762492612,
+      "mul": 3562182,
+      "mul_defer": 0,
+      "add": 2400167,
+      "hash_bytes": 0
+    },
+    {
+      "run": "large-2",
+      "phase": "prove.matmuls",
+      "seconds": 3.3289430008735508,
+      "mul": 14751,
+      "mul_defer": 25862144,
+      "add": 25478762,
+      "hash_bytes": 5794304
+    },
+    {
+      "run": "large-2",
+      "phase": "prove.open",
+      "seconds": 0.007291337009519339,
+      "mul": 0,
+      "mul_defer": 0,
+      "add": 0,
+      "hash_bytes": 0
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "kind": "admission_probe",
+  "gate_failures": 0,
+  "rates": {
+    "machine": {
+      "gpu_name": "NVIDIA RTX A6000",
+      "gpu_total_mem": "47705751552",
+      "gpu_count": "1",
+      "cuda": "12.6",
+      "torch": "2.13.0+cu126"
+    },
+    "geometry": {
+      "ELL": 8192,
+      "K_DEG": 16384,
+      "N_LIG": 65536,
+      "T_QUERIES": 54
+    },
+    "runs": 30,
+    "bound_kind": "p99_upper",
+    "weights": "none_kernel_only",
+    "rates": {
+      "encode_ns_per_slot": 4.283832707350914,
+      "hash_ns_per_slot": 0.29808293639046646,
+      "open_ns_per_slot": 0.17064594182158999,
+      "quad_ns_per_product": 17.781709619525632,
+      "egress_bytes_per_s": 96956560.54555686
+    },
+    "stages": {
+      "model_load": null,
+      "semantic_5_active_sweeps": null,
+      "fresh_commit_fold": 428.38327073509146,
+      "linear": null,
+      "quadratic": 800.1769328786535,
+      "fresh_hash_coef": 29.80829363904665,
+      "persistent_weight_qlin": null,
+      "persistent_open": 68.72332177430508,
+      "fresh_open": 17.064594182159,
+      "proof_egress": 979.8202356338999,
+      "rtt": null,
+      "tail": null,
+      "orchestration_refresh": null
+    }
+  }
+}

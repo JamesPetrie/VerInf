@@ -30,7 +30,7 @@ import secrets
 import time
 import warnings
 from dataclasses import dataclass, field, fields
-from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple, Type, Union
 
 import numpy as np
 import os
@@ -65,10 +65,14 @@ import protocol as pr   # shared challenge PRF / domains / column sampler (no to
 class Variable:
     """A named contiguous block of witness slots.
 
-    `phase` is 1 (committed before challenges) or 2 (after). `row_start`
-    is assigned by the framework when prove/verify is called — variables
-    are laid out phase 1 first, then phase 2, in declaration order, with
-    each variable taking n_rows(ELL) = ceil(length/ELL) rows.
+    `phase` is the commitment epoch a variable belongs to:
+      1 — committed in R1, before any challenge exists;
+      2 — committed in R2, may depend on the R1 coin s_op;
+      3 — committed in R3, may depend on the R2 coin s_bind (the late
+          Freivalds auxiliaries of the routed-projected matmul live here).
+    `row_start` is assigned by the framework when prove/verify is called —
+    variables are laid out phase 1 first, then 2, then 3, in declaration
+    order, with each variable taking n_rows(ELL) = ceil(length/ELL) rows.
 
     eq=False so identity-based equality/hash hold: two Variables are
     distinct unless they're the same Python object, which lets us use
@@ -391,37 +395,67 @@ def _iter_message_chunks(vars_list: List[Variable],
     (vars_list packed row by row into ELL-wide rows from row_offset_start).
 
     Replaces the full (m_total, ELL) matrix allocation with chunk-by-chunk
-    iteration. chunk_tensor is freshly allocated each iter (small enough
-    that torch's caching allocator reuses memory cheaply), so consumers
-    may freely hold or drop without affecting later chunks.
+    iteration. chunk_tensor is freshly allocated (cloned) per yield, so
+    consumers may freely hold or drop without affecting later chunks.
+
+    Each variable is padded/reshaped into its own (v_rows, ELL) tensor in
+    one vectorized op (pad tail with zeros, then .view) instead of a
+    Python loop over rows -- v_rows can be in the hundreds of thousands
+    for a single lookup-table variable, and a per-row torch.Tensor
+    __setitem__ pays ~10-20us of dispatch overhead regardless of how
+    little data it moves (see analysis/ in the "toy transformer" formula-
+    vs-reality investigation: this loop was ~69% of prove() wall-clock on
+    a small witness, dwarfing the actual NTT/hash kernels it feeds). A
+    `carry` buffer holds any rows left over after slicing off whole
+    chunk_size pieces, so chunk boundaries are identical to the old
+    per-row version even when a variable's row count doesn't align to
+    chunk_size, or a chunk is filled by the tail of one variable plus the
+    head of the next -- this does NOT materialize the full (m_total, ELL)
+    matrix; peak extra memory is one variable's own rows plus one chunk.
 
     Last chunk may have fewer rows. abs_row_offset is row_offset_start +
     cumulative-rows-yielded-so-far."""
     if not vars_list:
         return
-    chunk = torch.zeros((chunk_size, cfg.ELL), dtype=torch.uint64, device="cuda")
-    chunk_row = 0
+    ELL = cfg.ELL
+    carry = None                          # (k, ELL) leftover rows, k < chunk_size, or None
     abs_offset = row_offset_start
+    padded = None
     for v in vars_list:
         data = _to_device_u64(_fetch(inputs, v)).reshape(-1)
         v_len = data.numel()
         assert v_len == v.length, (
             f"variable '{v.name}' length {v.length} != input numel {v_len}")
-        v_rows = v.n_rows(cfg.ELL)
-        for r in range(v_rows):
-            lo = r * cfg.ELL
-            hi = min(lo + cfg.ELL, v_len)
-            chunk[chunk_row, :hi - lo] = data[lo:hi]
-            if hi - lo < cfg.ELL:
-                chunk[chunk_row, hi - lo:].zero_()
-            chunk_row += 1
-            if chunk_row == chunk_size:
-                yield abs_offset, chunk
-                chunk = torch.zeros((chunk_size, cfg.ELL), dtype=torch.uint64, device="cuda")
-                chunk_row = 0
-                abs_offset += chunk_size
-    if chunk_row > 0:
-        yield abs_offset, chunk[:chunk_row]
+        v_rows = v.n_rows(ELL)
+        pad_len = v_rows * ELL - v_len
+        if pad_len:
+            padded = torch.zeros(v_rows * ELL, dtype=torch.uint64, device="cuda")
+            padded[:v_len] = data
+            rows_v = padded.view(v_rows, ELL)
+        else:
+            rows_v = data.view(v_rows, ELL)
+        if carry is not None:
+            rows_v = torch.cat([carry, rows_v], dim=0)
+            carry = None
+        n = rows_v.shape[0]
+        pos = 0
+        while n - pos >= chunk_size:
+            yield abs_offset, rows_v[pos:pos + chunk_size].clone()
+            abs_offset += chunk_size
+            pos += chunk_size
+        if pos < n:
+            # .clone(), not a view: a view keeps the WHOLE source variable
+            # alive until the next chunk boundary, so the previous expert
+            # shard would still be resident while the next one loads (~336 MB
+            # each at Maverick shapes, and the routed claim walks 128 of
+            # them). The copy is at most one partial chunk.
+            carry = rows_v[pos:].clone()
+        # Drop this variable's tensors BEFORE the next iteration resolves the
+        # next one: plain rebinding evaluates the new loader while the old
+        # tensor is still bound, which means two shards resident at the peak.
+        data = rows_v = padded = None
+    if carry is not None and carry.shape[0] > 0:
+        yield abs_offset, carry.clone()
 
 
 # ============================================================
@@ -648,6 +682,42 @@ def _coset_powers(n: int, gamma: int) -> torch.Tensor:
     return tensor
 
 
+# --- coset-NTT encode mode (autoresearch: encode is ~32% of the 400B prove) ---
+# The notebook's coset_ntt=True: evaluate at the N=rho*K coset by doing rho
+# separate length-K NTTs instead of one length-N NTT. Byte-identical to the
+# single-N path (validated bit-exact at K=64..16384 in
+# analysis/bench/coset_ntt_bench.py + a byte-identical PROOF + Rust ACCEPT in
+# validate_coset_ntt.py). The isolated NTT primitive is ~1.2x faster at
+# K >= 2^16 (coset_ntt_ab.py), BUT an in-situ prove A/B at K=2^16 on a small
+# model (ab_coset_insitu.py) showed NO encode-time win and +1.4GB peak memory
+# — at that scale encode isn't NTT-bound, so the microbenchmark overstated the
+# in-prove benefit. Its production benefit (huge witness at K>=2^18) is a
+# cost-model PREDICTION, not a measured fact. So this is OPT-IN ONLY (default
+# off): a validated-correct lever to A/B at true production scale, never
+# auto-enabled (it costs memory for unconfirmed benefit). LIGERO_COSET_NTT=on.
+_COSET_NTT_MODE = os.environ.get("LIGERO_COSET_NTT", "off")   # off | on | auto
+_COSET_NTT_MIN_K = 1 << 16
+
+
+def _coset_encode_via_coset_ntt(coeffs: torch.Tensor, cfg: 'LigeroConfig') -> torch.Tensor:
+    """rho length-K coset NTTs, interleaved -> (m, N_LIG) codeword. Peak memory
+    = out (m*N) + one length-K transform (m*K), same as the single-N path (no
+    3x expand); the rho=N/K cosets run as a small Python loop. Bit-exact
+    equivalent of the single-N encode below."""
+    m, K, N = coeffs.size(0), cfg.K_DEG, cfg.N_LIG
+    rho = N // K
+    out = torch.empty((m, N), dtype=torch.uint64, device="cuda")
+    for t in range(rho):
+        gamma_t = (cfg.coset_shift * pow(cfg.W_N, t, P)) % P
+        gp = _coset_powers(K, gamma_t)                             # (K,), cached
+        twisted = gl_mul(coeffs, gp.unsqueeze(0).expand(m, K).contiguous())
+        ntt_forward_batched(twisted)                               # in-place length-K
+        # codeword[row, i*rho + t] = coset_t_result[row, i]; strided write via the
+        # int64 view (pure data movement -> bit-identical, dodges the uint64 gap).
+        out.view(torch.int64)[:, t::rho] = twisted.view(torch.int64)
+    return out
+
+
 def _coset_encode_codewords(coeffs: torch.Tensor,
                               cfg: 'LigeroConfig') -> torch.Tensor:
     """Evaluate (m, K_DEG) polynomials (coefficient form, degree < K_DEG)
@@ -659,6 +729,10 @@ def _coset_encode_codewords(coeffs: torch.Tensor,
     m = coeffs.size(0)
     if m == 0:
         return torch.empty((0, cfg.N_LIG), dtype=torch.uint64, device="cuda")
+    use_coset = (_COSET_NTT_MODE == "on"
+                 or (_COSET_NTT_MODE == "auto" and cfg.K_DEG >= _COSET_NTT_MIN_K))
+    if use_coset and cfg.N_LIG > cfg.K_DEG:
+        return _coset_encode_via_coset_ntt(coeffs, cfg)
     g_powers = _coset_powers_k(cfg)                                # (K_DEG,)
     # gl_mul requires same shapes; broadcast g_powers to (m, K_DEG).
     g_powers_2d = g_powers.unsqueeze(0).expand(m, cfg.K_DEG).contiguous()
@@ -673,8 +747,15 @@ def encode_messages(messages: torch.Tensor, cfg: LigeroConfig,
                     *,
                     master_seed: torch.Tensor,
                     row_offset: int = 0,
-                    ) -> Tuple[torch.Tensor, torch.Tensor]:
+                    need_codewords: bool = True,
+                    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
     """messages: (m, ELL). Returns (row_polys: (m, K_DEG), codewords: (m, N_LIG)).
+
+    `need_codewords=False` returns (row_polys, None) and skips the N_LIG-point
+    coset LDE. The q-poly round consumes only row_polys — it has no Merkle tree
+    and opens no column — so computing the codewords there is work whose result
+    nobody reads: 402.7G weight slots' worth of it at Maverick scale. Skipping
+    output that is never consumed cannot change the proof.
 
     The K_DEG - ELL slack slots are filled by `row_prg(master_seed,
     row_offset + i, slack)` for row i. Deterministic: same (master_seed,
@@ -715,6 +796,8 @@ def encode_messages(messages: torch.Tensor, cfg: LigeroConfig,
 
     row_polys = padded.clone()
     ntt_inverse_batched(row_polys)
+    if not need_codewords:
+        return row_polys, None
     codewords = _coset_encode_codewords(row_polys, cfg)
     return row_polys, codewords
 
@@ -814,7 +897,8 @@ def commit_weights(tape, cfg: LigeroConfig, master_seed: bytes = MASTER_SEED):
     tree. (A weight committed but never referenced by a claim is not in the
     proof's witness, so it is excluded here too.)"""
     claims = _with_synthesized_settlements(tape.claims)
-    _all, _p1, _p2, _m_p1, _m_total, weight_vars, m_w, _wn, _m_wn = _layout(claims, cfg)
+    (_all, _p1, _p2, _p3, _m_p1, _m_p2, _m_total,
+     weight_vars, m_w, _wn, _m_wn) = _layout(claims, cfg)
     master_seed_t = _master_seed_to_cuda(master_seed)
     acc = _make_merkle_acc(cfg.N_LIG, m_w) if m_w else None
     if acc is not None:
@@ -847,28 +931,155 @@ class WeightCommitment:
     m_w: int
     n_lig: int
     master_seed: bytes = MASTER_SEED
+    # Opening ledger. Every proof that references this commitment opens
+    # T_QUERIES columns of the SAME weight rows under the SAME padding, so the
+    # leakage that matters is the CUMULATIVE set of distinct columns, not the
+    # per-proof count. Each row's polynomial carries K_DEG-ELL random pad
+    # coefficients; once the union of opened columns approaches that, the
+    # padding stops hiding and the enrollment must be REFRESHED (the P5 path:
+    # re-commit under a fresh seed and prove the link).
+    opened_columns: List[int] = field(default_factory=list)
 
     @staticmethod
-    def from_tape(tape, cfg: LigeroConfig, master_seed: bytes = MASTER_SEED
+    def from_tape(tape, cfg: LigeroConfig, master_seed: bytes = None
                   ) -> "WeightCommitment":
+        # A fresh secret enrollment seed by default: the padding of the
+        # enrolled model is what hides it in the opened columns, so a public
+        # constant would give the weights away. Callers that need a
+        # reproducible R_W (diff-tests) pass one explicitly.
+        if master_seed is None:
+            master_seed = new_zk_seed()
         art, _wv, m_w = commit_weights(tape, cfg, master_seed)
         return WeightCommitment(root=art.root, levels=art.levels, m_w=m_w,
                                 n_lig=cfg.N_LIG, master_seed=bytes(master_seed))
 
+    # Wire format: a plain length-framed binary blob, NOT pickle. The handle
+    # carries the enrollment seed (a secret) and the Merkle levels, and it is
+    # read before anything about it has been checked — pickle.load would
+    # execute whatever the file says. Layout:
+    #   magic "VERINFWC" | u32 version | u32 m_w | u32 n_lig | 32B root
+    #   | 32B master_seed | u32 n_levels | per level: u32 n_nodes, nodes*32B
+    MAGIC = b"VERINFWC"
+    VERSION = 2
+    # Fraction of the ZK pad we are willing to spend before demanding a
+    # refresh. Half leaves the same margin again for the refresh proof itself.
+    OPENING_BUDGET_FRACTION = 0.5
+
     def save(self, path: str) -> None:
-        import pickle
-        with open(path, "wb") as f:
-            pickle.dump({"root": self.root, "levels": self.levels,
-                         "m_w": self.m_w, "n_lig": self.n_lig,
-                         "master_seed": self.master_seed}, f)
+        import os
+        import struct
+        # The ledger is security state, not a cache.  Publish it atomically so
+        # a crash cannot roll the enrollment back to an earlier opening set.
+        part = path + ".part"
+        with open(part, "wb") as f:
+            f.write(self.MAGIC)
+            f.write(struct.pack("<III", self.VERSION, self.m_w, self.n_lig))
+            f.write(self.root)
+            f.write(self.master_seed)
+            f.write(struct.pack("<I", len(self.levels)))
+            for lvl in self.levels:
+                f.write(struct.pack("<I", len(lvl)))
+                for node in lvl:
+                    assert len(node) == 32, "merkle node must be 32 bytes"
+                    f.write(node)
+            cols = sorted(set(self.opened_columns))
+            f.write(struct.pack("<I", len(cols)))
+            for c in cols:
+                f.write(struct.pack("<I", c))
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(part, path)
+        dfd = os.open(os.path.dirname(os.path.abspath(path)) or ".", os.O_RDONLY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
 
     @staticmethod
     def load(path: str) -> "WeightCommitment":
-        import pickle
+        try:
+            return WeightCommitment._parse(path)
+        except AssertionError:
+            raise
+        except Exception as e:                      # truncated / scrambled file
+            raise AssertionError(
+                f"corrupt weight commitment {path}: {type(e).__name__}: {e}")
+
+    @staticmethod
+    def _parse(path: str) -> "WeightCommitment":
+        import struct
         with open(path, "rb") as f:
-            d = pickle.load(f)
-        d.setdefault("master_seed", MASTER_SEED)   # pre-P5 pickles
-        return WeightCommitment(**d)
+            blob = f.read()
+        assert blob[:8] == WeightCommitment.MAGIC, "not a weight commitment file"
+        ver, m_w, n_lig = struct.unpack("<III", blob[8:20])
+        assert ver == WeightCommitment.VERSION, f"unsupported version {ver}"
+        root, seed = blob[20:52], blob[52:84]
+        (n_levels,) = struct.unpack("<I", blob[84:88])
+        off = 88
+        levels: List[List[bytes]] = []
+        for _ in range(n_levels):
+            (n_nodes,) = struct.unpack("<I", blob[off:off + 4]); off += 4
+            end = off + 32 * n_nodes
+            levels.append([blob[i:i + 32] for i in range(off, end, 32)])
+            off = end
+        (n_cols,) = struct.unpack("<I", blob[off:off + 4]); off += 4
+        cols = list(struct.unpack(f"<{n_cols}I", blob[off:off + 4 * n_cols]))
+        off += 4 * n_cols
+        assert off == len(blob), "trailing bytes in weight commitment file"
+        wc = WeightCommitment(root=root, levels=levels, m_w=m_w, n_lig=n_lig,
+                              master_seed=seed, opened_columns=cols)
+        wc.check_topology()
+        return wc
+
+    def opening_budget(self, cfg: 'LigeroConfig') -> int:
+        """How many DISTINCT columns this enrollment may ever reveal."""
+        slack = cfg.K_DEG - cfg.ELL
+        return int(slack * self.OPENING_BUDGET_FRACTION)
+
+    def check_openings(self, cfg: 'LigeroConfig', new_columns) -> None:
+        """Refuse a proof that would spend more of the pad than the ledger
+        allows. Called once the column challenge exists and BEFORE any weight
+        column is produced, so an exhausted enrollment costs nothing.
+
+        A config with no usable slack (K_DEG-ELL <= T_QUERIES) is not zero
+        knowledge to begin with — encode_messages already warns about it — so
+        there is no pad to ration and the ledger stands down. Production runs
+        at K_DEG=2*ELL, where the budget is real."""
+        if cfg.K_DEG - cfg.ELL <= cfg.T_QUERIES:
+            return
+        after = len(set(self.opened_columns) | set(new_columns))
+        budget = self.opening_budget(cfg)
+        if after > budget:
+            raise AssertionError(
+                f"weight-commitment opening budget exhausted: this proof would "
+                f"take the enrollment to {after} distinct opened columns, past "
+                f"the {budget} its ZK padding covers "
+                f"(K_DEG-ELL={cfg.K_DEG - cfg.ELL}). REFRESH the enrollment "
+                f"under a fresh seed and prove the link (persistent-weights P5) "
+                f"before proving again.")
+
+    def record_openings(self, new_columns) -> None:
+        """Book the columns a completed proof revealed. The caller persists the
+        handle afterwards — an unsaved ledger is a silently reusable pad."""
+        self.opened_columns = sorted(set(self.opened_columns) | set(new_columns))
+
+    def check_topology(self) -> None:
+        """Recompute the tree from its leaves: a handle is trusted for the
+        root it hands to the verifier, so a file whose levels do not build
+        that root must not be usable at all."""
+        assert self.levels, "empty commitment"
+        assert len(self.levels[0]) == self.n_lig, (
+            f"leaf count {len(self.levels[0])} != N_LIG {self.n_lig}")
+        cur = list(self.levels[0])
+        depth = 1
+        while len(cur) > 1:
+            nxt = [_b3(cur[i], cur[i + 1]) for i in range(0, len(cur), 2)]
+            assert depth < len(self.levels) and self.levels[depth] == nxt, (
+                f"merkle level {depth} does not follow from level {depth - 1}")
+            cur = nxt
+            depth += 1
+        assert depth == len(self.levels), "extra levels in commitment"
+        assert cur[0] == self.root, "levels do not build the stored root"
 
 
 
@@ -888,7 +1099,10 @@ def _opened_columns_match_leaves(opened: Dict[int, torch.Tensor],
     step = 1 << 20
     for lo in range(0, n_total_rows, step):
         hi = min(lo + step, n_total_rows)
-        acc.update(torch.stack([opened[j][lo:hi] for j in Q_cols], dim=1))
+        # ColumnSink serves the openings from pre-sized HOST buffers; the
+        # merkle accumulator hashes on the GPU, so move each row block over.
+        acc.update(torch.stack([opened[j][lo:hi] for j in Q_cols], dim=1)
+                   .to("cuda", non_blocking=True))
     digests = acc.finalize().cpu().numpy()
     return all(bytes(digests[k].tolist()) == art.column_hashes[j]
                for k, j in enumerate(Q_cols))
@@ -951,6 +1165,44 @@ def _ephase_report():
         print(f"    {n:14s} {ms / 1000:7.3f}s  ({len(_EPHASE[n])} calls)", flush=True)
 
 
+class ColumnSink:
+    """Opened columns, written straight to host memory as they are produced.
+
+    The old path buffered every chunk's slice on the GPU and joined them with
+    torch.cat at the end. At the target geometry the openings are tens of GB
+    and the join briefly doubles that — the peak that decides whether a run
+    fits in VRAM at all. Here each column is one pre-sized pinned host tensor
+    (the block's row count is known before the sweep) and every chunk is
+    copied into its own slice, so there is no accumulation and no join.
+    """
+
+    __slots__ = ("cols", "n_rows", "row_base", "_filled")
+
+    def __init__(self, n_rows: int, columns: List[int], row_base: int = 0):
+        self.n_rows = n_rows
+        self.row_base = row_base          # absolute row of this block's row 0
+        self.cols = {j: torch.empty(n_rows, dtype=torch.uint64, device="cpu")
+                     for j in columns}
+        self._filled = 0
+
+    def write(self, abs_row: int, chunk: torch.Tensor, columns: List[int]):
+        """chunk: (rows, len(columns)) device slice of this chunk's codewords,
+        starting at ABSOLUTE row `abs_row`."""
+        lo = abs_row - self.row_base
+        n = chunk.size(0)
+        assert 0 <= lo and lo + n <= self.n_rows, (
+            f"column sink overflow: [{lo}, {lo + n}) outside [0, {self.n_rows})")
+        host = chunk.cpu()
+        for k, j in enumerate(columns):
+            self.cols[j][lo:lo + n] = host[:, k]
+        self._filled += n
+
+    def finish(self) -> Dict[int, torch.Tensor]:
+        assert self._filled == self.n_rows, (
+            f"column sink filled {self._filled} of {self.n_rows} rows")
+        return self.cols
+
+
 def _stream_phase(
     vars_list: List[Variable],
     inputs: Dict[Variable, InputVal],
@@ -965,6 +1217,7 @@ def _stream_phase(
     q_irs_acc: Optional['QIrsAccumulator'] = None,
     q_lin_acc: Optional['QLinAccumulator'] = None,
     columns_at: Optional[List[int]] = None,
+    column_sink: Optional['ColumnSink'] = None,
     chunk_size: int = _ENCODE_CHUNK_ROWS,
 ) -> Dict[str, Any]:
     """One streaming pass over (vars_list, inputs). For each chunk:
@@ -992,31 +1245,53 @@ def _stream_phase(
     Caller-owned accumulators are not included; caller finalises them.
     """
     out: Dict[str, Any] = {}
+    # No sink: nothing to compute. This is the referenced-weight case (a
+    # persistent commitment supplies root and paths, so R1 has no merkle
+    # accumulator for the W block) — encoding it anyway would cost a full
+    # RS pass over every weight slot, 402.7G slots at Maverick scale, for
+    # output nobody reads.
+    if (merkle_acc is None and q_irs_acc is None and q_lin_acc is None
+            and columns_at is None):
+        return out
 
     col_buf: Optional[Dict[int, List[torch.Tensor]]] = None
     Q_set: Optional[torch.Tensor] = None
     if columns_at is not None:
-        col_buf = {j: [] for j in columns_at}
+        # With a sink the slices go straight to host; without one (unit tests,
+        # the in-process verifier) the old device buffer is kept.
+        col_buf = None if column_sink is not None else {j: [] for j in columns_at}
         Q_set = torch.tensor(list(columns_at), dtype=torch.long, device="cuda")
 
     # Optional prefix codewords (round 1: blinding rows for phase-1).
     if prefix_codewords is not None and prefix_codewords.size(0) > 0:
         if merkle_acc is not None:
             merkle_acc.update(prefix_codewords)
+        if column_sink is not None:
+            column_sink.write(abs_row_offset,
+                              prefix_codewords.index_select(1, Q_set), columns_at)
         if col_buf is not None:
             slice_ = prefix_codewords.index_select(1, Q_set)
             for k, j in enumerate(columns_at):
                 col_buf[j].append(slice_[:, k].clone())
 
     # Stream encode + feed every active accumulator.
+    #
+    # Only the codeword sinks need the LDE: the Merkle tree hashes codeword
+    # values and an opening slices codeword columns. The q-poly round has
+    # neither, and its rows are the whole enrolled weight block, so computing
+    # the codewords there was the single largest piece of unread work in the
+    # prover.
     seed_for_pad = master_seed if pad_seed is None else pad_seed
+    need_codes = (merkle_acc is not None or column_sink is not None
+                  or col_buf is not None)
     for chunk_abs_row, chunk_msg in _iter_message_chunks(
             vars_list, inputs, cfg, abs_row_offset, chunk_size):
         with _phase('encode'):
             polys, codes = encode_messages(
                 chunk_msg, cfg, master_seed=seed_for_pad,
                 row_offset=(chunk_abs_row if pad_row_offset is None
-                            else pad_row_offset + (chunk_abs_row - abs_row_offset)))
+                            else pad_row_offset + (chunk_abs_row - abs_row_offset)),
+                need_codewords=need_codes)
         if merkle_acc is not None:
             with _phase('merkle'):
                 merkle_acc.update(codes)
@@ -1026,7 +1301,11 @@ def _stream_phase(
         if q_lin_acc is not None:
             with _phase('fold_qlin'):
                 q_lin_acc.update(chunk_abs_row, polys)
-        if col_buf is not None:
+        if column_sink is not None:
+            with _phase('cols'):
+                column_sink.write(chunk_abs_row,
+                                  codes.index_select(1, Q_set), columns_at)
+        elif col_buf is not None:
             with _phase('cols'):
                 slice_ = codes.index_select(1, Q_set)
                 for k, j in enumerate(columns_at):
@@ -1100,6 +1379,44 @@ class QIrsAccumulator:
         return self.q
 
 
+class _PktRange(NamedTuple):
+    """O(1) alternative to emitting one (row, pkt) tuple per row: a
+    compile_fn that knows its packet is IDENTICAL across a whole
+    row range (the common case -- see _index_bands's docstring: "All rows
+    of a (variable, family) share an identical template; only the row
+    range varies") can return one of these instead of row_end - row_start
+    separate tuples. _index_bands folds it into a band in O(1); the eager
+    (non-streaming) compile path expands it back to per-row tuples via
+    _expand_row_pkts, since that path's per_row list genuinely needs one
+    entry per row."""
+    pkt: object
+    row_start: int
+    row_end: int   # exclusive
+
+
+def _expand_row_pkts(row_pkts):
+    """Normalize row_pkts entries to a flat (row, pkt) iterator, expanding
+    any _PktRange entries. O(rows) -- for the eager compile path
+    (_compile_with_chs), which needs a genuine per-row list; the streaming
+    path (_StreamingPackets._index_bands) consumes _PktRange directly in
+    O(1) instead and should not go through this."""
+    for item in row_pkts:
+        if isinstance(item, _PktRange):
+            for r in range(item.row_start, item.row_end):
+                yield r, item.pkt
+        else:
+            yield item
+
+
+def _compile_one(claim, ch, cfg, base, late_ch=None):
+    """COMPILE_FNS dispatch, passing the late challenge to claims that have a
+    phase-3 stage. Every other claim keeps the original 4-argument call."""
+    fn = COMPILE_FNS[type(claim)]
+    if late_ch is not None and type(claim) in LATE_SAMPLE_FNS:
+        return fn(claim, ch, cfg, base, late_ch=late_ch)
+    return fn(claim, ch, cfg, base)
+
+
 class _StreamingPackets:
     """Lazy per-claim compile for the streaming prover.
 
@@ -1120,9 +1437,14 @@ class _StreamingPackets:
     term-identical to the eager path. The fold consumes the band index via
     bands_overlapping (variable-major; no per-row lists)."""
 
-    def __init__(self, claims, ch0, cfg, n_ops):
+    def __init__(self, claims, ch0, cfg, n_ops, chs_late=None):
         self.claims, self.ch0, self.cfg = claims, ch0, cfg
         self.n_ops = n_ops
+        # Late (phase-3) challenges, for claims that own a second stage. The
+        # compile runs ONCE, after s_bind, so a late claim's bands and its
+        # early ones are emitted together and the constraint ids never depend
+        # on when the compile happened.
+        self.chs_late = chs_late if chs_late is not None else [None] * len(claims)
         # Build the per-(variable, family) band index UPFRONT from the count pass:
         # one template + row range per band (~MB), replacing the per-row packet
         # store (~45 GB). All bands are known before the sweep -> no lazy compile and
@@ -1137,7 +1459,8 @@ class _StreamingPackets:
         self.quad_fams: Dict[int, list] = {}
         for i in range(n_ops):
             self.base_c.append(cur)
-            pk, q, na, _ = COMPILE_FNS[type(claims[i])](claims[i], ch0[i], cfg, cur)
+            pk, q, na, _ = _compile_one(claims[i], ch0[i], cfg, cur,
+                                        self.chs_late[i])
             self._index_bands(pk)
             cur += na
             fams = []
@@ -1148,7 +1471,8 @@ class _StreamingPackets:
         self.ops_end_constraints, self.ops_end_quads = cur, nq
         # settlements: their packets land on rows across the tape -> indexed here too.
         for i in range(n_ops, len(claims)):
-            pk, q, na, _ = COMPILE_FNS[type(claims[i])](claims[i], ch0[i], cfg, cur)
+            pk, q, na, _ = _compile_one(claims[i], ch0[i], cfg, cur,
+                                        self.chs_late[i])
             cur += na
             self._index_bands(pk)
             fams = []
@@ -1161,17 +1485,26 @@ class _StreamingPackets:
 
     def _index_bands(self, row_pkts):
         """Dedup a claim's per-row packets into band records. All rows of a
-        (variable, family) share an identical template; only the row range varies."""
-        for r, pkt in row_pkts:
+        (variable, family) share an identical template; only the row range
+        varies -- a compile_fn that already knows its whole range shares one
+        packet can hand it over as a _PktRange and skip the O(rows) walk
+        entirely (folded in O(1) below); anything still emitting bare
+        (row, pkt) tuples is handled exactly as before, one row at a time."""
+        for item in row_pkts:
+            if isinstance(item, _PktRange):
+                pkt, rs, re = item.pkt, item.row_start, item.row_end
+            else:
+                r, pkt = item
+                rs, re = r, r + 1
             key = _band_key(pkt)
             idx = self._band_seen.get(key)
             if idx is None:
                 self._band_seen[key] = len(self.bands)
-                self.bands.append([pkt, r, r + 1])
+                self.bands.append([pkt, rs, re])
             else:
                 b = self.bands[idx]
-                if r < b[1]: b[1] = r
-                if r + 1 > b[2]: b[2] = r + 1
+                if rs < b[1]: b[1] = rs
+                if re > b[2]: b[2] = re
 
     def _build_row_lookup(self):
         """Group bands by their row range (disjoint across variables -- each
@@ -1349,16 +1682,36 @@ class ChalSource:
             self.cache[(lo, hi)] = buf
         return lo, buf
 
+_ROW_START_FIELD_NAME_CACHE: Dict[type, Optional[str]] = {}
+_NO_ROW_START_FIELD = object()   # sentinel: "checked, this type has no *row_start field"
+
+
+def _row_start_field_name(pkt_type: type) -> Optional[str]:
+    """The field name ending in 'row_start' for a packet dataclass TYPE,
+    memoized -- dataclasses.fields() is the same for every instance of a
+    type, so re-deriving it per packet (this is called once per witness
+    row during the one-time band-index pass -- hundreds of thousands of
+    times on a real run) was pure repeated reflection overhead."""
+    name = _ROW_START_FIELD_NAME_CACHE.get(pkt_type, _NO_ROW_START_FIELD)
+    if name is not _NO_ROW_START_FIELD:
+        return name
+    name = None
+    for f in fields(pkt_type):
+        if f.name.endswith("row_start"):
+            name = f.name
+            break
+    _ROW_START_FIELD_NAME_CACHE[pkt_type] = name
+    return name
+
+
 def _band_key(pkt):
     """A (variable, family) band identity from a packet's scalar fields. Any valid
     partition keeps the decomposition bit-exact (gl_add is linear); this keys on
     (kind, base, *_row_start) so it mirrors the real (variable, family) bands."""
-    rs = None
-    for f in fields(pkt):
-        if f.name.endswith("row_start"):
-            rs = getattr(pkt, f.name)
-            break
-    return (type(pkt), getattr(pkt, "base", None), rs)
+    pkt_type = type(pkt)
+    name = _row_start_field_name(pkt_type)
+    rs = getattr(pkt, name) if name is not None else None
+    return (pkt_type, getattr(pkt, "base", None), rs)
 
 
 # --- Phase 4: descriptor-interpreter kernels (linear-fold-unification.md) ---
@@ -1592,18 +1945,42 @@ def _encode_rows_indexed(msgs: torch.Tensor, abs_row_indices: List[int],
     return polys
 
 
+class _RowMap:
+    """abs_row -> (Variable, local_row), same lookup contract as the plain
+    dict _build_row_map used to return (`row_map[abs_row]`, KeyError if out
+    of range), but built from O(n_vars) sorted ranges instead of one dict
+    entry per row -- same restructure _build_row_lookup/bands_overlapping
+    already applies to the band index, applied here too since a variable
+    list can be hundreds of thousands of rows."""
+    __slots__ = ("_starts", "_ends", "_vars")
+
+    def __init__(self, starts: List[int], ends: List[int], vars_: List[Variable]):
+        self._starts, self._ends, self._vars = starts, ends, vars_
+
+    def __getitem__(self, abs_row: int) -> Tuple[Variable, int]:
+        i = bisect.bisect_right(self._starts, abs_row) - 1
+        if i < 0 or abs_row >= self._ends[i]:
+            raise KeyError(abs_row)
+        return self._vars[i], abs_row - self._starts[i]
+
+
 def _build_row_map(vars_list: List[Variable], cfg: LigeroConfig,
-                    row_offset_start: int) -> Dict[int, Tuple[Variable, int]]:
-    """Build {abs_row → (Variable, local_row)} for the given var list,
-    walking vars in declaration order."""
-    row_map: Dict[int, Tuple[Variable, int]] = {}
+                    row_offset_start: int) -> '_RowMap':
+    """Build abs_row → (Variable, local_row) for the given var list, walking
+    vars in declaration order (one range per variable, not one entry per row)."""
+    starts: List[int] = []
+    ends: List[int] = []
+    vars_: List[Variable] = []
     abs_offset = row_offset_start
     for v in vars_list:
         n = v.n_rows(cfg.ELL)
-        for r in range(n):
-            row_map[abs_offset] = (v, r)
-            abs_offset += 1
-    return row_map
+        if n == 0:
+            continue
+        starts.append(abs_offset)
+        ends.append(abs_offset + n)
+        vars_.append(v)
+        abs_offset += n
+    return _RowMap(starts, ends, vars_)
 
 
 def _gather_rows(inputs: Dict[Variable, InputVal],
@@ -1612,8 +1989,16 @@ def _gather_rows(inputs: Dict[Variable, InputVal],
                   needed_abs_rows: List[int]) -> torch.Tensor:
     """Return a (len(needed_abs_rows), ELL) tensor of message rows at the
     requested absolute indices. `row_map` is pre-built by `_build_row_map`
-    so callers in a loop don't pay the build cost per call."""
-    out = torch.zeros((len(needed_abs_rows), cfg.ELL), dtype=torch.uint64, device="cuda")
+    so callers in a loop don't pay the build cost per call.
+
+    Per-variable, the needed rows are gathered with one index_select instead
+    of a Python loop doing one __setitem__ per row -- found via profiling a
+    medium-scale (SEQ=384, 4 layers) run, where this was ~17% of prove()
+    wall-clock (the Freivalds-style spot-checks in compute_p_0_streaming
+    call this often, with growing needed_abs_rows lists as SEQ grows), the
+    same pattern as _iter_message_chunks (see that function's docstring)."""
+    ELL = cfg.ELL
+    out = torch.zeros((len(needed_abs_rows), ELL), dtype=torch.uint64, device="cuda")
     # Group needed rows by Variable so each weight loads once even if
     # multiple rows are needed from it (matters under lazy loaders).
     by_var: Dict[Variable, List[Tuple[int, int]]] = {}  # var → [(out_i, local_row)]
@@ -1623,10 +2008,21 @@ def _gather_rows(inputs: Dict[Variable, InputVal],
     for v, items in by_var.items():
         data = _to_device_u64(_fetch(inputs, v)).reshape(-1)
         v_len = data.numel()
-        for i, r in items:
-            lo = r * cfg.ELL
-            hi = min(lo + cfg.ELL, v_len)
-            out[i, :hi - lo] = data[lo:hi]
+        v_rows = v.n_rows(ELL)
+        pad_len = v_rows * ELL - v_len
+        if pad_len:
+            padded = torch.zeros(v_rows * ELL, dtype=torch.uint64, device="cuda")
+            padded[:v_len] = data
+            rows_v = padded.view(v_rows, ELL)
+        else:
+            rows_v = data.view(v_rows, ELL)
+        out_idx = torch.tensor([i for i, _ in items], dtype=torch.long, device="cuda")
+        row_idx = torch.tensor([r for _, r in items], dtype=torch.long, device="cuda")
+        gathered = rows_v.index_select(0, row_idx)
+        # index_copy_ isn't in _uint64_compat's patched op list (index_select
+        # is); pure data movement (row copy, sign never inspected), so the
+        # int64 view is bit-identical -- same rule _uint64_compat itself uses.
+        out.view(torch.int64).index_copy_(0, out_idx, gathered.view(torch.int64))
         del data
     return out
 
@@ -1662,6 +2058,45 @@ def compute_p_0_streaming(
     p_0 = torch.zeros(2 * K - 1, dtype=torch.uint64, device="cuda")
     if T == 0:
         return p_0
+
+    # Multiplication is performed in the 2K evaluation domain.  The previous
+    # implementation inverse-transformed every product row and only then took
+    # the r_quad-weighted row sum.  The inverse NTT is linear, so that did
+    # exactly the same work as
+    #
+    #   iNTT(sum_i r_i * (NTT(px_i)NTT(py_i) +
+    #                     NTT(pa_i)NTT(pz_i)))
+    #
+    # but paid one 2K inverse transform per constraint row.  Accumulate the
+    # products in the evaluation domain and invert ONCE at the end.  This is a
+    # pure reassociation in F_p: transcript, polynomial coefficients and the
+    # verifier are unchanged.
+    n_eval = 1
+    while n_eval < 2 * K - 1:
+        n_eval <<= 1
+    eval_acc = torch.zeros(n_eval, dtype=torch.uint64, device="cuda")
+    public_acc = torch.zeros(K, dtype=torch.uint64, device="cuda")
+    saw_public = False
+
+    # Public a/b rows are uniform on the first n message positions and zero on
+    # the rest of the K interpolation domain.  A full chunk normally repeats
+    # the same (n,a,b) hundreds of times (notably LogUp's a=-1,b=0).  Interpolate
+    # each distinct public row once instead of running an identical iNTT for
+    # every constraint.  The cache is local to this call and therefore bounded
+    # by the number of distinct public coefficients in one claim.
+    public_poly_cache = {}
+
+    def public_poly(n: int, coef: int) -> torch.Tensor:
+        key = (int(n), int(coef) % P)
+        hit = public_poly_cache.get(key)
+        if hit is not None:
+            return hit
+        mask = (slot_grid < int(n)).to(torch.int64).unsqueeze(0)
+        c = torch.tensor([key[1]], dtype=torch.uint64, device="cuda")
+        vals = (c.view(torch.int64).unsqueeze(1) * mask).view(torch.uint64)
+        hit = _interpolate_to_kdeg(vals.contiguous(), cfg)
+        public_poly_cache[key] = hit
+        return hit
 
     # Build row maps once — walking the var lists per chunk would be O(M·rows·T/chunk_size).
     # The streaming prover passes prebuilt maps so per-op calls don't rebuild them.
@@ -1714,35 +2149,60 @@ def compute_p_0_streaming(
                                   dtype=torch.int64, device="cuda")
         z_compact = torch.tensor([compact_idx_of[qc.z_row] for qc in chunk_qcs],
                                   dtype=torch.int64, device="cuda")
-        n_chunk = torch.tensor([qc.n for qc in chunk_qcs],
-                                dtype=torch.int64, device="cuda")
-        a_chunk = torch.tensor([qc.a_values[0] for qc in chunk_qcs],
-                                dtype=torch.uint64, device="cuda")
-        b_chunk = torch.tensor([qc.b_values[0] for qc in chunk_qcs],
-                                dtype=torch.uint64, device="cuda")
-
-        mask_i = (slot_grid.unsqueeze(0) < n_chunk.unsqueeze(1)).to(torch.int64)
-        a_i = a_chunk.contiguous().view(torch.int64).unsqueeze(1)
-        b_i = b_chunk.contiguous().view(torch.int64).unsqueeze(1)
-        pa_vals = (a_i * mask_i).view(torch.uint64).contiguous()
-        pb_vals = (b_i * mask_i).view(torch.uint64).contiguous()
-
         px = polys_cache.index_select(0, x_compact)
         py = polys_cache.index_select(0, y_compact)
         pz = polys_cache.index_select(0, z_compact)
-        pa = _interpolate_to_kdeg(pa_vals, cfg)
-        pb = _interpolate_to_kdeg(pb_vals, cfg)
 
-        inner = gl_sub(
-            gl_add(poly_mul_batched(px, py), poly_mul_batched(pa, pz)),
-            torch.cat([pb,
-                        torch.zeros((chunk, K - 1), dtype=torch.uint64, device="cuda")],
-                       dim=1),
-        )
-        p_0 = gl_add(p_0, gl_matvec(inner.T.contiguous(), r_quad[t_lo:t_hi]))
+        a_keys = [(qc.n, qc.a_values[0] % P) for qc in chunk_qcs]
+        b_keys = [(qc.n, qc.b_values[0] % P) for qc in chunk_qcs]
+        have_a = any(a != 0 for _, a in a_keys)
+        have_b = any(b != 0 for _, b in b_keys)
 
-        del polys_cache, px, py, pz, pa, pb, inner, pa_vals, pb_vals, mask_i
+        # One pair of batched forward NTT launches for both products.  Rows
+        # with a=0 need no a*z product at all.
+        lhs_parts, rhs_parts = [px], [py]
+        if have_a:
+            pa = torch.cat([public_poly(n, a) for n, a in a_keys], dim=0)
+            lhs_parts.append(pa)
+            rhs_parts.append(pz)
+        lhs_k = torch.cat(lhs_parts, dim=0)
+        rhs_k = torch.cat(rhs_parts, dim=0)
+        lhs = torch.zeros((lhs_k.size(0), n_eval), dtype=torch.uint64, device="cuda")
+        rhs = torch.zeros_like(lhs)
+        lhs[:, :K] = lhs_k
+        rhs[:, :K] = rhs_k
+        ntt_forward_batched(lhs)
+        ntt_forward_batched(rhs)
+        products = gl_mul(lhs, rhs)
+        product_sum = products[:chunk]
+        if have_a:
+            product_sum = gl_add(product_sum, products[chunk:])
+        weighted_eval = gl_matvec(product_sum.T.contiguous(), r_quad[t_lo:t_hi])
+        eval_acc = gl_add(eval_acc, weighted_eval)
 
+        # The public b polynomial is already in coefficient form.  Accumulate
+        # it separately and subtract after the single inverse transform.  The
+        # overwhelmingly common b=0 family avoids this path entirely.
+        if have_b:
+            saw_public = True
+            pb = torch.cat([public_poly(n, b) for n, b in b_keys], dim=0)
+            public_acc = gl_add(
+                public_acc,
+                gl_matvec(pb.T.contiguous(), r_quad[t_lo:t_hi]))
+
+        del (polys_cache, px, py, pz, lhs_k, rhs_k, lhs, rhs, products,
+             product_sum, weighted_eval)
+        if have_a:
+            del pa
+        if have_b:
+            del pb
+
+    ntt_inverse(eval_acc)
+    p_0 = eval_acc[:2 * K - 1].contiguous()
+    if saw_public:
+        public_pad = torch.zeros(2 * K - 1, dtype=torch.uint64, device="cuda")
+        public_pad[:K] = public_acc
+        p_0 = gl_sub(p_0, public_pad)
     return p_0
 
 
@@ -1807,7 +2267,27 @@ class Proof:
     root_blind:   Optional[bytes] = None
     opened_blind: Dict[int, torch.Tensor] = field(default_factory=dict)
     paths_blind:  Dict[int, List[Tuple[bytes, int]]] = field(default_factory=dict)
+    # Phase-3 block: the late auxiliaries committed in R3, after the coin
+    # s_bind. None when no claim on the tape has a late stage.
+    root_p3:    Optional[bytes] = None
+    opened_p3:  Dict[int, torch.Tensor] = field(default_factory=dict)
+    paths_p3:   Dict[int, List[Tuple[bytes, int]]] = field(default_factory=dict)
     blocks:       Optional[List[str]] = None
+    # Sequential Fiat-Shamir transcript (S1). `seeds` are the coins the prover
+    # DERIVED (never chose): the verifier recomputes each one from the same
+    # transcript and ignores these. `statement_digest` is the digest of
+    # `claims_bytes`, the exact canonical claim-set bytes the proof file
+    # carries; `Q_cols` are the columns s_col selected.
+    seeds:            Optional[Dict[str, bytes]] = None
+    statement_digest: Optional[bytes] = None
+    claims_bytes:     Optional[bytes] = None
+    Q_cols:           Optional[List[int]] = None
+
+
+def _u64_le_bytes(t: torch.Tensor) -> bytes:
+    """A device u64 field vector as little-endian u64 bytes — the transcript
+    framing the Rust verifier hashes (protocol.u64_bytes)."""
+    return t.cpu().contiguous().view(torch.uint8).numpy().tobytes()
 
 
 # ============================================================
@@ -1818,6 +2298,24 @@ class Proof:
 SAMPLE_FNS: Dict[Type, Callable] = {}
 # Per-claim auxiliary-witness computer: (claim, witness, challenge) → dict.
 AUX_FNS: Dict[Type, Callable] = {}
+# LATE (phase-3) counterparts, for claims that need a second, independent coin
+# sampled AFTER their phase-2 rows are committed — the routed-projected
+# matmul's Freivalds check of Q = M·P is the reason these exist. A claim
+# registers here only if it owns phase-3 variables; every other claim is
+# untouched and its transcript position is unchanged.
+LATE_SAMPLE_FNS: Dict[Type, Callable] = {}
+LATE_AUX_FNS: Dict[Type, Callable] = {}
+# Callables run at the start of every proof, for per-proof state that lives
+# outside core (currently the routed claim's challenge-keyed projection cache).
+# A hook must only DROP state: nothing here may affect what is proved.
+PROVE_START_HOOKS: List[Callable] = []
+# Claim types whose compute/aux resolve their OWN inputs, one shard at a time.
+# The sweep must not pre-fetch their inputs and must not hand them a caching
+# view: a routed MoE matmul references 128 expert shards (~43 GB for one
+# Maverick matrix), so materializing them together is an OOM, not a slowdown.
+# Their compute takes (claim, live, ch) — `live` still holds unresolved
+# loaders — and is responsible for releasing each shard before the next.
+STREAMING_INPUT_CLAIMS: set = set()
 
 
 # Set True by the streaming provers around _compile_with_chs. They DISCARD the
@@ -1871,6 +2369,14 @@ def _sample_chs(claims: List, s_op) -> List:
     return [SAMPLE_FNS[type(c)](c, ci, s_op) for ci, c in enumerate(claims)]
 
 
+def _sample_late_chs(claims: List, s_bind) -> List:
+    """The phase-3 coins, from the R2 seed. None for claims with no late
+    stage, so the index stays the claim's position in the settled list."""
+    return [LATE_SAMPLE_FNS[type(c)](c, ci, s_bind)
+            if type(c) in LATE_SAMPLE_FNS else None
+            for ci, c in enumerate(claims)]
+
+
 def _compile_with_chs(claims: List, chs_per_claim: List, cfg: LigeroConfig,
                        m_total: int) -> Tuple[List[List[Any]],
                                                List[QuadraticConstraint],
@@ -1908,7 +2414,7 @@ def _compile_with_chs(claims: List, chs_per_claim: List, cfg: LigeroConfig,
             _a[1] = max(_a[1], _mp - _b)                     # transient above baseline
             _a[2] += 1
             if _mp > _gpeak: _gpeak = _mp; _gtype = _tn
-        for r, pkt in row_pkts:
+        for r, pkt in _expand_row_pkts(row_pkts):
             per_row[r].append(pkt)
         for fam in quads:                        # quad lift: families -> per-row
             quadratic_all.extend(fam.expand())
@@ -2022,38 +2528,44 @@ def table_settlement_compile(c: TableSettlement, _ch, cfg: LigeroConfig,
 
     sum_cid = base + T_LEN
 
-    row_pkts: List[Tuple[int, object]] = []
+    # Every packet below is IDENTICAL across its whole row range (only the
+    # row_off used to vary was never actually read by the packet fields --
+    # var_row_start is the VARIABLE's start, not the row's own index), so
+    # each is handed to _index_bands as one O(1) _PktRange instead of
+    # row_end - row_start separate (row, pkt) tuples. table.w_var alone can
+    # be a lookup-table-sized variable (hundreds of thousands of rows), so
+    # this is the difference between one range object and one Python object
+    # + list-append per row. The eager (non-streaming) compile path expands
+    # these back to per-row tuples via _expand_row_pkts, unchanged for it.
+    w_rows = table.w_var.n_rows(ell)
+    mult_rows = table.mult_var.n_rows(ell)
 
-    # Per-row product constraints (IDs [base, base + T_LEN)).
-    for row_off in range(table.w_var.n_rows(ell)):
-        row_pkts.append((table.w_var.row_start + row_off,
-                          L2_PerSlotVector(base=base,
-                                            var_row_start=table.w_var.row_start,
-                                            L=T_LEN,
-                                            coef_vec=w_coef_vec)))
-    for row_off in range(table.mult_var.n_rows(ell)):
-        row_pkts.append((table.mult_var.row_start + row_off,
-                          L2_IdentityScalar(base=base,
-                                             var_row_start=table.mult_var.row_start,
-                                             L=T_LEN, coef=neg1)))
-
-    # Sum identity (single constraint at sum_cid).
-    # Stride = variable's own length → all slots collapse onto base + 0 = sum_cid.
+    row_pkts: List[object] = [
+        _PktRange(
+            L2_PerSlotVector(base=base, var_row_start=table.w_var.row_start,
+                              L=T_LEN, coef_vec=w_coef_vec),
+            table.w_var.row_start, table.w_var.row_start + w_rows),
+        _PktRange(
+            L2_IdentityScalar(base=base, var_row_start=table.mult_var.row_start,
+                               L=T_LEN, coef=neg1),
+            table.mult_var.row_start, table.mult_var.row_start + mult_rows),
+    ]
+    # Sum identity (single constraint at sum_cid). Stride = full var length
+    # → every slot of that variable collapses onto base + 0 = sum_cid, so
+    # this is still one range per z / for w_var. Order matches the old
+    # per-row emission exactly (z_vars, THEN w_var's own sum term) --
+    # per_row[r] for a w_var row accumulates both its L2_PerSlotVector and
+    # this term, and the eager path's per-row list order is observable.
     for z in table.z_vars:
-        for row_off in range(z.n_rows(ell)):
-            row_pkts.append((z.row_start + row_off,
-                              L2_StrideManyToOneScalar(base=sum_cid,
-                                                        var_row_start=z.row_start,
-                                                        L=z.length,
-                                                        stride=z.length,
-                                                        coef=1)))
-    for row_off in range(table.w_var.n_rows(ell)):
-        row_pkts.append((table.w_var.row_start + row_off,
-                          L2_StrideManyToOneScalar(base=sum_cid,
-                                                    var_row_start=table.w_var.row_start,
-                                                    L=T_LEN,
-                                                    stride=T_LEN,
-                                                    coef=neg1)))
+        z_rows = z.n_rows(ell)
+        row_pkts.append(_PktRange(
+            L2_StrideManyToOneScalar(base=sum_cid, var_row_start=z.row_start,
+                                      L=z.length, stride=z.length, coef=1),
+            z.row_start, z.row_start + z_rows))
+    row_pkts.append(_PktRange(
+        L2_StrideManyToOneScalar(base=sum_cid, var_row_start=table.w_var.row_start,
+                                  L=T_LEN, stride=T_LEN, coef=neg1),
+        table.w_var.row_start, table.w_var.row_start + w_rows))
 
     return row_pkts, [], T_LEN + 1, None
 
@@ -2148,6 +2660,7 @@ def _layout(claims: List, cfg: LigeroConfig):
     wnew_vars   = [v for v in all_vars if v.phase == 1 and v.persistent and v.w_new]
     p1_vars     = [v for v in all_vars if v.phase == 1 and not v.persistent]
     p2_vars     = [v for v in all_vars if v.phase == 2]
+    p3_vars     = [v for v in all_vars if v.phase == 3]
     next_row = NUM_BLINDING_ROWS    # rows 0..NUM_BLINDING_ROWS-1 → blinding (its own tree)
     for v in weight_vars:
         v.row_start = next_row
@@ -2164,53 +2677,228 @@ def _layout(claims: List, cfg: LigeroConfig):
     for v in p2_vars:
         v.row_start = next_row
         next_row += v.n_rows(cfg.ELL)
-    return (all_vars, p1_vars, p2_vars, m_p1_rows, next_row,
+    m_p2_rows = next_row                # end of phase-2, start of phase-3
+    for v in p3_vars:
+        v.row_start = next_row
+        next_row += v.n_rows(cfg.ELL)
+    return (all_vars, p1_vars, p2_vars, p3_vars, m_p1_rows, m_p2_rows, next_row,
             weight_vars, m_w_rows, wnew_vars, m_wnew_rows)
 
 
 def _claim_var_groups(claims, cfg):
-    """Mirror _layout's var-walk, returning [(claim, p1_vars, p2_vars)] in
-    claim order with each list in row order. The streaming prover encodes a
+    """Mirror _layout's var-walk, returning [(claim, p1_vars, p2_vars, p3_vars)]
+    in claim order with each list in row order. The streaming prover encodes a
     claim's own vars right after generating them, so it needs this per-claim
     split of the (relaid-out) layout. The walk MUST match _layout exactly
     (same TableSettlement guard) or row-order != op-order and roots diverge."""
     seen = set()
     groups = []
-    def collect(v, p1, p2):
+    def collect(v, buckets):
         if isinstance(v, Variable) and id(v) not in seen:
             seen.add(id(v))
-            (p1 if v.phase == 1 else p2).append(v)
+            buckets[min(v.phase, 3) - 1].append(v)
     for c in claims:
-        p1, p2 = [], []
+        buckets = ([], [], [])
         is_settlement = isinstance(c, TableSettlement)
         for f in fields(c):
             v = getattr(c, f.name)
-            collect(v, p1, p2)
+            collect(v, buckets)
             if isinstance(v, Table):
                 if is_settlement:
-                    collect(v.mult_var, p1, p2)
-                    collect(v.w_var, p1, p2)
+                    collect(v.mult_var, buckets)
+                    collect(v.w_var, buckets)
                     for z in v.z_vars:
-                        collect(z, p1, p2)
+                        collect(z, buckets)
             elif isinstance(v, list):
                 for item in v:
-                    collect(item, p1, p2)
-        groups.append((c, p1, p2))
+                    collect(item, buckets)
+        groups.append((c, *buckets))
     return groups
 
 
+# --- Witness cache (autoresearch iter 2) --------------------------------------
+# The sound prover re-runs the witness forward pass once per Fiat-Shamir sweep
+# (4x). Each compute_fn output is a DETERMINISTIC function of committed inputs,
+# so it is byte-identical on every sweep; caching it across sweeps yields a
+# byte-identical witness -> byte-identical proof -> ACCEPT unchanged (the whole
+# point of the 4 rounds — fixing each commitment before the next challenge — is
+# preserved: we recompute nothing challenge-dependent, only reuse deterministic
+# values). We cache ONLY the expensive-to-recompute, small-in-memory ops
+# (softmax's s1_at CPU binary search; silu's numpy decomposition), NEVER the
+# aux/Freivalds witnesses (those depend on the round's challenges and are the
+# `aux` phase, not touched here). A cumulative-element cap bounds memory at
+# large scale and degrades gracefully to recompute. LIGERO_WITNESS_CACHE=0 off.
+_WITNESS_CACHE_ON = os.environ.get("LIGERO_WITNESS_CACHE", "1") != "0"
+_WITNESS_CACHE_TYPES = frozenset({"SoftmaxClaim", "SiluClaim"})
+# Memory budget for the cache. The old fixed 2e8-element (~1.6GB) cap was far
+# too tight: at seq1024 it engaged partway through sweep 1 and gated most
+# caching out, dropping the win from ~50% to 10.8% while peak mem was only
+# 5.7GB / 32GB (iter3 sweep, measured). We now size the budget to a fraction of
+# the *actually free* GPU memory at cache-init, so it auto-scales to the card
+# and still degrades to recompute only when memory is genuinely tight. Which ops
+# get cached may thus vary with free memory, but cached and recomputed outputs
+# are byte-identical (validated), so this affects ONLY timing, never the proof.
+# LIGERO_WITNESS_CACHE_MEM_FRACTION overrides the fraction; the legacy
+# LIGERO_WITNESS_CACHE_MAX_ELEMS still applies as an optional hard ceiling.
+_WITNESS_CACHE_MEM_FRACTION = float(
+    os.environ.get("LIGERO_WITNESS_CACHE_MEM_FRACTION", "0.25"))
+_WITNESS_CACHE_MAX_ELEMS = int(
+    os.environ.get("LIGERO_WITNESS_CACHE_MAX_ELEMS", "0")) or None  # None = no hard cap
+
+
+def _witness_cache_budget_bytes():
+    """Bytes the cache may use: a fraction of currently-free GPU memory, leaving
+    the rest for prove()'s later working set (encode/merkle/etc.). Returns 0 if
+    memory can't be queried, which degrades the cache to a no-op (safe)."""
+    try:
+        free, _total = torch.cuda.mem_get_info()
+    except Exception:
+        return 0
+    return int(free * _WITNESS_CACHE_MEM_FRACTION)
+
+
+# --- Witness SPILL: store-once, re-read (host memory) instead of recompute. ---
+# Same soundness argument as the GPU witness cache (only deterministic,
+# challenge-INDEPENDENT compute_fn outputs are reused; nothing challenge-derived
+# is touched, so commit-before-challenge is untouched). The difference is WHERE
+# the reused witness lives: pinned HOST memory instead of scarce GPU memory, so
+# it holds far more than the card and covers the regime "witness > GPU but the
+# forward-pass recompute is slower than a host->device re-read" (measured on this
+# box: recompute ~8 GB/s vs H2D ~11 GB/s -> re-read wins narrowly). Whether it
+# wins depends on the deployment (recompute throughput vs storage bandwidth), so
+# it is OPT-IN (LIGERO_WITNESS_SPILL=1) and validated byte-identical.
+_WITNESS_SPILL_ON = os.environ.get("LIGERO_WITNESS_SPILL", "0") != "0"
+_WITNESS_SPILL_MEM_FRACTION = float(
+    os.environ.get("LIGERO_WITNESS_SPILL_MEM_FRACTION", "0.5"))
+# DISK-backed spill: for the production case where the witness (7.5 TB at 400B)
+# exceeds host RAM, so it must land on disk, not pinned host memory. Same
+# soundness as host spill (identical int64 bit pattern re-read), but covers the
+# FULL witness (every claim type, not just softmax/silu) and its budget is disk
+# free space. Re-reads over storage BW instead of recomputing. LIGERO_WITNESS_
+# SPILL_DISK=1 + LIGERO_WITNESS_SPILL_DIR=/path (a big/fast filesystem).
+_WITNESS_SPILL_DISK = os.environ.get("LIGERO_WITNESS_SPILL_DISK", "0") != "0"
+_WITNESS_SPILL_DIR = os.environ.get("LIGERO_WITNESS_SPILL_DIR", "/tmp")
+# BENCHMARK-ONLY, default OFF: evict each spilled range from the page cache
+# (fdatasync + posix_fadvise DONTNEED) so re-reads hit the DISK, not RAM. Lets a
+# small model measure true disk-spill I/O without needing witness > RAM. Changes
+# ONLY timing -- the bytes read back are identical -> proof byte-for-byte unchanged.
+# NEVER engages unless LIGERO_SPILL_FADVISE=1 AND disk-spill is on, so it cannot
+# affect any run that does not explicitly ask for it.
+_SPILL_FADVISE = os.environ.get("LIGERO_SPILL_FADVISE", "0") != "0"
+
+
+def _host_spill_budget_bytes():
+    """Bytes the host spill may use: a fraction of available host RAM (from
+    /proc/meminfo MemAvailable). Returns 0 if unqueryable -> spill degrades to
+    recompute (safe)."""
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    avail = int(line.split()[1]) * 1024
+                    return int(avail * _WITNESS_SPILL_MEM_FRACTION)
+    except Exception:
+        pass
+    return 0
+
+
+def _spill_store(t):
+    """Copy a witness tensor to pinned host memory for later re-read. The int64
+    view sidesteps uint64 CUDA/pin gaps; the bit pattern (hence field value) is
+    identical, so re-reading is byte-for-byte the same as recomputing."""
+    src = t.contiguous()
+    src_i = src.view(torch.int64) if src.dtype == torch.uint64 else src
+    host = torch.empty(src_i.shape, dtype=src_i.dtype, pin_memory=True)
+    host.copy_(src_i)
+    return (host, t.dtype)
+
+
+def _spill_load(entry):
+    """Re-read a spilled witness tensor back onto the GPU (fresh, independent
+    tensor -> no clone needed)."""
+    host, dt = entry
+    dev = host.to("cuda", non_blocking=True)
+    return dev.view(dt) if dt == torch.uint64 else dev
+
+
+def _disk_spill_open(wc):
+    """Open a per-proof append-only spill file on disk; budget = free space on
+    the spill dir's filesystem (the 7.5 TB witness cannot fit host RAM)."""
+    import tempfile, shutil
+    os.makedirs(_WITNESS_SPILL_DIR, exist_ok=True)
+    fd, path = tempfile.mkstemp(prefix="ligero_wspill_", dir=_WITNESS_SPILL_DIR)
+    wc['_disk_fd'], wc['_disk_path'], wc['_disk_off'] = fd, path, 0
+    wc['_budget_bytes'] = int(shutil.disk_usage(_WITNESS_SPILL_DIR).free * 0.9)
+    return wc
+
+
+def _disk_spill_store(t, wc):
+    """Append a witness tensor's int64 bytes to the disk file; return an
+    (offset, nbytes, shape, dtype) handle. The bit pattern is identical to
+    recompute, so re-reading is byte-for-byte the same -> proof unchanged."""
+    src = t.contiguous()
+    src_i = src.view(torch.int64) if src.dtype == torch.uint64 else src
+    buf = src_i.cpu().numpy().tobytes()
+    off = wc['_disk_off']; n = 0
+    while n < len(buf):
+        n += os.pwrite(wc['_disk_fd'], buf[n:], off + n)
+    if _SPILL_FADVISE:                     # bench-only: flush + drop from cache -> cold reads
+        try:
+            os.fdatasync(wc['_disk_fd'])
+            os.posix_fadvise(wc['_disk_fd'], off, len(buf), os.POSIX_FADV_DONTNEED)
+        except (OSError, AttributeError):
+            pass
+    wc['_disk_off'] = off + len(buf)
+    return (off, len(buf), tuple(src_i.shape), t.dtype)
+
+
+def _disk_spill_load(entry, wc):
+    """Read a spilled tensor back from disk onto the GPU (fresh, independent)."""
+    import numpy as _np
+    off, nb, shape, dt = entry
+    buf = bytearray(nb); got = 0
+    while got < nb:
+        chunk = os.pread(wc['_disk_fd'], nb - got, off + got)
+        if not chunk:
+            raise IOError("disk-spill short read")
+        buf[got:got + len(chunk)] = chunk; got += len(chunk)
+    if _SPILL_FADVISE:                     # bench-only: drop the just-read pages -> next re-read also cold
+        try: os.posix_fadvise(wc['_disk_fd'], off, nb, os.POSIX_FADV_DONTNEED)
+        except (OSError, AttributeError): pass
+    arr = _np.frombuffer(bytes(buf), dtype=_np.int64).reshape(shape)
+    dev = torch.from_numpy(arr.copy()).to("cuda", non_blocking=True)
+    return dev.view(dt) if dt == torch.uint64 else dev
+
+
+def _disk_spill_close(wc):
+    """Close and delete the per-proof spill file."""
+    if wc and wc.get('_disk_fd') is not None:
+        try: os.close(wc['_disk_fd'])
+        except Exception: pass
+        try: os.remove(wc['_disk_path'])
+        except Exception: pass
+        wc['_disk_fd'] = None
+
+
 def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p1_rows,
-                  tables, ch0, *, want_aux, merkle_p1=None, merkle_p2=None, merkle_w=None,
+                  tables, ch0, *, want_aux, ch1=None, p3_vars=(), m_p2_rows=None,
+                  merkle_p1=None, merkle_p2=None, merkle_p3=None, merkle_w=None,
                   merkle_wnew=None, merkle_blind=None, q_irs=None, q_lin=None,
-                  col_p1=None, col_p2=None,
+                  col_p1=None, col_p2=None, col_p3=None,
                   col_w=None, col_wnew=None, col_blind=None, p_0=None,
                   w_pad=None, wnew_pad=None,
-                  stream_pk=None, r_quad=None, p_maps=None, Q_cols=None, p1_prefix=None):
+                  stream_pk=None, r_quad=None, p_maps=None, Q_cols=None, p1_prefix=None,
+                  witness_cache=None):
     """One op-order streaming pass: regenerate the witness, encode each op's rows
     into whichever accumulators are non-None, fire its quads into p_0 (if given)
     from `live`, freeing per op. want_aux=False does phase-1 only (the commit
     round before α exists). Fast mode calls this once with every accumulator;
     sound mode calls it once per round with the round's subset. Returns p_0.
+
+    `ch1` (the phase-3 coins, sampled after the R2 commitment) enables the LATE
+    aux stage: claims registered in LATE_AUX_FNS produce their phase-3 rows
+    only when it is present, so the R2 sweep physically cannot compute a value
+    that depends on a coin it has not seen.
 
     w_pad / wnew_pad: optional (pad_seed_tensor, logical_offset,
     block_phys_start) for the W / Wnew block's ZK padding (P5) — the block
@@ -2245,8 +2933,11 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
             merkle_blind.update(p1_prefix)
         if col_blind is not None:
             pslice = p1_prefix.index_select(1, Q_set)
-            for k, j in enumerate(Q_cols):
-                col_blind[j].append(pslice[:, k].clone())
+            if isinstance(col_blind, ColumnSink):
+                col_blind.write(0, pslice, Q_cols)
+            else:
+                for k, j in enumerate(Q_cols):
+                    col_blind[j].append(pslice[:, k].clone())
     last_use = {}
     for i, (_c, ivars, _se) in enumerate(tape._deferred):
         for v in ivars:
@@ -2258,7 +2949,7 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
     # claim set; the outs-free below uses last_use (not the consumed set) so an
     # own-var operand still frees at its declaring claim rather than leaking.
     if stream_pk is not None:
-        start2var = {v.row_start: v for v in (*p1_vars, *p2_vars)}
+        start2var = {v.row_start: v for v in (*p1_vars, *p2_vars, *p3_vars)}
         for qi_claim, fams in stream_pk.quad_fams.items():
             for _b0, fam in fams:
                 for rs in (fam.x_row, fam.y_row, fam.z_row):
@@ -2276,16 +2967,22 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
     def emit(vg, merkle, abs0, colbuf, pad=None):
         if not vg:
             return
+        sink = colbuf if isinstance(colbuf, ColumnSink) else None
         res = _stream_phase(vg, live, cfg, master_seed=master_seed_t, abs_row_offset=abs0,
                             pad_seed=(None if pad is None else pad[0]),
                             pad_row_offset=(None if pad is None else pad[1]),
                             merkle_acc=merkle, q_irs_acc=q_irs, q_lin_acc=q_lin,
-                            columns_at=(Q_cols if colbuf is not None else None))
-        if colbuf is not None:
+                            columns_at=(Q_cols if colbuf is not None else None),
+                            column_sink=sink)
+        if colbuf is not None and sink is None:
             for j in Q_cols:
                 colbuf[j].append(res['opened_columns'][j])
     do_p1 = any(x is not None for x in (merkle_p1, q_irs, q_lin, col_p1))
     do_p2 = any(x is not None for x in (merkle_p2, q_irs, q_lin, col_p2))
+    # Phase-3 rows exist only once their coin does, so a sweep without ch1
+    # emits nothing for them however its accumulators are set.
+    do_p3 = ch1 is not None and any(x is not None
+                                    for x in (merkle_p3, q_irs, q_lin, col_p3))
     # Optional periodic allocator release during the sweep (LIGERO_SWEEP_GC=N):
     # diagnostic/workaround for sustained-churn faults on unified-memory GPUs.
     _sweep_gc = int(os.environ.get("LIGERO_SWEEP_GC", "0") or "0")
@@ -2300,10 +2997,53 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
                 input_data = {}
                 with _phase('witness'):
                     outs = fold.finalize(claim, live)
+            elif type(claim) in STREAMING_INPUT_CLAIMS:
+                # Shard-streaming claim: hand it the raw live map (loaders
+                # unresolved) and the round's op challenge, so one pass over a
+                # shard can serve both the semantic output and the projection.
+                input_data = {}
+                with _phase('witness'):
+                    outs = _cf.COMPUTE_FNS[type(claim)](
+                        claim, live, ch0[i] if (want_aux and ch0) else None)
             else:
                 input_data = {v: fetch(v) for v in input_vars}
-                with _phase('witness'):
-                    outs = _cf.COMPUTE_FNS[type(claim)](claim, input_data)
+                _spill = witness_cache.get('_spill') if witness_cache else False
+                _disk = witness_cache.get('_disk') if witness_cache else False
+                # disk-spill covers the FULL witness (every compute claim); host
+                # spill / GPU cache cover only the expensive softmax/silu ops.
+                _cacheable = (witness_cache is not None
+                              and (_disk or type(claim).__name__ in _WITNESS_CACHE_TYPES))
+                if _cacheable and i in witness_cache:
+                    # Reuse the deterministic compute_fn output from sweep 1.
+                    # GPU cache: clone so consumers can't mutate the cached copy.
+                    # Spill: _spill_load returns a fresh device tensor (from the
+                    # host copy) each time -> already independent, no clone.
+                    if _disk:
+                        outs = {v: _disk_spill_load(e, witness_cache) for v, e in witness_cache[i].items()}
+                    elif _spill:
+                        outs = {v: _spill_load(e) for v, e in witness_cache[i].items()}
+                    else:
+                        outs = {v: t.clone() for v, t in witness_cache[i].items()}
+                else:
+                    with _phase('witness'):
+                        outs = _cf.COMPUTE_FNS[type(claim)](claim, input_data)
+                    if _cacheable:
+                        _nb = sum(t.numel() * t.element_size() for t in outs.values())
+                        _ne = sum(t.numel() for t in outs.values())
+                        _budget = witness_cache.get('_budget_bytes', 0)
+                        _under_bytes = witness_cache.get('_bytes', 0) + _nb <= _budget
+                        _under_elems = (_WITNESS_CACHE_MAX_ELEMS is None
+                                        or witness_cache.get('_elems', 0) + _ne
+                                        <= _WITNESS_CACHE_MAX_ELEMS)
+                        if _under_bytes and _under_elems:
+                            if _disk:
+                                witness_cache[i] = {v: _disk_spill_store(t, witness_cache) for v, t in outs.items()}
+                            elif _spill:
+                                witness_cache[i] = {v: _spill_store(t) for v, t in outs.items()}
+                            else:
+                                witness_cache[i] = {v: t.clone() for v, t in outs.items()}
+                            witness_cache['_bytes'] = witness_cache.get('_bytes', 0) + _nb
+                            witness_cache['_elems'] = witness_cache.get('_elems', 0) + _ne
             for v, t in outs.items():
                 live[v] = t
             if side_effects is not None:
@@ -2313,12 +3053,19 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
                 if i < n_ops and fold.is_fold(claim):
                     live.update(fold.aux_finalize(claim, live, ch0[i]))
                 else:
-                    live.update(AUX_FNS[type(claim)](claim, _LazyResolvingDict(live), ch0[i]))
+                    _wit = (live if type(claim) in STREAMING_INPUT_CLAIMS
+                            else _LazyResolvingDict(live))
+                    live.update(AUX_FNS[type(claim)](claim, _wit, ch0[i]))
+                # Late (phase-3) aux: only once the R2 coin exists.
+                if ch1 is not None and type(claim) in LATE_AUX_FNS:
+                    _wit_l = (live if type(claim) in STREAMING_INPUT_CLAIMS
+                              else _LazyResolvingDict(live))
+                    live.update(LATE_AUX_FNS[type(claim)](claim, _wit_l, ch1[i]))
         own_quads = None
         if use_pk:
             with _phase('compile'):
                 own_quads = stream_pk.compile_op(i)
-        p1g, p2g = groups[i][1], groups[i][2]
+        p1g, p2g, p3g = groups[i][1], groups[i][2], groups[i][3]
         if do_p1:
             # Split the claim's phase-1 vars — activations → p1 tree,
             # persistent weights → W tree, refreshed weights (linking proofs)
@@ -2345,11 +3092,14 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
                 emit(p1g_wn, merkle_wnew, p1g_wn[0].row_start, col_wnew, pad=wp)
         if want_aux and do_p2:
             emit(p2g, merkle_p2, p2g[0].row_start if p2g else m_p1_rows, col_p2)
+        if want_aux and do_p3:
+            emit(p3g, merkle_p3, p3g[0].row_start if p3g else m_p2_rows, col_p3)
         if want_aux and p_0 is not None and own_quads:
             with _phase('quad'):
                 idx = torch.tensor([gi for gi, _ in own_quads], dtype=torch.long, device="cuda")
                 p_0 = gl_add(p_0, compute_p_0_streaming(
-                    p1_vars, p2_vars, live, m_p1_rows, r_quad.index_select(0, idx),
+                    p1_vars, [*p2_vars, *p3_vars], live, m_p1_rows,
+                    r_quad.index_select(0, idx),
                     [qc for _, qc in own_quads], cfg, master_seed_t, maps=p_maps))
         if i < n_ops:                              # free: dead inputs / unread outputs
             for v in input_vars:
@@ -2368,6 +3118,9 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
         if want_aux:
             for v in p2g:
                 live.pop(v, None)
+            if do_p3:
+                for v in p3g:
+                    live.pop(v, None)
         # Always-on progress line: op count, % done, elapsed, and a linear-rate
         # ETA. Just a print — correctness-neutral. The verbose memory dump below
         # stays behind LIGERO_STREAM_DBG.
@@ -2401,9 +3154,14 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
     return p_0
 
 
-def _stream_setup(tape, cfg, seed):
-    """Shared setup for the streaming provers: layout, challenges, quad grouping,
-    row-maps, blinding. Returns a context the fast/sound provers fill in."""
+def _stream_setup(tape, cfg, zk_seed=None):
+    """Shared setup for the streaming provers: layout, quad grouping, row-maps
+    and blinding — everything that is CHALLENGE-INDEPENDENT.
+
+    Nothing derived from a verifier coin is computed here: under sequential
+    Fiat-Shamir each coin exists only after the prover message it follows, so
+    the op challenges (s_op), the test-combiner vectors (s_comb) and the opened
+    columns (s_col) are derived inside prove_streaming at their own round."""
     import os as _os
     def _m(tag):
         if not _os.environ.get("LIGERO_STREAM_DBG"):
@@ -2413,11 +3171,11 @@ def _stream_setup(tape, cfg, seed):
         print(f"  [setup] {tag}: rss={rss:.1f}GB gpu={torch.cuda.memory_allocated()/1e9:.1f}GB "
               f"peak={torch.cuda.max_memory_allocated()/1e9:.1f}GB", flush=True)
         torch.cuda.reset_peak_memory_stats()   # peak is per-step (since prev checkpoint)
-    master_seed = MASTER_SEED
+    master_seed = zk_seed if zk_seed is not None else MASTER_SEED
     master_seed_t = _master_seed_to_cuda(master_seed)
     claims = _with_synthesized_settlements(tape.claims)
     _m("enter")
-    (_all, p1_vars, p2_vars, m_p1_rows, m_total,
+    (_all, p1_vars, p2_vars, p3_vars, m_p1_rows, m_p2_rows, m_total,
      weight_vars, m_w_rows, wnew_vars, m_wnew_rows) = _layout(claims, cfg)
     if _os.environ.get("LIGERO_LAYOUT_BREAKDOWN"):
         import sys
@@ -2447,36 +3205,14 @@ def _stream_setup(tape, cfg, seed):
         sys.exit(0)
     groups = _claim_var_groups(claims, cfg)
     n_ops = len(tape.claims)
-    # Challenges + compile, derived inline (compile ONCE). _sample_test_challenges
-    # would re-synthesize, re-layout, AND re-compile — at 32L/SEQ=1000 the compile
-    # is ~87 GB / minutes, so doing it twice doubles setup cost. This reproduces
-    # its derivation byte-for-byte (s_op→ch0, s_comb→ch1, s_col→ch2).
-    s_op, s_comb, s_col = pr.round_seeds(seed)
-    ch0 = _sample_chs(claims, s_op)
-    _m("ch0")
-    # Streaming compile: regular ops compile lazily inside the sweep so the
-    # ~45 GB packet store never materializes; settlements pre-compile (their
-    # packets land on rows emitted long before they would compile). The
-    # constructor's count pass also yields the global quad total for r_quad.
-    globals()['_SKIP_B_CHUNK'] = True
-    stream_pk = _StreamingPackets(claims, ch0, cfg, n_ops)
-    globals()['_SKIP_B_CHUNK'] = False
-    # Unified-memory hygiene: release the allocator's reserved high-water
-    # before the long-lived phase begins.
-    torch.cuda.empty_cache()
-    _m(f"compile-count (m_total={m_total} quads={stream_pk.total_quads})")
-    seed_u8 = torch.tensor(list(s_comb), dtype=torch.uint8, device="cuda")
-    _lbl = lambda b: torch.tensor(list(b), dtype=torch.uint8, device="cuda")
-    r_irs_t = challenge_vec(seed_u8, _lbl(b"irs"), m_total - NUM_BLINDING_ROWS)
-    r_lin_seed = seed_u8
-    r_quad_t = challenge_vec(seed_u8, _lbl(b"quad"), stream_pk.total_quads)
-    Q_cols = list(pr.random_columns(s_col, cfg))
-    _m("challenges")
     # Phase-1 row map covers weights, then the linking proof's Wnew block, then
     # activations (layout B row order), so a quad operand in any of them lands
     # correctly; p2 map starts at the phase-1 end.
+    # Phase 3 continues straight after phase 2, so one map covers both: p_0's
+    # row split is "< m_p1_rows" vs "the rest", and the rest is p2 then p3 in
+    # row order.
     p_maps = (_build_row_map(weight_vars + wnew_vars + p1_vars, cfg, NUM_BLINDING_ROWS),
-              _build_row_map(p2_vars, cfg, m_p1_rows))
+              _build_row_map(p2_vars + p3_vars, cfg, m_p1_rows))
     _m("row_maps")
     u_irs_msg, u_lin_msg, u_quad_msg = _make_blinding_messages(cfg, master_seed)
     u_irs_polys_K, u_irs_codes = encode_messages(
@@ -2485,19 +3221,62 @@ def _stream_setup(tape, cfg, seed):
         torch.stack([u_lin_msg, u_quad_msg], dim=0), cfg)
     return dict(
         master_seed_t=master_seed_t, claims=claims, p1_vars=p1_vars, p2_vars=p2_vars,
-        weight_vars=weight_vars, m_w_rows=m_w_rows, wnew_vars=wnew_vars,
-        m_p1_rows=m_p1_rows, groups=groups, n_ops=n_ops, ch0=ch0, r_irs_t=r_irs_t,
-        r_lin_seed=r_lin_seed, r_quad_t=r_quad_t, Q_cols=Q_cols,
-        stream_pk=stream_pk, p_maps=p_maps, tables=_collect_tables(claims),
+        p3_vars=p3_vars, weight_vars=weight_vars, m_w_rows=m_w_rows,
+        wnew_vars=wnew_vars, m_p1_rows=m_p1_rows, m_p2_rows=m_p2_rows,
+        m_total=m_total, groups=groups, n_ops=n_ops,
+        p_maps=p_maps, tables=_collect_tables(claims),
         u_irs_poly=u_irs_polys_K[0], u_lin_poly=polys_2k[0], u_quad_poly=polys_2k[1],
         p1_prefix=torch.cat([u_irs_codes, codes_2k], dim=0),
         n_blind_total=NUM_BLINDING_ROWS,          # blinding is its own tree (layout B)
         n_p1_total=sum(v.n_rows(cfg.ELL) for v in p1_vars),   # activations only, no blinding
         n_w_total=m_w_rows, n_wnew_total=m_wnew_rows,
-        n_p2_total=sum(v.n_rows(cfg.ELL) for v in p2_vars))
+        n_p2_total=sum(v.n_rows(cfg.ELL) for v in p2_vars),
+        n_p3_total=sum(v.n_rows(cfg.ELL) for v in p3_vars))
 
 
-def prove_streaming(tape, cfg, seed, weight_commitment=None, wnew_seed=None):
+def _build_stream_packets(claims, ch0, ch1, cfg, n_ops):
+    """The streaming compile: band index + quad families for the whole tape.
+
+    Runs once, after BOTH coins that any claim's bands depend on (s_op and
+    s_bind), so a late claim's phase-3 bands are emitted in the same pass as
+    its early ones and constraint ids are independent of compile timing.
+    Regular ops then stream their rows against this index; settlements are
+    pre-indexed here because their sum-side packets land on rows emitted long
+    before they would compile. The count pass also yields the global quad
+    total for r_quad."""
+    globals()['_SKIP_B_CHUNK'] = True
+    stream_pk = _StreamingPackets(claims, ch0, cfg, n_ops, chs_late=ch1)
+    globals()['_SKIP_B_CHUNK'] = False
+    # Unified-memory hygiene: release the allocator's reserved high-water
+    # before the long-lived phase begins.
+    torch.cuda.empty_cache()
+    return stream_pk
+
+
+def _derive_test_challenges(s_comb, m_total, total_quads):
+    """s_comb -> the IRS / linear / quadratic combiner vectors."""
+    seed_u8 = torch.tensor(list(s_comb), dtype=torch.uint8, device="cuda")
+    _lbl = lambda b: torch.tensor(list(b), dtype=torch.uint8, device="cuda")
+    r_irs_t = challenge_vec(seed_u8, _lbl(b"irs"), m_total - NUM_BLINDING_ROWS)
+    r_quad_t = challenge_vec(seed_u8, _lbl(b"quad"), total_quads)
+    return r_irs_t, seed_u8, r_quad_t
+
+
+def new_zk_seed() -> bytes:
+    """A fresh secret seed for one proof's ZK padding and blinding rows.
+
+    The old fixed MASTER_SEED is public (it is a constant in this file), and a
+    verifier who knows it reconstructs every mask and subtracts it from the
+    openings: the proof stays sound but stops being zero-knowledge. Online
+    rows therefore pad under a per-proof secret; the persistent W block keeps
+    padding under its own ENROLLMENT seed, which must be kept secret in the
+    commitment handle, or its committed leaves would not reproduce."""
+    import secrets
+    return secrets.token_bytes(32)
+
+
+def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None,
+                    claims_bytes=None, zk_seed=None):
     """Streaming prover — the single production path (the sound four-round protocol).
 
     `weight_commitment` (a WeightCommitment, P3): reference a pre-committed W
@@ -2515,34 +3294,78 @@ def prove_streaming(tape, cfg, seed, weight_commitment=None, wnew_seed=None):
 
     FOUR streaming sweeps, the witness regenerated each round, as the staged
     interactive protocol requires (commit before the challenges that determine
-    what is revealed). The per-round challenges are derived from `seed` here, at
-    the points the verifier would supply them between rounds; a future interactive
-    transport injects s_op/s_comb/s_col per round instead, with no change to the
-    round structure below. Returns a full Proof; Rust-verified.
+    what is revealed).
+
+    Each coin is SEQUENTIAL Fiat-Shamir over the transcript so far
+    (analysis/routed-projected-protocol.md):
+
+        R1 (blind|W|Wnew|p1 roots) -> s_op
+        R2 (p2 root)               -> s_comb
+        test polynomials           -> s_col -> openings
+
+    so no coin can be derived before the prover message it follows. `seed` no
+    longer determines any coin — it is accepted for call compatibility and
+    ignored. The derived seeds travel on the returned Proof (`proof.seeds`)
+    together with the statement digest they are bound to; the Rust verifier
+    recomputes all of them and trusts none of them from the wire.
+
+    `claims_bytes`: the exact canonical claim-set JSON bytes that will be
+    written into the proof file. Pass the driver's copy so it is built once;
+    None recomputes it here. Returns a full Proof; Rust-verified.
     """
     torch.cuda.reset_peak_memory_stats()
     if _PHASE_ON:
         _PHASE_TIMES.clear()
-    s = _stream_setup(tape, cfg, seed)
+    for _hook in PROVE_START_HOOKS:
+        _hook()
+    # Fresh secret padding/blinding entropy per proof unless a caller pins it
+    # (diff-tests that compare two proofs byte-for-byte do pin it).
+    s = _stream_setup(tape, cfg, zk_seed=(zk_seed or new_zk_seed()))
+    if claims_bytes is None:
+        claims_bytes = pr.claims_canonical_bytes(tape.claims, cfg)
+    # The row-block layout is part of the statement, not something the proof
+    # gets to choose: it follows from the tape (persistent weights? a linking
+    # block? a late-stage claim?) and is fixed before R1.
+    blocks = (["blind"] + (["w"] if s['n_w_total'] else [])
+              + (["wnew"] if s['n_wnew_total'] else []) + ["p1", "p2"]
+              + (["p3"] if s['n_p3_total'] else []))
+    stmt_digest = pr.statement_digest(claims_bytes, blocks)
     # The streaming sweeps recompile each claim and DISCARD its b_chunk (RHS) —
     # only row packets + quads are consumed (_compile_at: `..., _b = COMPILE_FNS`).
     # Keep _SKIP_B_CHUNK on so the sweep doesn't waste an O(T*V) dense RHS build
     # per claim (the V=202048 hidden-routing claim's b_chunk was ~89M entries in
     # Python — a ~40-min stall before op 0). Value-neutral: the RHS is unused.
     globals()['_SKIP_B_CHUNK'] = True
-    Q_cols = s['Q_cols']
-    q_irs_acc = QIrsAccumulator(s['r_irs_t'], cfg)
-    q_lin_acc = QLinAccumulator(s['r_lin_seed'], s['stream_pk'], cfg)
-    col_p1 = {j: [] for j in Q_cols}
-    col_p2 = {j: [] for j in Q_cols}
+    # Coins and everything derived from them are filled in at their own round
+    # below; nothing challenge-dependent may exist before R1 is committed.
+    ch0 = ch1 = stream_pk = Q_cols = None
+    q_irs_acc = q_lin_acc = None
+    col_p1 = col_p2 = col_p3 = None
 
     w_pad = None      # (pad_seed_t, logical_offset, block_phys_start) for the W /
     wnew_pad = None   # Wnew block — set below (P5 refresh / linking support).
 
+    # Witness cache shared across the 4 sweeps: populated on sweep 1, reused on
+    # sweeps 2-4 for the deterministic softmax/silu compute_fn outputs. None
+    # disables (LIGERO_WITNESS_CACHE=0). Fresh per prove call -> no staleness.
+    # Two backing stores, same soundness: default caches in GPU memory; opt-in
+    # LIGERO_WITNESS_SPILL=1 caches in pinned HOST memory (larger budget, covers
+    # witness > GPU) and re-reads over PCIe instead of recomputing.
+    if _WITNESS_SPILL_DISK:
+        witness_cache = _disk_spill_open({'_spill': True, '_disk': True})
+    elif _WITNESS_SPILL_ON:
+        witness_cache = {'_budget_bytes': _host_spill_budget_bytes(), '_spill': True}
+    elif _WITNESS_CACHE_ON:
+        witness_cache = {'_budget_bytes': _witness_cache_budget_bytes()}
+    else:
+        witness_cache = None
+
     def sweep(**kw):
         return _stream_sweep(tape, cfg, s['master_seed_t'], s['groups'], s['n_ops'],
                              s['p1_vars'], s['p2_vars'], s['m_p1_rows'], s['tables'],
-                             s['ch0'], w_pad=w_pad, wnew_pad=wnew_pad, **kw)
+                             ch0, ch1=ch1, p3_vars=s['p3_vars'],
+                             m_p2_rows=s['m_p2_rows'], w_pad=w_pad, wnew_pad=wnew_pad,
+                             witness_cache=witness_cache, **kw)
 
     def _p0_zero():
         return torch.zeros(2 * cfg.K_DEG - 1, dtype=torch.uint64, device="cuda")
@@ -2561,7 +3384,19 @@ def prove_streaming(tape, cfg, seed, weight_commitment=None, wnew_seed=None):
     # is for THIS model's W block (same row count and codeword length).
     wc = weight_commitment if has_w else None
 
+    # The quad-placement guards below need the compiled quad families, which
+    # exist only after s_op (the R1 coin) — so they are QUEUED here and run the
+    # moment the compile lands, still before any work that depends on them.
+    _pending_quad_checks = []
+
     def _assert_no_quads_in(lo, hi, what):
+        _pending_quad_checks.append((lo, hi, what))
+
+    def _run_quad_checks(stream_pk):
+        for lo, hi, what in _pending_quad_checks:
+            _assert_no_quads_now(stream_pk, lo, hi, what)
+
+    def _assert_no_quads_now(stream_pk, lo, hi, what):
         # Completeness guard: p_0's sparse re-encode (compute_p_0_streaming)
         # pads by PHYSICAL row under MASTER_SEED, so a quad constraint touching
         # a row padded under a different (seed, logical offset) would make p_0
@@ -2569,7 +3404,7 @@ def prove_streaming(tape, cfg, seed, weight_commitment=None, wnew_seed=None):
         # Refresh/linking tapes are linear in the weight blocks; fail loudly if
         # not. Band anchors are exact at variable granularity (a band lives
         # inside one variable, and a variable is entirely in or out of a block).
-        for fams in s['stream_pk'].quad_fams.values():
+        for fams in stream_pk.quad_fams.values():
             for _b0, fam in fams:
                 for rs in (fam.x_row, fam.y_row, fam.z_row):
                     assert not (lo <= rs < hi), (
@@ -2605,9 +3440,6 @@ def prove_streaming(tape, cfg, seed, weight_commitment=None, wnew_seed=None):
         wnew_pad = (_master_seed_to_cuda(wnew_seed), NUM_BLINDING_ROWS, wnew_phys)
         _assert_no_quads_in(wnew_phys, wnew_phys + s['n_wnew_total'],
                             "linking proof's Wnew block")
-    col_w = {j: [] for j in Q_cols}
-    col_wnew = {j: [] for j in Q_cols}
-    col_blind = {j: [] for j in Q_cols}
     _acc = lambda n: _make_merkle_acc(cfg.N_LIG, n) if n else None
     merkle_blind = _acc(s['n_blind_total'])                              # R1: commit phase-1
     merkle_w = None if wc is not None else _acc(s['n_w_total'])          #   (W referenced → skip)
@@ -2615,22 +3447,85 @@ def prove_streaming(tape, cfg, seed, weight_commitment=None, wnew_seed=None):
     merkle_p1 = _acc(s['n_p1_total'])
     sweep(want_aux=False, merkle_blind=merkle_blind, merkle_w=merkle_w,
           merkle_wnew=merkle_wnew, merkle_p1=merkle_p1,
-          Q_cols=Q_cols, p1_prefix=s['p1_prefix'])
+          p1_prefix=s['p1_prefix'])
     art_blind = _finalize_merkle_artifact(merkle_blind)
     art_w = _finalize_merkle_artifact(merkle_w) if merkle_w is not None else None
     art_wnew = _finalize_merkle_artifact(merkle_wnew) if merkle_wnew is not None else None
     art_p1 = _finalize_merkle_artifact(merkle_p1) if merkle_p1 is not None else None
+    # ---- coin after R1: the op challenges (rho and friends) --------------
+    # root_w of a REFERENCED persistent commitment is part of R1 exactly as an
+    # in-proof weight tree would be, so the same statement/model binds either
+    # way. Block order is framed too: a proof cannot re-label its blocks.
+    root_w_r1 = (wc.root if wc is not None else (art_w.root if has_w else None))
+    blocks_r1 = (["blind"] + (["w"] if has_w else []) + (["wnew"] if has_wnew else [])
+                 + ["p1"])
+    roots_r1 = ([art_blind.root] + ([root_w_r1] if has_w else [])
+                + ([art_wnew.root] if has_wnew else []) + [art_p1.root])
+    s_op = pr.fs_s_op(stmt_digest, blocks_r1, roots_r1)
+    ch0 = _sample_chs(s['claims'], s_op)
     merkle_p2 = _make_merkle_acc(cfg.N_LIG, s['n_p2_total'])              # R2: commit phase-2
     sweep(want_aux=True, merkle_p2=merkle_p2)
     art_p2 = _finalize_merkle_artifact(merkle_p2)
+    # ---- coin after R2: the late (phase-3) challenges --------------------
+    s_bind = pr.fs_s_bind(s_op, art_p2.root)
+    has_p3 = bool(s['n_p3_total'])
+    ch1 = _sample_late_chs(s['claims'], s_bind)
+    if has_p3:                                                            # R3: commit phase-3
+        merkle_p3 = _acc(s['n_p3_total'])
+        sweep(want_aux=True, merkle_p3=merkle_p3)
+        art_p3 = _finalize_merkle_artifact(merkle_p3)
+        root_p3 = art_p3.root
+    else:
+        # No late-stage claim on this tape: R3 is the empty message, and the
+        # transcript still frames it so a proof cannot silently drop a round.
+        art_p3, root_p3 = None, pr.EMPTY_COMMIT_ROOT
+    # Compile once, now that every coin a band can depend on exists.
+    stream_pk = _build_stream_packets(s['claims'], ch0, ch1, cfg, s['n_ops'])
+    _run_quad_checks(stream_pk)
+    # ---- coin after R3: the test combiners -------------------------------
+    s_comb = pr.fs_s_comb(s_bind, root_p3)
+    r_irs_t, r_lin_seed, r_quad_t = _derive_test_challenges(
+        s_comb, s['m_total'], stream_pk.total_quads)
+    q_irs_acc = QIrsAccumulator(r_irs_t, cfg)
+    q_lin_acc = QLinAccumulator(r_lin_seed, stream_pk, cfg)
     p_0 = sweep(want_aux=True, q_irs=q_irs_acc, q_lin=q_lin_acc,          # R3: q-polys + p_0
-                p_0=_p0_zero(), stream_pk=s['stream_pk'],
-                r_quad=s['r_quad_t'], p_maps=s['p_maps'])
-    sweep(want_aux=True, col_blind=col_blind, col_w=col_w,              # R4: columns only
-          col_wnew=col_wnew, col_p1=col_p1, col_p2=col_p2,
+                p_0=_p0_zero(), stream_pk=stream_pk,
+                r_quad=r_quad_t, p_maps=s['p_maps'])
+    # ---- coin after the test polynomials: the opened columns -------------
+    # Mixed with the blinding rows FIRST: s_col must hash the polynomials the
+    # verifier actually receives, not the pre-blinding accumulators.
+    q_irs, q_lin, p_0 = _mix_blinding_into_tests(
+        q_irs_acc.finalize(), q_lin_acc.finalize(), p_0,
+        s['u_irs_poly'], s['u_lin_poly'], s['u_quad_poly'], cfg)
+    s_col = pr.fs_s_col(s_comb, _u64_le_bytes(q_irs), _u64_le_bytes(q_lin),
+                        _u64_le_bytes(p_0))
+    Q_cols = list(pr.random_columns(s_col, cfg))
+    if wc is not None:
+        # Fail before a single weight column is extracted.
+        wc.check_openings(cfg, Q_cols)
+    # One pre-sized HOST buffer per column per block: the openings are written
+    # through as they are produced, so nothing accumulates on the GPU and
+    # there is no final torch.cat (which briefly doubled tens of GB).
+    _w_base = NUM_BLINDING_ROWS
+    _wnew_base = _w_base + s['n_w_total']
+    _p1_base = _wnew_base + s['n_wnew_total']
+    col_blind = ColumnSink(s['n_blind_total'], Q_cols, 0)
+    col_w = ColumnSink(s['n_w_total'], Q_cols, _w_base)
+    col_wnew = ColumnSink(s['n_wnew_total'], Q_cols, _wnew_base)
+    col_p1 = ColumnSink(s['n_p1_total'], Q_cols, _p1_base)
+    col_p2 = ColumnSink(s['n_p2_total'], Q_cols, s['m_p1_rows'])
+    col_p3 = ColumnSink(s['n_p3_total'], Q_cols, s['m_p2_rows'])
+    # Opening round: columns only. Roots, trees and opening paths all come
+    # from the R1/R2/R3 commits (the trees are a few MB and are kept); this
+    # sweep only re-extracts the challenged columns, whose identity is not
+    # known until s_col.
+    sweep(want_aux=True, col_blind=col_blind, col_w=col_w,
+          col_wnew=col_wnew, col_p1=col_p1, col_p2=col_p2, col_p3=col_p3,
           Q_cols=Q_cols, p1_prefix=s['p1_prefix'])
 
     def _opened(colbuf):
+        if isinstance(colbuf, ColumnSink):
+            return colbuf.finish()
         return {j: (torch.cat(colbuf[j]) if colbuf[j]
                     else torch.empty(0, dtype=torch.uint64, device="cuda")) for j in Q_cols}
     def _paths(art):
@@ -2640,6 +3535,7 @@ def prove_streaming(tape, cfg, seed, weight_commitment=None, wnew_seed=None):
     opened_wnew  = _opened(col_wnew) if has_wnew else {}
     opened_p1    = _opened(col_p1)
     opened_p2    = _opened(col_p2)
+    opened_p3    = _opened(col_p3) if has_p3 else {}
     # W block root + opening paths: from the referenced commitment (P3) or the
     # in-proof W tree kept from R1. Either way opened_w is the re-extracted
     # weight columns, which reproduce the committed leaves (context-independent
@@ -2653,24 +3549,25 @@ def prove_streaming(tape, cfg, seed, weight_commitment=None, wnew_seed=None):
         root_w = art_w.root if has_w else None
         paths_w = _paths(art_w) if has_w else {}
         w_leaf_art = art_w
-    # Cross-round consistency self-check, replacing the old full R4 tree
-    # rebuild + root comparison: the re-extracted columns must hash to the
-    # leaves committed in R1/R2 (for a referenced W block, to the persisted
-    # commitment's leaves). Same witness-regeneration-drift detection on
-    # exactly the data being served, now covering every block including
-    # phase 2, at T column hashes per block instead of N_LIG.
+    # Cross-round consistency self-check, replacing the old full opening-round
+    # tree rebuild + root comparison: the re-extracted columns must hash to
+    # the leaves committed in R1/R2/R3 (for a referenced W block, to the
+    # persisted commitment's leaves). Same witness-regeneration-drift
+    # detection on exactly the data being served, now covering every block
+    # including phases 2 and 3, at T column hashes per block instead of N_LIG.
+    # NOTE: q_irs/q_lin/p_0 were already blinding-mixed BEFORE s_col above —
+    # the s_col coin must hash the polynomials the verifier receives.
     repro = (_opened_columns_match_leaves(opened_blind, Q_cols, art_blind, s['n_blind_total'])
              and (not has_w or _opened_columns_match_leaves(opened_w, Q_cols, w_leaf_art, s['n_w_total']))
              and (not has_wnew or _opened_columns_match_leaves(opened_wnew, Q_cols, art_wnew, s['n_wnew_total']))
              and _opened_columns_match_leaves(opened_p1, Q_cols, art_p1, s['n_p1_total'])
-             and _opened_columns_match_leaves(opened_p2, Q_cols, art_p2, s['n_p2_total']))
-    q_irs, q_lin, p_0 = _mix_blinding_into_tests(
-        q_irs_acc.finalize(), q_lin_acc.finalize(), p_0,
-        s['u_irs_poly'], s['u_lin_poly'], s['u_quad_poly'], cfg)
+             and _opened_columns_match_leaves(opened_p2, Q_cols, art_p2, s['n_p2_total'])
+             and (not has_p3 or _opened_columns_match_leaves(opened_p3, Q_cols, art_p3, s['n_p3_total'])))
     peak = torch.cuda.max_memory_allocated() / 1e9
-    print(f"  [stream-sound] 4 rounds done; opened columns match committed leaves: "
-          f"{repro}; W-block rows {s['n_w_total']}; W-ref {wc is not None}; "
-          f"Wnew rows {s['n_wnew_total']}; peak {peak:.2f} GB", flush=True)
+    print(f"  [stream-sound] {5 if has_p3 else 4} rounds done; opened columns "
+          f"match committed leaves: {repro}; W-block rows {s['n_w_total']}; "
+          f"W-ref {wc is not None}; Wnew rows {s['n_wnew_total']}; "
+          f"p3 rows {s['n_p3_total']}; peak {peak:.2f} GB", flush=True)
     if _PHASE_ON and _PHASE_TIMES:
         _tot = sum(_PHASE_TIMES.values())
         print("  [phase] prove-time breakdown (cuda-synced buckets; shares, not "
@@ -2684,10 +3581,15 @@ def prove_streaming(tape, cfg, seed, weight_commitment=None, wnew_seed=None):
     # DOES need the public RHS — e.g. the reveal pin) recompiles it. Leaking
     # True here silently zeroed every nonzero-RHS constraint in verify.
     globals()['_SKIP_B_CHUNK'] = False
-    blocks = (["blind"] + (["w"] if has_w else []) + (["wnew"] if has_wnew else [])
-              + ["p1", "p2"])
+    _disk_spill_close(witness_cache)          # delete the per-proof disk-spill file
+    assert blocks == (["blind"] + (["w"] if has_w else [])
+                      + (["wnew"] if has_wnew else []) + ["p1", "p2"]
+                      + (["p3"] if has_p3 else [])), (
+        "row-block layout diverged from the one the statement digest fixed")
     return Proof(
         q_irs=q_irs, q_lin=q_lin, p_0=p_0, blocks=blocks,
+        seeds={"s_op": s_op, "s_bind": s_bind, "s_comb": s_comb, "s_col": s_col},
+        statement_digest=stmt_digest, claims_bytes=claims_bytes, Q_cols=Q_cols,
         root_blind=art_blind.root, opened_blind=opened_blind, paths_blind=_paths(art_blind),
         root_w=root_w,
         opened_w=opened_w, paths_w=paths_w,
@@ -2695,7 +3597,10 @@ def prove_streaming(tape, cfg, seed, weight_commitment=None, wnew_seed=None):
         opened_wnew=opened_wnew,
         paths_wnew=(_paths(art_wnew) if has_wnew else {}),
         root_p1=art_p1.root, opened_p1=opened_p1, paths_p1=_paths(art_p1),
-        root_p2=art_p2.root, opened_p2=opened_p2, paths_p2=_paths(art_p2))
+        root_p2=art_p2.root, opened_p2=opened_p2, paths_p2=_paths(art_p2),
+        root_p3=(root_p3 if has_p3 else None),
+        opened_p3=(opened_p3 if has_p3 else {}),
+        paths_p3=(_paths(art_p3) if has_p3 else {}))
 
 
 class _PhaseLogger:

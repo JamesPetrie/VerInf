@@ -1,0 +1,113 @@
+{
+  "host": "riftvm",
+  "gpu": "Tesla V100-SXM3-32GB, 32768 MiB",
+  "matrix": "phone",
+  "reps": 2,
+  "python": "3.12.3",
+  "utc": "2026-07-30T11:56:12Z",
+  "gates": [
+    {
+      "script": "validate_gpu_softmax.py",
+      "status": "ok",
+      "dur_s": 104.7,
+      "highlights": [
+        "Rust verify (gpu-on proof): ACCEPT"
+      ],
+      "label": "byte-identical: GPU vs numpy softmax",
+      "pass": true
+    },
+    {
+      "script": "validate_gpu_silu.py",
+      "status": "ok",
+      "dur_s": 33.4,
+      "highlights": [
+        "ALL IDENTICAL \u2014 GPU silu produces a byte-for-byte identical proof"
+      ],
+      "label": "byte-identical: GPU vs numpy silu",
+      "pass": true
+    },
+    {
+      "script": "validate_witness_spill.py",
+      "status": "ok",
+      "dur_s": 33.7,
+      "highlights": [
+        "ALL IDENTICAL \u2014 host spill produces a byte-for-byte identical proof"
+      ],
+      "label": "byte-identical: spill vs recompute",
+      "pass": true
+    },
+    {
+      "script": "accept_toy_spill.py",
+      "status": "ok",
+      "dur_s": 90.3,
+      "highlights": [
+        "Rust verify_proof (spill ON): ACCEPT"
+      ],
+      "label": "Rust verify_proof = ACCEPT (spill on)",
+      "pass": true
+    }
+  ],
+  "ab": [
+    {
+      "script": "ab_gpu_softmax.py",
+      "status": "ok",
+      "dur_s": 482.8,
+      "highlights": [
+        "config                    off_s     on_s   faster  wit_off   wit_on  peakGB",
+        "    BUCKETED      112.4s  (vs total prove wall-clock; remainder = setup + un-bucketed)",
+        "    BUCKETED      112.0s  (vs total prove wall-clock; remainder = setup + un-bucketed)",
+        "    BUCKETED       91.1s  (vs total prove wall-clock; remainder = setup + un-bucketed)",
+        "    BUCKETED       91.2s  (vs total prove wall-clock; remainder = setup + un-bucketed)",
+        "  PRODUCTION PROJECTION: +44.1%  (28668s -> 16016s)  (transfers; softmax share of witness grows with SEQ, so conservative)"
+      ],
+      "label": "GPU softmax (transferable witness-compute win)",
+      "config": "d896_ff4864_seq256_L24_v151936"
+    },
+    {
+      "script": "ab_witness_spill.py",
+      "status": "ok",
+      "dur_s": 671.9,
+      "highlights": [
+        "    BUCKETED       92.6s  (vs total prove wall-clock; remainder = setup + un-bucketed)",
+        "    BUCKETED       91.7s  (vs total prove wall-clock; remainder = setup + un-bucketed)",
+        "    BUCKETED       91.0s  (vs total prove wall-clock; remainder = setup + un-bucketed)",
+        "    BUCKETED       90.9s  (vs total prove wall-clock; remainder = setup + un-bucketed)",
+        "    BUCKETED       90.8s  (vs total prove wall-clock; remainder = setup + un-bucketed)",
+        "    BUCKETED       90.6s  (vs total prove wall-clock; remainder = setup + un-bucketed)",
+        "  recompute : prove  98.80s   witness   6.84s",
+        "  gpu-cache : prove  96.94s   witness   5.88s   (+1.9% vs recompute)",
+        "  host-spill: prove 105.44s   witness   5.98s   (-6.7% vs recompute)",
+        "  spill vs gpu-cache: prove 96.94s vs 105.44s (spill trades GPU mem for host mem; slower by 8.50s here)",
+        "  PRODUCTION PROJECTION: +27.0%  (28668s -> 20941s)  (NVMe 7GB/s; crossover-type \u2014 prod per-term cut, NOT the toy fraction)"
+      ],
+      "label": "witness spill (host store-once/re-read)",
+      "config": "d896_ff4864_seq256_L24_v151936"
+    },
+    {
+      "script": "ab_gpu_softmax.py",
+      "status": "ok",
+      "dur_s": 650.3,
+      "highlights": [
+        "config                    off_s     on_s   faster  wit_off   wit_on  peakGB",
+        "    BUCKETED      185.3s  (vs total prove wall-clock; remainder = setup + un-bucketed)",
+        "    BUCKETED      183.4s  (vs total prove wall-clock; remainder = setup + un-bucketed)",
+        "    BUCKETED      113.8s  (vs total prove wall-clock; remainder = setup + un-bucketed)",
+        "    BUCKETED      113.6s  (vs total prove wall-clock; remainder = setup + un-bucketed)",
+        "  PRODUCTION PROJECTION: +49.7%  (28668s -> 14428s)  (transfers; softmax share of witness grows with SEQ, so conservative)"
+      ],
+      "label": "GPU softmax (transferable witness-compute win)",
+      "config": "d2048_ff8192_seq256_L16_v128256"
+    },
+    {
+      "script": "ab_witness_spill.py",
+      "status": "exit1",
+      "dur_s": 146.3,
+      "highlights": [
+        "    BUCKETED      116.8s  (vs total prove wall-clock; remainder = setup + un-bucketed)",
+        "torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 1.96 GiB. GPU 0 has a total capacity of 31.73 GiB of which 1.33 GiB is free. Including non-PyTorch memory, this process has 30.40 GiB memory in use. Of the allocated memory 29.53 GiB is allocated by PyTorch, and 378.92 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://docs.pytorch.org/docs/stable/notes/cuda.html#optimizing-memory-usage-with-pytorch-cuda-alloc-conf)"
+      ],
+      "label": "witness spill (host store-once/re-read)",
+      "config": "d2048_ff8192_seq256_L16_v128256"
+    }
+  ]
+}
