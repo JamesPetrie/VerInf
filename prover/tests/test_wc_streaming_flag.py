@@ -14,10 +14,30 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import torch
 
+import core
 import wc_bridge as wc
-from routed_projected import RoutedProjectedMatmulClaim, routed_sample
-from tests.test_routed_projected import _build, T, K, J, E
+from routed_projected import (RoutedProjectedMatmulClaim, routed_sample,
+                              routed_projected_matmul)
+from tape import Tape
+from tests.test_routed_projected import _build, _u64, CFG, T, K, J, E
 from tests._rust_verify import rust_verify_tape
+
+
+def _build_bridged(routes=(0, 1, 0), w_bump=0):
+    """test_routed_projected._build with use_bridge=1 on the claim."""
+    core._COSET_POWERS_K_CACHE.clear()
+    tape = Tape(CFG, lazy=True)
+    X = torch.arange(1, T * K + 1).reshape(T, K)
+    W = torch.arange(1, E * K * J + 1).reshape(E, K * J) + w_bump
+    M = torch.zeros(T, E, dtype=torch.int64)
+    for t, e in enumerate(routes):
+        M[t, e] = 1
+    x = tape.commit("X", _u64(X.reshape(-1)), (T, K))
+    m = tape.commit("M", _u64(M.reshape(-1)), (T, E))
+    w = [tape.commit(f"W{e}", _u64(W[e]), (K, J)) for e in range(E)]
+    routed_projected_matmul(tape, x, m, w, T=T, K=K, J=J, E=E,
+                            use_bridge=True)
+    return tape
 
 PARAMS = wc.WcParams(B=48, lam=16, N_w=128, q_w=8)
 
@@ -32,7 +52,7 @@ def _enroll(tape, claim):
 
 
 def _prove_with_flag():
-    tape, y, X, W, M = _build()
+    tape = _build_bridged()
     claim = next(c for c in tape.claims
                  if isinstance(c, RoutedProjectedMatmulClaim))
     enr = _enroll(tape, claim)
@@ -79,7 +99,7 @@ def test_hosted_bridge_rejects_tampered_p_trace():
     tape, proof, enr = _prove_with_flag()
     sc = proof.wc_bridge
     br = sc["bridge"]
-    br.p_trace[J][3] = (int(br.p_trace[J][3].item()) + 1)
+    br.p_trace[J].view(torch.int64)[3] ^= 1      # bit-flip tamper, no overflow
     ci = sc["claim_index"]
     rho = routed_sample(tape.claims[ci], ci, proof.seeds["s_op"])
     ok, why = wc.verify_bridge_hosted(sc["root"], sc["manifest_digest"],
@@ -92,11 +112,11 @@ def test_hosted_bridge_rejects_tampered_p_trace():
 def test_hosted_bridge_rejects_foreign_enrollment():
     """A proof whose bridge ran against different weights must fail against
     the true enrollment root (model-substitution, hosted mode)."""
-    tape, y, X, W, M = _build()
+    tape = _build_bridged()
     claim = next(c for c in tape.claims
                  if isinstance(c, RoutedProjectedMatmulClaim))
     enr_true = _enroll(tape, claim)
-    tape2, y2, X2, W2, M2 = _build(w_bump=3)      # different weights
+    tape2 = _build_bridged(w_bump=3)              # different weights
     claim2 = next(c for c in tape2.claims
                   if isinstance(c, RoutedProjectedMatmulClaim))
     enr_fake = _enroll(tape2, claim2)

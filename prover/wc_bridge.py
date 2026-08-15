@@ -28,6 +28,8 @@ from __future__ import annotations
 
 import hashlib
 import math
+
+import blake3
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
@@ -132,11 +134,18 @@ def _rs_domain(params: WcParams) -> torch.Tensor:
     x = torch.zeros(params.N_w, dtype=torch.uint64, device="cuda")
     x[1] = 1
     ntt_forward(x)
+    # protocol-pinned order: natural powers of omega = 7^((P-1)/N_w) — the
+    # Rust twin recomputes the domain from this formula, so a kernel that
+    # changes its output order must fail HERE, not fork the two verifiers.
+    omega = pow(7, (P - 1) // params.N_w, P)
+    assert int(x[1].item()) == omega and int(x[2].item()) == omega * omega % P, \
+        "NTT kernel domain order changed — the Rust twin's formula would fork"
     return x
 
 
 def _leaf(column_u64: torch.Tensor) -> bytes:
-    return hashlib.sha256(b"wc-leaf" + column_u64.cpu().numpy().tobytes()).digest()
+    # blake3 everywhere: the Rust twin (verifier/src) carries no sha2 dep
+    return blake3.blake3(b"wc-leaf" + column_u64.cpu().numpy().tobytes()).digest()
 
 
 def _tree(leaves: List[bytes]) -> List[List[bytes]]:
@@ -145,7 +154,7 @@ def _tree(leaves: List[bytes]) -> List[List[bytes]]:
         lo = levels[-1]
         if len(lo) & 1:
             lo = lo + [lo[-1]]
-        levels.append([hashlib.sha256(lo[i] + lo[i + 1]).digest()
+        levels.append([blake3.blake3(lo[i] + lo[i + 1]).digest()
                        for i in range(0, len(lo), 2)])
     return levels
 
@@ -164,7 +173,7 @@ def _path(levels: List[List[bytes]], idx: int) -> List[Tuple[bytes, int]]:
 def _verify_path(leaf: bytes, path: List[Tuple[bytes, int]], root: bytes) -> bool:
     h = leaf
     for sib, is_right in path:
-        h = hashlib.sha256((sib + h) if is_right else (h + sib)).digest()
+        h = blake3.blake3((sib + h) if is_right else (h + sib)).digest()
     return h == root
 
 
@@ -251,7 +260,7 @@ class BridgeProof:
 
 def _commit_r2(p_trace: Dict[int, torch.Tensor],
                pi: Dict[int, torch.Tensor]) -> bytes:
-    h = hashlib.sha256(b"wc-r2")
+    h = blake3.blake3(b"wc-r2")
     for n in sorted(p_trace):
         h.update(p_trace[n].cpu().numpy().tobytes())
         h.update(pi[n].cpu().numpy().tobytes())

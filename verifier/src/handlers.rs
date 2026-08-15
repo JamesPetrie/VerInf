@@ -18,6 +18,10 @@ struct Build {
     quad: Vec<QuadFamily>,
     nxt: usize,
     nq: usize,                       // running quad index (positional r_quad pairing)
+    // WC-LCRL-STC: (claim_index, P_trace values) authenticated by the bridge
+    // in verify_proof.rs BEFORE compile — the public pin for a use_bridge
+    // routed claim's Pj identity rows. None when no bridge section exists.
+    wc_pin: Option<(usize, Vec<u64>)>,
 }
 
 impl Build {
@@ -407,16 +411,30 @@ fn compile_routed_projected(cl: &Claim, ci: usize, s_op: &[u8],
     let b_fin = b_fu + e;
     b.nxt = b_fin + 1;
 
-    // P = W rho, one band per expert shard: expert x owns constraint ids
-    // [b_p + x*K, b_p + (x+1)*K), so the prover can stream shard by shard and
-    // never holds a whole layer's experts (~43 GB at Maverick shapes).
+    // P = W rho.  Bridge OFF: one LF1B band per expert shard (expert x owns
+    // constraint ids [b_p + x*K, b_p + (x+1)*K)).  Bridge ON (use_bridge,
+    // WC-LCRL-STC 0.5): the online fold over the weights is gone — the Pj
+    // identity rows are pinned to the bridge-authenticated public P_trace,
+    // which verify_proof.rs checked against the enrollment root before
+    // handing it to this compile.
     b.emit_id(cl.var("Pj"), b_p, 1, ell);
-    let w_experts = cl.var_list("W");
-    assert_eq!(w_experts.len(), e, "expected one weight variable per expert");
-    for (x, wv) in w_experts.iter().enumerate() {
-        b.push_family(*wv, ell, Expander::FreivaldsB {
-            base: b_p + x * k, k, n: j, h: 1, kk: k,
-            transpose_b: false, neg_rho: neg_rho.clone() });
+    if cl.opt_scalar("use_bridge").unwrap_or(0) == 1 {
+        let (pin_ci, pin) = b.wc_pin.take().expect(
+            "use_bridge claim but no bridge-authenticated P_trace pin — \
+             the wc section is missing or its verification did not run");
+        assert_eq!(pin_ci, ci, "bridge pin belongs to another claim");
+        assert!(pin.len() >= e * k, "bridge pin shorter than E*K");
+        let runs: Vec<(usize, usize, u64)> =
+            pin[..e * k].iter().enumerate().map(|(i, &v)| (i, 1, v)).collect();
+        b.add_rhs(b_p, &runs);
+    } else {
+        let w_experts = cl.var_list("W");
+        assert_eq!(w_experts.len(), e, "expected one weight variable per expert");
+        for (x, wv) in w_experts.iter().enumerate() {
+            b.push_family(*wv, ell, Expander::FreivaldsB {
+                base: b_p + x * k, k, n: j, h: 1, kk: k,
+                transpose_b: false, neg_rho: neg_rho.clone() });
+        }
     }
     // yr = Y rho
     b.emit_id(cl.var("yr"), b_yr, 1, ell);
@@ -1167,10 +1185,17 @@ pub fn compile_claims(cs: &mut ClaimSet, s_op: &[u8]) -> Constraints {
 /// claim set that has none, and such a claim panics rather than silently
 /// compiling a relation the transcript never bound.
 pub fn compile_claims_bound(cs: &mut ClaimSet, s_op: &[u8], s_bind: Option<&[u8]>) -> Constraints {
+    compile_claims_bound_pinned(cs, s_op, s_bind, None)
+}
+
+/// compile_claims_bound with the WC-LCRL-STC bridge pin: (claim_index,
+/// bridge-authenticated P_trace) for the single use_bridge routed claim.
+pub fn compile_claims_bound_pinned(cs: &mut ClaimSet, s_op: &[u8], s_bind: Option<&[u8]>,
+                                   wc_pin: Option<(usize, Vec<u64>)>) -> Constraints {
     let cfg = cs.cfg;
     let ell = cfg.ell as usize;
     let mt = m_total(cs);
-    let mut b = Build { families: Vec::new(), rhs: Vec::new(), quad: Vec::new(), nxt: 0, nq: 0 };
+    let mut b = Build { families: Vec::new(), rhs: Vec::new(), quad: Vec::new(), nxt: 0, nq: 0, wc_pin };
     let n_ops = cs.claims.len();
 
     // Derive each table's α/β from s_op by settled-list index (after ops), then

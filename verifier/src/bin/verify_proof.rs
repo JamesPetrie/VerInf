@@ -14,7 +14,8 @@ use serde_json::Value;
 use serde_json::value::RawValue;
 use ligero_verifier::claim::parse_claim_set_value;
 use ligero_verifier::fs;
-use ligero_verifier::verify::{Round3, Round4, verify_bound};
+use ligero_verifier::verify::{Round3, Round4, verify_bound, verify_bound_pinned};
+use ligero_verifier::protocol;
 
 /// A field vector on the proof wire.  Legacy proofs use a JSON array; the
 /// production writer uses `"u64le:<base64>"`.  Both decode to the identical
@@ -134,6 +135,144 @@ struct RawTop {
     statement_digest: Option<String>,
     #[serde(default)]
     python_accept: Option<bool>,
+    // WC-LCRL-STC bridge materials (analysis/wc-lcrl-stc-spec.md 0.4):
+    // verified HERE against the enrollment root before compile consumes the
+    // P_trace pin for use_bridge claims.
+    #[serde(default)]
+    wc: Option<WcSection>,
+}
+
+#[derive(Deserialize)]
+#[allow(non_snake_case)]
+struct WcGeom { B: usize, lam: usize, N_w: usize, q_w: usize }
+
+#[derive(Deserialize)]
+struct WcSection {
+    root: String,
+    manifest_digest: String,
+    params: WcGeom,
+    claim_index: usize,
+    group_meta: HashMap<String, (usize, usize)>,
+    p_trace: HashMap<String, Vec<u64>>,
+    pi: HashMap<String, Vec<Vec<u64>>>,
+    c: Vec<u64>,
+    v: Vec<u64>,
+    eta: Vec<u64>,
+    opened: HashMap<String, Vec<u64>>,
+    paths: HashMap<String, Vec<(String, u8)>>,
+}
+
+fn wc_u64le(vals: &[u64]) -> Vec<u8> {
+    let mut b = Vec::with_capacity(vals.len() * 8);
+    for v in vals { b.extend_from_slice(&v.to_le_bytes()); }
+    b
+}
+
+fn wc_leaf(col: &[u64]) -> [u8; 32] {
+    let mut h = blake3::Hasher::new();
+    h.update(b"wc-leaf");
+    h.update(&wc_u64le(col));
+    *h.finalize().as_bytes()
+}
+
+fn wc_path_ok(leaf: [u8; 32], path: &[(String, u8)], root: [u8; 32]) -> bool {
+    let mut h = leaf;
+    for (sib_hex, is_right) in path {
+        let sib = hex32(sib_hex);
+        let mut hh = blake3::Hasher::new();
+        if *is_right == 1 { hh.update(&sib); hh.update(&h); }
+        else { hh.update(&h); hh.update(&sib); }
+        h = *hh.finalize().as_bytes();
+    }
+    h == root
+}
+
+/// The full WC bridge check (python twin: wc_bridge.verify_bridge_hosted +
+/// _verify_core).  Every coin recomputed from (s_op, s_bind) — nothing from
+/// the wire is trusted.  Returns the authenticated P_trace pin on ACCEPT.
+fn wc_verify(wc: &WcSection, s_op: &[u8], s_bind: &[u8])
+             -> Result<(usize, Vec<u64>), String> {
+    use ligero_verifier::field::{add, mul, pow, P};
+    let g = &wc.params;
+    let k_w = g.B + g.lam;
+    if wc.c.len() != k_w { return Err("c length != K_w".into()); }
+    let mut widths: Vec<usize> =
+        wc.group_meta.keys().map(|w| w.parse().unwrap()).collect();
+    widths.sort();
+    if widths.len() != 1 {
+        return Err("wc v1 supports exactly one width group".into());
+    }
+    let width = widths[0];
+    let (n_blocks, _) = wc.group_meta[&width.to_string()];
+    let pt = wc.p_trace.get(&width.to_string())
+        .ok_or("p_trace group missing")?;
+    let pim = wc.pi.get(&width.to_string()).ok_or("pi group missing")?;
+    if pt.len() != n_blocks * g.B { return Err("p_trace length".into()); }
+    if pim.len() != n_blocks || pim.iter().any(|r| r.len() != g.lam) {
+        return Err("pi shape".into());
+    }
+    // hosted late coin: s_bind + enrollment identity + geometry + R2 commit
+    let root = hex32(&wc.root);
+    let manifest = hex32(&wc.manifest_digest);
+    let mut geom = b"wc-geom".to_vec();
+    for v in [g.B, g.lam, g.N_w, g.q_w] {
+        geom.extend_from_slice(&(v as u64).to_le_bytes());
+    }
+    let mut r2 = blake3::Hasher::new();
+    r2.update(b"wc-r2");
+    r2.update(&wc_u64le(pt));
+    for row in pim { r2.update(&wc_u64le(row)); }
+    let r2d = *r2.finalize().as_bytes();
+    let s_late = fs::fs_seed("wc/hosted-late",
+                             &[s_bind, &root, &manifest, &geom, &r2d]);
+    // eta: distinct, and exactly the transcript's draw
+    let eta = protocol::random_columns_n(
+        &fs::fs_seed("wc/eta", &[&s_late]), g.q_w, g.N_w as u64);
+    let mut ded = eta.clone(); ded.sort(); ded.dedup();
+    if ded.len() != g.q_w { return Err("eta not distinct".into()); }
+    if eta != wc.eta { return Err("eta mismatch".into()); }
+    // c aggregation over the committed R2 values
+    let mut c = vec![0u64; k_w];
+    for a in 0..n_blocks {
+        let alpha = protocol::challenge(&s_late, a as u64, "alpha");
+        for i in 0..g.B {
+            c[i] = add(c[i], mul(alpha, pt[a * g.B + i]));
+        }
+        for h in 0..g.lam {
+            c[g.B + h] = add(c[g.B + h], mul(alpha, pim[a][h]));
+        }
+    }
+    if c != wc.c { return Err("c does not aggregate P_trace/pi".into()); }
+    // v = c(eta) on the pinned natural domain omega = 7^((P-1)/N_w)
+    let omega = pow(7, (P - 1) / g.N_w as u64);
+    for (l, &ei) in eta.iter().enumerate() {
+        let x = pow(omega, ei);
+        let mut acc = 0u64;
+        for k in (0..k_w).rev() { acc = add(mul(acc, x), c[k]); }
+        if acc != wc.v[l] { return Err(format!("v[{l}] != c(eta)")); }
+    }
+    // enrollment side: merkle-verified columns + the bridge equation, under
+    // the HOST transcript's rho (the claim's own R1 coin)
+    let rho = protocol::op_vec(s_op, wc.claim_index, "rho", width);
+    for (l, &ei) in eta.iter().enumerate() {
+        let col = wc.opened.get(&ei.to_string()).ok_or("column missing")?;
+        if col.len() != n_blocks * width { return Err("column length".into()); }
+        let path = wc.paths.get(&ei.to_string()).ok_or("path missing")?;
+        if !wc_path_ok(wc_leaf(col), path, root) {
+            return Err(format!("merkle path fails at eta[{l}]"));
+        }
+        let mut rhs = 0u64;
+        for a in 0..n_blocks {
+            let alpha = protocol::challenge(&s_late, a as u64, "alpha");
+            let mut sum = 0u64;
+            for j in 0..width {
+                sum = add(sum, mul(rho[j], col[a * width + j]));
+            }
+            rhs = add(rhs, mul(alpha, sum));
+        }
+        if rhs != wc.v[l] { return Err(format!("bridge equation fails at eta[{l}]")); }
+    }
+    Ok((wc.claim_index, pt.clone()))
 }
 
 fn hex32(s: &str) -> [u8; 32] {
@@ -292,9 +431,37 @@ fn main() {
         (None, None) => {}
     }
 
+    // ---- WC-LCRL-STC bridge (spec 0.4/0.5) -------------------------------
+    // Verified BEFORE compile: on ACCEPT the authenticated P_trace becomes
+    // the public pin for the use_bridge claim's Pj rows; a use_bridge claim
+    // without a verified bridge fails closed.
+    let n_bridge_claims = cs.claims.iter()
+        .filter(|c| c.opt_scalar("use_bridge").unwrap_or(0) == 1).count();
+    let mut wc_pin: Option<(usize, Vec<u64>)> = None;
+    match (&top.wc, n_bridge_claims, s_bind_out.as_deref()) {
+        (Some(wcs), n, Some(sb)) if n > 0 => {
+            match wc_verify(wcs, &s_op, sb) {
+                Ok(pin) => {
+                    policy.push(("wc bridge: P_trace authenticated against \
+enrollment root".into(), true));
+                    wc_pin = Some(pin);
+                }
+                Err(e) => policy.push((format!("wc bridge REJECT: {e}"), false)),
+            }
+        }
+        (None, n, _) if n > 0 => policy.push((
+            "use_bridge claims but no wc section".into(), false)),
+        (Some(_), 0, _) => policy.push((
+            "wc section but no use_bridge claim".into(), false)),
+        (Some(_), _, None) => policy.push((
+            "wc bridge needs the transcript's s_bind".into(), false)),
+        _ => {}
+    }
+
     let t0 = std::time::Instant::now();
-    let (ok_checks, per) = verify_bound(&mut cs, &roots, &r3, r4, &s_op,
-                                        s_bind_out.as_deref(), &s_comb, &s_col);
+    let (ok_checks, per) = verify_bound_pinned(&mut cs, &roots, &r3, r4, &s_op,
+                                        s_bind_out.as_deref(), &s_comb, &s_col,
+                                        wc_pin);
     let elapsed = t0.elapsed();
     for (name, b) in &per {
         println!("  [{}] {}", if *b { "OK " } else { "XX " }, name);

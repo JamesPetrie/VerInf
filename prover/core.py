@@ -3477,17 +3477,24 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
     # s_bind, and pi is bound through the bridge's hosted late coin until it
     # becomes committed R2 rows proved by fresh qLin (interim, status doc).
     wc_sidecar = None
+    from routed_projected import RoutedProjectedMatmulClaim as _RPC
+    _bridged = [(ci, c) for ci, c in enumerate(s['claims'])
+                if isinstance(c, _RPC) and c.use_bridge]
+    if _bridged and weight_enrollment is None:
+        raise RuntimeError(
+            "tape has use_bridge claims but no weight_enrollment — refusing "
+            "to prove (spec 0.8: every persistent map in exactly one chain)")
     if weight_enrollment is not None:
         import wc_bridge as _wcb
-        from routed_projected import RoutedProjectedMatmulClaim as _RPC
-        routed = [(ci, c) for ci, c in enumerate(s['claims'])
-                  if isinstance(c, _RPC)]
+        routed = _bridged
         assert len(routed) == 1, (
-            "weight_enrollment v1 supports exactly one routed claim per tape; "
-            f"got {len(routed)}")
+            "weight_enrollment v1 supports exactly one use_bridge routed "
+            f"claim per tape; got {len(routed)}")
         _ci, _rc = routed[0]
         _rho = {_rc.J: list(ch0[_ci])}
         _pt, _pi = _wcb.bridge_r2(weight_enrollment, _rho)
+        # the 0.8 chain: the SAME tensor the terminal pin consumes
+        _rc._bridge_pin = _pt[_rc.J][: _rc.E * _rc.K]
         _s_late = _wcb.hosted_s_late(s_bind, weight_enrollment.root,
                                      weight_enrollment.manifest_digest,
                                      _pt, _pi, weight_enrollment.params)
