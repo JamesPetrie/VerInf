@@ -1171,7 +1171,9 @@ fn settle_table(t: &Table, b: &mut Build, ell: usize) {
 fn m_total(cs: &ClaimSet) -> usize {
     let ell = cs.cfg.ell as usize;
     let mut top = NUM_BLINDING_ROWS - 1;
-    let mut bump = |v: Var| { let t = v.row_start + nrows(v.length, ell) - 1; if t > top { top = t; } };
+    let mut bump = |v: Var| {
+        if v.row_start >= usize::MAX / 2 { return; }   // external: no rows
+        let t = v.row_start + nrows(v.length, ell) - 1; if t > top { top = t; } };
     for cl in &cs.claims {
         for v in cl.all_vars() { bump(v); }
     }

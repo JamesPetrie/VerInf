@@ -363,6 +363,9 @@ def routed_projected_matmul(tape, x, m_routes, w_experts, *, T, K, J, E,
     """
     assert len(w_experts) == E, f"expected {E} expert shards, got {len(w_experts)}"
     w_vars = [w.var for w in w_experts]
+    assert use_bridge or not any(v.external for v in w_vars), (
+        "external (uncommitted) weights are only sound under use_bridge — "
+        "without the bridge nothing authenticates them")
     name = f"rp[{x.var.name}@{w_vars[0].name}..]"
     Y = tape._alloc(name, T * J, phase=1)
     Pj = tape._alloc(f"{name}.P", E * K, phase=2)

@@ -432,6 +432,21 @@ class Tape:
         self.inputs[v] = flat
         return WitnessTensor(flat, v, shape, self)
 
+    def external(self, name, data, shape):
+        """A prover INPUT that is NOT committed to the witness (WC-LCRL-STC):
+        the weight enrollment authenticates it instead. Only meaningful for
+        weights consumed by use_bridge claims — the builder asserts that."""
+        flat = data.contiguous().view(-1)
+        v = Variable(name, length=flat.numel(), phase=1, external=True)
+        self.inputs[v] = flat
+        return WitnessTensor(flat, v, shape, self)
+
+    def external_lazy(self, name, loader, shape, length):
+        """external() with on-demand loading (one expert shard resident)."""
+        v = Variable(name, length=length, phase=1, external=True)
+        self.inputs[v] = loader
+        return WitnessTensor(None, v, shape, self)
+
     def commit_lazy(self, name, loader, shape, length, *, persistent: bool = True):
         """Register a Variable whose data is loaded on demand via `loader`.
         tape.inputs[v] stores the callable, not a tensor — used for weight

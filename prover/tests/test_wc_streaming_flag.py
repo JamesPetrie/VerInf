@@ -163,3 +163,55 @@ def test_two_bridged_claims_share_one_enrollment():
     assert acc, f"two-claim bridged proof rejected by Rust: {msg}"
     # ledger economics: one opening set for BOTH claims
     assert len(proof.wc_bridge["bridge"].eta_idx) == PARAMS.q_w
+
+
+def test_external_weights_leave_the_witness():
+    """The W-block removal: bridged weights as tape.external() — prover
+    inputs, NOT committed rows. The proof shrinks and still ACCEPTs through
+    the Rust twin (the enrollment, not the commitment, authenticates W)."""
+    core._COSET_POWERS_K_CACHE.clear()
+    tape = Tape(CFG, lazy=True)
+    X = torch.arange(1, T * K + 1).reshape(T, K)
+    W = torch.arange(1, E * K * J + 1).reshape(E, K * J)
+    M = torch.zeros(T, E, dtype=torch.int64)
+    for t, e in enumerate((0, 1, 0)):
+        M[t, e] = 1
+    x = tape.commit("X", _u64(X.reshape(-1)), (T, K))
+    m = tape.commit("M", _u64(M.reshape(-1)), (T, E))
+    w = [tape.external(f"W{e}", _u64(W[e]), (K, J)) for e in range(E)]
+    routed_projected_matmul(tape, x, m, w, T=T, K=K, J=J, E=E,
+                            use_bridge=True)
+    enr = wc.enroll_tape(tape, b"ext-mask", b"ext-manifest", PARAMS)
+    proof = tape.prove(weight_enrollment=enr)
+    acc, msg = rust_verify_tape(tape, proof, seed=None)
+    assert acc, f"external-weights proof rejected: {msg}"
+    # the committed witness really shrank: compare p1 rows against the
+    # committed-W variant of the same tape
+    tape2 = _build_bridged()
+    enr2 = _enroll(tape2, next(c for c in tape2.claims
+                               if isinstance(c, RoutedProjectedMatmulClaim)))
+    proof2 = tape2.prove(weight_enrollment=enr2)
+    rows = lambda p: max(v for cols in (p.opened_p1,) for v in
+                         [next(iter(cols.values())).numel()])
+    assert rows(proof) < rows(proof2), (
+        f"witness did not shrink: {rows(proof)} vs {rows(proof2)} p1 rows")
+
+
+def test_external_weights_without_bridge_refuse():
+    """Fail-closed: uncommitted weights under a non-bridged claim are a
+    soundness hole and must not even build."""
+    core._COSET_POWERS_K_CACHE.clear()
+    tape = Tape(CFG, lazy=True)
+    X = torch.arange(1, T * K + 1).reshape(T, K)
+    W = torch.arange(1, E * K * J + 1).reshape(E, K * J)
+    M = torch.zeros(T, E, dtype=torch.int64)
+    for t, e in enumerate((0, 1, 0)):
+        M[t, e] = 1
+    x = tape.commit("X", _u64(X.reshape(-1)), (T, K))
+    m = tape.commit("M", _u64(M.reshape(-1)), (T, E))
+    w = [tape.external(f"W{e}", _u64(W[e]), (K, J)) for e in range(E)]
+    try:
+        routed_projected_matmul(tape, x, m, w, T=T, K=K, J=J, E=E)
+        assert False, "external weights accepted without the bridge"
+    except AssertionError as e:
+        assert "use_bridge" in str(e)

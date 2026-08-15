@@ -88,6 +88,11 @@ class Variable:
     w_new: bool = False        # linking proofs (P5): persistent var belongs to
                                # the SECOND weight block "wnew" (the refreshed
                                # commitment's tree) instead of "w"
+    external: bool = False     # WC-LCRL-STC: a prover INPUT that is NOT a
+                               # committed witness row — the enrollment holds
+                               # it (weights under the bridge). Never laid
+                               # out, never streamed into a tree; any family
+                               # emitted over it crashes on row_start=-1.
 
     def __post_init__(self):
         # Variables derived by chaining tape ops (e.g. residual x + proj across
@@ -2656,6 +2661,7 @@ def _layout(claims: List, cfg: LigeroConfig):
     # Each block's vars are assigned row_starts in all_vars (op) order, so the
     # streaming sweep feeds each block's tree in row order even though weights
     # and activations interleave in op order.
+    all_vars = [v for v in all_vars if not v.external]   # bridge-held weights
     weight_vars = [v for v in all_vars if v.phase == 1 and v.persistent and not v.w_new]
     wnew_vars   = [v for v in all_vars if v.phase == 1 and v.persistent and v.w_new]
     p1_vars     = [v for v in all_vars if v.phase == 1 and not v.persistent]
@@ -2694,7 +2700,7 @@ def _claim_var_groups(claims, cfg):
     seen = set()
     groups = []
     def collect(v, buckets):
-        if isinstance(v, Variable) and id(v) not in seen:
+        if isinstance(v, Variable) and id(v) not in seen and not v.external:
             seen.add(id(v))
             buckets[min(v.phase, 3) - 1].append(v)
     for c in claims:
