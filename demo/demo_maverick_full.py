@@ -360,7 +360,10 @@ def main():
         # concurrent provers can both read the same opening set and the last
         # save silently loses the other proof's columns.
         import fcntl
-        a._wc_lock = open(a.weight_commitment + ".lock", "a+b")
+        # under the bridge there is no wcommit file; the ledger lock rides
+        # next to the proof output instead
+        a._wc_lock = open((a.weight_commitment or a.dump_proof) + ".lock",
+                          "a+b")
         try:
             fcntl.flock(a._wc_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
