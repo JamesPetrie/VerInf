@@ -444,7 +444,9 @@ def main():
     # digest are taken from the laid-out tape (row_start is -1 before that).
     wc_enr = None
     if WC_BRIDGE:
+        import gc
         import wc_bridge as _wcb
+        gc.collect(); torch.cuda.empty_cache()
         _log("building streaming weight enrollment (one-time pass)")
         _t0 = time.time()
         wc_enr = _wcb.lazy_enroll_tape(

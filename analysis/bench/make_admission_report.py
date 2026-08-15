@@ -135,7 +135,9 @@ def main():
     print("[3/3] binding the report to this build/model/statement/layout",
           flush=True)
     if a.wc_bridge:
+        import gc
         import wc_bridge as _wcb
+        gc.collect(); torch.cuda.empty_cache()   # the stage sweep left the GPU full
         print("    (wc-bridge: streaming enrollment root)", flush=True)
         enr = _wcb.lazy_enroll_tape(
             tape, b"wc-maverick-mask-v1",

@@ -590,44 +590,49 @@ class LazyEnrollment:
 
     def _stream_codewords(self):
         """Yield (width, block, codewords (width, N_w)) in width-sorted,
-        block order — the canonical poly order."""
+        block order — the canonical poly order.  STREAMING: one unit_stream
+        pass PER WIDTH (widths sorted), emitting each B-block immediately —
+        resident state is one (B, width) buffer plus one codeword batch.
+        (The first version collected every block on the GPU to reorder; at
+        48 Maverick layers that is terabytes — the attempt-4 OOM.)"""
         params = self.params
-        bufs: Dict[int, list] = {}
-        fills: Dict[int, int] = {}
-        pend: Dict[int, list] = {n: [] for n in self.blocks_per_width}
-        blocks_done: Dict[int, int] = {n: 0 for n in self.blocks_per_width}
-        # buffer rows per width, cut into B-blocks; ORDER requires width-major
-        # emission, so blocks are collected per width then yielded sorted.
-        collected: Dict[int, list] = {n: [] for n in self.blocks_per_width}
-        for width, rows in self.unit_stream():
-            buf = bufs.setdefault(width, torch.zeros(
-                params.B, width, dtype=torch.uint64, device="cuda"))
-            fill = fills.get(width, 0)
-            r, off = rows.size(0), 0
-            while r - off > 0:
-                take = min(params.B - fill, r - off)
-                buf[fill:fill + take] = rows[off:off + take]
-                fill += take
-                off += take
-                if fill == params.B:
-                    collected[width].append(buf.clone())
-                    fill = 0
-                    buf.zero_()
-            fills[width] = fill
-        for width in self.blocks_per_width:
-            if fills.get(width, 0):
-                collected[width].append(bufs[width].clone())
         for width in sorted(self.blocks_per_width):
-            assert len(collected[width]) == self.blocks_per_width[width]
-            for block, rows in enumerate(collected[width]):
-                masks = self._masks(width, block)
+            buf = torch.zeros(params.B, width, dtype=torch.uint64,
+                              device="cuda")
+            fill, block = 0, 0
+
+            def emit(rows_b, blk):
+                masks = self._masks(width, blk)
                 coeffs = torch.zeros(width, params.N_w, dtype=torch.uint64,
                                      device="cuda")
-                coeffs[:, :params.B] = (rows.view(torch.int64).T.contiguous()
-                                        .view(torch.uint64))
+                coeffs[:, :params.B] = (rows_b.view(torch.int64).T
+                                        .contiguous().view(torch.uint64))
                 coeffs[:, params.B:params.K_w] = masks
                 ntt_forward_batched(coeffs)
-                yield width, block, coeffs
+                return coeffs
+
+            for w, rows in self.unit_stream():
+                if w != width:
+                    continue
+                r, off = rows.size(0), 0
+                while r - off > 0:
+                    take = min(params.B - fill, r - off)
+                    buf[fill:fill + take] = rows[off:off + take]
+                    fill += take
+                    off += take
+                    if fill == params.B:
+                        yield width, block, emit(buf, block)
+                        block += 1
+                        fill = 0
+                        buf.zero_()
+                del rows
+            if fill:
+                yield width, block, emit(buf, block)
+                block += 1
+            assert block == self.blocks_per_width[width], (
+                f"width {width}: streamed {block} blocks, expected "
+                f"{self.blocks_per_width[width]}")
+            del buf
 
     def pi(self, rho: Dict[int, List[int]]):
         out = {}
