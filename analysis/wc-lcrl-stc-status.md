@@ -27,15 +27,39 @@ Spec: [wc-lcrl-stc-spec.md](wc-lcrl-stc-spec.md). Branch: `wc-lcrl-stc`
   enrollment 4.65 s (74 ns/param, one-time; dominated by the CPU sha256
   Merkle), bridge prove 0.07 s (1.13 ns/param), CPU verify 0.26 s, ACCEPT.
 
+## Integrated (bricks 1-4, 2026-08-15)
+
+- **§0.2/0.3/0.5 wiring is DONE for the single-claim case**: a
+  `use_bridge=1` routed claim (part of the statement) proves `P = W rho`
+  by the bridge inside the real 5-round transcript. The per-expert
+  FreivaldsLF1B folds over the weights are NOT emitted by either
+  compiler; the committed Pj rows are pinned (b_chunk) to the public
+  P_trace that the bridge authenticates against the enrollment root.
+  `tape.prove(weight_enrollment=...)`; fail-closed both ways (bridged
+  claim without enrollment refuses to prove; without a verified wc
+  section the Rust verifier rejects).
+- **Rust twin is DONE**: `verify_proof.rs` recomputes every bridge coin
+  from its own transcript, checks eta/c/v/merkle/bridge-equation and
+  only then feeds the pin to compile. Wire: the `wc` proof section;
+  enrollment merkle is blake3; the NTT domain order is protocol-pinned
+  (natural powers of 7^((P-1)/N_w)) with an assert against kernel drift.
+- Gate: 79 tests green across 13 suites, incl. the flagged proof
+  end-to-end through Rust and the bridge negatives.
+- Toy prove A/B: 0.02 s vs 0.02 s — NO measurable delta at toy shapes,
+  as expected: the deleted work is linear in weight count (the toy-scale
+  lesson). The magnitude of the deletion at scale is the measured
+  Maverick bridge (B+C 1,051 s) vs the persistent fold+open (5,437 s).
+
 ## NOT implemented (do not claim it)
 
-- **§0.2/0.3 integration**: `P_trace` is not yet the semantic variable the
-  terminal constraints consume — the bridge runs standalone, not inside
-  the 5-round `prove_streaming` transcript. Wiring it in (and deleting the
-  persistent-weight qIRS/qLin rows it replaces) is the actual speedup and
-  the actual soundness surface.
-- **§0.5 routed experts**: `compile_routed_projected` still proves
-  `P = W rho` the old way; the bridge does not yet replace it.
+- **Multi-claim / shared-width rho (§0.2)**: v1 = exactly one use_bridge
+  claim per tape; the 72-matmul Maverick tape needs shared per-width rho
+  and per-claim enrollment group mapping.
+- **W-block removal**: the enrolled weights still sit in the witness
+  commit (their fold is gone, their commit/open cost is not) — deleting
+  the block entirely is the remaining 1,812 s/proof.
+- **pi as committed R2 rows proved by fresh qLin** (interim: bound via
+  the hosted late coin).
 - **§0.6 message cache**: the existing `LIGERO_WITNESS_CACHE`/`SPILL`
   caches compute_fn outputs only; canonical fresh message rows + pad
   metadata caching and the two-pass q/opening structure are not built.
