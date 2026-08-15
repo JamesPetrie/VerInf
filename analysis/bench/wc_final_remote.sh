@@ -44,9 +44,13 @@ $PY - "$MODEL_DIR" "$REPO" "$QUANT" "$BASE" "$SHARDS" <<'PY' || fail "download f
 import sys, os
 from huggingface_hub import hf_hub_download
 d, repo, quant, base, n = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], int(sys.argv[5])
+import shutil
 for i in range(1, n + 1):
     f = f"{quant}/{base}-{i:05d}-of-{n:05d}.gguf"
     p = hf_hub_download(repo, f, local_dir=d, token=os.environ.get("HF_TOKEN"))
+    # the xet download path keeps a chunk cache the size of the shard —
+    # doubling disk use killed the 400GB box at shard 4; drop it per shard
+    shutil.rmtree(os.path.join(d, ".cache"), ignore_errors=True)
     print("got", p, os.path.getsize(p) / 1e9, "GB", flush=True)
 PY
 GGUF="$MODEL_DIR/$QUANT/${BASE}-00001-of-0000${SHARDS}.gguf"
