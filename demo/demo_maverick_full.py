@@ -424,13 +424,16 @@ def main():
         return 0
 
     # ---- PROOF: policy first, then the admission gate, then prove ---------
-    wc = core.WeightCommitment.load(a.weight_commitment)
-    expected_root = bytes.fromhex(a.expected_weight_root.removeprefix("0x"))
-    if wc.root != expected_root:
-        raise SystemExit(
-            f"refusing to prove: the commitment's root {wc.root.hex()} is not "
-            f"the trusted enrolled root {expected_root.hex()}")
-    _log(f"model: enrolled root {wc.root.hex()[:16]}… ({wc.m_w} weight rows)")
+    if a.weight_commitment:
+        wc = core.WeightCommitment.load(a.weight_commitment)
+        expected_root = bytes.fromhex(a.expected_weight_root.removeprefix("0x"))
+        if wc.root != expected_root:
+            raise SystemExit(
+                f"refusing to prove: the commitment's root {wc.root.hex()} is not "
+                f"the trusted enrolled root {expected_root.hex()}")
+        _log(f"model: enrolled root {wc.root.hex()[:16]}… ({wc.m_w} weight rows)")
+    else:
+        wc = None       # bridge mode: the WC enrollment (built below) is the model
 
     # The public bound is an INPUT to the statement, not something the prover
     # discovers: pinning it here removes the extra pre-proof reveal pass (a
@@ -488,8 +491,23 @@ def main():
     # budget for a proof whose final write later fails is conservative; the
     # reverse order is unsafe because a crash can publish openings and lose
     # their ledger update.
-    wc.record_openings(proof.Q_cols)
-    wc.save(a.weight_commitment)
+    if wc is not None:
+        wc.record_openings(proof.Q_cols)
+        wc.save(a.weight_commitment)
+    else:
+        # bridge mode: the mask-point ledger is the enrollment's budget
+        # (40 eta points per proof of lam=1024); persist it next to the proof
+        import json as _json
+        _sc = getattr(proof, "wc_bridge", None)
+        _led = a.dump_proof + ".wc-ledger.json"
+        _prev = []
+        if pathlib.Path(_led).exists():
+            _prev = _json.load(open(_led)).get("eta_spent", [])
+        _eta = sorted(set(_prev) | set(_sc["bridge"].eta_idx if _sc else []))
+        _json.dump({"eta_spent": _eta, "lam": 1024,
+                    "root": _sc["root"].hex() if _sc else None},
+                   open(_led, "w"))
+        _log(f"wc ledger: {len(_eta)}/1024 mask points spent")
     from proof_dump import dump_proof
     t0 = time.time()
     try:
