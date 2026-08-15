@@ -171,6 +171,10 @@ def build_moe_ffn(tape, n2g, gguf, il, sig_tbl, ones_bc, *, T, E, d, d_ff,
 
     def wexp(kind, name, shape, e):
         ld = maverick_lazy_expert(gguf, il, kind, e, S)
+        if WC_BRIDGE:
+            # WC-LCRL-STC: expert weights are prover inputs only — the
+            # enrollment authenticates them, nothing is committed.
+            return tape.external_lazy(name, ld, shape, shape[0] * shape[1])
         return tape.commit_lazy(name, ld, shape, shape[0] * shape[1],
                                 persistent=persistent)
 
@@ -184,7 +188,8 @@ def build_moe_ffn(tape, n2g, gguf, il, sig_tbl, ones_bc, *, T, E, d, d_ff,
 
     def routed(x, kind, tag, K, J):
         shards = [wexp(kind, f"L{il}_W{tag}{e}", (K, J), e) for e in range(E)]
-        raw = routed_projected_matmul(tape, x, m, shards, T=T, K=K, J=J, E=E)
+        raw = routed_projected_matmul(tape, x, m, shards, T=T, K=K, J=J, E=E,
+                                      use_bridge=WC_BRIDGE)
         return rescale(tape, raw, s_in=S * S, s_out=S, output_width=OUTPUT_WIDTH)
 
     g_sum = routed(x_r, "gate_exps", "g", d, d_ff)
@@ -277,6 +282,9 @@ def build_model(tape, gguf, prompt_ids, cont_ids, *, V, d, n_layers, E, d_ff):
     return logits, Sz, handles, sum_pos
 
 
+WC_BRIDGE = False
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--from-gguf", required=True)
@@ -306,9 +314,16 @@ def main():
     ap.add_argument("--admission-report", default=None,
                     help="admission.json from the production benchmark; the "
                          "run is refused unless every stage is under its cap")
+    ap.add_argument("--wc-bridge", action="store_true",
+                    help="WC-LCRL-STC: prove the routed expert matmuls by the "
+                         "coefficient bridge against a streaming weight "
+                         "enrollment — the expert weights leave the witness "
+                         "(no online fold, no weight commit/open)")
     ap.add_argument("--allow-dev-config", action="store_true",
                     help="permit a non-target Ligero config (dev only)")
     a = ap.parse_args()
+    global WC_BRIDGE
+    WC_BRIDGE = bool(a.wc_bridge)
     torch.manual_seed(7)
 
     import admission
@@ -319,19 +334,26 @@ def main():
     # loading a 400B model is a wasted hour.
     proving = not (a.enroll_weights or a.witness_only)
     if proving:
-        missing = [n for n, v in (("--weight-commitment", a.weight_commitment),
-                                  ("--expected-weight-root", a.expected_weight_root),
-                                  ("--public-sz", a.public_sz),
-                                  ("--admission-report", a.admission_report),
-                                  ("--dump-proof", a.dump_proof))
-                   if v is None]
+        # Under the bridge the model reference is the WC enrollment root
+        # (checked by the verifier against external policy), not a committed
+        # weight tree — those two arguments stop applying.
+        req = ((("--public-sz", a.public_sz),
+                ("--admission-report", a.admission_report),
+                ("--dump-proof", a.dump_proof))
+               if a.wc_bridge else
+               (("--weight-commitment", a.weight_commitment),
+                ("--expected-weight-root", a.expected_weight_root),
+                ("--public-sz", a.public_sz),
+                ("--admission-report", a.admission_report),
+                ("--dump-proof", a.dump_proof)))
+        missing = [n for n, v in req if v is None]
         if missing:
             raise SystemExit(
                 "refusing to prove: missing " + ", ".join(missing) +
                 ".\nA production proof references an enrolled model, states "
                 "the public Sz it was served under, and passes the admission "
                 "gate. See demo/4h-production-runbook.md.")
-        for path in (a.weight_commitment, a.admission_report):
+        for path in filter(None, (a.weight_commitment, a.admission_report)):
             if not pathlib.Path(path).is_file():
                 raise SystemExit(f"refusing to prove: {path} does not exist")
         # Serialize access to the enrollment ledger.  Without the lock, two
@@ -420,9 +442,22 @@ def main():
 
     # One call: the layout is assigned first, then the canonical bytes and the
     # digest are taken from the laid-out tape (row_start is -1 before that).
+    wc_enr = None
+    if WC_BRIDGE:
+        import wc_bridge as _wcb
+        _log("building streaming weight enrollment (one-time pass)")
+        _t0 = time.time()
+        wc_enr = _wcb.lazy_enroll_tape(
+            tape, b"wc-maverick-mask-v1",
+            f"maverick|{a.from_gguf}|S={1 << 12}".encode(),
+            _wcb.WcParams())
+        _log(f"enrollment_root={wc_enr.root.hex()} "
+             f"({time.time() - _t0:.1f}s)")
     claims_bytes, manifest, stmt = admission.prepare(tape, CFG)
     report = admission.load_report(a.admission_report)
-    admission.check(report, cfg=CFG, model_root=wc.root, statement_digest=stmt,
+    admission.check(report, cfg=CFG,
+                    model_root=(wc.root if wc is not None else wc_enr.root),
+                    statement_digest=stmt,
                     manifest=manifest, output_path=a.dump_proof)
     _log(f"admission: PASSED on {report['machine']['gpu_name']} "
          f"({report['runs']} runs/stage)")
@@ -435,7 +470,8 @@ def main():
 
     t0 = time.time()
     try:
-        proof = tape.prove(weight_commitment=wc, claims_bytes=claims_bytes)
+        proof = tape.prove(weight_commitment=wc, claims_bytes=claims_bytes,
+                           weight_enrollment=wc_enr)
     except BaseException:
         try: pathlib.Path(reserved_part).unlink()
         except FileNotFoundError: pass

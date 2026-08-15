@@ -467,10 +467,23 @@ fn main() {
         (Some(_), None) => policy.push((
             "trusted weight root supplied for a persistent-model proof".into(),
             false)),
-        (None, Some(_)) => policy.push((
-            "policy names a weight root but the proof has no weight block".into(),
-            false)),
-        (None, None) => {}
+        // In WC-bridge mode the externally-trusted model reference is the
+        // ENROLLMENT root — same trust anchor, different tree.
+        (None, Some(exp_w)) => match &top.wc {
+            Some(wcs) => policy.push((
+                "wc enrollment root = trusted enrolled root".into(),
+                hex32(&wcs.root) == exp_w)),
+            None => policy.push((
+                "policy names a model root but the proof has neither a weight \
+block nor a wc section".into(), false)),
+        },
+        (None, None) => {
+            if top.wc.is_some() {
+                policy.push((
+                    "trusted enrollment root supplied for a wc-bridge proof".into(),
+                    false));
+            }
+        }
     }
 
     // ---- WC-LCRL-STC bridge (spec 0.4/0.5) -------------------------------
