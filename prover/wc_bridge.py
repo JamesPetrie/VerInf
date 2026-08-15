@@ -258,6 +258,23 @@ def _commit_r2(p_trace: Dict[int, torch.Tensor],
     return h.digest()
 
 
+def bridge_r2(enr: Enrollment, rho: Dict[int, List[int]]):
+    """R2 phase with INJECTED coins: the host transcript supplies rho (one
+    per output width, sampled after its real R1).  Returns the values the
+    host must commit in its R2: P_trace = W rho per block and the projected
+    masks pi = z^T rho.  This is the integration surface — the standalone
+    prove_bridge wrapper derives rho itself for tests/benches."""
+    p_trace, pi = {}, {}
+    for n, g in enr.groups.items():
+        rho_t = torch.tensor(rho[n], dtype=torch.uint64, device="cuda")
+        p_trace[n] = gl_matvec(g.weights, rho_t)              # (rows_padded,)
+        # pi[a,h] = sum_j masks[a,j,h] * rho_j
+        pi[n] = torch.stack([
+            gl_matvec(g.masks[a].T.contiguous(), rho_t)       # (lam,)
+            for a in range(g.n_blocks)])
+    return p_trace, pi
+
+
 def prove_bridge(enr: Enrollment, s_r1: bytes,
                  ledger: Optional[EnrollmentLedger] = None) -> BridgeProof:
     """s_r1: transcript seed AFTER R1 (all semantic outputs fixed) — rho must
@@ -275,14 +292,7 @@ def prove_bridge(enr: Enrollment, s_r1: bytes,
     for gi, n in enumerate(sorted(enr.groups)):
         rho[n] = pr.op_vec(s_rho, gi, "rho", n)
     # --- R2: semantic projections and projected masks -----------------------
-    p_trace, pi = {}, {}
-    for n, g in enr.groups.items():
-        rho_t = torch.tensor(rho[n], dtype=torch.uint64, device="cuda")
-        p_trace[n] = gl_matvec(g.weights, rho_t)              # (rows_padded,)
-        # pi[a,h] = sum_j masks[a,j,h] * rho_j
-        pi[n] = torch.stack([
-            gl_matvec(g.masks[a].T.contiguous(), rho_t)       # (lam,)
-            for a in range(g.n_blocks)])
+    p_trace, pi = bridge_r2(enr, rho)
     # --- coins after R2: alpha per block, q_w distinct eta ------------------
     s_late = pr.fs_seed("wc/late", s_rho, _commit_r2(p_trace, pi))
     c = torch.zeros(params.K_w, dtype=torch.uint64, device="cuda")
