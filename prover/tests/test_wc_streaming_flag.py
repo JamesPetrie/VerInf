@@ -1,0 +1,111 @@
+"""WC-LCRL-STC integration brick 2: the weight_enrollment flag inside the
+real 5-round prove_streaming.
+
+With the flag: the routed claim's own R1 coin (ch0 rho) drives bridge_r2,
+the hosted late coin is derived from the real s_bind + the bridge R2
+commitment, and the proof carries a python sidecar (proof.wc_bridge).  The
+Rust wire proof is UNCHANGED (twin lands in brick 4), so the existing
+ACCEPT gate must stay green alongside the hosted bridge verify.
+"""
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+import torch
+
+import wc_bridge as wc
+from routed_projected import RoutedProjectedMatmulClaim, routed_sample
+from tests.test_routed_projected import _build, T, K, J, E
+from tests._rust_verify import rust_verify_tape
+
+PARAMS = wc.WcParams(B=48, lam=16, N_w=128, q_w=8)
+
+
+def _enroll(tape, claim):
+    def _flat(wv):
+        val = tape.inputs[wv]
+        return (val() if callable(val) else val)
+    w_rows = torch.cat([_flat(wv).reshape(K, J) for wv in claim.W])
+    return wc.build_enrollment({J: w_rows.cuda()}, b"flag-mask",
+                               b"flag-manifest", PARAMS)
+
+
+def _prove_with_flag():
+    tape, y, X, W, M = _build()
+    claim = next(c for c in tape.claims
+                 if isinstance(c, RoutedProjectedMatmulClaim))
+    enr = _enroll(tape, claim)
+    proof = tape.prove(weight_enrollment=enr)
+    return tape, proof, enr
+
+
+def test_flagged_proof_keeps_rust_accept_and_bridge_accepts():
+    tape, proof, enr = _prove_with_flag()
+    acc, msg = rust_verify_tape(tape, proof, seed=None)
+    assert acc, f"rust ACCEPT lost under the flag: {msg}"
+    sc = proof.wc_bridge
+    ci = sc["claim_index"]
+    claim = tape.claims[ci]
+    rho = routed_sample(claim, ci, proof.seeds["s_op"])
+    ok, why = wc.verify_bridge_hosted(sc["root"], sc["manifest_digest"],
+                                      sc["group_meta"], sc["bridge"],
+                                      proof.seeds["s_bind"], {J: rho},
+                                      sc["params"])
+    assert ok, f"hosted bridge REJECT: {why}"
+    # and the bridge P_trace is the claim's projection (link invariant)
+    assert sc["bridge"].p_trace[J].numel() >= E * K
+
+
+def test_flag_off_has_no_sidecar():
+    tape, y, X, W, M = _build()
+    proof = tape.prove()
+    assert not hasattr(proof, "wc_bridge"), \
+        "flag off must leave the proof exactly as before"
+
+
+def test_hosted_bridge_rejects_foreign_rho():
+    tape, proof, enr = _prove_with_flag()
+    sc = proof.wc_bridge
+    bad_rho = {J: [1] * J}
+    ok, why = wc.verify_bridge_hosted(sc["root"], sc["manifest_digest"],
+                                      sc["group_meta"], sc["bridge"],
+                                      proof.seeds["s_bind"], bad_rho,
+                                      sc["params"])
+    assert not ok and "rho" in why, why
+
+
+def test_hosted_bridge_rejects_tampered_p_trace():
+    tape, proof, enr = _prove_with_flag()
+    sc = proof.wc_bridge
+    br = sc["bridge"]
+    br.p_trace[J][3] = (int(br.p_trace[J][3].item()) + 1)
+    ci = sc["claim_index"]
+    rho = routed_sample(tape.claims[ci], ci, proof.seeds["s_op"])
+    ok, why = wc.verify_bridge_hosted(sc["root"], sc["manifest_digest"],
+                                      sc["group_meta"], br,
+                                      proof.seeds["s_bind"], {J: rho},
+                                      sc["params"])
+    assert not ok, "tampered hosted P_trace accepted"
+
+
+def test_hosted_bridge_rejects_foreign_enrollment():
+    """A proof whose bridge ran against different weights must fail against
+    the true enrollment root (model-substitution, hosted mode)."""
+    tape, y, X, W, M = _build()
+    claim = next(c for c in tape.claims
+                 if isinstance(c, RoutedProjectedMatmulClaim))
+    enr_true = _enroll(tape, claim)
+    tape2, y2, X2, W2, M2 = _build(w_bump=3)      # different weights
+    claim2 = next(c for c in tape2.claims
+                  if isinstance(c, RoutedProjectedMatmulClaim))
+    enr_fake = _enroll(tape2, claim2)
+    proof = tape2.prove(weight_enrollment=enr_fake)
+    sc = proof.wc_bridge
+    ci = sc["claim_index"]
+    rho = routed_sample(tape2.claims[ci], ci, proof.seeds["s_op"])
+    ok, why = wc.verify_bridge_hosted(enr_true.root, enr_true.manifest_digest,
+                                      sc["group_meta"], sc["bridge"],
+                                      proof.seeds["s_bind"], {J: rho},
+                                      sc["params"])
+    assert not ok, "bridge against a substituted model accepted"

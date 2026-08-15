@@ -295,6 +295,16 @@ def prove_bridge(enr: Enrollment, s_r1: bytes,
     p_trace, pi = bridge_r2(enr, rho)
     # --- coins after R2: alpha per block, q_w distinct eta ------------------
     s_late = pr.fs_seed("wc/late", s_rho, _commit_r2(p_trace, pi))
+    return bridge_r3(enr, rho, p_trace, pi, s_late, ledger)
+
+
+def bridge_r3(enr: Enrollment, rho, p_trace, pi, s_late: bytes,
+              ledger: Optional[EnrollmentLedger] = None) -> BridgeProof:
+    """Post-R2 phase with an INJECTED late seed: the host transcript derives
+    s_late from its own state PLUS the R2 commitment of (P_trace, pi), then
+    this computes alpha aggregation, the eta set, v = c(eta) and the
+    enrollment openings.  Standalone prove_bridge wraps it."""
+    params = enr.params
     c = torch.zeros(params.K_w, dtype=torch.uint64, device="cuda")
     bi = 0
     for n in sorted(enr.groups):
@@ -368,6 +378,33 @@ class ChainRegistry:
 # Bridge — verifier side (CPU, python ints; mirrors the future Rust twin)
 # ---------------------------------------------------------------------------
 
+def hosted_s_late(s_bind: bytes, root: bytes, manifest_digest: bytes,
+                  p_trace, pi, params: WcParams) -> bytes:
+    """The late coin when the bridge lives INSIDE the 5-round transcript:
+    derived from the host's s_bind (which exists only after the real R2
+    root) plus the bridge's own R2 commitment of (P_trace, pi), the
+    enrollment identity and the geometry.  Interim binding for pi until it
+    becomes committed R2 rows proved by fresh qLin (spec §0.4 full form)."""
+    return pr.fs_seed("wc/hosted-late", s_bind, root, manifest_digest,
+                      _params_bytes(params), _commit_r2(p_trace, pi))
+
+
+def verify_bridge_hosted(root: bytes, manifest_digest: bytes,
+                         group_meta: Dict[int, Tuple[int, int]],
+                         proof: BridgeProof, s_bind: bytes,
+                         expected_rho: Dict[int, List[int]],
+                         params: WcParams) -> Tuple[bool, str]:
+    """Hosted-mode verify: rho is the HOST transcript's coin (the claim's
+    routed_sample output, recomputed by the host verifier) — the bridge
+    checks identity against it instead of deriving its own."""
+    for n in sorted(group_meta):
+        if proof.rho.get(n) != list(expected_rho[n]):
+            return False, "rho mismatch vs host transcript"
+    s_late = hosted_s_late(s_bind, root, manifest_digest,
+                           proof.p_trace, proof.pi, params)
+    return _verify_core(root, group_meta, proof, s_late, params)
+
+
 def verify_bridge(root: bytes, manifest_digest: bytes,
                   group_meta: Dict[int, Tuple[int, int]],   # width->(blocks,n)
                   proof: BridgeProof, s_r1: bytes,
@@ -380,6 +417,12 @@ def verify_bridge(root: bytes, manifest_digest: bytes,
         if proof.rho[n] != pr.op_vec(s_rho, gi, "rho", n):
             return False, "rho mismatch"
     s_late = pr.fs_seed("wc/late", s_rho, _commit_r2(proof.p_trace, proof.pi))
+    return _verify_core(root, group_meta, proof, s_late, params)
+
+
+def _verify_core(root: bytes, group_meta: Dict[int, Tuple[int, int]],
+                 proof: BridgeProof, s_late: bytes,
+                 params: WcParams) -> Tuple[bool, str]:
     eta_idx = pr.random_columns_n(pr.fs_seed("wc/eta", s_late),
                                   params.q_w, params.N_w)
     # H_qw assumes sampling WITHOUT replacement (review §5.3) — check the

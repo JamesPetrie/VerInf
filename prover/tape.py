@@ -1346,7 +1346,8 @@ class Tape:
         return WitnessTensor(outs[x_rot_var] if outs else None, x_rot_var, x.shape, self)
 
     def prove(self, seed=None, *, verbose=False, weight_commitment=None,
-              wnew_seed=None, claims_bytes=None, zk_seed=None):
+              wnew_seed=None, claims_bytes=None, zk_seed=None,
+              weight_enrollment=None):
         """Streaming prover — the sound four-round protocol (the single path).
         Requires a lazy tape (streaming replays the tape's deferred ops).
 
@@ -1367,6 +1368,7 @@ class Tape:
         from core import prove_streaming
         return prove_streaming(self, self.cfg, seed,
                                weight_commitment=weight_commitment,
+                               weight_enrollment=weight_enrollment,
                                wnew_seed=wnew_seed, claims_bytes=claims_bytes,
                                zk_seed=zk_seed)
 

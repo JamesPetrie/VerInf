@@ -3276,7 +3276,7 @@ def new_zk_seed() -> bytes:
 
 
 def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None,
-                    claims_bytes=None, zk_seed=None):
+                    claims_bytes=None, zk_seed=None, weight_enrollment=None):
     """Streaming prover — the single production path (the sound four-round protocol).
 
     `weight_commitment` (a WeightCommitment, P3): reference a pre-committed W
@@ -3470,6 +3470,37 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
     s_bind = pr.fs_s_bind(s_op, art_p2.root)
     has_p3 = bool(s['n_p3_total'])
     ch1 = _sample_late_chs(s['claims'], s_bind)
+    # ---- WC-LCRL-STC bridge (hosted mode, spec 0.3/0.4) ------------------
+    # rho is the routed claim's OWN R1 coin (ch0), so P_trace here is the
+    # same projection the terminal constraints consume (test_wc_tape_link);
+    # the low half (Pj) is already committed via the p2 rows whose root fed
+    # s_bind, and pi is bound through the bridge's hosted late coin until it
+    # becomes committed R2 rows proved by fresh qLin (interim, status doc).
+    wc_sidecar = None
+    if weight_enrollment is not None:
+        import wc_bridge as _wcb
+        from routed_projected import RoutedProjectedMatmulClaim as _RPC
+        routed = [(ci, c) for ci, c in enumerate(s['claims'])
+                  if isinstance(c, _RPC)]
+        assert len(routed) == 1, (
+            "weight_enrollment v1 supports exactly one routed claim per tape; "
+            f"got {len(routed)}")
+        _ci, _rc = routed[0]
+        _rho = {_rc.J: list(ch0[_ci])}
+        _pt, _pi = _wcb.bridge_r2(weight_enrollment, _rho)
+        _s_late = _wcb.hosted_s_late(s_bind, weight_enrollment.root,
+                                     weight_enrollment.manifest_digest,
+                                     _pt, _pi, weight_enrollment.params)
+        wc_sidecar = {
+            "bridge": _wcb.bridge_r3(weight_enrollment, _rho, _pt, _pi,
+                                     _s_late),
+            "root": weight_enrollment.root,
+            "manifest_digest": weight_enrollment.manifest_digest,
+            "group_meta": {n: (g.n_blocks, n)
+                           for n, g in weight_enrollment.groups.items()},
+            "params": weight_enrollment.params,
+            "claim_index": _ci,
+        }
     if has_p3:                                                            # R3: commit phase-3
         merkle_p3 = _acc(s['n_p3_total'])
         sweep(want_aux=True, merkle_p3=merkle_p3)
@@ -3586,7 +3617,7 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
                       + (["wnew"] if has_wnew else []) + ["p1", "p2"]
                       + (["p3"] if has_p3 else [])), (
         "row-block layout diverged from the one the statement digest fixed")
-    return Proof(
+    proof_out = Proof(
         q_irs=q_irs, q_lin=q_lin, p_0=p_0, blocks=blocks,
         seeds={"s_op": s_op, "s_bind": s_bind, "s_comb": s_comb, "s_col": s_col},
         statement_digest=stmt_digest, claims_bytes=claims_bytes, Q_cols=Q_cols,
@@ -3601,6 +3632,11 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
         root_p3=(root_p3 if has_p3 else None),
         opened_p3=(opened_p3 if has_p3 else {}),
         paths_p3=(_paths(art_p3) if has_p3 else {}))
+    if wc_sidecar is not None:
+        # python-side sidecar; the Rust wire format is untouched until the
+        # verifier twin lands (integration brick 4)
+        proof_out.wc_bridge = wc_sidecar
+    return proof_out
 
 
 class _PhaseLogger:
