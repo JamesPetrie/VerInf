@@ -60,11 +60,29 @@ geometry, growing slices:
 Per-param cost still falling with slice size (fixed overhead amortizes),
 so linear extrapolation from the largest slice is an upper bound.
 
-## Modeled (not measured) production numbers
+## MEASURED: the full Maverick (vast L40S, 2026-08-14, run #3)
 
-From the 464M-slice rates: 400B enrollment ≈ 19.7k s one-time (dominated
-by the CPU sha256 Merkle — a GPU BLAKE3 accumulator cuts this hard),
-bridge prove ≈ 150 s/proof. What it would replace in the current
-admission model: persistent q_lin fold 3 625 s + persistent openings
-1 812 s per proof. Both sides are models until the integrated pipeline
-exists; treat the delta as a hypothesis, not a result.
+`wc_maverick.py` over the real UD-Q4_K_XL GGUF, ALL persistent maps —
+400,711,352,320 weights, 9,578 units, 26.16M polynomials, 3,830 blocks
+(widths 128/1024/5120/8192/16384/202048; embed+lm-head through the lean
+wide path):
+
+| pass | time | notes |
+|---|---|---|
+| A — enrollment (one-time) | 648.8 s | dequant 324.7 + pack/NTT 353.5; GPU BLAKE3 merkle; **1.62 ns/param** |
+| B — bridge (per proof) | 470.9 s | W rho + pi + c + v; dominated by the one unavoidable full weight read |
+| C — eta columns (per proof) | 580.0 s | second NTT sweep; drift=False vs pass A digests |
+| verify | 6.1 s | coins + v=c(eta) python ints + GPU bridge equation + spot checks |
+
+**ACCEPT=True, no fails; root 5607ebd0…; ledger spend 40/1024.**
+Total compute 28.4 min end-to-end (4.24 ns/param); the earlier modeled
+numbers are superseded by these measurements. Per proof the bridge side
+costs B+C ≈ 1,051 s on an L40S against the 3,625 s persistent q_lin fold
++ 1,812 s persistent openings it is meant to replace — a measured ~5.2x
+on the replaced component, PENDING the transcript integration (the
+replacement is real only once the 5-round wiring deletes those stages).
+
+Run history: #1 killed by a false `offline` API reading (lesson: verdict
+from suite.log only); #2 OOM on the width-202048 group + cold slow disk
+(both fixed); #3 clean. Raw results:
+`analysis/bench/remote_results/l40s-47743564/`.
