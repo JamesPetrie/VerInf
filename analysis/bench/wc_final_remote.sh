@@ -19,6 +19,7 @@ PROMPT_N="${PROMPT_N:-442}"
 CONT_N="${CONT_N:-558}"
 MIN_MBPS="${MIN_MBPS:-40}"
 mkdir -p "$OUT" "$MODEL_DIR"
+export LIGERO_T_QUERIES=54          # production geometry (admission target)
 export HF_HUB_ENABLE_HF_TRANSFER=1
 step() { echo "=== [$(date -u +%H:%M:%S)] $* ==="; }
 fail() { echo "WCFINAL-ABORT: $*"
