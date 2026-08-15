@@ -215,3 +215,28 @@ def test_external_weights_without_bridge_refuse():
         assert False, "external weights accepted without the bridge"
     except AssertionError as e:
         assert "use_bridge" in str(e)
+
+
+def test_lazy_enrollment_end_to_end():
+    """Production path: LazyEnrollment (no resident weights, streaming root
+    + streaming openings, GPU BLAKE3 inner digests) must produce the same
+    ACCEPT through the Rust twin as the resident enrollment."""
+    core._COSET_POWERS_K_CACHE.clear()
+    tape = Tape(CFG, lazy=True)
+    X = torch.arange(1, T * K + 1).reshape(T, K)
+    W = torch.arange(1, E * K * J + 1).reshape(E, K * J)
+    M = torch.zeros(T, E, dtype=torch.int64)
+    for t, e in enumerate((0, 1, 0)):
+        M[t, e] = 1
+    x = tape.commit("X", _u64(X.reshape(-1)), (T, K))
+    m = tape.commit("M", _u64(M.reshape(-1)), (T, E))
+    w = [tape.external(f"W{e}", _u64(W[e]), (K, J)) for e in range(E)]
+    routed_projected_matmul(tape, x, m, w, T=T, K=K, J=J, E=E,
+                            use_bridge=True)
+    enr = wc.lazy_enroll_tape(tape, b"lazy-mask", b"lazy-manifest", PARAMS)
+    # same manifest/mask/weights => same root as the resident build
+    enr_res = wc.enroll_tape(tape, b"lazy-mask", b"lazy-manifest", PARAMS)
+    assert enr.root == enr_res.root, "lazy root != resident root"
+    proof = tape.prove(weight_enrollment=enr)
+    acc, msg = rust_verify_tape(tape, proof, seed=None)
+    assert acc, f"lazy-enrollment proof rejected: {msg}"

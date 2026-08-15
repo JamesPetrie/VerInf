@@ -67,7 +67,7 @@ def test_tampered_p_trace_rejects():
     """A projection that is not W rho must fail the bridge equation."""
     enr, meta = _toy_enrollment()
     proof = wc.prove_bridge(enr, S_R1)
-    proof.p_trace[4][17] = (int(proof.p_trace[4][17].item()) + 1) % P
+    proof.p_trace[4].view(torch.int64)[17] ^= 1   # bit-flip tamper, no overflow
     # honest-prover consistency values (c, v) no longer match the commitment;
     # a cheating prover would instead recompute c/v from the fake P_trace, so
     # rebuild them the way the prover does — the bridge equation still fails.

@@ -169,9 +169,13 @@ fn wc_u64le(vals: &[u64]) -> Vec<u8> {
 }
 
 fn wc_leaf(col: &[u64]) -> [u8; 32] {
+    // leaf = blake3("wc-leaf" || blake3(column bytes)) — the inner hash is
+    // the GPU column accumulator's digest, the outer wrap domain-separates
+    // the enrollment tree (mirrors wc_bridge._leaf).
+    let inner = *blake3::hash(&wc_u64le(col)).as_bytes();
     let mut h = blake3::Hasher::new();
     h.update(b"wc-leaf");
-    h.update(&wc_u64le(col));
+    h.update(&inner);
     *h.finalize().as_bytes()
 }
 

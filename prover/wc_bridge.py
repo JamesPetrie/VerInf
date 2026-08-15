@@ -115,6 +115,18 @@ class EnrollmentLedger:
         self.spent = new
 
 
+def wc_block_masks(mask_seed: bytes, width: int, block: int,
+                   params: WcParams) -> torch.Tensor:
+    """(width, lam) mask coefficients for one block — per-(width, block)
+    blake3-seeded PRG, shared by the resident and streaming builders."""
+    g = torch.Generator(device="cpu")
+    g.manual_seed(int.from_bytes(blake3.blake3(
+        mask_seed + b"|" + width.to_bytes(8, "little")
+        + block.to_bytes(8, "little")).digest()[:8], "little"))
+    return (torch.randint(0, 1 << 62, (width, params.lam), generator=g,
+                          dtype=torch.int64).to(torch.uint64)).cuda()
+
+
 def _coeffs_to_codewords(coeffs: torch.Tensor, params: WcParams) -> torch.Tensor:
     """(m, K_w) COEFFICIENT rows -> (m, N_w) evaluations on the NTT domain.
     NOTE: rs_encode_rows is evaluation-based (Ligero messages) and is the
@@ -143,9 +155,17 @@ def _rs_domain(params: WcParams) -> torch.Tensor:
     return x
 
 
+def _leaf_from_inner(inner32: bytes) -> bytes:
+    """leaf = blake3("wc-leaf" || blake3(column bytes)): the inner hash is
+    exactly what core's GPU column accumulator computes (streamed BLAKE3 ==
+    one-shot), the outer wrap keeps the enrollment tree domain-separated.
+    Both twins mirror this two-level definition."""
+    return blake3.blake3(b"wc-leaf" + inner32).digest()
+
+
 def _leaf(column_u64: torch.Tensor) -> bytes:
-    # blake3 everywhere: the Rust twin (verifier/src) carries no sha2 dep
-    return blake3.blake3(b"wc-leaf" + column_u64.cpu().numpy().tobytes()).digest()
+    inner = blake3.blake3(column_u64.cpu().numpy().tobytes()).digest()
+    return _leaf_from_inner(inner)
 
 
 def _tree(leaves: List[bytes]) -> List[List[bytes]]:
@@ -217,14 +237,11 @@ def build_enrollment(weight_groups: Dict[int, torch.Tensor],
         if pad:
             W = torch.cat([W, torch.zeros(pad, n, dtype=torch.uint64,
                                           device="cuda")])
-        # independent masks, PRG-seeded so enrollment is reproducible
-        g = torch.Generator(device="cpu")
-        g.manual_seed(int.from_bytes(
-            hashlib.sha256(mask_seed + b"masks" + n.to_bytes(8, "little"))
-            .digest()[:8], "little"))
-        masks = (torch.randint(0, 1 << 62, (n_blocks, n, params.lam),
-                               generator=g, dtype=torch.int64)
-                 .to(torch.uint64)).cuda()  # < 2^62 < P
+        # independent masks, PRG-seeded per (width, block) — the SAME
+        # convention LazyEnrollment streams with, so both builds agree bit
+        # for bit on the root
+        masks = torch.stack([wc_block_masks(mask_seed, n, a, params)
+                             for a in range(n_blocks)])
         # coefficient rows: one polynomial per (block a, output j)
         coeffs = torch.empty(n_blocks * n, params.K_w, dtype=torch.uint64,
                              device="cuda")
@@ -335,9 +352,12 @@ def bridge_r3(enr: Enrollment, rho, p_trace, pi, s_late: bytes,
     eta_pts = domain.view(torch.int64)[idx].view(torch.uint64)
     v = poly_eval(c, eta_pts).cpu().tolist()
     # --- openings ------------------------------------------------------------
-    all_cw = torch.cat([enr.groups[n].codewords for n in sorted(enr.groups)])
-    opened = {i: all_cw[:, i].cpu().tolist() for i in eta_idx}
-    paths = {i: _path(enr.levels, i) for i in eta_idx}
+    if isinstance(enr, LazyEnrollment):
+        opened, paths = enr.open_columns(eta_idx)
+    else:
+        all_cw = torch.cat([enr.groups[n].codewords for n in sorted(enr.groups)])
+        opened = {i: all_cw[:, i].cpu().tolist() for i in eta_idx}
+        paths = {i: _path(enr.levels, i) for i in eta_idx}
     return BridgeProof(rho, p_trace, pi, c.cpu().tolist(), v,
                        eta_idx, opened, paths)
 
@@ -525,3 +545,138 @@ def enroll_tape(tape, mask_seed: bytes, manifest: bytes,
     return build_enrollment(
         {n: torch.cat(rows) for n, rows in groups.items()},
         mask_seed, manifest, params)
+
+
+class LazyEnrollment:
+    """Production enrollment: the weights are NOT resident — the root/levels
+    come from one streaming pass (GPU BLAKE3 column accumulator), the masks
+    regenerate from their PRG seed, and the eta columns are re-extracted by
+    a second streaming pass only after eta exists.  `unit_stream` is a
+    zero-arg callable yielding (width, rows_tensor (r, width) uint64 cuda)
+    in the SAME canonical order every time (bridged_claim_map order)."""
+
+    def __init__(self, params: WcParams, mask_seed: bytes, manifest: bytes,
+                 unit_stream, rows_per_width: Dict[int, int]):
+        from core import _make_merkle_acc
+        self.params = params
+        self.mask_seed = mask_seed
+        self.manifest_digest = blake3.blake3(manifest).digest() if len(
+            manifest) != 32 else manifest
+        self.unit_stream = unit_stream
+        self.blocks_per_width = {n: -(-r // params.B)
+                                 for n, r in rows_per_width.items()}
+        self.rows_per_width = dict(rows_per_width)
+        total_polys = sum(b * n for n, b in self.blocks_per_width.items())
+        self.total_polys = total_polys
+        acc = _make_merkle_acc(params.N_w, total_polys)
+        for width, block, coeff_cw in self._stream_codewords():
+            acc.update(coeff_cw)
+        inner = acc.finalize().cpu().numpy()
+        leaves = [_leaf_from_inner(bytes(inner[i].tolist()))
+                  for i in range(params.N_w)]
+        self.levels = _tree(leaves)
+        self.root = self.levels[-1][0]
+
+    @property
+    def groups(self):
+        class _G:
+            def __init__(self, n_blocks, n_rows):
+                self.n_blocks, self.n_rows = n_blocks, n_rows
+        return {n: _G(b, self.rows_per_width[n])
+                for n, b in self.blocks_per_width.items()}
+
+    def _masks(self, width, block):
+        return wc_block_masks(self.mask_seed, width, block, self.params)
+
+    def _stream_codewords(self):
+        """Yield (width, block, codewords (width, N_w)) in width-sorted,
+        block order — the canonical poly order."""
+        params = self.params
+        bufs: Dict[int, list] = {}
+        fills: Dict[int, int] = {}
+        pend: Dict[int, list] = {n: [] for n in self.blocks_per_width}
+        blocks_done: Dict[int, int] = {n: 0 for n in self.blocks_per_width}
+        # buffer rows per width, cut into B-blocks; ORDER requires width-major
+        # emission, so blocks are collected per width then yielded sorted.
+        collected: Dict[int, list] = {n: [] for n in self.blocks_per_width}
+        for width, rows in self.unit_stream():
+            buf = bufs.setdefault(width, torch.zeros(
+                params.B, width, dtype=torch.uint64, device="cuda"))
+            fill = fills.get(width, 0)
+            r, off = rows.size(0), 0
+            while r - off > 0:
+                take = min(params.B - fill, r - off)
+                buf[fill:fill + take] = rows[off:off + take]
+                fill += take
+                off += take
+                if fill == params.B:
+                    collected[width].append(buf.clone())
+                    fill = 0
+                    buf.zero_()
+            fills[width] = fill
+        for width in self.blocks_per_width:
+            if fills.get(width, 0):
+                collected[width].append(bufs[width].clone())
+        for width in sorted(self.blocks_per_width):
+            assert len(collected[width]) == self.blocks_per_width[width]
+            for block, rows in enumerate(collected[width]):
+                masks = self._masks(width, block)
+                coeffs = torch.zeros(width, params.N_w, dtype=torch.uint64,
+                                     device="cuda")
+                coeffs[:, :params.B] = (rows.view(torch.int64).T.contiguous()
+                                        .view(torch.uint64))
+                coeffs[:, params.B:params.K_w] = masks
+                ntt_forward_batched(coeffs)
+                yield width, block, coeffs
+
+    def pi(self, rho: Dict[int, List[int]]):
+        out = {}
+        for n, b in self.blocks_per_width.items():
+            rho_t = torch.tensor(rho[n], dtype=torch.uint64, device="cuda")
+            out[n] = torch.stack([
+                gl_matvec(self._masks(n, a).view(torch.int64).T.contiguous()
+                          .view(torch.uint64), rho_t) for a in range(b)])
+        return out
+
+    def open_columns(self, eta_idx: List[int]):
+        """Second streaming pass: re-extract the eta columns and drift-check
+        their inner digests against the committed leaves."""
+        from core import _make_merkle_acc
+        params = self.params
+        idx = torch.tensor(eta_idx, dtype=torch.long, device="cuda")
+        opened = {i: [] for i in eta_idx}
+        chk = _make_merkle_acc(len(eta_idx), self.total_polys)
+        for width, block, cw in self._stream_codewords():
+            cols = cw.view(torch.int64)[:, idx].view(torch.uint64)
+            chk.update(cols)
+            cc = cols.cpu()
+            for k, i in enumerate(eta_idx):
+                opened[i].append(cc[:, k])
+        inner = chk.finalize().cpu().numpy()
+        for k, i in enumerate(eta_idx):
+            leaf = _leaf_from_inner(bytes(inner[k].tolist()))
+            assert leaf == self.levels[0][i], (
+                f"enrollment drift at eta column {i}")
+        return ({i: torch.cat(opened[i]).tolist() for i in eta_idx},
+                {i: _path(self.levels, i) for i in eta_idx})
+
+
+def lazy_enroll_tape(tape, mask_seed: bytes, manifest: bytes,
+                     params: WcParams) -> LazyEnrollment:
+    """LazyEnrollment streaming straight from the tape's (external) weight
+    inputs in canonical bridged_claim_map order."""
+    cmap = bridged_claim_map(tape.claims)
+    assert cmap, "no use_bridge claims on this tape"
+    rows_per_width: Dict[int, int] = {}
+    for ci, width, off, ek in cmap:
+        rows_per_width[width] = rows_per_width.get(width, 0) + ek
+
+    def stream():
+        for ci, width, off, ek in cmap:
+            c = tape.claims[ci]
+            for wv in c.W:
+                val = tape.inputs[wv]
+                flat = val() if callable(val) else val
+                yield width, flat.reshape(c.K, c.J).cuda()
+
+    return LazyEnrollment(params, mask_seed, manifest, stream, rows_per_width)

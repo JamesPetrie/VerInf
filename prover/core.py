@@ -3507,7 +3507,24 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
             got = weight_enrollment.groups[width].n_rows
             assert got == want, (
                 f"enrollment width {width} has {got} rows, tape needs {want}")
-        _pt, _pi = _wcb.bridge_r2(weight_enrollment, _rho)
+        if isinstance(weight_enrollment, _wcb.LazyEnrollment):
+            # production path: P_trace comes from the SAME fused projections
+            # the R2 sweep already computed (byte-equal to W rho — the link
+            # test), so no extra weight pass; pi from the mask PRG.
+            from routed_projected import _P_CACHE, _rho_key
+            _pt = {n: torch.zeros(b * weight_enrollment.params.B,
+                                  dtype=torch.uint64, device="cuda")
+                   for n, b in weight_enrollment.blocks_per_width.items()}
+            for ci, width, off, ek in cmap:
+                _c = s['claims'][ci]
+                _P = _P_CACHE.get(_rho_key(_c, _rho[width]))
+                assert _P is not None, (
+                    "fused projection missing from _P_CACHE — the R2 sweep "
+                    "must run before the bridge block")
+                _pt[width][off:off + ek] = _P.reshape(-1)
+            _pi = weight_enrollment.pi(_rho)
+        else:
+            _pt, _pi = _wcb.bridge_r2(weight_enrollment, _rho)
         # the 0.8 chain: the SAME tensor slices the terminal pins consume
         for ci, width, off, ek in cmap:
             s['claims'][ci]._bridge_pin = _pt[width][off:off + ek]
