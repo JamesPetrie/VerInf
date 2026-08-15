@@ -50,16 +50,30 @@ Spec: [wc-lcrl-stc-spec.md](wc-lcrl-stc-spec.md). Branch: `wc-lcrl-stc`
   lesson). The magnitude of the deletion at scale is the measured
   Maverick bridge (B+C 1,051 s) vs the persistent fold+open (5,437 s).
 
+## Integrated (bricks 5-6, 2026-08-15)
+
+- **Multi-claim, shared per-width rho (§0.2)**: every bridged claim of
+  one width samples ONE rho (`rho-w<J>`, both compilers) — 72 Maverick
+  matmuls spend one q_w=40 opening set, not 2,880 mask points. The
+  claim→P_trace-slice map is canonical (recomputed from the claim set on
+  both sides, never wire). `wc_bridge.enroll_tape` builds the enrollment
+  from a tape; prove fail-closed checks coverage.
+- **W-block removal (brick 6)**: `tape.external()` weights are prover
+  inputs, never committed rows — layout skips them, wire carries null
+  row_start, the Rust parser poisons it (any accidental use overflows).
+  External weights refuse to build without use_bridge. Proof measurably
+  shrinks; Rust ACCEPT end-to-end. Together with the fold removal this
+  deletes BOTH production weight components: 3,625 s (fold) + 1,812 s
+  (commit/open) per proof — pending a full-scale measured run.
+
 ## NOT implemented (do not claim it)
 
-- **Multi-claim / shared-width rho (§0.2)**: v1 = exactly one use_bridge
-  claim per tape; the 72-matmul Maverick tape needs shared per-width rho
-  and per-claim enrollment group mapping.
-- **W-block removal**: the enrolled weights still sit in the witness
-  commit (their fold is gone, their commit/open cost is not) — deleting
-  the block entirely is the remaining 1,812 s/proof.
 - **pi as committed R2 rows proved by fresh qLin** (interim: bound via
   the hosted late coin).
+- **§0.6 message cache** (two-pass q/opening over cached fresh rows).
+- **Embedding late-lookup (review §5.7)**, gain blocks, enrollment
+  ledger persistence across proofs (in-memory only), Maverick-tape
+  driver switch to use_bridge + enroll_tape.
 - **§0.6 message cache**: the existing `LIGERO_WITNESS_CACHE`/`SPILL`
   caches compute_fn outputs only; canonical fresh message rows + pad
   metadata caching and the two-pass q/opening structure are not built.
