@@ -188,10 +188,13 @@ fn wc_path_ok(leaf: [u8; 32], path: &[(String, u8)], root: [u8; 32]) -> bool {
 }
 
 /// The full WC bridge check (python twin: wc_bridge.verify_bridge_hosted +
-/// _verify_core).  Every coin recomputed from (s_op, s_bind) — nothing from
-/// the wire is trusted.  Returns the authenticated P_trace pin on ACCEPT.
-fn wc_verify(wc: &WcSection, s_op: &[u8], s_bind: &[u8])
-             -> Result<(usize, Vec<u64>), String> {
+/// _verify_core), width-general.  Every coin recomputed from (s_op, s_bind)
+/// — nothing from the wire is trusted.  `cmap` is the CANONICAL claim map
+/// recomputed from the claim set (never from the wire): (claim_index,
+/// width, row_off, E*K).  Returns the per-claim P_trace pins on ACCEPT.
+fn wc_verify(wc: &WcSection, s_op: &[u8], s_bind: &[u8],
+             cmap: &[(usize, usize, usize, usize)])
+             -> Result<Vec<(usize, Vec<u64>)>, String> {
     use ligero_verifier::field::{add, mul, pow, P};
     let g = &wc.params;
     let k_w = g.B + g.lam;
@@ -199,19 +202,32 @@ fn wc_verify(wc: &WcSection, s_op: &[u8], s_bind: &[u8])
     let mut widths: Vec<usize> =
         wc.group_meta.keys().map(|w| w.parse().unwrap()).collect();
     widths.sort();
-    if widths.len() != 1 {
-        return Err("wc v1 supports exactly one width group".into());
+    // the enrollment must cover exactly the claim set's bridged weights
+    for &w in &widths {
+        let want: usize = cmap.iter().filter(|m| m.1 == w).map(|m| m.3).sum();
+        let (n_blocks, _) = wc.group_meta[&w.to_string()];
+        if want == 0 { return Err(format!("width {w} has no bridged claim")); }
+        if n_blocks != (want + g.B - 1) / g.B {
+            return Err(format!("width {w}: {n_blocks} blocks for {want} rows"));
+        }
     }
-    let width = widths[0];
-    let (n_blocks, _) = wc.group_meta[&width.to_string()];
-    let pt = wc.p_trace.get(&width.to_string())
-        .ok_or("p_trace group missing")?;
-    let pim = wc.pi.get(&width.to_string()).ok_or("pi group missing")?;
-    if pt.len() != n_blocks * g.B { return Err("p_trace length".into()); }
-    if pim.len() != n_blocks || pim.iter().any(|r| r.len() != g.lam) {
-        return Err("pi shape".into());
+    for m in cmap {
+        if !widths.contains(&m.1) {
+            return Err(format!("claim {} width {} not enrolled", m.0, m.1));
+        }
+    }
+    for (&ref wkey, pt) in &wc.p_trace {
+        let w: usize = wkey.parse().unwrap();
+        let (n_blocks, _) = *wc.group_meta.get(wkey).ok_or("group missing")?;
+        if pt.len() != n_blocks * g.B { return Err("p_trace length".into()); }
+        let pim = wc.pi.get(wkey).ok_or("pi group missing")?;
+        if pim.len() != n_blocks || pim.iter().any(|r| r.len() != g.lam) {
+            return Err("pi shape".into());
+        }
+        let _ = w;
     }
     // hosted late coin: s_bind + enrollment identity + geometry + R2 commit
+    // (widths iterated SORTED, matching python's _commit_r2)
     let root = hex32(&wc.root);
     let manifest = hex32(&wc.manifest_digest);
     let mut geom = b"wc-geom".to_vec();
@@ -220,8 +236,10 @@ fn wc_verify(wc: &WcSection, s_op: &[u8], s_bind: &[u8])
     }
     let mut r2 = blake3::Hasher::new();
     r2.update(b"wc-r2");
-    r2.update(&wc_u64le(pt));
-    for row in pim { r2.update(&wc_u64le(row)); }
+    for &w in &widths {
+        r2.update(&wc_u64le(&wc.p_trace[&w.to_string()]));
+        for row in &wc.pi[&w.to_string()] { r2.update(&wc_u64le(row)); }
+    }
     let r2d = *r2.finalize().as_bytes();
     let s_late = fs::fs_seed("wc/hosted-late",
                              &[s_bind, &root, &manifest, &geom, &r2d]);
@@ -231,15 +249,23 @@ fn wc_verify(wc: &WcSection, s_op: &[u8], s_bind: &[u8])
     let mut ded = eta.clone(); ded.sort(); ded.dedup();
     if ded.len() != g.q_w { return Err("eta not distinct".into()); }
     if eta != wc.eta { return Err("eta mismatch".into()); }
-    // c aggregation over the committed R2 values
+    // c aggregation: alpha indexed width-major (sorted), then block —
+    // exactly bridge_r3's order
     let mut c = vec![0u64; k_w];
-    for a in 0..n_blocks {
-        let alpha = protocol::challenge(&s_late, a as u64, "alpha");
-        for i in 0..g.B {
-            c[i] = add(c[i], mul(alpha, pt[a * g.B + i]));
-        }
-        for h in 0..g.lam {
-            c[g.B + h] = add(c[g.B + h], mul(alpha, pim[a][h]));
+    let mut bi: u64 = 0;
+    for &w in &widths {
+        let (n_blocks, _) = wc.group_meta[&w.to_string()];
+        let pt = &wc.p_trace[&w.to_string()];
+        let pim = &wc.pi[&w.to_string()];
+        for a in 0..n_blocks {
+            let alpha = protocol::challenge(&s_late, bi, "alpha");
+            for i in 0..g.B {
+                c[i] = add(c[i], mul(alpha, pt[a * g.B + i]));
+            }
+            for h in 0..g.lam {
+                c[g.B + h] = add(c[g.B + h], mul(alpha, pim[a][h]));
+            }
+            bi += 1;
         }
     }
     if c != wc.c { return Err("c does not aggregate P_trace/pi".into()); }
@@ -252,27 +278,39 @@ fn wc_verify(wc: &WcSection, s_op: &[u8], s_bind: &[u8])
         if acc != wc.v[l] { return Err(format!("v[{l}] != c(eta)")); }
     }
     // enrollment side: merkle-verified columns + the bridge equation, under
-    // the HOST transcript's rho (the claim's own R1 coin)
-    let rho = protocol::op_vec(s_op, wc.claim_index, "rho", width);
+    // the SHARED per-width rho from the host transcript (spec 0.2)
     for (l, &ei) in eta.iter().enumerate() {
         let col = wc.opened.get(&ei.to_string()).ok_or("column missing")?;
-        if col.len() != n_blocks * width { return Err("column length".into()); }
+        let total: usize = widths.iter()
+            .map(|w| { let (nb, _) = wc.group_meta[&w.to_string()]; nb * w })
+            .sum();
+        if col.len() != total { return Err("column length".into()); }
         let path = wc.paths.get(&ei.to_string()).ok_or("path missing")?;
         if !wc_path_ok(wc_leaf(col), path, root) {
             return Err(format!("merkle path fails at eta[{l}]"));
         }
         let mut rhs = 0u64;
-        for a in 0..n_blocks {
-            let alpha = protocol::challenge(&s_late, a as u64, "alpha");
-            let mut sum = 0u64;
-            for j in 0..width {
-                sum = add(sum, mul(rho[j], col[a * width + j]));
+        let mut bi: u64 = 0;
+        let mut off = 0usize;
+        for &w in &widths {
+            let rho = protocol::op_vec(s_op, 0, &format!("rho-w{w}"), w);
+            let (n_blocks, _) = wc.group_meta[&w.to_string()];
+            for a in 0..n_blocks {
+                let alpha = protocol::challenge(&s_late, bi, "alpha");
+                let mut sum = 0u64;
+                for j in 0..w {
+                    sum = add(sum, mul(rho[j], col[off + a * w + j]));
+                }
+                rhs = add(rhs, mul(alpha, sum));
+                bi += 1;
             }
-            rhs = add(rhs, mul(alpha, sum));
+            off += n_blocks * w;
         }
         if rhs != wc.v[l] { return Err(format!("bridge equation fails at eta[{l}]")); }
     }
-    Ok((wc.claim_index, pt.clone()))
+    Ok(cmap.iter().map(|&(ci, w, off, ek)| {
+        (ci, wc.p_trace[&w.to_string()][off..off + ek].to_vec())
+    }).collect())
 }
 
 fn hex32(s: &str) -> [u8; 32] {
@@ -435,16 +473,30 @@ fn main() {
     // Verified BEFORE compile: on ACCEPT the authenticated P_trace becomes
     // the public pin for the use_bridge claim's Pj rows; a use_bridge claim
     // without a verified bridge fails closed.
-    let n_bridge_claims = cs.claims.iter()
-        .filter(|c| c.opt_scalar("use_bridge").unwrap_or(0) == 1).count();
-    let mut wc_pin: Option<(usize, Vec<u64>)> = None;
-    match (&top.wc, n_bridge_claims, s_bind_out.as_deref()) {
+    // canonical claim map, recomputed from the claim set (never the wire):
+    // (claim_index, width J, row offset within the width group, E*K)
+    let mut cmap: Vec<(usize, usize, usize, usize)> = Vec::new();
+    {
+        let mut off: HashMap<usize, usize> = HashMap::new();
+        for (ci, c) in cs.claims.iter().enumerate() {
+            if c.opt_scalar("use_bridge").unwrap_or(0) == 1 {
+                let (e, k, j) = (c.scalar("E") as usize,
+                                 c.scalar("K") as usize,
+                                 c.scalar("J") as usize);
+                let o = *off.get(&j).unwrap_or(&0);
+                cmap.push((ci, j, o, e * k));
+                off.insert(j, o + e * k);
+            }
+        }
+    }
+    let mut wc_pins: Vec<(usize, Vec<u64>)> = Vec::new();
+    match (&top.wc, cmap.len(), s_bind_out.as_deref()) {
         (Some(wcs), n, Some(sb)) if n > 0 => {
-            match wc_verify(wcs, &s_op, sb) {
-                Ok(pin) => {
+            match wc_verify(wcs, &s_op, sb, &cmap) {
+                Ok(pins) => {
                     policy.push(("wc bridge: P_trace authenticated against \
 enrollment root".into(), true));
-                    wc_pin = Some(pin);
+                    wc_pins = pins;
                 }
                 Err(e) => policy.push((format!("wc bridge REJECT: {e}"), false)),
             }
@@ -461,7 +513,7 @@ enrollment root".into(), true));
     let t0 = std::time::Instant::now();
     let (ok_checks, per) = verify_bound_pinned(&mut cs, &roots, &r3, r4, &s_op,
                                         s_bind_out.as_deref(), &s_comb, &s_col,
-                                        wc_pin);
+                                        wc_pins);
     let elapsed = t0.elapsed();
     for (name, b) in &per {
         println!("  [{}] {}", if *b { "OK " } else { "XX " }, name);

@@ -3486,15 +3486,25 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
             "to prove (spec 0.8: every persistent map in exactly one chain)")
     if weight_enrollment is not None:
         import wc_bridge as _wcb
-        routed = _bridged
-        assert len(routed) == 1, (
-            "weight_enrollment v1 supports exactly one use_bridge routed "
-            f"claim per tape; got {len(routed)}")
-        _ci, _rc = routed[0]
-        _rho = {_rc.J: list(ch0[_ci])}
+        cmap = _wcb.bridged_claim_map(s['claims'])
+        assert cmap, "weight_enrollment given but no use_bridge claims"
+        # shared per-width rho (spec 0.2): every bridged claim of one width
+        # sampled the SAME coin — assert it, then hand one rho per width.
+        _rho = {}
+        for ci, width, off, ek in cmap:
+            r = list(ch0[ci])
+            assert _rho.setdefault(width, r) == r, \
+                "bridged claims of one width disagree on rho"
+        # fail-closed: the enrollment must cover exactly the tape's weights
+        for width in _rho:
+            want = sum(ek for _, w, _, ek in cmap if w == width)
+            got = weight_enrollment.groups[width].n_rows
+            assert got == want, (
+                f"enrollment width {width} has {got} rows, tape needs {want}")
         _pt, _pi = _wcb.bridge_r2(weight_enrollment, _rho)
-        # the 0.8 chain: the SAME tensor the terminal pin consumes
-        _rc._bridge_pin = _pt[_rc.J][: _rc.E * _rc.K]
+        # the 0.8 chain: the SAME tensor slices the terminal pins consume
+        for ci, width, off, ek in cmap:
+            s['claims'][ci]._bridge_pin = _pt[width][off:off + ek]
         _s_late = _wcb.hosted_s_late(s_bind, weight_enrollment.root,
                                      weight_enrollment.manifest_digest,
                                      _pt, _pi, weight_enrollment.params)
@@ -3506,7 +3516,7 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
             "group_meta": {n: (g.n_blocks, n)
                            for n, g in weight_enrollment.groups.items()},
             "params": weight_enrollment.params,
-            "claim_index": _ci,
+            "claim_index": cmap[0][0],
         }
     if has_p3:                                                            # R3: commit phase-3
         merkle_p3 = _acc(s['n_p3_total'])

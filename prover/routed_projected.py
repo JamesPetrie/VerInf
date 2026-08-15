@@ -107,7 +107,15 @@ class RoutedProjectedMatmulClaim:
 
 # ---------------------------------------------------------------- challenges
 def routed_sample(c: RoutedProjectedMatmulClaim, ci: int, s_op):
-    """R1 coin: the output-axis projection rho (length J)."""
+    """R1 coin: the output-axis projection rho (length J).
+
+    Bridged claims (use_bridge, spec 0.2) share ONE rho per output width —
+    safe because every claim's outputs are committed in R1 before s_op
+    exists, and required so all widths-J matmuls pack into one enrollment
+    group and one q_w-point opening (72 x 40 points would blow the lam
+    mask budget; shared rho spends exactly 40)."""
+    if c.use_bridge:
+        return protocol.op_vec(s_op, 0, f"rho-w{c.J}", c.J)
     return protocol.op_vec(s_op, ci, "rho", c.J)
 
 

@@ -129,3 +129,37 @@ def test_hosted_bridge_rejects_foreign_enrollment():
                                       proof.seeds["s_bind"], {J: rho},
                                       sc["params"])
     assert not ok, "bridge against a substituted model accepted"
+
+
+def test_two_bridged_claims_share_one_enrollment():
+    """Spec 0.2: two width-J routed matmuls, ONE shared rho, ONE enrollment,
+    one q_w-point opening — end-to-end through the Rust twin."""
+    core._COSET_POWERS_K_CACHE.clear()
+    tape = Tape(CFG, lazy=True)
+    X = torch.arange(1, T * K + 1).reshape(T, K)
+    W1 = torch.arange(1, E * K * J + 1).reshape(E, K * J)
+    W2 = W1 + 7
+    M = torch.zeros(T, E, dtype=torch.int64)
+    for t, e in enumerate((0, 1, 0)):
+        M[t, e] = 1
+    x = tape.commit("X", _u64(X.reshape(-1)), (T, K))
+    m = tape.commit("M", _u64(M.reshape(-1)), (T, E))
+    wa = [tape.commit(f"Wa{e}", _u64(W1[e]), (K, J)) for e in range(E)]
+    wb = [tape.commit(f"Wb{e}", _u64(W2[e]), (K, J)) for e in range(E)]
+    routed_projected_matmul(tape, x, m, wa, T=T, K=K, J=J, E=E,
+                            use_bridge=True)
+    routed_projected_matmul(tape, x, m, wb, T=T, K=K, J=J, E=E,
+                            use_bridge=True)
+    enr = wc.enroll_tape(tape, b"multi-mask", b"multi-manifest", PARAMS)
+    assert enr.groups[J].n_rows == 2 * E * K
+    proof = tape.prove(weight_enrollment=enr)
+    # both claims sampled the SAME rho (shared per width)
+    cis = [ci for ci, c in enumerate(tape.claims)
+           if isinstance(c, RoutedProjectedMatmulClaim)]
+    r0 = routed_sample(tape.claims[cis[0]], cis[0], proof.seeds["s_op"])
+    r1 = routed_sample(tape.claims[cis[1]], cis[1], proof.seeds["s_op"])
+    assert r0 == r1, "bridged claims of one width must share rho"
+    acc, msg = rust_verify_tape(tape, proof, seed=None)
+    assert acc, f"two-claim bridged proof rejected by Rust: {msg}"
+    # ledger economics: one opening set for BOTH claims
+    assert len(proof.wc_bridge["bridge"].eta_idx) == PARAMS.q_w

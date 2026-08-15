@@ -181,7 +181,7 @@ pub fn verify_bound(cs: &mut ClaimSet,
               roots: &[[u8; 32]], r3: &Round3, r4: Round4,
               s_op: &[u8], s_bind: Option<&[u8]>,
               s_comb: &[u8], s_col: &[u8]) -> (bool, Vec<(&'static str, bool)>) {
-    verify_bound_pinned(cs, roots, r3, r4, s_op, s_bind, s_comb, s_col, None)
+    verify_bound_pinned(cs, roots, r3, r4, s_op, s_bind, s_comb, s_col, Vec::new())
 }
 
 /// verify_bound with the WC-LCRL-STC bridge pin (claim_index, P_trace) —
@@ -190,9 +190,9 @@ pub fn verify_bound_pinned(cs: &mut ClaimSet,
               roots: &[[u8; 32]], r3: &Round3, r4: Round4,
               s_op: &[u8], s_bind: Option<&[u8]>,
               s_comb: &[u8], s_col: &[u8],
-              wc_pin: Option<(usize, Vec<u64>)>) -> (bool, Vec<(&'static str, bool)>) {
+              wc_pins: Vec<(usize, Vec<u64>)>) -> (bool, Vec<(&'static str, bool)>) {
     let cfg: Config = cs.cfg;
-    let cons = compile_claims_bound_pinned(cs, s_op, s_bind, wc_pin);
+    let cons = compile_claims_bound_pinned(cs, s_op, s_bind, wc_pins);
     let q = random_columns(s_col, &cfg);
     let cols = match opened_columns(r4, &q) {
         Some(c) => c,

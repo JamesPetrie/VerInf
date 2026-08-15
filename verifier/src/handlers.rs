@@ -18,10 +18,10 @@ struct Build {
     quad: Vec<QuadFamily>,
     nxt: usize,
     nq: usize,                       // running quad index (positional r_quad pairing)
-    // WC-LCRL-STC: (claim_index, P_trace values) authenticated by the bridge
-    // in verify_proof.rs BEFORE compile — the public pin for a use_bridge
-    // routed claim's Pj identity rows. None when no bridge section exists.
-    wc_pin: Option<(usize, Vec<u64>)>,
+    // WC-LCRL-STC: claim_index -> bridge-authenticated P_trace slice,
+    // filled by verify_proof.rs BEFORE compile — the public pins for the
+    // use_bridge claims' Pj identity rows. Empty when no bridge section.
+    wc_pins: std::collections::HashMap<usize, Vec<u64>>,
 }
 
 impl Build {
@@ -396,7 +396,13 @@ fn compile_routed_projected(cl: &Claim, ci: usize, s_op: &[u8],
         "RoutedProjectedMatmulClaim needs the R2 coin s_bind: its late Freivalds \
          challenges must not be derivable before P and Q are committed");
 
-    let rho = op_vec(s_op, ci, "rho", j);
+    // Bridged claims share ONE rho per output width (spec 0.2) — mirrors
+    // routed_sample; safe because R1 commits every claim's outputs first.
+    let rho = if cl.opt_scalar("use_bridge").unwrap_or(0) == 1 {
+        op_vec(s_op, 0, &format!("rho-w{j}"), j)
+    } else {
+        op_vec(s_op, ci, "rho", j)
+    };
     let neg_rho = Arc::new(rho.iter().map(|&v| (P - v % P) % P).collect::<Vec<u64>>());
     let sig = Arc::new(op_vec(s_bind, ci, "sig", k));
     let lam = Arc::new(op_vec(s_bind, ci, "lam", t));
@@ -419,10 +425,9 @@ fn compile_routed_projected(cl: &Claim, ci: usize, s_op: &[u8],
     // handing it to this compile.
     b.emit_id(cl.var("Pj"), b_p, 1, ell);
     if cl.opt_scalar("use_bridge").unwrap_or(0) == 1 {
-        let (pin_ci, pin) = b.wc_pin.take().expect(
+        let pin = b.wc_pins.remove(&ci).expect(
             "use_bridge claim but no bridge-authenticated P_trace pin — \
              the wc section is missing or its verification did not run");
-        assert_eq!(pin_ci, ci, "bridge pin belongs to another claim");
         assert!(pin.len() >= e * k, "bridge pin shorter than E*K");
         let runs: Vec<(usize, usize, u64)> =
             pin[..e * k].iter().enumerate().map(|(i, &v)| (i, 1, v)).collect();
@@ -1185,17 +1190,18 @@ pub fn compile_claims(cs: &mut ClaimSet, s_op: &[u8]) -> Constraints {
 /// claim set that has none, and such a claim panics rather than silently
 /// compiling a relation the transcript never bound.
 pub fn compile_claims_bound(cs: &mut ClaimSet, s_op: &[u8], s_bind: Option<&[u8]>) -> Constraints {
-    compile_claims_bound_pinned(cs, s_op, s_bind, None)
+    compile_claims_bound_pinned(cs, s_op, s_bind, Vec::new())
 }
 
-/// compile_claims_bound with the WC-LCRL-STC bridge pin: (claim_index,
-/// bridge-authenticated P_trace) for the single use_bridge routed claim.
+/// compile_claims_bound with the WC-LCRL-STC bridge pins: per use_bridge
+/// claim, its bridge-authenticated P_trace slice.
 pub fn compile_claims_bound_pinned(cs: &mut ClaimSet, s_op: &[u8], s_bind: Option<&[u8]>,
-                                   wc_pin: Option<(usize, Vec<u64>)>) -> Constraints {
+                                   wc_pins: Vec<(usize, Vec<u64>)>) -> Constraints {
     let cfg = cs.cfg;
     let ell = cfg.ell as usize;
     let mt = m_total(cs);
-    let mut b = Build { families: Vec::new(), rhs: Vec::new(), quad: Vec::new(), nxt: 0, nq: 0, wc_pin };
+    let mut b = Build { families: Vec::new(), rhs: Vec::new(), quad: Vec::new(), nxt: 0, nq: 0,
+                        wc_pins: wc_pins.into_iter().collect() };
     let n_ops = cs.claims.len();
 
     // Derive each table's α/β from s_op by settled-list index (after ops), then

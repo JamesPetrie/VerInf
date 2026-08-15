@@ -485,3 +485,43 @@ def _verify_core(root: bytes, group_meta: Dict[int, Tuple[int, int]],
         if rhs != proof.v[l] % P:
             return False, f"bridge equation fails at eta[{l}]"
     return True, "ACCEPT"
+
+
+# ---------------------------------------------------------------------------
+# Tape-level helpers (integration bricks 5+): canonical enrollment of every
+# use_bridge claim's weights, and the canonical claim -> P_trace slice map.
+# The map is NOT wire material: prover and verifier both recompute it from
+# the claim set, so a proof cannot permute pins between claims.
+# ---------------------------------------------------------------------------
+
+def bridged_claim_map(claims):
+    """[(claim_index, width, row_off_in_group, n_rows=E*K)] in claim order,
+    offsets accumulated per width (groups are width-sorted downstream)."""
+    from routed_projected import RoutedProjectedMatmulClaim
+    out, off = [], {}
+    for ci, c in enumerate(claims):
+        if isinstance(c, RoutedProjectedMatmulClaim) and c.use_bridge:
+            o = off.get(c.J, 0)
+            out.append((ci, c.J, o, c.E * c.K))
+            off[c.J] = o + c.E * c.K
+    return out
+
+
+def enroll_tape(tape, mask_seed: bytes, manifest: bytes,
+                params: WcParams) -> Enrollment:
+    """Enroll the expert weights of every use_bridge claim on the tape:
+    per width, claims' experts concatenated in claim order (the same layout
+    bridged_claim_map describes)."""
+    cmap = bridged_claim_map(tape.claims)
+    assert cmap, "no use_bridge claims on this tape"
+    groups: Dict[int, list] = {}
+    for ci, width, off, ek in cmap:
+        c = tape.claims[ci]
+        for wv in c.W:
+            val = tape.inputs[wv]
+            flat = val() if callable(val) else val
+            groups.setdefault(width, []).append(
+                flat.reshape(c.K, c.J).cuda())
+    return build_enrollment(
+        {n: torch.cat(rows) for n, rows in groups.items()},
+        mask_seed, manifest, params)
