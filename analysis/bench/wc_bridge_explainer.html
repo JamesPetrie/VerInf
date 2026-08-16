@@ -476,18 +476,18 @@
 
         <div class="optblock">
           <div class="optlab">что включено</div>
-          <label class="chk"><input type="checkbox" id="cSpill"> выгружать прогон на диск <span class="dsc" style="font-size:10.5px">(старая схема: 1 пересчёт + чтения)</span></label>
+          <label class="chk"><input type="checkbox" id="cSpill"> <b>не прогонять модель пять раз</b> <span class="dsc" style="font-size:10.5px">(сохранить первый прогон на диск и читать его — ещё не сделано)</span></label>
           <div class="ctrl" style="margin-top:6px"><div class="lab"><span class="nm">скорость диска</span></div>
             <select id="cBw"><option value="3.5">NVMe 3.5 GB/s</option><option value="7">NVMe fast 7 GB/s</option><option value="11" selected>RAID/PCIe 11 GB/s</option></select></div>
           <label class="chk" style="margin-top:8px"><input type="checkbox" id="cCoset"> быстрое кодирование <span class="dsc" style="font-size:10.5px">(выигрыш только на больших блоках)</span></label>
-          <label class="chk" style="margin-top:8px"><input type="checkbox" id="cProj"> проекция экспертных умножений <span class="dsc" style="font-size:10.5px">(вместо всех экспертов — только выбранный, свёрнутый случайным числом)</span></label>
+          <label class="chk" style="margin-top:8px"><input type="checkbox" id="cProj" checked> проекция экспертных умножений <span class="dsc" style="font-size:10.5px">(вместо всех экспертов — только выбранный, свёрнутый случайным числом)</span></label>
           <label class="chk" style="margin-top:8px"><input type="checkbox" id="cWc" checked> <b>регистрация модели вместо работы с весами</b> <span class="dsc" style="font-size:10.5px">(то, что описано выше; требует включённой проекции)</span></label>
           <label class="chk" style="margin-top:8px"><input type="checkbox" id="cWcAmort" checked> делить стоимость регистрации на 25 доказательств (её ресурс)</label>
           <label class="chk" style="margin-top:8px"><input type="checkbox" id="cWcDisk"> хранить регистрацию на диске и читать только нужные точки</label>
-          <label class="chk" style="margin-top:8px"><input type="checkbox" id="cMsgCache"> <b>не прогонять модель пять раз</b> <span class="dsc" style="font-size:10.5px">(сохранить первый прогон и читать его — ещё не сделано)</span></label>
-          <div class="ctrl" style="margin-top:8px"><div class="lab"><span class="nm">скорость диска, ГБ/с</span></div>
-            <select id="cDiskBw"><option value="2">2 — обычный SSD</option><option value="3.5" selected>3.5 — NVMe</option><option value="7">7 — быстрый NVMe</option><option value="11">11 — RAID</option></select></div>
-          <div class="optnote">Замерено: прогон модели 960 s первый и 564 s последующие, сверка 580 s, регистрация 633 s. Остальное — оценки по этим числам.</div>
+          <div class="optnote">Переключатели выставлены в то состояние, в котором код находится сейчас.
+            Прогоны модели ручка считает точно как замеренные (60 минут на пять прогонов), остальные
+            стадии — по асимптотической модели: она консервативна и даёт больше, чем показал реальный
+            прогон.</div>
         </div>
 
         <button class="creset" id="cReset">вернуть Maverick-400B</button>
@@ -533,26 +533,6 @@
         <div class="cwarn" id="cWarn"></div>
       </div>
     </div>
-  </section>
-
-  <section>
-    <h2>Хронология измерений</h2>
-    <div class="tblwrap"><table>
-      <tr><th>Дата · железо</th><th>Что мерили</th><th>Результат</th></tr>
-      <tr><td class="mono">14.08 · RTX 8000</td><td>сверка отдельно от прувера, до 464 млн весов</td>
-        <td class="num">проверка проходит</td></tr>
-      <tr><td class="mono">14.08 · L40S</td><td>вся модель, 400.7 млрд весов</td>
-        <td class="num">регистрация 649 s · сверка 1 051 s · проверка проходит</td></tr>
-      <tr><td class="mono">15.08 · A100</td><td>полный протокол на 2 слоях реальной модели</td>
-        <td class="num">доказательство 226 s · проверка проходит · результат прогона совпал побитово</td></tr>
-      <tr><td class="mono">15.08 · A100</td><td>полное доказательство, 48 слоёв, 1000 токенов</td>
-        <td class="num dead">3 прогона из 5 за 88 мин, дальше машина умерла — итоговое время не получено</td></tr>
-    </table></div>
-    <div class="prose" style="margin-top:12px"><p><b>83 теста проходят</b>, включая попытки
-      обмануть проверку: подменить модель, подправить свёртку весов, выбрать точки сверки самому,
-      превысить ресурс регистрации — все отклоняются. Рядом:
-      <a href="https://claude.ai/code/artifact/21556b18-1b64-42a4-ab7a-7d60c196bce3">из чего складывается время доказательства</a>
-      и <a href="https://claude.ai/code/artifact/4478fd6b-b774-44f9-9481-26f973a4309f">как работает проекция</a>.</p></div>
   </section>
 
 </div>
@@ -611,12 +591,17 @@
       if(proj){ persistS=5437*(Ww/4.00e11); W=0.1072*W; Q=0.2449*Q; Llin=0.1915*Llin; Ww=0; }
       // Регистрация модели вместо работы с весами (замеры A100 15.08):
       // сверка 580 s и регистрация 633 s на 400.7 млрд весов, линейно по числу весов.
-      var wcOn=$('cWc').checked && proj, regS=0, checkS=0, WwOrig=(L*4*d*d+Ld*3*d*dff+Lm*Ex*3*d*dff+2*vocab*d);
+      // Регистрация модели: веса выходят из witness, их пересчёт и раскрытие исчезают,
+      // вместо них — сверка в 40 точках (замер 580 s на 400.7 млрд весов) и доля
+      // регистрации (633 s). Работает независимо от проекции.
+      var wcOn=$('cWc').checked, regS=0, checkS=0,
+          WwOrig=(L*4*d*d+Ld*3*d*dff+Lm*Ex*3*d*dff+2*vocab*d), scaleW=WwOrig/4.00e11,
+          diskBw=+$('cBw').value;
       if(wcOn){
-        var scaleW=WwOrig/4.00e11;
-        persistS=0;                                   // пересчёт и раскрытие весов исчезают
-        checkS=($('cWcDisk').checked? 8/ (+$('cDiskBw').value) + 30 : 580*scaleW);
-        regS=($('cWcAmort').checked? 633*scaleW/Math.floor(1024/40) : 633*scaleW);
+        if(Ww>0){ W=Math.max(W-Ww,0); Q=0.204*W; Llin=0.190*W; Ww=0; }
+        persistS=0;
+        checkS=$('cWcDisk').checked ? (8*scaleW)/diskBw+30 : 580*scaleW;
+        regS=$('cWcAmort').checked ? 633*scaleW/25 : 633*scaleW;
       }
       var ELLexp=+$('cELL').value, maxELL=K-8, ELLcap=Math.pow(2,ELLexp)>maxELL, ELL=cl(Math.pow(2,ELLexp),512,maxELL);
       $('vELL').textContent='2'+sup(ELLexp)+(ELLcap?' → '+eng(ELL)+' (cap K−8)':' = '+eng(ELL));
@@ -639,8 +624,12 @@
       // notebook (prod) regime. Matches analysis/bench/spill_costmodel_prod.py.
       // At P=1 there is no reuse to spill (nothing to re-read), so it degrades to a
       // single recompute — no write, no reads. Only P>=2 pays 1 write + (P-1) reads.
-      var spillOn=$('cSpill').checked, bw=+$('cBw').value;
-      if(spillOn&&wmode==='notebook'&&!proj){ var tio=(W*8)/(Math.min(bw,11)*1e9); witS=TWIT+(P>=2?P*tio:0); }
+      var spillOn=$('cSpill').checked;
+      if(spillOn&&wmode==='notebook'){
+        var one=TWIT*(proj?0.1773:1)/(1-E);
+        var tio=(W*8)/(Math.min(diskBw,11)*1e9);
+        witS=one+(P>=2?(P-1)*tio:0);
+      }
       var k=d, b=Math.log2(k)+2*Math.log2(s)+2*Math.log2(R)+1, bbAccOK=b<31;
       var M=W*1.06e-2;   // lookup queries (est: ~1e10 at 400B W=9.4e11)
       function snd(fb){var irs=T*Math.log2(rho/(rho-1)),fld=fb-Math.log2(N),lg=fb-Math.log2(M+T+1),mn=Math.min(irs,fld,lg);
@@ -654,14 +643,6 @@
       // Fit to 39 saved runs; floor+overhead lands within ±30% of measured. NOT
       // byte-dependent, so BabyBear does not halve it.
       var ovhS=22e-6*Math.min(mtot,5e6);
-      // сохранить первый прогон на диск вместо пяти повторов
-      var cacheOn=$('cMsgCache').checked && wmode==='notebook', cacheIO=0;
-      if(cacheOn){
-        var bytesGB=W*8/1e9;
-        cacheIO=2*bytesGB/(+$('cDiskBw').value);
-        witS=witS/Math.max(1,P)+cacheIO;
-        strS*=0.85;
-      }
       var total=witS+strS+qdS+lnS+ovhS+checkS+regS;
       var total0=witS0+strS0+qdS+lnS+ovhS;           // baseline (opts off) for the delta
 
@@ -714,15 +695,16 @@
       $('dProof').textContent=(proof_b/1e9).toFixed(1)+' GB'; $('dVerify').textContent=(verify_s/3600).toFixed(1)+' h';
 
       var w=[];
-      if(Math.round(Math.log2(2*K))>24||Math.round(Math.log2(N))>24||Math.round(Math.log2(K))<12) w.push('⚠ K/N outside the c(n) calibration 2¹²–2²⁴ → clamped.');
+      if(Math.round(Math.log2(2*K))>24||Math.round(Math.log2(N))>24||Math.round(Math.log2(K))<12) w.push('⚠ длина блока вне откалиброванного диапазона — значение подрезано.');
       if(ELL<d) w.push(ELLcap
-        ? '⚠ ELL &lt; d — the embedding lookup needs ELL ≥ d; ELL is pinned at the K−8 cap ('+eng(maxELL)+'), the ELL knob has no further effect — raise K (now '+eng(K)+').'
-        : '⚠ ELL &lt; d — the embedding lookup needs ELL ≥ d (raise ELL).');
-      if(wmode==='measured'&&!(604267<=mtot&&mtot<=2747117)) w.push('⚠ the measured fit is valid for 604k–2.75M m_total; this is extrapolation.');
-      if(spillOn&&wmode!=='notebook') w.push('⚠ spill is modeled only in notebook (prod) mode — not applied under measured.');
-      if(cosetOn&&K<262144) w.push('⚠ coset-NTT: no win at K&lt;2¹⁸ (now K='+eng(K)+') — the microbench showed 0 in-prove.');
-      if(projOn&&wmode!=='notebook') w.push('⚠ projection is modeled only in notebook (prod) mode — not applied under measured.');
-      if(proj&&spillOn) w.push('⚠ spill does not stack with projection: 5 active sweeps already replace the full recomputes — spill is ignored.');
+        ? '⚠ строка короче ширины слоя, а поднять её уже нельзя — увеличьте длину блока.'
+        : '⚠ строка короче ширины слоя — увеличьте число чисел в строке.');
+      if(wmode==='measured'&&!(604267<=mtot&&mtot<=2747117)) w.push('⚠ режим «measured» откалиброван не на этот размер — здесь это экстраполяция.');
+      if(spillOn&&wmode!=='notebook') w.push('⚠ отказ от повторных прогонов учитывается только в режиме оценки notebook.');
+      if(cosetOn&&K<262144) w.push('⚠ быстрое кодирование ничего не даёт на блоках меньше 2¹⁸.');
+      if(projOn&&wmode!=='notebook') w.push('⚠ проекция учитывается только в режиме оценки notebook.');
+      if($('cWcDisk').checked&&!wcOn) w.push('⚠ «хранить регистрацию на диске» работает только вместе с регистрацией модели.');
+      if($('cWcAmort').checked&&!wcOn) w.push('⚠ деление стоимости регистрации работает только вместе с регистрацией модели.');
       // The BabyBear status lives under its own checkbox (#bbStat) — why the time
       // changes or not; not duplicated here.
       $('cWarn').innerHTML=w.join('<br>');
