@@ -476,7 +476,7 @@
 
         <div class="optblock">
           <div class="optlab">что включено</div>
-          <label class="chk"><input type="checkbox" id="cSpill"> <b>не прогонять модель пять раз</b> <span class="dsc" style="font-size:10.5px">(сохранить первый прогон на диск и читать его — ещё не сделано)</span></label>
+          <label class="chk"><input type="checkbox" id="cSpill"> <b>не прогонять модель пять раз</b> <span class="dsc" style="font-size:10.5px">(сохранить первый прогон на диск и читать его)</span></label>
           <div class="ctrl" style="margin-top:6px"><div class="lab"><span class="nm">скорость диска</span></div>
             <select id="cBw"><option value="3.5">NVMe 3.5 GB/s</option><option value="7">NVMe fast 7 GB/s</option><option value="11" selected>RAID/PCIe 11 GB/s</option></select></div>
           <label class="chk" style="margin-top:8px"><input type="checkbox" id="cCoset"> быстрое кодирование <span class="dsc" style="font-size:10.5px">(выигрыш только на больших блоках)</span></label>
@@ -600,7 +600,7 @@
       if(wcOn){
         if(Ww>0){ W=Math.max(W-Ww,0); Q=0.204*W; Llin=0.190*W; Ww=0; }
         persistS=0;
-        checkS=$('cWcDisk').checked ? (8*scaleW)/diskBw+30 : 580*scaleW;
+        checkS=$('cWcDisk').checked ? (8*scaleW*(T/40))/diskBw+30*scaleW : 580*scaleW;
         regS=$('cWcAmort').checked ? 633*scaleW/25 : 633*scaleW;
       }
       var ELLexp=+$('cELL').value, maxELL=K-8, ELLcap=Math.pow(2,ELLexp)>maxELL, ELL=cl(Math.pow(2,ELLexp),512,maxELL);
@@ -710,8 +710,11 @@
       $('cWarn').innerHTML=w.join('<br>');
     }
     function preset(o){ for(var kk in o){ var el=$(kk); if(el){ if(el.type==='checkbox') el.checked=o[kk]; else el.value=o[kk]; } } compute(); }
-    ['cD','cSeq','cL','cFF','cH','cV','cE','cMoe','cK','cRho','cELL','cT','cScale','cR','cP','cWmode','cBB','cSpill','cBw','cCoset','cProj'].forEach(function(id){
-      var el=$(id); if(el) el.addEventListener('input',compute);
+    ['cD','cSeq','cL','cFF','cH','cV','cE','cMoe','cK','cRho','cELL','cT','cScale','cR','cP',
+     'cWmode','cBB','cSpill','cBw','cCoset','cProj','cWc','cWcAmort','cWcDisk'].forEach(function(id){
+      var el=$(id);
+      if(!el) throw new Error('нет элемента управления '+id);
+      el.addEventListener('input',compute); el.addEventListener('change',compute);
     });
     $('pQwen').addEventListener('click',function(){preset({cD:896,cSeq:256,cL:24,cFF:4864,cH:14,cV:151936,cE:1,cMoe:0,cK:'2048',cELL:10,cT:16,cWmode:'measured',cScale:12,cR:32,cP:4,cRho:'4'});});
     $('pLlama').addEventListener('click',function(){preset({cD:2048,cSeq:256,cL:16,cFF:8192,cH:32,cV:128256,cE:1,cMoe:0,cK:'4096',cELL:11,cT:16,cWmode:'measured',cScale:12,cR:32,cP:4,cRho:'4'});});
