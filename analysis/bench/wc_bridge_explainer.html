@@ -196,17 +196,17 @@
   <h1>Мост вместо весов</h1>
   <p class="thesis">Прувер доказывает, что прогнал именно разрешённую модель, — и раньше для
     этого <b>каждое</b> доказательство математически перерабатывало все 400.7 млрд её весов
-    (~1.5 часа работы), хотя от запуска к запуску веса одни и те же. Новая схема выносит эту работу
+    (на нашей видеокарте это 42 минуты), хотя от запуска к запуску веса одни и те же. Новая схема выносит эту работу
     за скобки: веса <b>один раз</b> фиксируются отдельной проверяемой структурой —
     <b>регистрацией модели</b>, — а каждое доказательство лишь сверяется с ней
     в 40 случайных точках (эта короткая сверка и называется <b>мостом</b>). Подделать веса и
     пройти сверку можно с вероятностью 2⁻⁴⁰ — примерно один шанс на триллион.</p>
 
   <div class="facts">
-    <div class="fact good"><div class="n">−91 мин</div><div class="l">работы с весами убрано из каждого доказательства</div></div>
+    <div class="fact good"><div class="n">−42 мин</div><div class="l">работы с весами убрано из каждого доказательства</div></div>
     <div class="fact"><div class="n">+10 мин</div><div class="l">во столько обходится сверка, которая её заменила</div></div>
     <div class="fact"><div class="n">11 мин</div><div class="l">регистрация модели — один раз на 25 доказательств</div></div>
-    <div class="fact dead"><div class="n">67 мин</div><div class="l">новое узкое место: модель прогоняется пять раз подряд</div></div>
+    <div class="fact dead"><div class="n">60 мин</div><div class="l">новое узкое место: модель прогоняется пять раз подряд</div></div>
   </div>
 
   <section>
@@ -214,29 +214,26 @@
     <div class="ba">
       <div class="row"><span class="tag" style="color:var(--dead)">ДО (RP-STC)</span>
         <div class="barwrap"><div class="bar">
-          <span class="b-wit" style="flex:27">прогоны модели 27%</span>
-          <span class="b-dead" style="flex:28">пересчёт весов 28%</span>
-          <span class="b-dead" style="flex:14">раскрытие весов 14%</span>
-          <span class="b-str" style="flex:12">упаковка 12%</span>
-          <span class="b-qd" style="flex:6">проверки 6%</span>
-          <span class="b-lin" style="flex:13">прочее 13%</span>
+          <span class="b-wit" style="flex:30">прогоны модели 30%</span>
+          <span class="b-dead" style="flex:36">работа с весами 36%</span>
+          <span class="b-str" style="flex:9">упаковка 9%</span>
+          <span class="b-qd" style="flex:10">проверки 10%</span>
+          <span class="b-lin" style="flex:15">прочее 15%</span>
         </div></div></div>
       <div class="row"><span class="tag" style="color:var(--good)">ПОСЛЕ (WC)</span>
         <div class="barwrap"><div class="bar">
-          <span class="b-wit" style="flex:48">прогоны модели 48%</span>
-          <span class="b-br" style="flex:8">сверка 8%</span>
-          <span class="b-str" style="flex:17">упаковка 17%</span>
-          <span class="b-qd" style="flex:9">проверки 9%</span>
-          <span class="b-lin" style="flex:18">прочее 18%</span>
+          <span class="b-wit" style="flex:42">прогоны модели 42%</span>
+          <span class="b-br" style="flex:11">сверка 11%</span>
+          <span class="b-str" style="flex:12">упаковка 12%</span>
+          <span class="b-qd" style="flex:13">проверки 13%</span>
+          <span class="b-lin" style="flex:22">прочее 22%</span>
         </div></div></div>
-      <div class="cap">Замеры на A100, 15 августа. Оранжевым — работа с весами, которой больше
-        нет ни в одном доказательстве. Прогоны модели остались прежними — поэтому их доля выросла,
-        и теперь узкое место именно они.</div>
+      <div class="cap">117 минут → 85 минут</div>
     </div>
     <div class="prose" style="margin-top:16px">
       <p>Веса не меняются от доказательства к доказательству, а платили за них каждый раз —
-        полтора часа на 400 миллиардов чисел. Теперь эту цену платят один раз при регистрации
-        модели, а каждое доказательство отделывается сверкой в 40 точках.</p>
+        42 минуты на 400 миллиардов чисел. Теперь эту цену платят один раз при регистрации
+        модели (11 минут), а каждое доказательство отделывается сверкой в 40 точках за 10 минут.</p>
     </div>
   </section>
 
@@ -265,10 +262,9 @@
         <text x="82" y="74" text-anchor="middle" font-size="10" fill="var(--muted)">1000 токенов</text>
         <rect x="205" y="38" width="140" height="48" rx="8" fill="var(--dead-b)" stroke="var(--dead)"/>
         <text x="275" y="57" text-anchor="middle" font-size="12" font-weight="700" fill="var(--dead)">все 400.7 млрд весов</text>
-        <text x="275" y="73" text-anchor="middle" font-size="10" fill="var(--dead)">пересчёт + раскрытие · 91 мин</text>
+        <text x="275" y="73" text-anchor="middle" font-size="10" fill="var(--dead)">пересчёт + раскрытие · 42 мин</text>
         <rect x="400" y="42" width="200" height="40" rx="8" fill="var(--hair2)" stroke="var(--hair)"/>
-        <text x="500" y="60" text-anchor="middle" font-size="12" fill="var(--ink)">прогоны модели и проверки</text>
-        <text x="500" y="74" text-anchor="middle" font-size="10" fill="var(--muted)">~2 часа</text>
+        <text x="500" y="66" text-anchor="middle" font-size="12" fill="var(--ink)">прогоны модели и проверки</text>
         <rect x="655" y="42" width="120" height="40" rx="8" fill="var(--qd-b)" stroke="var(--qd)"/>
         <text x="715" y="66" text-anchor="middle" font-size="12" font-weight="700" fill="var(--qd-t)">доказательство</text>
         <line x1="14" y1="112" x2="886" y2="112" stroke="var(--hair)" stroke-width="1"/>
@@ -279,7 +275,7 @@
         <text x="82" y="208" text-anchor="middle" font-size="10" fill="var(--muted)">400.7 млрд</text>
         <rect x="205" y="172" width="140" height="48" rx="8" fill="var(--str-b)" stroke="var(--str)"/>
         <text x="275" y="191" text-anchor="middle" font-size="12" font-weight="700" fill="var(--str-t)">регистрация модели</text>
-        <text x="275" y="207" text-anchor="middle" font-size="10" fill="var(--str-t)">11 мин · один раз на 25</text>
+        <text x="275" y="207" text-anchor="middle" font-size="10" fill="var(--str-t)">11 мин · хватает на 25 доказательств</text>
         <rect x="14" y="232" width="136" height="40" rx="8" fill="var(--hair2)" stroke="var(--hair)"/>
         <text x="82" y="250" text-anchor="middle" font-size="12" fill="var(--ink)">запрос</text>
         <text x="82" y="264" text-anchor="middle" font-size="10" fill="var(--muted)">1000 токенов</text>
@@ -288,15 +284,15 @@
         <text x="275" y="264" text-anchor="middle" font-size="10" fill="var(--lever)">10 мин</text>
         <rect x="400" y="232" width="200" height="40" rx="8" fill="var(--hair2)" stroke="var(--hair)"/>
         <text x="500" y="250" text-anchor="middle" font-size="12" fill="var(--ink)">прогоны модели и проверки</text>
-        <text x="500" y="264" text-anchor="middle" font-size="10" fill="var(--muted)">не изменились</text>
+        <text x="500" y="264" text-anchor="middle" font-size="10" fill="var(--muted)">те же самые</text>
         <rect x="655" y="232" width="120" height="40" rx="8" fill="var(--qd-b)" stroke="var(--qd)"/>
         <text x="715" y="256" text-anchor="middle" font-size="12" font-weight="700" fill="var(--qd-t)">доказательство</text>
-        <text x="795" y="250" font-size="11" font-weight="700" fill="var(--good)">−81 мин</text>
+        <text x="795" y="250" font-size="11" font-weight="700" fill="var(--good)">−32 мин</text>
         <text x="795" y="264" font-size="10" fill="var(--muted)">на каждом</text>
       </svg>
       </div>
-      <div class="cap">Сверка не «доверяет» регистрации на слово: она математически связывает
-        числа, которыми пользуется доказательство, с тем, что было зарегистрировано.</div>
+      <div class="cap">Сверка связывает числа, которыми пользуется доказательство, с тем, что было
+        зарегистрировано, — подменить одно, оставив другое, невозможно.</div>
     </div>
   </section>
 
@@ -328,9 +324,9 @@
           выбираются после фиксации. Подделка должна случайно совпасть во всех сразу.</p>
         <div class="f">шанс ≈ 1 из 1 128 000 000 000</div></div>
       <div class="step"><h3>Почему веса не утекают</h3>
-        <p>К настоящим коэффициентам добавлены 1024 случайных числа. Каждая проверка раскрывает
-          одно уравнение на них; пока уравнений меньше 1024, весов из них не вытащить.</p>
-        <div class="f">40 уравнений за доказательство → запас 25</div></div>
+        <p>К настоящим коэффициентам добавлены 1024 случайных числа. Каждая точка проверки
+          раскрывает одно уравнение на них; пока уравнений меньше 1024, весов из них не вытащить.</p>
+        <div class="f">40 точек за доказательство → запас на 25</div></div>
     </div>
   </section>
 
@@ -365,11 +361,12 @@
         а точки выбраны уже после того, как прувер всё зафиксировал.</p>
         <div class="f">шанс проскочить ≈ 1 из 1 128 000 000 000</div></div>
       <div class="step"><h3>Ресурс одной регистрации</h3>
-        <p>Каждое доказательство тратит 40 точек из 1024. Пока потрачено меньше 1024, веса
+        <p>Каждое доказательство тратит 40 точек из 1024 — <b>независимо от длины запроса</b>:
+        и на тысяче токенов, и на миллионе цена одна. Пока потрачено меньше 1024, веса
         математически невосстановимы. Значит одной регистрации хватает на <b>25 доказательств</b>,
-        после чего модель регистрируют заново с новыми масками — прувер считает остаток сам и
+        дальше модель регистрируют заново с новыми масками. Прувер считает остаток сам и
         отказывается работать, когда он кончается.</p>
-        <div class="f">1024 ÷ 40 = 25 доказательств</div></div>
+        <div class="f">1024 ÷ 40 = 25 доказательств любой длины</div></div>
     </div>
   </section>
 
@@ -394,37 +391,37 @@
     <h2>Сложность теперь — измеренная формула</h2>
     <div class="mf">
       <div class="eq">
-        <span class="row"><span class="lhs">Время доказательства</span> <span class="op">=</span> <span class="t-wit">5 прогонов модели: 960 + 960 + 3×564 s</span> <span class="tag">← протокол требует пяти проходов; главный расход</span></span>
-        <span class="row"><span class="op">+</span> <span class="t-br">сверка с регистрацией: 580 s</span> <span class="tag">← чтение 40 точек; свёртка Wρ считается попутно и стоит ~0</span></span>
+        <span class="row"><span class="lhs">Время доказательства</span> <span class="op">=</span> <span class="t-wit">5 прогонов модели: 2 145 s по расчёту, 3 612 s по факту</span> <span class="tag">← протокол требует пяти проходов; главный расход</span></span>
+        <span class="row"><span class="op">+</span> <span class="t-br">сверка с регистрацией: 580 s</span> <span class="tag">← чтение 40 точек; свёртка весов считается попутно и стоит ~0</span></span>
         <span class="row"><span class="op">+</span> <span class="t-qd">проверки корректности: 677 + 93 + 23 + 18 s</span> <span class="tag">← не менялись</span></span>
-        <span class="row"><span class="op">+</span> <span class="t-str">упаковка и выгрузка доказательства: ≈ 2 100 s</span> <span class="tag">← сборка деревьев и запись файла</span></span>
-        <span class="row"><span class="op">+</span> <span class="t-dead">пересчёт весов 3 625 + раскрытие весов 1 812 s</span> <span class="tag">← этого больше нет</span></span>
-        <span class="row"><span class="op">(регистрация модели 633 s — один раз на 25 доказательств)</span></span>
+        <span class="row"><span class="op">+</span> <span class="t-str">упаковка, загрузка модели, выгрузка файла: 602 + 59 + 207 s</span> <span class="tag">← плюс 700 s фиксированных допусков протокола</span></span>
+        <span class="row"><span class="op">+</span> <span class="t-dead">пересчёт весов 2 423 + раскрытие весов 74 s</span> <span class="tag">← этого больше нет</span></span>
+        <span class="row"><span class="op">(регистрация модели 633 s — один раз на 25 доказательств, то есть 25 s на каждое)</span></span>
       </div>
-      <div class="eta">Все числа замерены на A100 15 августа. Итог на этой карте — <b>около двух
-        часов</b>, из них <b>60% съедают пять прогонов модели</b>. Главное изменение в структуре:
-        от числа весов теперь зависят только два слагаемых (сверка и один проход чтения), всё
-        остальное растёт от длины запроса, а не от размера модели.</div>
+      <div class="eta">Итог: <b>85 минут</b> против 117 до изменения. В реальном прогоне прогоны
+        модели идут дольше расчёта — 60 минут вместо 36, — и теперь именно они, а не веса,
+        определяют время. От размера модели зависит только сверка; всё остальное растёт от длины
+        запроса.</div>
     </div>
   </section>
 
   <section>
     <h2>Узкие места — и что с каждым делать</h2>
     <div class="tblwrap"><table>
-      <tr><th>#</th><th>Компонента</th><th>Сейчас (A100)</th><th>Лечение</th><th>Эффект</th></tr>
-      <tr><td>1</td><td>Модель прогоняется 5 раз</td><td class="num">~67 мин</td>
+      <tr><th>#</th><th>Компонента</th><th>Сейчас</th><th>Лечение</th><th>Эффект</th></tr>
+      <tr><td>1</td><td>Модель прогоняется 5 раз</td><td class="num">60 мин</td>
         <td>сохранить результат первого прогона на диск и читать его вместо повторов</td>
         <td class="num good">−~45 мин</td></tr>
-      <tr><td>2</td><td>Упаковка доказательства</td><td class="num">~32 мин</td>
+      <tr><td>2</td><td>Упаковка, загрузка, выгрузка</td><td class="num">15 мин</td>
         <td>частично уходит вместе с пунктом 1 — меньше повторной сборки</td>
         <td class="num">−5…10 мин</td></tr>
       <tr><td>3</td><td>Сверка с регистрацией</td><td class="num">~10 мин</td>
         <td>хранить регистрацию на диске (6.4 ТБ) и читать только нужные 40 точек (8 ГБ)</td>
         <td class="num">−~9 мин</td></tr>
-      <tr><td>4</td><td>Проверки корректности</td><td class="num">~17 мин</td>
+      <tr><td>4</td><td>Проверки корректности</td><td class="num">14 мин</td>
         <td>только более быстрая видеокарта</td><td class="num">пропорц.</td></tr>
       <tr><td>—</td><td class="dead" style="text-decoration:line-through">Работа с весами</td><td class="num dead">0 мин</td>
-        <td class="good">уже убрана</td><td class="num good">−91 мин</td></tr>
+        <td class="good">уже убрана</td><td class="num good">−42 мин</td></tr>
     </table></div>
   </section>
 
@@ -485,12 +482,12 @@
           <label class="chk" style="margin-top:8px"><input type="checkbox" id="cCoset"> быстрое кодирование <span class="dsc" style="font-size:10.5px">(выигрыш только на больших блоках)</span></label>
           <label class="chk" style="margin-top:8px"><input type="checkbox" id="cProj"> проекция экспертных умножений <span class="dsc" style="font-size:10.5px">(вместо всех экспертов — только выбранный, свёрнутый случайным числом)</span></label>
           <label class="chk" style="margin-top:8px"><input type="checkbox" id="cWc" checked> <b>регистрация модели вместо работы с весами</b> <span class="dsc" style="font-size:10.5px">(то, что описано выше; требует включённой проекции)</span></label>
-          <label class="chk" style="margin-top:8px"><input type="checkbox" id="cWcAmort" checked> делить стоимость регистрации на 25 доказательств</label>
+          <label class="chk" style="margin-top:8px"><input type="checkbox" id="cWcAmort" checked> делить стоимость регистрации на 25 доказательств (её ресурс)</label>
           <label class="chk" style="margin-top:8px"><input type="checkbox" id="cWcDisk"> хранить регистрацию на диске и читать только нужные точки</label>
           <label class="chk" style="margin-top:8px"><input type="checkbox" id="cMsgCache"> <b>не прогонять модель пять раз</b> <span class="dsc" style="font-size:10.5px">(сохранить первый прогон и читать его — ещё не сделано)</span></label>
           <div class="ctrl" style="margin-top:8px"><div class="lab"><span class="nm">скорость диска, ГБ/с</span></div>
             <select id="cDiskBw"><option value="2">2 — обычный SSD</option><option value="3.5" selected>3.5 — NVMe</option><option value="7">7 — быстрый NVMe</option><option value="11">11 — RAID</option></select></div>
-          <div class="optnote">Замерено на A100 15.08: прогон модели 960 s (первый) и 564 s (последующие), сверка 580 s, регистрация 633 s. Остальное — оценки по этим якорям.</div>
+          <div class="optnote">Замерено: прогон модели 960 s первый и 564 s последующие, сверка 580 s, регистрация 633 s. Остальное — оценки по этим числам.</div>
         </div>
 
         <button class="creset" id="cReset">вернуть Maverick-400B</button>
