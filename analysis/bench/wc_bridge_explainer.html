@@ -490,7 +490,7 @@
           <div class="sub" id="oFirst" style="opacity:.85"></div>
           <div class="sub" id="oTotalH" style="opacity:.75"></div>
         </div>
-        <div class="oterms-head">where the time goes</div>
+        <div class="oterms-head">where the time goes, everything included</div>
         <div class="oterms">
           <div class="oterm"><span class="chip cw"></span><span class="nm">model runs</span><span class="bw"><span class="bar cw" id="bWit"></span></span><span class="sec" id="sWit"></span></div>
           <div class="oterm"><span class="chip cs"></span><span class="nm">packing</span><span class="bw"><span class="bar cs" id="bStr"></span></span><span class="sec" id="sStr"></span></div>
@@ -498,6 +498,7 @@
           <div class="oterm"><span class="chip cl2"></span><span class="nm">linear checks</span><span class="bw"><span class="bar cl2" id="bLn"></span></span><span class="sec" id="sLn"></span></div>
           <div class="oterm"><span class="chip co"></span><span class="nm">overheads</span><span class="bw"><span class="bar co" id="bOvh"></span></span><span class="sec" id="sOvh"></span></div>
           <div class="oterm"><span class="chip cbr"></span><span class="nm">check against registration</span><span class="bw"><span class="bar cbr" id="bChk"></span></span><span class="sec" id="sChk"></span></div>
+          <div class="oterm"><span class="chip creg"></span><span class="nm">registering the model</span><span class="bw"><span class="bar creg" id="bReg"></span></span><span class="sec" id="sReg"></span></div>
         </div>
         <div class="snd">
           <div class="snd-head">Assurance <b id="oSoundBits">—</b> bits<span class="snd-bind" id="oSoundBind"></span></div>
@@ -644,20 +645,21 @@
       // Fit to 39 saved runs; floor+overhead lands within ±30% of measured. NOT
       // byte-dependent, so BabyBear does not halve it.
       var ovhS=22e-6*Math.min(mtot,5e6);
-      var total=witS+strS+qdS+lnS+ovhS+checkS;   // время ОДНОГО доказательства
+      var proofS=witS+strS+qdS+lnS+ovhS+checkS;  // одно доказательство
+      var total=proofS+regS;                     // ВСЁ: регистрация целиком + доказательство
       var total0=witS0+strS0+qdS+lnS+ovhS;           // baseline (opts off) for the delta
 
       var sum=total;                                 // formula sum (for the bars/breakdown)
       $('oTotal').textContent=(total>=3600? (total/3600).toFixed(2)+' ч' : Math.round(total/60)+' мин');
       var vd=$('oVerdict'); vd.className='verdict '+(total<3600?'ok':'no');
-      $('oVerdictTxt').textContent='one proof against an existing registration · '
-        +fmtS(total)+' s · '+(total<3600?'under an hour':'over an hour');
-      $('sChk').textContent=fmtS(checkS)+' s';
+      $('oVerdictTxt').textContent='everything: registration '+fmtS(regS)
+        +' s + proof '+fmtS(proofS)+' s';
+      $('sChk').textContent=fmtS(checkS)+' s'; $('sReg').textContent=fmtS(regS)+' s';
       $('bChk').style.width=(100*checkS/(sum||1)).toFixed(1)+'%';
+      $('bReg').style.width=(100*regS/(sum||1)).toFixed(1)+'%';
       $('oFirst').textContent = wcOn
-        ? ('first proof after registering: '+fmtS(total+regS)+' s'
-           + ' · registration itself '+fmtS(regS)+' s, then '
-           + Math.max(1,Math.floor(1024/qw))+' proofs need none')
+        ? ('each further proof '+fmtS(proofS)+' s, the registration lasts '
+           + Math.max(1,Math.floor(1024/qw))+' of them')
         : '';
       var saved=total0-total, hdr='≈ '+(total/3600).toFixed(2)+' h';
       if(saved>1) hdr+='  ·  −'+fmtS(saved)+' s (−'+(100*saved/total0).toFixed(0)+'%) vs base '+fmtS(total0)+' s';
