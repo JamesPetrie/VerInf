@@ -68,11 +68,11 @@
     padding:18px;box-shadow:var(--shadow)}
   .ba .row{display:grid;grid-template-columns:92px 1fr;gap:12px;align-items:center;margin:10px 0}
   .ba .tag{font-family:var(--mono);font-size:12px;font-weight:700}
-  .bar{display:flex;height:30px;border-radius:7px;overflow:hidden;min-width:320px}
-  .bar span{display:flex;align-items:center;justify-content:center;color:#fff;
+  .ba .bar{display:flex;height:30px;border-radius:7px;overflow:hidden;min-width:320px}
+  .ba .bar span{display:flex;align-items:center;justify-content:center;color:#fff;
     font-family:var(--mono);font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden}
-  .b-wit{background:var(--wit)} .b-str{background:var(--str)} .b-qd{background:var(--qd)}
-  .b-dead{background:var(--dead)} .b-br{background:var(--lever)} .b-lin{background:var(--lin)}
+  .ba .b-wit{background:var(--wit)} .ba .b-str{background:var(--str)} .ba .b-qd{background:var(--qd)}
+  .ba .b-dead{background:var(--dead)} .ba .b-br{background:var(--lever)} .ba .b-lin{background:var(--lin)}
   .ba .cap{font-family:var(--mono);font-size:11.5px;color:var(--muted);margin-top:10px;line-height:1.6}
   .barwrap{overflow-x:auto}
 
@@ -157,7 +157,7 @@
   .pill.model{color:var(--caution);border-color:var(--caution)}
   .foot{margin-top:52px;padding-top:18px;border-top:1px solid var(--hair);
     font-family:var(--mono);font-size:11.5px;color:var(--muted);line-height:1.7}
-  .cbr{background:var(--lever)} .creg{background:var(--ovh)}
+  .cbr{background:var(--lever)} .creg{background:var(--caution)}
   .cw{background:var(--wit)} .cs{background:var(--str)} .cq{background:var(--qd)}
   .cl2{background:var(--lin)} .co{background:var(--ovh)}
   .crow{display:grid;grid-template-columns:1fr 1fr;gap:10px}
@@ -185,7 +185,6 @@
     color:var(--muted);border-top:1px dashed var(--hair);padding-top:12px;margin-top:12px}
   .oderived b{color:var(--ink)}
   .cwarn{font-family:var(--mono);font-size:11.5px;color:var(--caution);margin-top:10px;line-height:1.6}
-  .bar{border-radius:4px}
   .oterm .bar{display:block;height:100%;width:0;border-radius:4px;transition:width .18s ease}
   @media (prefers-reduced-motion:reduce){.oterm .bar{transition:none}}
   @media (max-width:760px){.calc{grid-template-columns:1fr}.oterm{grid-template-columns:13px 150px 1fr 78px}}
@@ -194,13 +193,12 @@
 <div class="wrap">
   <p class="eyebrow">VerInf · разбор изменения</p>
   <h1>Мост вместо весов</h1>
-  <p class="thesis">Прувер доказывает, что прогнал именно разрешённую модель, — и раньше для
-    этого <b>каждое</b> доказательство математически перерабатывало все 400.7 млрд её весов
-    (на нашей видеокарте это 42 минуты), хотя от запуска к запуску веса одни и те же. Новая схема выносит эту работу
-    за скобки: веса <b>один раз</b> фиксируются отдельной проверяемой структурой —
-    <b>регистрацией модели</b>, — а каждое доказательство лишь сверяется с ней
-    в 40 случайных точках (эта короткая сверка и называется <b>мостом</b>). Подделать веса и
-    пройти сверку можно с вероятностью 2⁻⁴⁰ — примерно один шанс на триллион.</p>
+  <p class="thesis">Прувер доказывает, что прогнал именно разрешённую модель. Раньше каждое
+    доказательство заново перерабатывало все 400.7 млрд весов, это 42 минуты, хотя от запуска к
+    запуску веса одни и те же. Теперь веса фиксируются один раз отдельной проверяемой структурой,
+    она называется регистрацией модели. Каждое доказательство сверяется с ней в 40 случайных
+    точках, эта сверка занимает 10 минут. Подделать веса и пройти сверку можно с вероятностью
+    2⁻⁴⁰, это примерно один шанс на триллион.</p>
 
   <div class="facts">
     <div class="fact good"><div class="n">−42 мин</div><div class="l">работы с весами убрано из каждого доказательства</div></div>
@@ -379,12 +377,11 @@
       <tr><td>«эксперт выбран честно»</td><td>случайные проверки на месте</td>
         <td>без изменений</td><td class="num">2⁻⁶³</td></tr>
       <tr><td>всё остальное (сам прогон)</td><td>выборочная проверка 54 колонок</td>
-        <td>без изменений — <b>теперь это самое слабое звено</b></td><td class="num">2⁻¹⁶·⁸</td></tr>
+        <td>без изменений</td><td class="num">2⁻¹⁶·⁸</td></tr>
       <tr><td>маршрут остаётся тайной</td><td>все эксперты раскрываются одинаково</td>
         <td>без изменений</td><td class="num">—</td></tr>
     </table></div>
-    <div class="prose" style="margin-top:12px"><p><b>Надёжность выросла:</b> новая проверка
-      (2⁻⁴⁰) на порядки строже той, что она заменила (2⁻¹⁶·⁸).</p></div>
+    <div class="prose" style="margin-top:12px"><p>Надёжность выросла с 2⁻¹⁶·⁸ до 2⁻⁴⁰ за счёт новой проверки.</p></div>
   </section>
 
   <section>
@@ -437,7 +434,7 @@
         </div>
         <div class="crow">
           <div class="ctrl"><div class="lab"><span class="nm">ширина слоя</span><span class="vl" id="vD">5120</span></div><input type="range" id="cD" min="256" max="16384" step="128" value="5120"></div>
-          <div class="ctrl"><div class="lab"><span class="nm">длина запроса</span><span class="vl" id="vSeq">1093</span></div><input type="range" id="cSeq" min="16" max="8192" step="16" value="1093"></div>
+          <div class="ctrl"><div class="lab"><span class="nm">длина запроса</span><span class="vl" id="vSeq">1093</span></div><input type="range" id="cSeq" min="16" max="65536" step="16" value="1093"></div>
         </div>
         <div class="crow">
           <div class="ctrl"><div class="lab"><span class="nm">слоёв</span><span class="vl" id="vL">48</span></div><input type="range" id="cL" min="1" max="200" step="1" value="48"></div>
@@ -490,7 +487,6 @@
             прогон.</div>
         </div>
 
-        <button class="creset" id="cReset">вернуть Maverick-400B</button>
       </div>
 
       <div class="cpanel out">
@@ -719,7 +715,6 @@
     $('pQwen').addEventListener('click',function(){preset({cD:896,cSeq:256,cL:24,cFF:4864,cH:14,cV:151936,cE:1,cMoe:0,cK:'2048',cELL:10,cT:16,cWmode:'measured',cScale:12,cR:32,cP:4,cRho:'4'});});
     $('pLlama').addEventListener('click',function(){preset({cD:2048,cSeq:256,cL:16,cFF:8192,cH:32,cV:128256,cE:1,cMoe:0,cK:'4096',cELL:11,cT:16,cWmode:'measured',cScale:12,cR:32,cP:4,cRho:'4'});});
     $('pMav').addEventListener('click',function(){preset({cD:5120,cSeq:1093,cL:48,cFF:8192,cH:40,cV:202048,cE:128,cMoe:0.5,cK:'16384',cELL:13,cT:40,cWmode:'notebook',cScale:12,cR:32,cP:4,cRho:'4'});});
-    $('cReset').addEventListener('click',function(){$('pMav').click();});
     compute();
 })();
 </script>

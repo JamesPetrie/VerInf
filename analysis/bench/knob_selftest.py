@@ -39,7 +39,8 @@ Object.defineProperty(__El.prototype,'textContent',{get:function(){return __out[
 Object.defineProperty(__El.prototype,'innerHTML',{get:function(){return __out[this.id]||'';},set:function(v){__out[this.id]=String(v);}});
 Object.defineProperty(__El.prototype,'className',{get:function(){return __out[this.id+'#class']||'';},set:function(v){__out[this.id+'#class']=String(v);}});
 __El.prototype.addEventListener=function(ev,fn){ (__listeners[this.id]=__listeners[this.id]||[]).push([ev,fn]); };
-__El.prototype.style={};
+Object.defineProperty(__El.prototype,'style',{get:function(){ return (__styles[this.id]=__styles[this.id]||{}); }});
+var __styles={};
 var __listeners={};
 var document={ getElementById:function(id){ return (id in __dom)? new __El(id) : null; },
                querySelector:function(){return null;}, addEventListener:function(){},
@@ -65,10 +66,10 @@ def run(actions):
             code += "__dom[%s].checked=%s; __r.fired+=__fire(%s);\n" % (json.dumps(eid), 'true' if val else 'false', json.dumps(eid))
         else:
             code += "__dom[%s].value=%s; __r.fired+=__fire(%s);\n" % (json.dumps(eid), json.dumps(str(val)), json.dumps(eid))
-    code += "JSON.stringify({out:__out, fired:__r.fired});"
+    code += "JSON.stringify({out:__out, styles:__styles, fired:__r.fired});"
     try:
         res = json.loads(dukpy.evaljs(code))
-        return res['out'], res['fired'], None
+        return dict(res['out'], **{'#style:'+k: json.dumps(v) for k,v in res.get('styles',{}).items()}), res['fired'], None
     except Exception as e:
         return None, 0, str(e).split('\n')[0][:200]
 
@@ -123,6 +124,26 @@ for eid, enable, label in [('cBw', [('cSpill','check',True)], 'скорость 
     if ok and 'oTotal' not in diff:
         detail += f"  (итог не сдвинулся заметно; изменились: {', '.join(diff[:3])})"
     print(f"  {'✓' if ok else '✗'} {label:58s} {detail}")
+
+
+# --- отрисовка: полоски разной длины, цвета не повторяются ---
+print()
+print("отрисовка:")
+widths = {k[len('#style:'):]: json.loads(v).get('width') for k,v in base.items() if k.startswith('#style:')}
+bars = {k:v for k,v in widths.items() if k.startswith('b') and v}
+uniq = len(set(bars.values()))
+print(f"  {'✓' if uniq>1 else '✗'} длины полосок различаются: {uniq} разных значений из {len(bars)}  {bars}")
+
+rows = re.findall(r'<div class="oterm">.*?<span class="chip ([a-z0-9]+)".*?</div>', markup, re.S)
+dup = [c for c in set(rows) if rows.count(c) > 1]
+print(f"  {'✓' if not dup else '✗'} цвета строк уникальны" + (f" — ПОВТОР: {dup}" if dup else ""))
+
+css = markup[markup.index('<style>'):markup.index('</style>')]
+colors = dict(re.findall(r'\.(c[a-z0-9]+)\{background:var\((--[a-z]+)\)\}', css))
+same = {}
+for cls, tok in colors.items(): same.setdefault(tok, []).append(cls)
+clash = {t:c for t,c in same.items() if len(c)>1 and any(x in rows for x in c)}
+print(f"  {'✓' if not clash else '✗'} один цвет — одна строка" + (f" — СТОЛКНОВЕНИЕ: {clash}" if clash else ""))
 
 print()
 print("ИТОГ:", "все элементы управления живые" if not bad else "требуют условия: " + ", ".join(bad))
