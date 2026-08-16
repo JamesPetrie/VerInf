@@ -1,0 +1,434 @@
+<title>WC-LCRL-STC: мост вместо весов</title>
+<style>
+  :root{
+    --ground:#F4F7FA; --panel:#FFFFFF; --ink:#131820; --muted:#5A6472;
+    --hair:#E0E6ED; --hair2:#EDF1F6; --cyan:#1591AC; --lever:#8C52D6;
+    --caution:#C24E12; --good:#00745A;
+    --wit:#E69F00; --str:#2E7FB8; --qd:#009E73; --lin:#8A9099; --ovh:#B07AA1;
+    --wit-b:#FBE7C6; --str-b:#DCE7F6; --qd-b:#CFEEE2; --lin-b:#E7E9EC;
+    --wit-t:#9A6A00; --str-t:#215D89; --qd-t:#00745A; --lin-t:#6B7178;
+    --dead:#C24E12; --dead-b:#F8E3D8;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --shadow:0 1px 2px rgba(20,30,45,.06),0 6px 20px rgba(20,30,45,.05);
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --ground:#0E131A; --panel:#161C25; --ink:#E8EDF3; --muted:#96A1AF;
+      --hair:#242C38; --hair2:#1C232E; --cyan:#3BC1DB; --lever:#B18BEA;
+      --caution:#F0813C; --good:#2FC79E;
+      --wit-b:#3a2f18; --str-b:#16304a; --qd-b:#0e3a2d; --lin-b:#2a2f38;
+      --wit-t:#E6A93A; --str-t:#5FA6E0; --qd-t:#2FC79E; --lin-t:#9AA4B0;
+      --dead:#F0813C; --dead-b:#3a2417; --ovh:#C58FB6;
+    }
+  }
+  :root[data-theme="dark"]{
+    --ground:#0E131A; --panel:#161C25; --ink:#E8EDF3; --muted:#96A1AF;
+    --hair:#242C38; --hair2:#1C232E; --cyan:#3BC1DB; --lever:#B18BEA;
+    --caution:#F0813C; --good:#2FC79E;
+    --wit-b:#3a2f18; --str-b:#16304a; --qd-b:#0e3a2d; --lin-b:#2a2f38;
+    --wit-t:#E6A93A; --str-t:#5FA6E0; --qd-t:#2FC79E; --lin-t:#9AA4B0;
+    --dead:#F0813C; --dead-b:#3a2417; --ovh:#C58FB6;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--sans);
+    line-height:1.55;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1080px;margin:0 auto;padding:40px 24px 72px}
+  .mono{font-family:var(--mono)}
+  a{color:var(--cyan)}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--cyan);margin:0 0 10px}
+  h1{font-size:clamp(28px,4.4vw,44px);line-height:1.08;margin:0 0 12px;text-wrap:balance;
+    letter-spacing:-.015em;font-weight:680}
+  .thesis{font-size:17px;color:var(--muted);max-width:64ch;margin:0 0 22px}
+  .thesis b{color:var(--ink)}
+  section{margin-top:44px}
+  h2{font-size:13px;font-family:var(--mono);letter-spacing:.1em;text-transform:uppercase;
+    color:var(--muted);margin:0 0 16px;display:flex;align-items:center;gap:10px}
+  h2::after{content:"";flex:1;height:1px;background:var(--hair)}
+  .prose{max-width:72ch}
+  .prose p{margin:0 0 14px;font-size:15px;color:var(--muted);line-height:1.62}
+  .prose p b,.prose li b{color:var(--ink)}
+  .prose ul,.prose ol{margin:8px 0 14px;padding-left:22px}
+  .prose li{font-size:14.5px;color:var(--muted);margin-bottom:8px;line-height:1.55}
+  .prose code,.mf code{background:var(--hair2);border-radius:4px;padding:1px 5px;
+    font-family:var(--mono);font-size:.9em;color:var(--ink)}
+
+  /* fact strip */
+  .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin:18px 0 6px}
+  .fact{background:var(--panel);border:1px solid var(--hair);border-radius:12px;
+    padding:14px 16px;box-shadow:var(--shadow)}
+  .fact .n{font-family:var(--mono);font-size:24px;font-weight:700;letter-spacing:-.02em;
+    font-variant-numeric:tabular-nums}
+  .fact .l{font-size:12px;color:var(--muted);margin-top:2px;line-height:1.4}
+  .fact.good .n{color:var(--good)} .fact.dead .n{color:var(--dead)}
+
+  /* before/after bars */
+  .ba{background:var(--panel);border:1px solid var(--hair);border-radius:14px;
+    padding:18px;box-shadow:var(--shadow)}
+  .ba .row{display:grid;grid-template-columns:92px 1fr;gap:12px;align-items:center;margin:10px 0}
+  .ba .tag{font-family:var(--mono);font-size:12px;font-weight:700}
+  .bar{display:flex;height:30px;border-radius:7px;overflow:hidden;min-width:320px}
+  .bar span{display:flex;align-items:center;justify-content:center;color:#fff;
+    font-family:var(--mono);font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden}
+  .b-wit{background:var(--wit)} .b-str{background:var(--str)} .b-qd{background:var(--qd)}
+  .b-dead{background:var(--dead)} .b-br{background:var(--lever)} .b-lin{background:var(--lin)}
+  .ba .cap{font-family:var(--mono);font-size:11.5px;color:var(--muted);margin-top:10px;line-height:1.6}
+  .barwrap{overflow-x:auto}
+
+  /* step cards (real sequence) */
+  .steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+  .step{background:var(--panel);border:1px solid var(--hair);border-radius:12px;
+    padding:16px;box-shadow:var(--shadow)}
+  .step h3{margin:0 0 8px;font-family:var(--mono);font-size:13px;color:var(--cyan)}
+  .step p{margin:0;font-size:13.5px;color:var(--muted);line-height:1.55}
+  .step p b{color:var(--ink)}
+  .step .f{font-family:var(--mono);font-size:12px;background:var(--hair2);border-radius:7px;
+    padding:8px 10px;margin-top:9px;color:var(--ink);overflow-x:auto;white-space:nowrap}
+
+  /* soundness table */
+  table{border-collapse:collapse;width:100%;font-size:14px}
+  .tblwrap{overflow-x:auto;background:var(--panel);border:1px solid var(--hair);
+    border-radius:12px;box-shadow:var(--shadow);padding:6px 14px 10px}
+  th{font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.06em;
+    color:var(--muted);text-align:left;padding:10px 12px 6px;border-bottom:2px solid var(--hair)}
+  td{padding:8px 12px;border-bottom:1px solid var(--hair2);font-variant-numeric:tabular-nums}
+  tr:last-child td{border-bottom:none}
+  td.num{font-family:var(--mono);font-size:13px;text-align:right}
+  td.good{color:var(--good);font-weight:600}
+  td.dead{color:var(--dead)}
+
+  /* master formula (as in the graph page) */
+  .mf{background:var(--panel);border:1px solid var(--hair);border-radius:14px;
+    padding:22px 22px 18px;box-shadow:var(--shadow)}
+  .mf .eq{font-family:var(--mono);font-size:13.5px;line-height:1.5;overflow-x:auto;
+    white-space:nowrap;padding-bottom:6px}
+  .mf .eq .row{display:block;padding:3px 0}
+  .mf .eq .op{color:var(--muted)}
+  .mf .eq .lhs{color:var(--ink);font-weight:680}
+  .mf .eq .tag{color:var(--muted);font-size:11px;padding-left:12px}
+  .t-wit{color:var(--wit-t);font-weight:600} .t-str{color:var(--str-t);font-weight:600}
+  .t-qd{color:var(--qd-t);font-weight:600} .t-lin{color:var(--lin-t);font-weight:600}
+  .t-br{color:var(--lever);font-weight:600} .t-dead{color:var(--dead);font-weight:600;text-decoration:line-through}
+  .mf .eta{margin-top:12px;font-size:12.5px;color:var(--muted);line-height:1.65}
+  .mf .eta b{color:var(--ink)}
+
+  /* knob v2 */
+  .calc{display:grid;grid-template-columns:minmax(260px,340px) 1fr;gap:18px;align-items:start}
+  .cpanel{background:var(--panel);border:1px solid var(--hair);border-radius:14px;padding:18px;
+    box-shadow:var(--shadow)}
+  .cctrls{display:flex;flex-direction:column;gap:13px}
+  .ctrl{display:flex;flex-direction:column;gap:5px}
+  .ctrl .lab{display:flex;justify-content:space-between;align-items:baseline;
+    font-family:var(--mono);font-size:12px}
+  .ctrl .lab .nm{color:var(--ink);font-weight:600}
+  .ctrl .lab .vl{color:var(--cyan);font-weight:700;font-variant-numeric:tabular-nums}
+  .ctrl .dsc{font-size:10.5px;color:var(--muted);font-family:var(--mono);line-height:1.45}
+  input[type=range]{width:100%;accent-color:var(--cyan);height:20px;cursor:pointer}
+  select{font-family:var(--mono);font-size:13px;background:var(--hair2);color:var(--ink);
+    border:1px solid var(--hair);border-radius:7px;padding:6px 8px;cursor:pointer;width:100%}
+  .chk{display:flex;align-items:flex-start;gap:8px;font-family:var(--mono);font-size:12px;
+    color:var(--ink);cursor:pointer;line-height:1.4}
+  .chk input{accent-color:var(--lever);width:16px;height:16px;cursor:pointer;flex:none;margin-top:1px}
+  input:focus-visible,select:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  .verdict{font-family:var(--mono);border-radius:11px;padding:14px 16px;margin-bottom:14px}
+  .verdict .big{font-size:clamp(26px,4vw,38px);font-weight:700;letter-spacing:-.02em;
+    font-variant-numeric:tabular-nums;line-height:1.1}
+  .verdict .sub{font-size:12.5px;margin-top:4px}
+  .verdict.ok{background:var(--qd-b);color:var(--qd-t)}
+  .verdict.no{background:var(--dead-b);color:var(--dead)}
+  .oterms{display:flex;flex-direction:column;gap:8px;margin:6px 0 2px}
+  .oterm{display:grid;grid-template-columns:13px 172px 1fr 92px;gap:10px;align-items:center;
+    font-family:var(--mono);font-size:12px}
+  .oterm .chip{width:12px;height:12px;border-radius:3px}
+  .oterm .nm{color:var(--muted)}
+  .oterm .sec{color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums;text-align:right}
+  .oterm .bw{background:var(--hair2);border-radius:4px;height:10px;overflow:hidden}
+  .oterm .bar2{display:block;height:100%;width:0;border-radius:4px;transition:width .18s ease}
+  @media (prefers-reduced-motion:reduce){.oterm .bar2{transition:none}}
+  .c-wit{background:var(--wit)} .c-str{background:var(--str)} .c-qd{background:var(--qd)}
+  .c-br{background:var(--lever)} .c-lin{background:var(--lin)} .c-ovh{background:var(--ovh)}
+  .anchors{font-family:var(--mono);font-size:11px;color:var(--muted);border-top:1px dashed var(--hair);
+    margin-top:14px;padding-top:10px;line-height:1.7}
+  .pill{font-size:10px;font-weight:700;padding:1px 7px;border-radius:999px;border:1px solid;
+    font-family:var(--mono);white-space:nowrap}
+  .pill.meas{color:var(--qd-t);border-color:var(--qd)}
+  .pill.ind{color:var(--str-t);border-color:var(--str)}
+  .pill.model{color:var(--caution);border-color:var(--caution)}
+  .foot{margin-top:52px;padding-top:18px;border-top:1px solid var(--hair);
+    font-family:var(--mono);font-size:11.5px;color:var(--muted);line-height:1.7}
+  @media (max-width:760px){.calc{grid-template-columns:1fr}.oterm{grid-template-columns:13px 120px 1fr 78px}}
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">VerInf · WC-LCRL-STC · разбор алгоритма</p>
+  <h1>Мост вместо весов</h1>
+  <p class="thesis">Раньше каждое доказательство заново «прожёвывало» все 400.7 млрд весов:
+    фолдило их в линейные тесты и открывало их коммит. Теперь веса аутентифицирует
+    <b>одноразовый enrollment</b>, а каждое доказательство лишь <b>перекидывает мост</b> от него
+    к реально использованным проекциям — ценой 2⁻⁴⁰ по надёжности. Ниже: что изменилось,
+    из чего теперь складывается сложность, где узкие места, и живая ручка на измеренных якорях.</p>
+
+  <div class="facts">
+    <div class="fact good"><div class="n">−5 437 s</div><div class="l">весовые стадии, удалённые из каждого пруфа (фолд 3 625 + открытия 1 812)</div></div>
+    <div class="fact"><div class="n">+&#8202;~590 s</div><div class="l">цена моста в пруфе (η-колонки; Wρ едет бесплатно в свипе R2)</div></div>
+    <div class="fact"><div class="n">633 s</div><div class="l">enrollment всей модели — одноразово, амортизируется на ~25 пруфов</div></div>
+    <div class="fact dead"><div class="n">5 × свип</div><div class="l">регенерации witness — новое узкое место (§0.6 message cache не реализован)</div></div>
+  </div>
+
+  <section>
+    <h2>Что изменилось и зачем</h2>
+    <div class="ba">
+      <div class="row"><span class="tag" style="color:var(--dead)">ДО (RP-STC)</span>
+        <div class="barwrap"><div class="bar">
+          <span class="b-wit" style="flex:27">свипы 27%</span>
+          <span class="b-dead" style="flex:28">вес-фолд q_lin 28%</span>
+          <span class="b-dead" style="flex:14">вес-открытия 14%</span>
+          <span class="b-str" style="flex:12">fresh commit 12%</span>
+          <span class="b-qd" style="flex:6">quad 6%</span>
+          <span class="b-lin" style="flex:13">прочее 13%</span>
+        </div></div></div>
+      <div class="row"><span class="tag" style="color:var(--good)">ПОСЛЕ (WC)</span>
+        <div class="barwrap"><div class="bar">
+          <span class="b-wit" style="flex:48">свипы 48%</span>
+          <span class="b-br" style="flex:8">мост 8%</span>
+          <span class="b-str" style="flex:17">fresh commit 17%</span>
+          <span class="b-qd" style="flex:9">quad 9%</span>
+          <span class="b-lin" style="flex:18">прочее 18%</span>
+        </div></div></div>
+      <div class="cap">Доли — из admission-замеров A100 SXM4 (15.08). Оранжевым — то, что
+        структурно удалено: онлайн-фолд весов в q_lin и открытие весового коммита. Веса больше
+        <b>вообще не являются строками witness</b> (`tape.external`) — их держит enrollment.
+        Свипы никуда не делись — поэтому их доля выросла, и они стали узким местом №1.</div>
+    </div>
+    <div class="prose" style="margin-top:16px">
+      <p><b>Зачем.</b> В базовом протоколе веса — часть witness: каждый пруф платит за них
+        полиномиальные фолды и открытия, линейные по числу параметров. Но веса
+        <b>не меняются между пруфами</b> — платить за них каждый раз бессмысленно, если есть способ
+        один раз зафиксировать их «навсегда» и дёшево связывать с каждым пруфом. Этот способ —
+        коэффициентный RS-enrollment + поздний случайный мост.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Как работает мост — пять шагов</h2>
+    <div class="steps">
+      <div class="step"><h3>1 · Enrollment (одноразово)</h3>
+        <p>Веса группируются по ширине выхода, режутся на блоки по <b>B=15360</b> координат.
+        Блок и выходная координата <b>j</b> дают полином: первые B коэффициентов — веса,
+        сверху <b>λ=1024</b> случайных масок (маски = приватность). Полиномы кодируются на домене
+        N_w=32768 и связываются одним Merkle-корнем.</p>
+        <div class="f">F(X) = Σ W·Xᵇ + Σ z·X^(B+h) · K_w=16384 · N_w=32768</div></div>
+      <div class="step"><h3>2 · ρ после R1</h3>
+        <p>Пруф сначала <b>коммитит все выходы</b> (R1), и только потом из транскрипта рождается
+        общий на ширину коин <b>ρ</b>. Подгонять выходы под ρ уже поздно — на этом стоит вся
+        конструкция. Один ρ на ширину = один набор открытий на все 72 матмула.</p>
+        <div class="f">s_op = H(транскрипт R1) → ρ ∈ F^J</div></div>
+      <div class="step"><h3>3 · P_trace в R2</h3>
+        <p>Прувер коммитит <b>P_trace = Wρ</b> — ту самую переменную, которую едят дальнейшие
+        ограничения (несвязанная копия = ошибка компиляции, §0.8), и проекции масок
+        <b>π = zᵀρ</b>. Wρ считается «бесплатно»: он фьюзится в свип R2, который и так читает
+        каждый вес один раз.</p>
+        <div class="f">R2: commit(P_trace, π) → s_bind</div></div>
+      <div class="step"><h3>4 · Поздние коины: α и η</h3>
+        <p>Только теперь транскрипт выдаёт по случайному <b>α</b> на блок и <b>q_w=40 различных</b>
+        точек домена <b>η</b>. Прувер агрегирует c = Σ α·(P_trace‖π) и отдаёт c и значения
+        v = c(η).</p>
+        <div class="f">c_k = Σ α·U_k · v_ℓ = c(η_ℓ)</div></div>
+      <div class="step"><h3>5 · Проверка на 40 точках</h3>
+        <p>Верификатор открывает enrollment-колонки в тех же η и сверяет: v_ℓ обязан равняться
+        Σ α Σ ρ_j F(η_ℓ). Ложный P_trace — это ненулевой полином степени &lt;K_w, зафиксированный
+        <b>до</b> α и η: он выживает с вероятностью ≤ 1/p + H₄₀.</p>
+        <div class="f">H₄₀ = C(16383,40)/C(32768,40) ≈ 8.86·10⁻¹³ ≈ 2⁻⁴⁰</div></div>
+      <div class="step"><h3>Бюджет масок (ledger)</h3>
+        <p>Каждый пруф раскрывает 40 точек; маски идеально прячут веса, пока раскрыто ≤ λ=1024
+        различных точек — итого <b>~25 пруфов на один enrollment</b>, дальше re-enrollment со
+        свежими масками (детерминированная пересверка, linking не нужен). Прувер ведёт ledger и
+        отказывается доказывать при исчерпании.</p>
+        <div class="f">⌊1024/40⌋ = 25 пруфов · precheck fail-closed</div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Надёжность: что на что обменяли</h2>
+    <div class="tblwrap"><table>
+      <tr><th>Отношение</th><th>Было (онлайн)</th><th>Стало (мост)</th><th>Ошибка</th></tr>
+      <tr><td><span class="mono">P = Wρ</span></td><td class="dead">LF1B-фолд по строкам весов</td>
+        <td class="good">коэффициентный мост к enrollment</td><td class="num">1/p + 2⁻⁴⁰·⁰⁴</td></tr>
+      <tr><td><span class="mono">Q=MP, H=X⊙Q, Σ H = Yρ</span></td><td>fresh-ограничения + поздний Freivalds</td>
+        <td>без изменений</td><td class="num">2/p</td></tr>
+      <tr><td>fresh-часть (qIRS/qLin/quad)</td><td>(3/4)^54 ≈ 2⁻¹⁶·⁸</td>
+        <td>без изменений — <b>осталась самым слабым термом</b></td><td class="num">2⁻¹⁶·⁸</td></tr>
+      <tr><td>приватность маршрута</td><td>все эксперты открываются одинаково</td>
+        <td>column-major открытия не зависят от M</td><td class="num">—</td></tr>
+    </table></div>
+    <div class="prose" style="margin-top:12px"><p>Мост (2⁻⁴⁰) <b>сильнее</b> той Ligero-части,
+      которую он заменил (2⁻¹⁶·⁸ при τ=54): суммарная надёжность не деградировала, а по
+      заменённой компоненте выросла. Правило масштабирования из ревью: q_w ≥ ⌈0.416·τ⌉ —
+      q_w=40 хватает до τ=96. Оба верификатора (Python и Rust-твин) пересчитывают все коины
+      сами и не верят ни одному значению из пруфа.</p></div>
+  </section>
+
+  <section>
+    <h2>Сложность теперь — измеренная формула</h2>
+    <div class="mf">
+      <div class="eq">
+        <span class="row"><span class="lhs">PROVE_wc</span> <span class="op">=</span> <span class="t-wit">Σ свипы: cold + 4×warm</span> <span class="op">≈ 960 + 960 + 3×564 s</span> <span class="tag">← 5 регенераций witness; R1/R2 несут коммит-работу — узкое место №1</span></span>
+        <span class="row"><span class="op">+</span> <span class="t-br">мост: C-проход по η-колонкам</span> <span class="op">≈ 580 s</span> <span class="tag">← один NTT-свип по весам; Wρ уже внутри свипа R2 (≈0)</span></span>
+        <span class="row"><span class="op">+</span> <span class="t-qd">quad 677</span> <span class="op">+</span> <span class="t-lin">lin 93 + hash 23 + fresh-открытия 18</span> <span class="tag">← fresh-тесты, без изменений</span></span>
+        <span class="row"><span class="op">+</span> <span class="t-str">egress 207 + обвязка раундов ≈ 1 900</span> <span class="tag">← merkle-финализация, компиляция пакетов; вычислено из наблюдаемой траектории</span></span>
+        <span class="row"><span class="op">+</span> <span class="t-dead">вес-фолд 3 625 + вес-открытия 1 812</span> <span class="tag">← УДАЛЕНО мостом</span></span>
+        <span class="row"><span class="op">(+ enrollment 633 s — одноразово, ÷25 пруфов ≈ 25 s/пруф)</span></span>
+      </div>
+      <div class="eta">Все числа — A100 SXM4, замеры 15.08 (admission-отчёт + живой лог прувинга).
+        Итог на этой карте: <b>≈ 2 часа</b>, из них <b>~60% — пять регенераций witness</b>.
+        Асимптотика: enrollment O(#весов) одноразово; на пруф — O(#весов) только в C-проходе моста
+        и в чтении весов свипом R2; всё остальное — O(fresh-witness), от числа параметров больше
+        не зависит.</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Узкие места — и что с каждым делать</h2>
+    <div class="tblwrap"><table>
+      <tr><th>#</th><th>Компонента</th><th>Сейчас (A100)</th><th>Лечение</th><th>Эффект</th></tr>
+      <tr><td>1</td><td>5 регенераций witness</td><td class="num">~67 мин</td>
+        <td>§0.6 message cache: 1 регенерация + 2 чтения кэша с NVMe (~760 ГБ)</td>
+        <td class="num good">−~45 мин</td></tr>
+      <tr><td>2</td><td>обвязка раундов + fresh commit</td><td class="num">~32 мин</td>
+        <td>частично уходит вместе с кэшем (меньше повторных финализаций)</td>
+        <td class="num">−5…10 мин</td></tr>
+      <tr><td>3</td><td>C-проход моста (η-колонки)</td><td class="num">~10 мин</td>
+        <td>хранить codewords enrollment на диске (6.4 ТБ) → читать 40 колонок (~8 ГБ)</td>
+        <td class="num">−~9 мин</td></tr>
+      <tr><td>4</td><td>quad/lin/egress</td><td class="num">~17 мин</td><td>карта быстрее (H100 ≈ ×1.8)</td><td class="num">пропорц.</td></tr>
+      <tr><td>—</td><td class="dead" style="text-decoration:line-through">весовые стадии</td><td class="num dead">0 мин</td>
+        <td class="good">уже удалены мостом</td><td class="num good">−91 мин</td></tr>
+    </table></div>
+  </section>
+
+  <section>
+    <h2>Ручка v2 — соберёт ли конфигурация час</h2>
+    <div class="calc">
+      <div class="cpanel cctrls">
+        <div class="ctrl"><div class="lab"><span class="nm">карта</span></div>
+          <select id="kGpu">
+            <option value="1.0" selected>A100 SXM4-80G — якорь ×1.00</option>
+            <option value="1.15">A100 PCIE — ×1.15 (замер witness)</option>
+            <option value="1.10">L40S — ×1.10 (замер моста)</option>
+            <option value="0.55">H100 — ×0.55 (модель)</option>
+            <option value="1.70">RTX 8000 — ×1.70 (модель)</option>
+          </select>
+          <div class="dsc">множитель ко всем compute-стадиям относительно якоря</div></div>
+        <label class="chk"><input type="checkbox" id="kCache">
+          message cache (§0.6, не реализован): 5 свипов → 1 + два чтения кэша</label>
+        <div class="ctrl"><div class="lab"><span class="nm">NVMe для кэша</span><span class="vl" id="vDisk">3.0 ГБ/с</span></div>
+          <input type="range" id="kDisk" min="1" max="12" step="0.5" value="3">
+          <div class="dsc">кэш fresh-строк ≈ 762 ГБ при S=1000; два прохода чтения</div></div>
+        <label class="chk"><input type="checkbox" id="kStore">
+          codewords enrollment на диске (6.4 ТБ): C-проход → чтение 40 колонок (~8 ГБ)</label>
+        <label class="chk"><input type="checkbox" id="kAmort" checked>
+          амортизировать enrollment на 25 пруфов (иначе прибавить все 633 s)</label>
+        <div class="ctrl"><div class="lab"><span class="nm">S — токены</span><span class="vl" id="vS">1000</span></div>
+          <input type="range" id="kS" min="250" max="4000" step="250" value="1000">
+          <div class="dsc">fresh-часть и кэш растут ~линейно по S (softmax — быстрее)</div></div>
+        <div class="ctrl"><div class="lab"><span class="nm">q_w — точки моста</span><span class="vl" id="vQw">40</span></div>
+          <input type="range" id="kQw" min="24" max="96" step="4" value="40">
+          <div class="dsc">надёжность ≈ бит/точку; бюджет масок ⌊1024/q_w⌋ пруфов</div></div>
+      </div>
+      <div class="cpanel">
+        <div class="verdict ok" id="kVerdict"><div class="big" id="kTotal">—</div><div class="sub" id="kSub"></div></div>
+        <div class="oterms">
+          <div class="oterm"><span class="chip c-wit"></span><span class="nm">свипы witness</span><span class="bw"><span class="bar2 c-wit" id="bSweep"></span></span><span class="sec" id="sSweep"></span></div>
+          <div class="oterm"><span class="chip c-str"></span><span class="nm">обвязка + commit + egress</span><span class="bw"><span class="bar2 c-str" id="bWrap"></span></span><span class="sec" id="sWrap"></span></div>
+          <div class="oterm"><span class="chip c-br"></span><span class="nm">мост (η-колонки)</span><span class="bw"><span class="bar2 c-br" id="bBr"></span></span><span class="sec" id="sBr"></span></div>
+          <div class="oterm"><span class="chip c-qd"></span><span class="nm">quad + lin тесты</span><span class="bw"><span class="bar2 c-qd" id="bQd"></span></span><span class="sec" id="sQd"></span></div>
+          <div class="oterm"><span class="chip c-ovh"></span><span class="nm">enrollment (аморт.)</span><span class="bw"><span class="bar2 c-ovh" id="bEnr"></span></span><span class="sec" id="sEnr"></span></div>
+        </div>
+        <div class="anchors" id="kAnchors">
+          Якоря <span class="pill meas">замер</span>: свипы 960/960/564 s, мост-C 580 s, quad 677,
+          lin 93, hash 23, откр. 18, egress 207, enrollment 633 — A100 SXM4, 15.08.
+          <span class="pill ind">косвенно</span>: обвязка раундов ≈ 1 900 s (из траектории 3/5 свипов
+          за 88 мин). <span class="pill model">модель</span>: множители карт H100/RTX8000, масштаб по S,
+          эффект message cache и дискового store — предсказания, не измерения.
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Хронология измерений</h2>
+    <div class="tblwrap"><table>
+      <tr><th>Дата · железо</th><th>Что мерили</th><th>Результат</th></tr>
+      <tr><td class="mono">14.08 · RTX 8000</td><td>мост изолированно, слайсы до 464M весов</td>
+        <td class="num">enroll 49 нс/парам · prove 0.38 нс/парам · ACCEPT</td></tr>
+      <tr><td class="mono">14.08 · L40S</td><td>полный Maverick, standalone-мост (400.7B весов)</td>
+        <td class="num">enroll 649 s · мост B+C 1 051 s · drift-free · ACCEPT</td></tr>
+      <tr><td class="mono">15.08 · A100 SXM4</td><td>интегрированный пруф: shakedown 2 слоя + admission</td>
+        <td class="num">shakedown prove 225.6 s ACCEPT · Sz бит-в-бит · admission 8 939/14 400 s</td></tr>
+      <tr><td class="mono">15.08 · A100 SXM4</td><td>финальный полный пруф (48 слоёв, S=1000)</td>
+        <td class="num dead">3/5 свипов за 88 мин; бокс погиб до сбора результата — число утрачено</td></tr>
+    </table></div>
+    <div class="prose" style="margin-top:12px"><p>Интегрированный гейт: <b>83 теста / 13 сьютов</b>
+      зелёные, включая конец-в-конец через Rust-твина и все негативы (чужой ρ, тампер P_trace,
+      подмена модели, чужие η, переполненный ledger, несвязанная копия P_trace). Статус-документ:
+      <code>analysis/wc-lcrl-stc-status.md</code>; родственные страницы —
+      <a href="https://claude.ai/code/artifact/21556b18-1b64-42a4-ab7a-7d60c196bce3">кост-модель прувера</a>
+      и <a href="https://claude.ai/code/artifact/4478fd6b-b774-44f9-9481-26f973a4309f">нота о проекции</a>.</p></div>
+  </section>
+
+  <div class="foot">Исходник: <span class="mono">analysis/bench/wc_bridge_explainer.html</span> ·
+    спека <span class="mono">analysis/wc-lcrl-stc-spec.md</span> · ветка <span class="mono">wc-lcrl-stc</span> ·
+    якоря: admission.json + prove.log бокса d88192cd5769 (A100 SXM4, 15.08.2026)</div>
+</div>
+
+<script>
+(function(){
+  var $=function(id){return document.getElementById(id);};
+  // измеренные якоря (A100 SXM4 = g1), секунды
+  var A={coldSweep:960, warmSweep:564, bridgeC:580, quad:677, lin:93, hash:23,
+         fopen:18, egress:207, wrap:1900, enroll:633, cacheGB:762, colGB:8};
+  function fmt(s){ if(s>=3600) return (s/3600).toFixed(2)+' ч';
+                   if(s>=90) return Math.round(s/60)+' мин'; return Math.round(s)+' s'; }
+  function compute(){
+    var g=parseFloat($('kGpu').value);
+    var S=parseInt($('kS').value,10), sS=S/1000;
+    var qw=parseInt($('kQw').value,10);
+    var disk=parseFloat($('kDisk').value);
+    $('vS').textContent=S; $('vQw').textContent=qw;
+    $('vDisk').textContent=disk.toFixed(1)+' ГБ/с';
+    // свипы: fresh-часть ~линейна по S; commit-нагрузка R1/R2 внутри cold-свипов
+    var cold=A.coldSweep*g*sS, warm=A.warmSweep*g*sS;
+    var sweeps, wrap=A.wrap*g*sS;
+    if($('kCache').checked){
+      sweeps=cold + 2*(A.cacheGB*sS)/disk;      // 1 регенерация + 2 чтения кэша
+      wrap*=0.7;                                 // меньше повторных финализаций (модель)
+    } else {
+      sweeps=2*cold + 3*warm;
+    }
+    // мост: C-проход — NTT по весам (не зависит от S), масштаб по q_w слабый (гатеринг)
+    var bridge=$('kStore').checked ? (A.colGB*qw/40)/disk + 30*g
+                                   : A.bridgeC*g*(0.8+0.2*qw/40);
+    var tests=(A.quad+A.lin+A.hash+A.fopen)*g*sS;
+    var wrapAll=wrap + A.egress*g*sS;
+    var enroll=$('kAmort').checked ? (A.enroll*g)/Math.floor(1024/qw)
+                                   : A.enroll*g;
+    var total=sweeps+bridge+tests+wrapAll+enroll;
+    $('kTotal').textContent='PROVE ≈ '+fmt(total);
+    var ok=total<3600;
+    var v=$('kVerdict'); v.className='verdict '+(ok?'ok':'no');
+    $('kSub').textContent=(ok?'укладываемся в час':'больше часа')+
+      ' · '+Math.round(total)+' s · бюджет масок: '+Math.floor(1024/qw)+' пруфов/enrollment';
+    var parts=[['bSweep','sSweep',sweeps],['bWrap','sWrap',wrapAll],['bBr','sBr',bridge],
+               ['bQd','sQd',tests],['bEnr','sEnr',enroll]];
+    for(var i=0;i<parts.length;i++){
+      $(parts[i][0]).style.width=(100*parts[i][2]/total).toFixed(1)+'%';
+      $(parts[i][1]).textContent=fmt(parts[i][2])+' ('+Math.round(100*parts[i][2]/total)+'%)';
+    }
+  }
+  ['kGpu','kCache','kDisk','kStore','kAmort','kS','kQw'].forEach(function(id){
+    $(id).addEventListener('input',compute);
+  });
+  compute();
+})();
+</script>
