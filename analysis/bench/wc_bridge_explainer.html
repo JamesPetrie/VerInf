@@ -623,7 +623,13 @@
       var quad_ns=(Q/ELLp)*QT*2*K*c(2*K), lin_ns=BNS*Llin;
       var toS=function(ns){return ns/1e9/(1-E);};
       var strS=toS(streaming_ns)+persistS,strS0=toS(streaming0_ns)+persistS,qdS=toS(quad_ns),lnS=toS(lin_ns);
-      var witS0 = wmode==='notebook' ? (proj?5*0.1773:P)*TWIT/(1-E) : Math.max(0,74.57e-6*mtot-42.13);
+      // Время одного прогона модели растёт вместе с её собственной работой:
+      // замер TWIT снят на форме 400B при 1093 токенах (MM0 операций), поэтому
+      // масштабируем по отношению числа операций. Раньше здесь стояла константа,
+      // и на длинном контексте прогоны переставали расти вместе с моделью.
+      var MM0=76625630656, workRatio=mm_out/MM0;
+      var witS0 = wmode==='notebook' ? (proj?5*0.1773:P)*TWIT*workRatio/(1-E)
+                                     : Math.max(0,74.57e-6*mtot-42.13);
       var witS=witS0;
       // witness spill: 1 recompute + 1 write + (P-1) reads of the 7.5TB witness,
       // instead of P recomputes. Read/write capped by PCIe ~11 GB/s. Only in the
