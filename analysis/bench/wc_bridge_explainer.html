@@ -1,4 +1,4 @@
-<title>Мост вместо весов</title>
+<title>A bridge instead of the weights</title>
 <style>
   :root{
     --ground:#F4F7FA; --panel:#FFFFFF; --ink:#131820; --muted:#5A6472;
@@ -191,56 +191,56 @@
 </style>
 
 <div class="wrap">
-  <p class="eyebrow">VerInf · разбор изменения</p>
-  <h1>Мост вместо весов</h1>
-  <p class="thesis">Прувер доказывает, что прогнал именно разрешённую модель. Раньше каждое
-    доказательство заново перерабатывало все 400.7 млрд весов, это 42 минуты, хотя от запуска к
-    запуску веса одни и те же. Теперь веса фиксируются один раз отдельной проверяемой структурой,
-    она называется регистрацией модели. Каждое доказательство сверяется с ней в 40 случайных
-    точках, эта сверка занимает 10 минут. Подделать веса и пройти сверку можно с вероятностью
-    2⁻⁴⁰, это примерно один шанс на триллион.</p>
+  <p class="eyebrow">VerInf · what changed</p>
+  <h1>A bridge instead of the weights</h1>
+  <p class="thesis">The prover shows that it ran the permitted model and nothing else. Until now
+    every proof reprocessed all 400.7 billion weights from scratch, which took 42 minutes, even
+    though the weights are the same from one run to the next. Now the weights are fixed once by a
+    separate checkable structure, called the model registration. Each proof checks against it at
+    40 random points, and that check takes 10 minutes. Forging the weights and passing the check
+    has a probability of 2 to the power minus 40, about one chance in a trillion.</p>
 
   <div class="facts">
-    <div class="fact good"><div class="n">−42 мин</div><div class="l">работы с весами убрано из каждого доказательства</div></div>
-    <div class="fact"><div class="n">+10 мин</div><div class="l">во столько обходится сверка, которая её заменила</div></div>
-    <div class="fact"><div class="n">11 мин</div><div class="l">регистрация модели — один раз на 25 доказательств</div></div>
-    <div class="fact dead"><div class="n">60 мин</div><div class="l">новое узкое место: модель прогоняется пять раз подряд</div></div>
+    <div class="fact good"><div class="n">−42 min</div><div class="l">of weight work removed from every proof</div></div>
+    <div class="fact"><div class="n">+10 min</div><div class="l">is what the check that replaced it costs</div></div>
+    <div class="fact"><div class="n">11 min</div><div class="l">to register the model, once per 25 proofs</div></div>
+    <div class="fact dead"><div class="n">60 min</div><div class="l">the new bottleneck, the model runs five times over</div></div>
   </div>
 
   <section>
-    <h2>Что изменилось и зачем</h2>
+    <h2>What changed</h2>
     <div class="ba">
-      <div class="row"><span class="tag" style="color:var(--dead)">ДО (RP-STC)</span>
+      <div class="row"><span class="tag" style="color:var(--dead)">BEFORE</span>
         <div class="barwrap"><div class="bar">
-          <span class="b-wit" style="flex:30">прогоны модели 30%</span>
-          <span class="b-dead" style="flex:36">работа с весами 36%</span>
-          <span class="b-str" style="flex:9">упаковка 9%</span>
-          <span class="b-qd" style="flex:10">проверки 10%</span>
-          <span class="b-lin" style="flex:15">прочее 15%</span>
+          <span class="b-wit" style="flex:30">model runs 30%</span>
+          <span class="b-dead" style="flex:36">weight work 36%</span>
+          <span class="b-str" style="flex:9">packing 9%</span>
+          <span class="b-qd" style="flex:10">checks 10%</span>
+          <span class="b-lin" style="flex:15">other 15%</span>
         </div></div></div>
-      <div class="row"><span class="tag" style="color:var(--good)">ПОСЛЕ (WC)</span>
+      <div class="row"><span class="tag" style="color:var(--good)">NOW</span>
         <div class="barwrap"><div class="bar">
-          <span class="b-wit" style="flex:42">прогоны модели 42%</span>
-          <span class="b-br" style="flex:11">сверка 11%</span>
-          <span class="b-str" style="flex:12">упаковка 12%</span>
-          <span class="b-qd" style="flex:13">проверки 13%</span>
-          <span class="b-lin" style="flex:22">прочее 22%</span>
+          <span class="b-wit" style="flex:42">model runs 42%</span>
+          <span class="b-br" style="flex:11">the check 11%</span>
+          <span class="b-str" style="flex:12">packing 12%</span>
+          <span class="b-qd" style="flex:13">checks 13%</span>
+          <span class="b-lin" style="flex:22">other 22%</span>
         </div></div></div>
-      <div class="cap">117 минут → 85 минут</div>
+      <div class="cap">117 minutes → 85 minutes</div>
     </div>
     <div class="prose" style="margin-top:16px">
-      <p>Веса не меняются от доказательства к доказательству, а платили за них каждый раз —
-        42 минуты на 400 миллиардов чисел. Теперь эту цену платят один раз при регистрации
-        модели (11 минут), а каждое доказательство отделывается сверкой в 40 точках за 10 минут.</p>
+      <p>The weights do not change from proof to proof, yet each proof paid for them again, 42
+        minutes for 400 billion numbers. That price is now paid once, when the model is registered,
+        and each proof gets away with a 40 point check that takes 10 minutes.</p>
     </div>
   </section>
 
   <section>
-    <h2>Механизм</h2>
+    <h2>How it works</h2>
     <div class="ba" style="padding:20px 14px 14px">
       <div style="overflow-x:auto">
       <svg viewBox="0 0 900 300" width="900" style="max-width:100%;display:block;margin:0 auto" role="img"
-           aria-label="Схема: раньше каждое доказательство перерабатывало все веса, теперь — регистрация один раз и сверка в 40 точках">
+           aria-label="Diagram: before, every proof reprocessed all the weights; now the model is registered once and each proof checks 40 points">
         <defs>
           <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
             <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
@@ -254,242 +254,232 @@
           <path d="M275 218 L275 236"/>
         </g>
         <!-- BEFORE -->
-        <text x="14" y="30" font-family="var(--mono)" font-size="12" font-weight="700" fill="var(--dead)">РАНЬШЕ · каждое доказательство</text>
+        <text x="14" y="30" font-family="var(--mono)" font-size="12" font-weight="700" fill="var(--dead)">BEFORE, every proof</text>
         <rect x="14" y="42" width="136" height="40" rx="8" fill="var(--hair2)" stroke="var(--hair)"/>
-        <text x="82" y="60" text-anchor="middle" font-size="12" fill="var(--ink)">запрос</text>
-        <text x="82" y="74" text-anchor="middle" font-size="10" fill="var(--muted)">1000 токенов</text>
+        <text x="82" y="60" text-anchor="middle" font-size="12" fill="var(--ink)">request</text>
+        <text x="82" y="74" text-anchor="middle" font-size="10" fill="var(--muted)">1000 tokens</text>
         <rect x="205" y="38" width="140" height="48" rx="8" fill="var(--dead-b)" stroke="var(--dead)"/>
-        <text x="275" y="57" text-anchor="middle" font-size="12" font-weight="700" fill="var(--dead)">все 400.7 млрд весов</text>
-        <text x="275" y="73" text-anchor="middle" font-size="10" fill="var(--dead)">пересчёт + раскрытие · 42 мин</text>
+        <text x="275" y="57" text-anchor="middle" font-size="12" font-weight="700" fill="var(--dead)">all 400.7 billion weights</text>
+        <text x="275" y="73" text-anchor="middle" font-size="10" fill="var(--dead)">reprocess and open, 42 min</text>
         <rect x="400" y="42" width="200" height="40" rx="8" fill="var(--hair2)" stroke="var(--hair)"/>
-        <text x="500" y="66" text-anchor="middle" font-size="12" fill="var(--ink)">прогоны модели и проверки</text>
+        <text x="500" y="66" text-anchor="middle" font-size="12" fill="var(--ink)">model runs and checks</text>
         <rect x="655" y="42" width="120" height="40" rx="8" fill="var(--qd-b)" stroke="var(--qd)"/>
-        <text x="715" y="66" text-anchor="middle" font-size="12" font-weight="700" fill="var(--qd-t)">доказательство</text>
+        <text x="715" y="66" text-anchor="middle" font-size="12" font-weight="700" fill="var(--qd-t)">proof</text>
         <line x1="14" y1="112" x2="886" y2="112" stroke="var(--hair)" stroke-width="1"/>
         <!-- AFTER -->
-        <text x="14" y="140" font-family="var(--mono)" font-size="12" font-weight="700" fill="var(--good)">ТЕПЕРЬ · регистрация один раз, дальше только сверка</text>
+        <text x="14" y="140" font-family="var(--mono)" font-size="12" font-weight="700" fill="var(--good)">NOW, register once, then only check</text>
         <rect x="14" y="176" width="136" height="40" rx="8" fill="var(--hair2)" stroke="var(--hair)"/>
-        <text x="82" y="194" text-anchor="middle" font-size="12" fill="var(--ink)">веса модели</text>
-        <text x="82" y="208" text-anchor="middle" font-size="10" fill="var(--muted)">400.7 млрд</text>
+        <text x="82" y="194" text-anchor="middle" font-size="12" fill="var(--ink)">model weights</text>
+        <text x="82" y="208" text-anchor="middle" font-size="10" fill="var(--muted)">400.7 billion</text>
         <rect x="205" y="172" width="140" height="48" rx="8" fill="var(--str-b)" stroke="var(--str)"/>
-        <text x="275" y="191" text-anchor="middle" font-size="12" font-weight="700" fill="var(--str-t)">регистрация модели</text>
-        <text x="275" y="207" text-anchor="middle" font-size="10" fill="var(--str-t)">11 мин · хватает на 25 доказательств</text>
+        <text x="275" y="191" text-anchor="middle" font-size="12" font-weight="700" fill="var(--str-t)">model registration</text>
+        <text x="275" y="207" text-anchor="middle" font-size="10" fill="var(--str-t)">11 min, lasts 25 proofs</text>
         <rect x="14" y="232" width="136" height="40" rx="8" fill="var(--hair2)" stroke="var(--hair)"/>
-        <text x="82" y="250" text-anchor="middle" font-size="12" fill="var(--ink)">запрос</text>
-        <text x="82" y="264" text-anchor="middle" font-size="10" fill="var(--muted)">1000 токенов</text>
+        <text x="82" y="250" text-anchor="middle" font-size="12" fill="var(--ink)">request</text>
+        <text x="82" y="264" text-anchor="middle" font-size="10" fill="var(--muted)">1000 tokens</text>
         <rect x="205" y="232" width="140" height="40" rx="8" fill="var(--panel)" stroke="var(--lever)"/>
-        <text x="275" y="250" text-anchor="middle" font-size="12" font-weight="700" fill="var(--lever)">сверка в 40 точках</text>
-        <text x="275" y="264" text-anchor="middle" font-size="10" fill="var(--lever)">10 мин</text>
+        <text x="275" y="250" text-anchor="middle" font-size="12" font-weight="700" fill="var(--lever)">check at 40 points</text>
+        <text x="275" y="264" text-anchor="middle" font-size="10" fill="var(--lever)">10 min</text>
         <rect x="400" y="232" width="200" height="40" rx="8" fill="var(--hair2)" stroke="var(--hair)"/>
-        <text x="500" y="250" text-anchor="middle" font-size="12" fill="var(--ink)">прогоны модели и проверки</text>
-        <text x="500" y="264" text-anchor="middle" font-size="10" fill="var(--muted)">те же самые</text>
+        <text x="500" y="250" text-anchor="middle" font-size="12" fill="var(--ink)">model runs and checks</text>
+        <text x="500" y="264" text-anchor="middle" font-size="10" fill="var(--muted)">unchanged</text>
         <rect x="655" y="232" width="120" height="40" rx="8" fill="var(--qd-b)" stroke="var(--qd)"/>
-        <text x="715" y="256" text-anchor="middle" font-size="12" font-weight="700" fill="var(--qd-t)">доказательство</text>
-        <text x="795" y="250" font-size="11" font-weight="700" fill="var(--good)">−32 мин</text>
-        <text x="795" y="264" font-size="10" fill="var(--muted)">на каждом</text>
+        <text x="715" y="256" text-anchor="middle" font-size="12" font-weight="700" fill="var(--qd-t)">proof</text>
+        <text x="795" y="250" font-size="11" font-weight="700" fill="var(--good)">−32 min</text>
+        <text x="795" y="264" font-size="10" fill="var(--muted)">per proof</text>
       </svg>
       </div>
-      <div class="cap">Сверка связывает числа, которыми пользуется доказательство, с тем, что было
-        зарегистрировано, — подменить одно, оставив другое, невозможно.</div>
+      <div class="cap">The check ties the numbers the proof actually uses to what was registered,
+        so one cannot be swapped while the other stays.</div>
     </div>
   </section>
 
   <section>
-    <h2>Числовой пример: как сверка ловит подмену</h2>
+    <h2>A worked example</h2>
     <div class="prose">
-      <p>Возьмём модель из трёх весов: <b>3, 1, 4</b>. Реальные размеры не нужны — механизм
-        целиком виден на трёх числах.</p>
+      <p>Take a model of three weights, 3, 1 and 4. Real sizes are not needed, the whole mechanism is visible on three numbers.</p>
     </div>
     <div class="steps">
-      <div class="step"><h3>Регистрация</h3>
-        <p>Веса становятся коэффициентами многочлена. Публикуется его отпечаток — по нему нельзя
-          восстановить веса, но нельзя и подменить их незаметно.</p>
+      <div class="step"><h3>Registration</h3>
+        <p>The weights become coefficients of a polynomial, and its fingerprint is published. The fingerprint does not reveal the weights, and it does not let them be swapped quietly.</p>
         <div class="f">F(x) = 3 + 1·x + 4·x²</div></div>
-      <div class="step"><h3>Честное доказательство</h3>
-        <p>Проверяющий называет случайную точку, скажем <b>x = 2</b>, уже после того, как прувер
-          всё зафиксировал. Оба считают значение и оно совпадает.</p>
-        <div class="f">F(2) = 3 + 2 + 16 = <b>21</b> ✓</div></div>
-      <div class="step"><h3>Попытка подмены</h3>
-        <p>Прувер тайком поменял последний вес с 4 на 5 — например, чтобы выдать другую модель
-          за зарегистрированную. В точке 2 значения расходятся, проверка падает.</p>
-        <div class="f">3 + 2 + 20 = <b>25</b> ≠ 21 ✗</div></div>
-      <div class="step"><h3>Почему нельзя подгадать</h3>
-        <p>Разница между настоящим и поддельным — тоже многочлен, и он обращается в ноль лишь в
-          считаных точках. Совпасть можно только случайно попав ровно в них.</p>
-        <div class="f">разница = 1·x² · ноль только при x = 0</div></div>
-      <div class="step"><h3>Реальные размеры</h3>
-        <p>Многочлен степени до 16 384, точек для проверки 32 768, берут 40 штук — и все 40
-          выбираются после фиксации. Подделка должна случайно совпасть во всех сразу.</p>
-        <div class="f">шанс ≈ 1 из 1 128 000 000 000</div></div>
-      <div class="step"><h3>Почему веса не утекают</h3>
-        <p>К настоящим коэффициентам добавлены 1024 случайных числа. Каждая точка проверки
-          раскрывает одно уравнение на них; пока уравнений меньше 1024, весов из них не вытащить.</p>
-        <div class="f">40 точек за доказательство → запас на 25</div></div>
+      <div class="step"><h3>An honest proof</h3>
+        <p>The verifier names a random point, say x = 2, after the prover has committed to everything. Both sides evaluate, and the values agree.</p>
+        <div class="f">F(2) = 3 + 2 + 16 = 21 ✓</div></div>
+      <div class="step"><h3>An attempted forgery</h3>
+        <p>The prover quietly changes the last weight from 4 to 5, to pass a different model off as the registered one. At the point 2 the values disagree and the check fails.</p>
+        <div class="f">3 + 2 + 20 = 25 ≠ 21 ✗</div></div>
+      <div class="step"><h3>Why it cannot be guessed</h3>
+        <p>The difference between the real and the forged model is itself a polynomial, and it is zero at only a handful of points. A forgery passes only by landing exactly on one.</p>
+        <div class="f">difference = 1·x², zero only at x = 0</div></div>
+      <div class="step"><h3>At real sizes</h3>
+        <p>The polynomial has degree up to 16 384, there are 32 768 points to choose from, and 40 are drawn after everything is committed. A forgery has to match at all 40 at once.</p>
+        <div class="f">about 1 in 1 128 000 000 000</div></div>
+      <div class="step"><h3>Why the weights stay secret</h3>
+        <p>1024 random numbers are added on top of the real coefficients. Each checked point reveals one equation about them, and while there are fewer than 1024 equations the weights cannot be recovered.</p>
+        <div class="f">40 points per proof, enough for 25</div></div>
     </div>
   </section>
 
   <section>
-    <h2>Порядок действий в одном доказательстве</h2>
+    <h2>The order of events in one proof</h2>
     <div class="steps">
-      <div class="step"><h3>1 · Регистрация модели (один раз)</h3>
-        <p>Все веса режутся на блоки и превращаются в многочлены: сами веса плюс <b>1024</b>
-        случайные маски сверху — маски не дают восстановить веса по проверкам. Всё это
-        разворачивается в 32768 точек и сводится к одному отпечатку, который и становится
-        публичным именем модели.</p>
-        <div class="f">400.7 млрд весов → один отпечаток</div></div>
-      <div class="step"><h3>2 · Случайное число ρ</h3>
-        <p>Сначала прувер публикует все результаты прогона. И только после этого появляется
-        случайное число <b>ρ</b> — его нельзя было узнать заранее, поэтому подогнать результаты
-        под будущую проверку невозможно. Одно ρ обслуживает все 72 матричных умножения сразу.</p>
-        <div class="f">ρ = хэш(всё опубликованное)</div></div>
-      <div class="step"><h3>3 · Сжатие весов до Wρ</h3>
-        <p>Прувер публикует <b>Wρ</b> — свёртку всех весов по ρ, одно число вместо целой строки.
-        Это ровно та величина, которой пользуется остальная часть доказательства, а не отдельная
-        копия «для проверки»: подмена ловится ещё при сборке. Считается бесплатно — попутно с
-        проходом, который и так читает каждый вес.</p>
-        <div class="f">Wρ + свёртка масок</div></div>
-      <div class="step"><h3>4 · Выбор 40 точек проверки</h3>
-        <p>Теперь появляются ещё случайные числа, по одному на блок весов, чтобы смешать все блоки
-        в один, и 40 разных точек, в которых будет проверка. Прувер отдаёт значения своей смеси
-        в этих точках. Точек именно 40, потому что каждая добавляет примерно бит надёжности,
-        а 40 дают 2⁻⁴⁰. Брать больше можно, но каждая точка тратит ресурс регистрации, и с 64
-        точками одной регистрации хватит уже на 16 доказательств вместо 25.</p>
-        <div class="f">40 точек из 32768 возможных</div></div>
-      <div class="step"><h3>5 · Сверка</h3>
-        <p>Проверяющий берёт те же 40 точек из регистрации модели и смотрит, совпали ли значения.
-        Соврать про веса можно, только если ложь случайно совпала во всех 40 точках сразу —
-        а точки выбраны уже после того, как прувер всё зафиксировал.</p>
-        <div class="f">шанс проскочить ≈ 1 из 1 128 000 000 000</div></div>
-      <div class="step"><h3>Ресурс одной регистрации</h3>
-        <p>Каждое доказательство тратит 40 точек из 1024 — <b>независимо от длины запроса</b>:
-        и на тысяче токенов, и на миллионе цена одна. Пока потрачено меньше 1024, веса
-        математически невосстановимы. Значит одной регистрации хватает на <b>25 доказательств</b>,
-        дальше модель регистрируют заново с новыми масками. Прувер считает остаток сам и
-        отказывается работать, когда он кончается.</p>
-        <div class="f">1024 ÷ 40 = 25 доказательств любой длины</div></div>
+      <div class="step"><h3>1 · Register the model, once</h3>
+        <p>All the weights are cut into blocks and turned into polynomials, the weights themselves plus 1024 random masks on top, and the masks are what stop the checks from revealing the weights. All of it is expanded to 32768 points and reduced to one fingerprint, which becomes the public name of the model.</p>
+        <div class="f">400.7 billion weights → one fingerprint</div></div>
+      <div class="step"><h3>2 · A random number</h3>
+        <p>The prover first publishes all the results of the run. Only then does a random number appear, which could not have been known in advance, so the results cannot be fitted to the future check. One such number serves all 72 matrix multiplications at once.</p>
+        <div class="f">random number = hash of everything published</div></div>
+      <div class="step"><h3>3 · Squeeze the weights into one column</h3>
+        <p>The prover publishes the weights folded by that random number, one value where a whole row used to be. This is exactly the quantity the rest of the proof uses, not a separate copy made for the check, and a substitution is caught at build time. It costs nothing extra, because it rides along with a pass that already reads every weight.</p>
+        <div class="f">folded weights and folded masks</div></div>
+      <div class="step"><h3>4 · Draw the 40 check points</h3>
+        <p>More random numbers appear now, one per block of weights so that all blocks mix into one, and 40 distinct points where the check will happen. The prover hands over the values of its mixture at those points. There are 40 of them because each point buys about one bit of assurance and 40 give one chance in a trillion. More is possible, but every point spends part of the registration, and at 64 points one registration lasts 16 proofs instead of 25.</p>
+        <div class="f">40 points out of 32768</div></div>
+      <div class="step"><h3>5 · The check</h3>
+        <p>The verifier takes the same 40 points from the registration and sees whether the values agree. Lying about the weights works only if the lie happens to match at all 40 points at once, and the points were drawn after the prover had committed to everything.</p>
+        <div class="f">about 1 in 1 128 000 000 000</div></div>
+      <div class="step"><h3>What one registration is worth</h3>
+        <p>Each proof spends 40 points out of 1024, and that is true whatever the request length, a thousand tokens and a million cost the same. While fewer than 1024 are spent the weights cannot be recovered. So one registration lasts 25 proofs, after which the model is registered again with fresh masks. The prover tracks the remainder itself and refuses to work when it runs out.</p>
+        <div class="f">1024 ÷ 40 = 25 proofs of any length</div></div>
     </div>
   </section>
 
   <section>
-    <h2>Надёжность: что на что обменяли</h2>
+    <h2>What was traded for what</h2>
     <div class="tblwrap"><table>
-      <tr><th>Отношение</th><th>Было (онлайн)</th><th>Стало (мост)</th><th>Ошибка</th></tr>
-      <tr><td>«веса те самые»</td><td class="dead">пересчёт всех весов в каждом доказательстве</td>
-        <td class="good">сверка с регистрацией в 40 точках</td><td class="num">2⁻⁴⁰</td></tr>
-      <tr><td>«эксперт выбран честно»</td><td>случайные проверки на месте</td>
-        <td>без изменений</td><td class="num">2⁻⁶³</td></tr>
-      <tr><td>всё остальное (сам прогон)</td><td>выборочная проверка 54 колонок</td>
-        <td>без изменений</td><td class="num">2⁻¹⁶·⁸</td></tr>
-      <tr><td>маршрут остаётся тайной</td><td>все эксперты раскрываются одинаково</td>
-        <td>без изменений</td><td class="num">—</td></tr>
+      <tr><th>Claim</th><th>Before</th><th>Now</th><th>Failure odds</th></tr>
+      <tr><td>the weights are the registered ones</td><td class="dead">reprocess every weight in every proof</td>
+        <td class="good">check the registration at 40 points</td><td class="num">2⁻⁴⁰</td></tr>
+      <tr><td>the expert was chosen honestly</td><td>random checks in place</td>
+        <td>unchanged</td><td class="num">2⁻⁶³</td></tr>
+      <tr><td>everything else, the run itself</td><td>spot check of 54 columns</td>
+        <td>unchanged</td><td class="num">2⁻¹⁶·⁸</td></tr>
+      <tr><td>the route stays secret</td><td>all experts opened alike</td>
+        <td>unchanged</td><td class="num">—</td></tr>
     </table></div>
-    <div class="prose" style="margin-top:12px"><p>Надёжность выросла с 2⁻¹⁶·⁸ до 2⁻⁴⁰ за счёт новой проверки.</p></div>
+    <div class="prose" style="margin-top:12px"><p>The odds of a forgery slipping through fell from 2⁻¹⁶·⁸ to 2⁻⁴⁰ thanks to the new check.</p></div>
   </section>
 
   <section>
-    <h2>Сложность теперь — измеренная формула</h2>
+    <h2>Where the time goes, measured</h2>
     <div class="mf">
       <div class="eq">
-        <span class="row"><span class="lhs">Время доказательства</span> <span class="op">=</span> <span class="t-wit">5 прогонов модели: 2 145 s по расчёту, 3 612 s по факту</span> <span class="tag">← протокол требует пяти проходов; главный расход</span></span>
-        <span class="row"><span class="op">+</span> <span class="t-br">сверка с регистрацией: 580 s</span> <span class="tag">← чтение 40 точек; свёртка весов считается попутно и стоит ~0</span></span>
-        <span class="row"><span class="op">+</span> <span class="t-qd">проверки корректности: 677 + 93 + 23 + 18 s</span> <span class="tag">← не менялись</span></span>
-        <span class="row"><span class="op">+</span> <span class="t-str">упаковка, загрузка модели, выгрузка файла: 602 + 59 + 207 s</span> <span class="tag">← плюс 700 s фиксированных допусков протокола</span></span>
-        <span class="row"><span class="op">+</span> <span class="t-dead">пересчёт весов 2 423 + раскрытие весов 74 s</span> <span class="tag">← этого больше нет</span></span>
-        <span class="row"><span class="op">(регистрация модели 633 s — один раз на 25 доказательств, то есть 25 s на каждое)</span></span>
+        <span class="row"><span class="lhs">Time per proof</span> <span class="op">=</span> <span class="t-wit">5 model runs: 2 145 s by the model, 3 612 s observed</span> <span class="tag">← the protocol needs five passes, the largest single cost</span></span>
+        <span class="row"><span class="op">+</span> <span class="t-br">check against the registration: 580 s</span> <span class="tag">← reading 40 points, the folding rides along and costs nothing</span></span>
+        <span class="row"><span class="op">+</span> <span class="t-qd">correctness checks: 677 + 93 + 23 + 18 s</span> <span class="tag">← unchanged</span></span>
+        <span class="row"><span class="op">+</span> <span class="t-str">packing, loading the model, writing the file: 602 + 59 + 207 s</span> <span class="tag">← plus 700 s of fixed protocol allowances</span></span>
+        <span class="row"><span class="op">+</span> <span class="t-dead">weight reprocessing 2 423 + weight opening 74 s</span> <span class="tag">← gone</span></span>
+        <span class="row"><span class="op">(registering the model 633 s, once per 25 proofs, so 25 s each)</span></span>
       </div>
-      <div class="eta">Итог: <b>85 минут</b> против 117 до изменения. В реальном прогоне прогоны
-        модели идут дольше расчёта — 60 минут вместо 36, — и теперь именно они, а не веса,
-        определяют время. От размера модели зависит только сверка; всё остальное растёт от длины
-        запроса.</div>
+      <div class="eta">85 minutes against 117 before the change. In the real run the model runs took
+        longer than the model predicts, 60 minutes instead of 36, and they now set the pace rather
+        than the weights. The structural change is that only the check scales with the size of the
+        model, everything else scales with the length of the request.</div>
     </div>
   </section>
 
   <section>
-    <h2>Узкие места — и что с каждым делать</h2>
+    <h2>What a model run costs here</h2>
+    <div class="prose">
+      <p>A proving run is the same forward pass the model would do anyway, with two differences.
+        Every number is an exact 64-bit integer instead of a low precision float, because a proof
+        cannot round. And every intermediate value is written down, since that is what gets proved,
+        which is about 7 recorded numbers per operation output at these shapes.</p>
+      <p>The protocol needs five such runs, one per stage of the exchange, and the run cannot be
+        stored between stages because at this size it is around 760 GB. On our card one run took
+        960 seconds cold and 564 seconds afterwards, so five runs are 60 minutes. Plain inference
+        on the same card was not measured, so the honest split is this. The 60 minutes are the
+        proving runs, not the model doing ordinary work, and the part the protocol adds is the
+        exact arithmetic, the recording, and the repetition.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>The bottlenecks and what fixes them</h2>
     <div class="tblwrap"><table>
-      <tr><th>#</th><th>Компонента</th><th>Сейчас</th><th>Лечение</th><th>Эффект</th></tr>
-      <tr><td>1</td><td>Модель прогоняется 5 раз</td><td class="num">60 мин</td>
-        <td>сохранить результат первого прогона на диск и читать его вместо повторов</td>
-        <td class="num good">−~45 мин</td></tr>
-      <tr><td>2</td><td>Упаковка, загрузка, выгрузка</td><td class="num">15 мин</td>
-        <td>частично уходит вместе с пунктом 1 — меньше повторной сборки</td>
-        <td class="num">−5…10 мин</td></tr>
-      <tr><td>3</td><td>Сверка с регистрацией</td><td class="num">~10 мин</td>
-        <td>хранить регистрацию на диске (6.4 ТБ) и читать только нужные 40 точек (8 ГБ)</td>
-        <td class="num">−~9 мин</td></tr>
-      <tr><td>4</td><td>Проверки корректности</td><td class="num">14 мин</td>
-        <td>только более быстрая видеокарта</td><td class="num">пропорц.</td></tr>
-      <tr><td>—</td><td class="dead" style="text-decoration:line-through">Работа с весами</td><td class="num dead">0 мин</td>
-        <td class="good">уже убрана</td><td class="num good">−42 мин</td></tr>
+      <tr><th>#</th><th>Component</th><th>Now</th><th>Fix</th><th>Effect</th></tr>
+      <tr><td>1</td><td>The model runs five times</td><td class="num">60 min</td>
+        <td>save the first run to disk and read it back instead of repeating</td>
+        <td class="num good">−~45 min</td></tr>
+      <tr><td>2</td><td>Packing, loading, writing</td><td class="num">15 min</td>
+        <td>partly goes away with row 1, less rebuilding</td>
+        <td class="num">−5…10 min</td></tr>
+      <tr><td>3</td><td>The check against the registration</td><td class="num">~10 min</td>
+        <td>keep the registration on disk, 6.4 TB, and read only the 40 points needed, 8 GB</td>
+        <td class="num">−~9 min</td></tr>
+      <tr><td>4</td><td>Correctness checks</td><td class="num">14 min</td>
+        <td>a faster card, nothing else</td><td class="num">in proportion</td></tr>
+      <tr><td>—</td><td class="dead" style="text-decoration:line-through">Weight work</td><td class="num dead">0 min</td>
+        <td class="good">already removed</td><td class="num good">−42 min</td></tr>
     </table></div>
   </section>
 
   <section>
-    <h2>Ручка</h2>
+    <h2>The knob</h2>
     <div class="calc">
       <div class="cpanel cctrls">
-        <div class="dsc" style="margin-bottom:4px;color:var(--ink);font-weight:600">какую модель доказываем:</div>
+        <div class="dsc" style="margin-bottom:4px;color:var(--ink);font-weight:600">which model are we proving:</div>
         <div class="crow" style="grid-template-columns:1fr 1fr 1fr;gap:6px">
           <button class="creset" id="pQwen">Qwen-0.5B</button>
           <button class="creset" id="pLlama">Llama-1B</button>
           <button class="creset" id="pMav">Maverick-400B</button>
         </div>
         <div class="crow">
-          <div class="ctrl"><div class="lab"><span class="nm">ширина слоя</span><span class="vl" id="vD">5120</span></div><input type="range" id="cD" min="256" max="16384" step="128" value="5120"></div>
-          <div class="ctrl"><div class="lab"><span class="nm">длина запроса</span><span class="vl" id="vSeq">1093</span></div><input type="range" id="cSeq" min="16" max="65536" step="16" value="1093"></div>
+          <div class="ctrl"><div class="lab"><span class="nm">layer width</span><span class="vl" id="vD">5120</span></div><input type="range" id="cD" min="256" max="16384" step="128" value="5120"></div>
+          <div class="ctrl"><div class="lab"><span class="nm">request length</span><span class="vl" id="vSeq">1093</span></div><input type="range" id="cSeq" min="16" max="65536" step="16" value="1093"></div>
         </div>
         <div class="crow">
-          <div class="ctrl"><div class="lab"><span class="nm">слоёв</span><span class="vl" id="vL">48</span></div><input type="range" id="cL" min="1" max="200" step="1" value="48"></div>
-          <div class="ctrl"><div class="lab"><span class="nm">размер MLP</span><span class="vl" id="vFF">8192</span></div><input type="range" id="cFF" min="256" max="53248" step="256" value="8192"></div>
+          <div class="ctrl"><div class="lab"><span class="nm">layers</span><span class="vl" id="vL">48</span></div><input type="range" id="cL" min="1" max="200" step="1" value="48"></div>
+          <div class="ctrl"><div class="lab"><span class="nm">MLP size</span><span class="vl" id="vFF">8192</span></div><input type="range" id="cFF" min="256" max="53248" step="256" value="8192"></div>
         </div>
         <div class="crow">
-          <div class="ctrl"><div class="lab"><span class="nm">голов внимания</span><span class="vl" id="vH">40</span></div><input type="range" id="cH" min="1" max="128" step="1" value="40"></div>
-          <div class="ctrl"><div class="lab"><span class="nm">словарь</span><span class="vl" id="vV">202k</span></div><input type="range" id="cV" min="1024" max="262144" step="1024" value="202048"></div>
+          <div class="ctrl"><div class="lab"><span class="nm">attention heads</span><span class="vl" id="vH">40</span></div><input type="range" id="cH" min="1" max="128" step="1" value="40"></div>
+          <div class="ctrl"><div class="lab"><span class="nm">vocabulary</span><span class="vl" id="vV">202k</span></div><input type="range" id="cV" min="1024" max="262144" step="1024" value="202048"></div>
         </div>
         <div class="crow">
-          <div class="ctrl"><div class="lab"><span class="nm">экспертов</span><span class="vl" id="vE">128</span></div><input type="range" id="cE" min="1" max="256" step="1" value="128"></div>
-          <div class="ctrl"><div class="lab"><span class="nm">доля MoE-слоёв</span><span class="vl" id="vMoe">0.5</span></div><input type="range" id="cMoe" min="0" max="1" step="0.05" value="0.5"></div>
+          <div class="ctrl"><div class="lab"><span class="nm">experts</span><span class="vl" id="vE">128</span></div><input type="range" id="cE" min="1" max="256" step="1" value="128"></div>
+          <div class="ctrl"><div class="lab"><span class="nm">share of MoE layers</span><span class="vl" id="vMoe">0.5</span></div><input type="range" id="cMoe" min="0" max="1" step="0.05" value="0.5"></div>
         </div>
-        <div class="dsc">объём работы выводится из формы модели: веса точно, промежуточные значения — по замеренным коэффициентам</div>
+        <div class="dsc">the workload follows from the shape, weights exactly, intermediate values by measured coefficients</div>
         <div class="crow">
-          <div class="ctrl"><div class="lab"><span class="nm">длина кодового блока</span></div>
+          <div class="ctrl"><div class="lab"><span class="nm">code block length</span></div>
             <select id="cK"><option>2048</option><option>4096</option><option>8192</option><option selected>16384</option><option>32768</option><option>65536</option><option>131072</option><option>262144</option><option>524288</option><option>1048576</option></select></div>
-          <div class="ctrl"><div class="lab"><span class="nm">запас избыточности</span></div>
+          <div class="ctrl"><div class="lab"><span class="nm">redundancy factor</span></div>
             <select id="cRho"><option>2</option><option selected>4</option><option>8</option></select></div>
         </div>
         <div class="crow">
-          <div class="ctrl"><div class="lab"><span class="nm">чисел в строке</span><span class="vl" id="vELL">8192</span></div><input type="range" id="cELL" min="9" max="20" step="1" value="13"></div>
-          <div class="ctrl"><div class="lab"><span class="nm">колонок на проверку</span><span class="vl" id="vT">40</span></div><input type="range" id="cT" min="8" max="128" step="1" value="40"></div>
+          <div class="ctrl"><div class="lab"><span class="nm">numbers per row</span><span class="vl" id="vELL">8192</span></div><input type="range" id="cELL" min="9" max="20" step="1" value="13"></div>
+          <div class="ctrl"><div class="lab"><span class="nm">columns spot checked</span><span class="vl" id="vT">40</span></div><input type="range" id="cT" min="8" max="128" step="1" value="40"></div>
         </div>
         <div class="crow">
-          <div class="ctrl"><div class="lab"><span class="nm">точность чисел</span><span class="vl" id="vSc">2¹²</span></div><input type="range" id="cScale" min="2" max="14" step="1" value="12"></div>
-          <div class="ctrl"><div class="lab"><span class="nm">границы значений</span><span class="vl" id="vR">32</span></div><input type="range" id="cR" min="1" max="256" step="1" value="32"></div>
+          <div class="ctrl"><div class="lab"><span class="nm">number precision</span><span class="vl" id="vSc">2¹²</span></div><input type="range" id="cScale" min="2" max="14" step="1" value="12"></div>
+          <div class="ctrl"><div class="lab"><span class="nm">value bounds</span><span class="vl" id="vR">32</span></div><input type="range" id="cR" min="1" max="256" step="1" value="32"></div>
         </div>
         <div class="crow">
-          <div class="ctrl"><div class="lab"><span class="nm">прогонов модели</span><span class="vl" id="vP">4</span></div><input type="range" id="cP" min="1" max="4" step="1" value="4"></div>
-          <div class="ctrl"><div class="lab"><span class="nm">режим оценки</span></div>
+          <div class="ctrl"><div class="lab"><span class="nm">model runs</span><span class="vl" id="vP">4</span></div><input type="range" id="cP" min="1" max="4" step="1" value="4"></div>
+          <div class="ctrl"><div class="lab"><span class="nm">estimation mode</span></div>
             <select id="cWmode"><option value="notebook">notebook</option><option value="measured">measured</option></select></div>
         </div>
-        <label class="chk"><input type="checkbox" id="cBB"> поле поменьше <span class="dsc" style="font-size:10.5px">(вдвое дешевле, но обычно не проходит по надёжности)</span></label>
+        <label class="chk"><input type="checkbox" id="cBB"> smaller field <span class="dsc" style="font-size:10.5px">(half the cost, usually fails on assurance)</span></label>
         <div class="bbstat" id="bbStat"></div>
 
         <div class="optblock">
-          <div class="optlab">что включено</div>
-          <label class="chk"><input type="checkbox" id="cSpill"> <b>не прогонять модель пять раз</b> <span class="dsc" style="font-size:10.5px">(сохранить первый прогон на диск и читать его)</span></label>
-          <div class="ctrl" style="margin-top:6px"><div class="lab"><span class="nm">скорость диска</span></div>
+          <div class="optlab">what is switched on</div>
+          <label class="chk"><input type="checkbox" id="cSpill"> <b>do not run the model five times</b> <span class="dsc" style="font-size:10.5px">(save the first run to disk and read it back)</span></label>
+          <div class="ctrl" style="margin-top:6px"><div class="lab"><span class="nm">disk speed</span></div>
             <select id="cBw"><option value="3.5">NVMe 3.5 GB/s</option><option value="7">NVMe fast 7 GB/s</option><option value="11" selected>RAID/PCIe 11 GB/s</option></select></div>
-          <label class="chk" style="margin-top:8px"><input type="checkbox" id="cCoset"> быстрое кодирование <span class="dsc" style="font-size:10.5px">(выигрыш только на больших блоках)</span></label>
-          <label class="chk" style="margin-top:8px"><input type="checkbox" id="cProj" checked> проекция экспертных умножений <span class="dsc" style="font-size:10.5px">(вместо всех экспертов — только выбранный, свёрнутый случайным числом)</span></label>
-          <label class="chk" style="margin-top:8px"><input type="checkbox" id="cWc" checked> <b>регистрация модели вместо работы с весами</b> <span class="dsc" style="font-size:10.5px">(то, что описано выше; требует включённой проекции)</span></label>
-          <label class="chk" style="margin-top:8px"><input type="checkbox" id="cWcAmort" checked> делить стоимость регистрации на 25 доказательств (её ресурс)</label>
-          <label class="chk" style="margin-top:8px"><input type="checkbox" id="cWcDisk"> хранить регистрацию на диске и читать только нужные точки</label>
-          <div class="ctrl" style="margin-top:8px"><div class="lab"><span class="nm">точек сверки</span><span class="vl" id="vQw">40</span></div>
+          <label class="chk" style="margin-top:8px"><input type="checkbox" id="cCoset"> faster encoding <span class="dsc" style="font-size:10.5px">(only helps on large blocks)</span></label>
+          <label class="chk" style="margin-top:8px"><input type="checkbox" id="cProj" checked> project the expert multiplications <span class="dsc" style="font-size:10.5px">(only the chosen expert, folded by a random number)</span></label>
+          <label class="chk" style="margin-top:8px"><input type="checkbox" id="cWc" checked> <b>register the model instead of reprocessing the weights</b> <span class="dsc" style="font-size:10.5px">(what this page is about)</span></label>
+          <label class="chk" style="margin-top:8px"><input type="checkbox" id="cWcAmort" checked> spread the registration cost over the proofs it lasts</label>
+          <label class="chk" style="margin-top:8px"><input type="checkbox" id="cWcDisk"> keep the registration on disk and read only the points needed</label>
+          <div class="ctrl" style="margin-top:8px"><div class="lab"><span class="nm">check points</span><span class="vl" id="vQw">40</span></div>
             <input type="range" id="cQw" min="16" max="128" step="4" value="40">
-            <div class="dsc">каждая точка добавляет около бита надёжности и тратит ресурс регистрации</div></div>
-          <div class="optnote">Переключатели выставлены в то состояние, в котором код находится сейчас.
-            Прогоны модели ручка считает точно как замеренные (60 минут на пять прогонов), остальные
-            стадии — по асимптотической модели: она консервативна и даёт больше, чем показал реальный
-            прогон.</div>
+            <div class="dsc">each point buys about one bit and spends part of the registration</div></div>
+          <div class="optnote">The switches start in the state the code is in today. Model runs are
+            computed from the measured pass, everything else from a model that is deliberately
+            conservative and comes out above the observed run.</div>
         </div>
 
       </div>
@@ -500,18 +490,18 @@
           <div class="sub" id="oVerdictTxt"></div>
           <div class="sub" id="oTotalH" style="opacity:.75"></div>
         </div>
-        <div class="oterms-head">из чего складывается время</div>
+        <div class="oterms-head">where the time goes</div>
         <div class="oterms">
-          <div class="oterm"><span class="chip cw"></span><span class="nm">прогоны модели</span><span class="bw"><span class="bar cw" id="bWit"></span></span><span class="sec" id="sWit"></span></div>
-          <div class="oterm"><span class="chip cs"></span><span class="nm">упаковка</span><span class="bw"><span class="bar cs" id="bStr"></span></span><span class="sec" id="sStr"></span></div>
-          <div class="oterm"><span class="chip cq"></span><span class="nm">проверки умножений</span><span class="bw"><span class="bar cq" id="bQd"></span></span><span class="sec" id="sQd"></span></div>
-          <div class="oterm"><span class="chip cl2"></span><span class="nm">линейные проверки</span><span class="bw"><span class="bar cl2" id="bLn"></span></span><span class="sec" id="sLn"></span></div>
-          <div class="oterm"><span class="chip co"></span><span class="nm">накладные</span><span class="bw"><span class="bar co" id="bOvh"></span></span><span class="sec" id="sOvh"></span></div>
-          <div class="oterm"><span class="chip cbr"></span><span class="nm">сверка с регистрацией</span><span class="bw"><span class="bar cbr" id="bChk"></span></span><span class="sec" id="sChk"></span></div>
-          <div class="oterm"><span class="chip creg"></span><span class="nm">регистрация (на доказательство)</span><span class="bw"><span class="bar creg" id="bReg"></span></span><span class="sec" id="sReg"></span></div>
+          <div class="oterm"><span class="chip cw"></span><span class="nm">model runs</span><span class="bw"><span class="bar cw" id="bWit"></span></span><span class="sec" id="sWit"></span></div>
+          <div class="oterm"><span class="chip cs"></span><span class="nm">packing</span><span class="bw"><span class="bar cs" id="bStr"></span></span><span class="sec" id="sStr"></span></div>
+          <div class="oterm"><span class="chip cq"></span><span class="nm">multiplication checks</span><span class="bw"><span class="bar cq" id="bQd"></span></span><span class="sec" id="sQd"></span></div>
+          <div class="oterm"><span class="chip cl2"></span><span class="nm">linear checks</span><span class="bw"><span class="bar cl2" id="bLn"></span></span><span class="sec" id="sLn"></span></div>
+          <div class="oterm"><span class="chip co"></span><span class="nm">overheads</span><span class="bw"><span class="bar co" id="bOvh"></span></span><span class="sec" id="sOvh"></span></div>
+          <div class="oterm"><span class="chip cbr"></span><span class="nm">check against registration</span><span class="bw"><span class="bar cbr" id="bChk"></span></span><span class="sec" id="sChk"></span></div>
+          <div class="oterm"><span class="chip creg"></span><span class="nm">registration, per proof</span><span class="bw"><span class="bar creg" id="bReg"></span></span><span class="sec" id="sReg"></span></div>
         </div>
         <div class="snd">
-          <div class="snd-head">Надёжность проверки <b id="oSoundBits">—</b> бит<span class="snd-bind" id="oSoundBind"></span></div>
+          <div class="snd-head">Assurance <b id="oSoundBits">—</b> bits<span class="snd-bind" id="oSoundBind"></span></div>
           <div class="snd-terms">
             <div class="sterm" id="stIRS"><span class="snm">IRS (¾)ᵀ<br>← T, ρ</span><span class="sval" id="vIRS"></span></div>
             <div class="sterm" id="stFld"><span class="snm">field N/|F|<br>← ρ,K, field</span><span class="sval" id="vFld"></span></div>
@@ -519,19 +509,19 @@
           </div>
         </div>
         <div class="oderived">
-          <span>строк <b id="dM">—</b></span>
+          <span>rows <b id="dM">—</b></span>
           <span>W <b id="dW">—</b></span>
           <span>Q <b id="dQ">—</b></span>
           <span>L_lin <b id="dL">—</b></span>
           <span>N=ρK <b id="dN">—</b></span>
           <span>ELL <b id="dELL">—</b></span>
-          <span>бит в аккумуляторе <b id="dB">—</b></span>
-          <span>поле <b id="dField">—</b></span>
-          <span>надёжность сверки <b id="dWcBits">—</b></span>
-          <span>доказательств на регистрацию <b id="dWcBudget">—</b></span>
+          <span>accumulator bits <b id="dB">—</b></span>
+          <span>field <b id="dField">—</b></span>
+          <span>check assurance <b id="dWcBits">—</b></span>
+          <span>proofs per registration <b id="dWcBudget">—</b></span>
           <span>M (lookup) <b id="dMq">—</b></span>
-          <span>размер файла <b id="dProof">—</b></span>
-          <span>проверка <b id="dVerify">—</b></span>
+          <span>proof size <b id="dProof">—</b></span>
+          <span>verification <b id="dVerify">—</b></span>
         </div>
         <div class="cwarn" id="cWarn"></div>
       </div>
@@ -661,7 +651,7 @@
       var sum=total;                                 // formula sum (for the bars/breakdown)
       $('oTotal').textContent=(total>=3600? (total/3600).toFixed(2)+' ч' : Math.round(total/60)+' мин');
       var vd=$('oVerdict'); vd.className='verdict '+(total<3600?'ok':'no');
-      $('oVerdictTxt').textContent=(total<3600?'укладываемся в час':'больше часа')+
+      $('oVerdictTxt').textContent=(total<3600?'under an hour':'over an hour')+
         ' · '+fmtS(total)+' s';
       $('sChk').textContent=fmtS(checkS)+' s'; $('sReg').textContent=fmtS(regS)+' s';
       $('bChk').style.width=(100*checkS/(sum||1)).toFixed(1)+'%';
@@ -709,16 +699,16 @@
       $('dProof').textContent=(proof_b/1e9).toFixed(1)+' GB'; $('dVerify').textContent=(verify_s/3600).toFixed(1)+' h';
 
       var w=[];
-      if(Math.round(Math.log2(2*K))>24||Math.round(Math.log2(N))>24||Math.round(Math.log2(K))<12) w.push('⚠ длина блока вне откалиброванного диапазона — значение подрезано.');
+      if(Math.round(Math.log2(2*K))>24||Math.round(Math.log2(N))>24||Math.round(Math.log2(K))<12) w.push('⚠ block length outside the calibrated range, value clamped.');
       if(ELL<d) w.push(ELLcap
-        ? '⚠ строка короче ширины слоя, а поднять её уже нельзя — увеличьте длину блока.'
-        : '⚠ строка короче ширины слоя — увеличьте число чисел в строке.');
-      if(wmode==='measured'&&!(604267<=mtot&&mtot<=2747117)) w.push('⚠ режим «measured» откалиброван не на этот размер — здесь это экстраполяция.');
-      if(spillOn&&wmode!=='notebook') w.push('⚠ отказ от повторных прогонов учитывается только в режиме оценки notebook.');
-      if(cosetOn&&K<262144) w.push('⚠ быстрое кодирование ничего не даёт на блоках меньше 2¹⁸.');
-      if(projOn&&wmode!=='notebook') w.push('⚠ проекция учитывается только в режиме оценки notebook.');
-      if($('cWcDisk').checked&&!wcOn) w.push('⚠ «хранить регистрацию на диске» работает только вместе с регистрацией модели.');
-      if($('cWcAmort').checked&&!wcOn) w.push('⚠ деление стоимости регистрации работает только вместе с регистрацией модели.');
+        ? '⚠ the row is shorter than the layer and cannot grow, raise the block length.'
+        : '⚠ the row is shorter than the layer, raise the numbers per row.');
+      if(wmode==='measured'&&!(604267<=mtot&&mtot<=2747117)) w.push('⚠ the measured mode was not calibrated for this size, this is extrapolation.');
+      if(spillOn&&wmode!=='notebook') w.push('⚠ skipping repeat runs is only modelled in notebook mode.');
+      if(cosetOn&&K<262144) w.push('⚠ faster encoding does nothing below block size 2¹⁸.');
+      if(projOn&&wmode!=='notebook') w.push('⚠ projection is only modelled in notebook mode.');
+      if($('cWcDisk').checked&&!wcOn) w.push('⚠ keeping the registration on disk needs the registration switched on.');
+      if($('cWcAmort').checked&&!wcOn) w.push('⚠ spreading the registration cost needs the registration switched on.');
       // The BabyBear status lives under its own checkbox (#bbStat) — why the time
       // changes or not; not duplicated here.
       $('cWarn').innerHTML=w.join('<br>');
@@ -727,7 +717,7 @@
     ['cD','cSeq','cL','cFF','cH','cV','cE','cMoe','cK','cRho','cELL','cT','cScale','cR','cP',
      'cWmode','cBB','cSpill','cBw','cCoset','cProj','cWc','cWcAmort','cWcDisk','cQw'].forEach(function(id){
       var el=$(id);
-      if(!el) throw new Error('нет элемента управления '+id);
+      if(!el) throw new Error('missing control '+id);
       el.addEventListener('input',compute); el.addEventListener('change',compute);
     });
     $('pQwen').addEventListener('click',function(){preset({cD:896,cSeq:256,cL:24,cFF:4864,cH:14,cV:151936,cE:1,cMoe:0,cK:'2048',cELL:10,cT:16,cWmode:'measured',cScale:12,cR:32,cP:4,cRho:'4'});});
