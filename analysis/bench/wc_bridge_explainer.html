@@ -1,4 +1,4 @@
-<title>WC-LCRL-STC: мост вместо весов</title>
+<title>Мост вместо весов</title>
 <style>
   :root{
     --ground:#F4F7FA; --panel:#FFFFFF; --ink:#131820; --muted:#5A6472;
@@ -161,21 +161,21 @@
 </style>
 
 <div class="wrap">
-  <p class="eyebrow">VerInf · WC-LCRL-STC · разбор алгоритма</p>
+  <p class="eyebrow">VerInf · разбор изменения</p>
   <h1>Мост вместо весов</h1>
   <p class="thesis">Прувер доказывает, что прогнал именно разрешённую модель, — и раньше для
     этого <b>каждое</b> доказательство математически перерабатывало все 400.7 млрд её весов
-    (~1.5 часа работы), хотя веса от пруфа к пруфу не меняются. Новая схема выносит эту работу
+    (~1.5 часа работы), хотя от запуска к запуску веса одни и те же. Новая схема выносит эту работу
     за скобки: веса <b>один раз</b> фиксируются отдельной проверяемой структурой —
-    <b>enrollment</b>, «регистрацией модели», — а каждое доказательство лишь сверяется с ней
+    <b>регистрацией модели</b>, — а каждое доказательство лишь сверяется с ней
     в 40 случайных точках (эта короткая сверка и называется <b>мостом</b>). Подделать веса и
     пройти сверку можно с вероятностью 2⁻⁴⁰ — примерно один шанс на триллион.</p>
 
   <div class="facts">
-    <div class="fact good"><div class="n">−5 437 s</div><div class="l">весовые стадии, удалённые из каждого пруфа (фолд 3 625 + открытия 1 812)</div></div>
-    <div class="fact"><div class="n">+&#8202;~590 s</div><div class="l">цена моста в пруфе (η-колонки; Wρ едет бесплатно в свипе R2)</div></div>
-    <div class="fact"><div class="n">633 s</div><div class="l">enrollment всей модели — одноразово, амортизируется на ~25 пруфов</div></div>
-    <div class="fact dead"><div class="n">5 × свип</div><div class="l">регенерации witness — новое узкое место (§0.6 message cache не реализован)</div></div>
+    <div class="fact good"><div class="n">−91 мин</div><div class="l">работы с весами убрано из каждого доказательства</div></div>
+    <div class="fact"><div class="n">+10 мин</div><div class="l">во столько обходится сверка, которая её заменила</div></div>
+    <div class="fact"><div class="n">11 мин</div><div class="l">регистрация модели — один раз на 25 доказательств</div></div>
+    <div class="fact dead"><div class="n">67 мин</div><div class="l">новое узкое место: модель прогоняется пять раз подряд</div></div>
   </div>
 
   <section>
@@ -183,71 +183,68 @@
     <div class="ba">
       <div class="row"><span class="tag" style="color:var(--dead)">ДО (RP-STC)</span>
         <div class="barwrap"><div class="bar">
-          <span class="b-wit" style="flex:27">свипы 27%</span>
-          <span class="b-dead" style="flex:28">вес-фолд q_lin 28%</span>
-          <span class="b-dead" style="flex:14">вес-открытия 14%</span>
-          <span class="b-str" style="flex:12">fresh commit 12%</span>
-          <span class="b-qd" style="flex:6">quad 6%</span>
+          <span class="b-wit" style="flex:27">прогоны модели 27%</span>
+          <span class="b-dead" style="flex:28">пересчёт весов 28%</span>
+          <span class="b-dead" style="flex:14">раскрытие весов 14%</span>
+          <span class="b-str" style="flex:12">упаковка 12%</span>
+          <span class="b-qd" style="flex:6">проверки 6%</span>
           <span class="b-lin" style="flex:13">прочее 13%</span>
         </div></div></div>
       <div class="row"><span class="tag" style="color:var(--good)">ПОСЛЕ (WC)</span>
         <div class="barwrap"><div class="bar">
-          <span class="b-wit" style="flex:48">свипы 48%</span>
-          <span class="b-br" style="flex:8">мост 8%</span>
-          <span class="b-str" style="flex:17">fresh commit 17%</span>
-          <span class="b-qd" style="flex:9">quad 9%</span>
+          <span class="b-wit" style="flex:48">прогоны модели 48%</span>
+          <span class="b-br" style="flex:8">сверка 8%</span>
+          <span class="b-str" style="flex:17">упаковка 17%</span>
+          <span class="b-qd" style="flex:9">проверки 9%</span>
           <span class="b-lin" style="flex:18">прочее 18%</span>
         </div></div></div>
-      <div class="cap">Доли — из admission-замеров A100 SXM4 (15.08). Оранжевым — то, что
-        структурно удалено: онлайн-фолд весов в q_lin и открытие весового коммита. Веса больше
-        <b>вообще не являются строками witness</b> (`tape.external`) — их держит enrollment.
-        Свипы никуда не делись — поэтому их доля выросла, и они стали узким местом №1.</div>
+      <div class="cap">Замеры на A100, 15 августа. Оранжевым — работа с весами, которой больше
+        нет ни в одном доказательстве. Прогоны модели остались прежними — поэтому их доля выросла,
+        и теперь узкое место именно они.</div>
     </div>
     <div class="prose" style="margin-top:16px">
-      <p><b>Зачем.</b> В базовом протоколе веса — часть witness: каждый пруф платит за них
-        полиномиальные фолды и открытия, линейные по числу параметров. Но веса
-        <b>не меняются между пруфами</b> — платить за них каждый раз бессмысленно, если есть способ
-        один раз зафиксировать их «навсегда» и дёшево связывать с каждым пруфом. Этот способ —
-        коэффициентный RS-enrollment + поздний случайный мост.</p>
+      <p>Веса не меняются от доказательства к доказательству, а платили за них каждый раз —
+        полтора часа на 400 миллиардов чисел. Теперь эту цену платят один раз при регистрации
+        модели, а каждое доказательство отделывается сверкой в 40 точках.</p>
     </div>
   </section>
 
   <section>
     <h2>Как работает мост — пять шагов</h2>
     <div class="steps">
-      <div class="step"><h3>1 · Enrollment (одноразово)</h3>
-        <p>Веса группируются по ширине выхода, режутся на блоки по <b>B=15360</b> координат.
-        Блок и выходная координата <b>j</b> дают полином: первые B коэффициентов — веса,
-        сверху <b>λ=1024</b> случайных масок (маски = приватность). Полиномы кодируются на домене
-        N_w=32768 и связываются одним Merkle-корнем.</p>
-        <div class="f">F(X) = Σ W·Xᵇ + Σ z·X^(B+h) · K_w=16384 · N_w=32768</div></div>
-      <div class="step"><h3>2 · ρ после R1</h3>
-        <p>Пруф сначала <b>коммитит все выходы</b> (R1), и только потом из транскрипта рождается
-        общий на ширину коин <b>ρ</b>. Подгонять выходы под ρ уже поздно — на этом стоит вся
-        конструкция. Один ρ на ширину = один набор открытий на все 72 матмула.</p>
-        <div class="f">s_op = H(транскрипт R1) → ρ ∈ F^J</div></div>
-      <div class="step"><h3>3 · P_trace в R2</h3>
-        <p>Прувер коммитит <b>P_trace = Wρ</b> — ту самую переменную, которую едят дальнейшие
-        ограничения (несвязанная копия = ошибка компиляции, §0.8), и проекции масок
-        <b>π = zᵀρ</b>. Wρ считается «бесплатно»: он фьюзится в свип R2, который и так читает
-        каждый вес один раз.</p>
-        <div class="f">R2: commit(P_trace, π) → s_bind</div></div>
-      <div class="step"><h3>4 · Поздние коины: α и η</h3>
-        <p>Только теперь транскрипт выдаёт по случайному <b>α</b> на блок и <b>q_w=40 различных</b>
-        точек домена <b>η</b>. Прувер агрегирует c = Σ α·(P_trace‖π) и отдаёт c и значения
-        v = c(η).</p>
-        <div class="f">c_k = Σ α·U_k · v_ℓ = c(η_ℓ)</div></div>
-      <div class="step"><h3>5 · Проверка на 40 точках</h3>
-        <p>Верификатор открывает enrollment-колонки в тех же η и сверяет: v_ℓ обязан равняться
-        Σ α Σ ρ_j F(η_ℓ). Ложный P_trace — это ненулевой полином степени &lt;K_w, зафиксированный
-        <b>до</b> α и η: он выживает с вероятностью ≤ 1/p + H₄₀.</p>
-        <div class="f">H₄₀ = C(16383,40)/C(32768,40) ≈ 8.86·10⁻¹³ ≈ 2⁻⁴⁰</div></div>
-      <div class="step"><h3>Бюджет масок (ledger)</h3>
-        <p>Каждый пруф раскрывает 40 точек; маски идеально прячут веса, пока раскрыто ≤ λ=1024
-        различных точек — итого <b>~25 пруфов на один enrollment</b>, дальше re-enrollment со
-        свежими масками (детерминированная пересверка, linking не нужен). Прувер ведёт ledger и
-        отказывается доказывать при исчерпании.</p>
-        <div class="f">⌊1024/40⌋ = 25 пруфов · precheck fail-closed</div></div>
+      <div class="step"><h3>1 · Регистрация модели (один раз)</h3>
+        <p>Все веса режутся на блоки и превращаются в многочлены: сами веса плюс <b>1024</b>
+        случайные маски сверху — маски не дают восстановить веса по проверкам. Всё это
+        разворачивается в 32768 точек и сводится к одному отпечатку, который и становится
+        публичным именем модели.</p>
+        <div class="f">400.7 млрд весов → один отпечаток</div></div>
+      <div class="step"><h3>2 · Случайное число ρ</h3>
+        <p>Сначала прувер публикует все результаты прогона. И только после этого появляется
+        случайное число <b>ρ</b> — его нельзя было узнать заранее, поэтому подогнать результаты
+        под будущую проверку невозможно. Одно ρ обслуживает все 72 матричных умножения сразу.</p>
+        <div class="f">ρ = хэш(всё опубликованное)</div></div>
+      <div class="step"><h3>3 · Сжатие весов до Wρ</h3>
+        <p>Прувер публикует <b>Wρ</b> — свёртку всех весов по ρ, одно число вместо целой строки.
+        Это ровно та величина, которой пользуется остальная часть доказательства, а не отдельная
+        копия «для проверки»: подмена ловится ещё при сборке. Считается бесплатно — попутно с
+        проходом, который и так читает каждый вес.</p>
+        <div class="f">Wρ + свёртка масок</div></div>
+      <div class="step"><h3>4 · Выбор 40 точек проверки</h3>
+        <p>Теперь появляются ещё случайные числа: по одному на блок весов (чтобы смешать все блоки
+        в один) и <b>40 разных точек</b>, в которых будет проверка. Прувер отдаёт значения своей
+        смеси в этих точках.</p>
+        <div class="f">40 точек из 32768 возможных</div></div>
+      <div class="step"><h3>5 · Сверка</h3>
+        <p>Проверяющий берёт те же 40 точек из регистрации модели и смотрит, совпали ли значения.
+        Соврать про веса можно, только если ложь случайно совпала во всех 40 точках сразу —
+        а точки выбраны уже после того, как прувер всё зафиксировал.</p>
+        <div class="f">шанс проскочить ≈ 1 из 1 128 000 000 000</div></div>
+      <div class="step"><h3>Ресурс одной регистрации</h3>
+        <p>Каждое доказательство тратит 40 точек из 1024. Пока потрачено меньше 1024, веса
+        математически невосстановимы. Значит одной регистрации хватает на <b>25 доказательств</b>,
+        после чего модель регистрируют заново с новыми масками — прувер считает остаток сам и
+        отказывается работать, когда он кончается.</p>
+        <div class="f">1024 ÷ 40 = 25 доказательств</div></div>
     </div>
   </section>
 
@@ -255,38 +252,34 @@
     <h2>Надёжность: что на что обменяли</h2>
     <div class="tblwrap"><table>
       <tr><th>Отношение</th><th>Было (онлайн)</th><th>Стало (мост)</th><th>Ошибка</th></tr>
-      <tr><td><span class="mono">P = Wρ</span></td><td class="dead">LF1B-фолд по строкам весов</td>
-        <td class="good">коэффициентный мост к enrollment</td><td class="num">1/p + 2⁻⁴⁰·⁰⁴</td></tr>
-      <tr><td><span class="mono">Q=MP, H=X⊙Q, Σ H = Yρ</span></td><td>fresh-ограничения + поздний Freivalds</td>
-        <td>без изменений</td><td class="num">2/p</td></tr>
-      <tr><td>fresh-часть (qIRS/qLin/quad)</td><td>(3/4)^54 ≈ 2⁻¹⁶·⁸</td>
-        <td>без изменений — <b>осталась самым слабым термом</b></td><td class="num">2⁻¹⁶·⁸</td></tr>
-      <tr><td>приватность маршрута</td><td>все эксперты открываются одинаково</td>
-        <td>column-major открытия не зависят от M</td><td class="num">—</td></tr>
+      <tr><td>«веса те самые»</td><td class="dead">пересчёт всех весов в каждом доказательстве</td>
+        <td class="good">сверка с регистрацией в 40 точках</td><td class="num">2⁻⁴⁰</td></tr>
+      <tr><td>«эксперт выбран честно»</td><td>случайные проверки на месте</td>
+        <td>без изменений</td><td class="num">2⁻⁶³</td></tr>
+      <tr><td>всё остальное (сам прогон)</td><td>выборочная проверка 54 колонок</td>
+        <td>без изменений — <b>теперь это самое слабое звено</b></td><td class="num">2⁻¹⁶·⁸</td></tr>
+      <tr><td>маршрут остаётся тайной</td><td>все эксперты раскрываются одинаково</td>
+        <td>без изменений</td><td class="num">—</td></tr>
     </table></div>
-    <div class="prose" style="margin-top:12px"><p>Мост (2⁻⁴⁰) <b>сильнее</b> той Ligero-части,
-      которую он заменил (2⁻¹⁶·⁸ при τ=54): суммарная надёжность не деградировала, а по
-      заменённой компоненте выросла. Правило масштабирования из ревью: q_w ≥ ⌈0.416·τ⌉ —
-      q_w=40 хватает до τ=96. Оба верификатора (Python и Rust-твин) пересчитывают все коины
-      сами и не верят ни одному значению из пруфа.</p></div>
+    <div class="prose" style="margin-top:12px"><p><b>Надёжность выросла:</b> новая проверка
+      (2⁻⁴⁰) на порядки строже той, что она заменила (2⁻¹⁶·⁸).</p></div>
   </section>
 
   <section>
     <h2>Сложность теперь — измеренная формула</h2>
     <div class="mf">
       <div class="eq">
-        <span class="row"><span class="lhs">PROVE_wc</span> <span class="op">=</span> <span class="t-wit">Σ свипы: cold + 4×warm</span> <span class="op">≈ 960 + 960 + 3×564 s</span> <span class="tag">← 5 регенераций witness; R1/R2 несут коммит-работу — узкое место №1</span></span>
-        <span class="row"><span class="op">+</span> <span class="t-br">мост: C-проход по η-колонкам</span> <span class="op">≈ 580 s</span> <span class="tag">← один NTT-свип по весам; Wρ уже внутри свипа R2 (≈0)</span></span>
-        <span class="row"><span class="op">+</span> <span class="t-qd">quad 677</span> <span class="op">+</span> <span class="t-lin">lin 93 + hash 23 + fresh-открытия 18</span> <span class="tag">← fresh-тесты, без изменений</span></span>
-        <span class="row"><span class="op">+</span> <span class="t-str">egress 207 + обвязка раундов ≈ 1 900</span> <span class="tag">← merkle-финализация, компиляция пакетов; вычислено из наблюдаемой траектории</span></span>
-        <span class="row"><span class="op">+</span> <span class="t-dead">вес-фолд 3 625 + вес-открытия 1 812</span> <span class="tag">← УДАЛЕНО мостом</span></span>
-        <span class="row"><span class="op">(+ enrollment 633 s — одноразово, ÷25 пруфов ≈ 25 s/пруф)</span></span>
+        <span class="row"><span class="lhs">Время доказательства</span> <span class="op">=</span> <span class="t-wit">5 прогонов модели: 960 + 960 + 3×564 s</span> <span class="tag">← протокол требует пяти проходов; главный расход</span></span>
+        <span class="row"><span class="op">+</span> <span class="t-br">сверка с регистрацией: 580 s</span> <span class="tag">← чтение 40 точек; свёртка Wρ считается попутно и стоит ~0</span></span>
+        <span class="row"><span class="op">+</span> <span class="t-qd">проверки корректности: 677 + 93 + 23 + 18 s</span> <span class="tag">← не менялись</span></span>
+        <span class="row"><span class="op">+</span> <span class="t-str">упаковка и выгрузка доказательства: ≈ 2 100 s</span> <span class="tag">← сборка деревьев и запись файла</span></span>
+        <span class="row"><span class="op">+</span> <span class="t-dead">пересчёт весов 3 625 + раскрытие весов 1 812 s</span> <span class="tag">← этого больше нет</span></span>
+        <span class="row"><span class="op">(регистрация модели 633 s — один раз на 25 доказательств)</span></span>
       </div>
-      <div class="eta">Все числа — A100 SXM4, замеры 15.08 (admission-отчёт + живой лог прувинга).
-        Итог на этой карте: <b>≈ 2 часа</b>, из них <b>~60% — пять регенераций witness</b>.
-        Асимптотика: enrollment O(#весов) одноразово; на пруф — O(#весов) только в C-проходе моста
-        и в чтении весов свипом R2; всё остальное — O(fresh-witness), от числа параметров больше
-        не зависит.</div>
+      <div class="eta">Все числа замерены на A100 15 августа. Итог на этой карте — <b>около двух
+        часов</b>, из них <b>60% съедают пять прогонов модели</b>. Главное изменение в структуре:
+        от числа весов теперь зависят только два слагаемых (сверка и один проход чтения), всё
+        остальное растёт от длины запроса, а не от размера модели.</div>
     </div>
   </section>
 
@@ -294,18 +287,19 @@
     <h2>Узкие места — и что с каждым делать</h2>
     <div class="tblwrap"><table>
       <tr><th>#</th><th>Компонента</th><th>Сейчас (A100)</th><th>Лечение</th><th>Эффект</th></tr>
-      <tr><td>1</td><td>5 регенераций witness</td><td class="num">~67 мин</td>
-        <td>§0.6 message cache: 1 регенерация + 2 чтения кэша с NVMe (~760 ГБ)</td>
+      <tr><td>1</td><td>Модель прогоняется 5 раз</td><td class="num">~67 мин</td>
+        <td>сохранить результат первого прогона на диск и читать его вместо повторов</td>
         <td class="num good">−~45 мин</td></tr>
-      <tr><td>2</td><td>обвязка раундов + fresh commit</td><td class="num">~32 мин</td>
-        <td>частично уходит вместе с кэшем (меньше повторных финализаций)</td>
+      <tr><td>2</td><td>Упаковка доказательства</td><td class="num">~32 мин</td>
+        <td>частично уходит вместе с пунктом 1 — меньше повторной сборки</td>
         <td class="num">−5…10 мин</td></tr>
-      <tr><td>3</td><td>C-проход моста (η-колонки)</td><td class="num">~10 мин</td>
-        <td>хранить codewords enrollment на диске (6.4 ТБ) → читать 40 колонок (~8 ГБ)</td>
+      <tr><td>3</td><td>Сверка с регистрацией</td><td class="num">~10 мин</td>
+        <td>хранить регистрацию на диске (6.4 ТБ) и читать только нужные 40 точек (8 ГБ)</td>
         <td class="num">−~9 мин</td></tr>
-      <tr><td>4</td><td>quad/lin/egress</td><td class="num">~17 мин</td><td>карта быстрее (H100 ≈ ×1.8)</td><td class="num">пропорц.</td></tr>
-      <tr><td>—</td><td class="dead" style="text-decoration:line-through">весовые стадии</td><td class="num dead">0 мин</td>
-        <td class="good">уже удалены мостом</td><td class="num good">−91 мин</td></tr>
+      <tr><td>4</td><td>Проверки корректности</td><td class="num">~17 мин</td>
+        <td>только более быстрая видеокарта</td><td class="num">пропорц.</td></tr>
+      <tr><td>—</td><td class="dead" style="text-decoration:line-through">Работа с весами</td><td class="num dead">0 мин</td>
+        <td class="good">уже убрана</td><td class="num good">−91 мин</td></tr>
     </table></div>
   </section>
 
@@ -315,44 +309,44 @@
       <div class="cpanel cctrls">
         <div class="ctrl"><div class="lab"><span class="nm">карта</span></div>
           <select id="kGpu">
-            <option value="1.0" selected>A100 SXM4-80G — якорь ×1.00</option>
-            <option value="1.15">A100 PCIE — ×1.15 (замер witness)</option>
-            <option value="1.10">L40S — ×1.10 (замер моста)</option>
-            <option value="0.55">H100 — ×0.55 (модель)</option>
-            <option value="1.70">RTX 8000 — ×1.70 (модель)</option>
+            <option value="1.0" selected>A100 SXM4-80G — на ней мерили</option>
+            <option value="1.15">A100 PCIE — ×1.15 (замерена)</option>
+            <option value="1.10">L40S — ×1.10 (замерена)</option>
+            <option value="0.55">H100 — ×0.55 (оценка)</option>
+            <option value="1.70">RTX 8000 — ×1.70 (оценка)</option>
           </select>
           <div class="dsc">множитель ко всем compute-стадиям относительно якоря</div></div>
         <label class="chk"><input type="checkbox" id="kCache">
-          message cache (§0.6, не реализован): 5 свипов → 1 + два чтения кэша</label>
-        <div class="ctrl"><div class="lab"><span class="nm">NVMe для кэша</span><span class="vl" id="vDisk">3.0 ГБ/с</span></div>
+          не прогонять модель 5 раз: сохранить первый прогон на диск <b>(ещё не сделано)</b></label>
+        <div class="ctrl"><div class="lab"><span class="nm">скорость диска</span><span class="vl" id="vDisk">3.0 ГБ/с</span></div>
           <input type="range" id="kDisk" min="1" max="12" step="0.5" value="3">
-          <div class="dsc">кэш fresh-строк ≈ 762 ГБ при S=1000; два прохода чтения</div></div>
+          <div class="dsc">сохранённый прогон весит ~760 ГБ, его читают дважды</div></div>
         <label class="chk"><input type="checkbox" id="kStore">
-          codewords enrollment на диске (6.4 ТБ): C-проход → чтение 40 колонок (~8 ГБ)</label>
+          хранить регистрацию модели на диске и читать только 40 нужных точек</label>
         <label class="chk"><input type="checkbox" id="kAmort" checked>
-          амортизировать enrollment на 25 пруфов (иначе прибавить все 633 s)</label>
-        <div class="ctrl"><div class="lab"><span class="nm">S — токены</span><span class="vl" id="vS">1000</span></div>
+          делить стоимость регистрации на 25 доказательств</label>
+        <div class="ctrl"><div class="lab"><span class="nm">длина запроса</span><span class="vl" id="vS">1000</span></div>
           <input type="range" id="kS" min="250" max="4000" step="250" value="1000">
-          <div class="dsc">fresh-часть и кэш растут ~линейно по S (softmax — быстрее)</div></div>
-        <div class="ctrl"><div class="lab"><span class="nm">q_w — точки моста</span><span class="vl" id="vQw">40</span></div>
+          <div class="dsc">токенов в доказываемом прогоне</div></div>
+        <div class="ctrl"><div class="lab"><span class="nm">точек сверки</span><span class="vl" id="vQw">40</span></div>
           <input type="range" id="kQw" min="24" max="96" step="4" value="40">
-          <div class="dsc">надёжность ≈ бит/точку; бюджет масок ⌊1024/q_w⌋ пруфов</div></div>
+          <div class="dsc">больше точек — надёжнее, но меньше доказательств на регистрацию</div></div>
       </div>
       <div class="cpanel">
         <div class="verdict ok" id="kVerdict"><div class="big" id="kTotal">—</div><div class="sub" id="kSub"></div></div>
         <div class="oterms">
-          <div class="oterm"><span class="chip c-wit"></span><span class="nm">свипы witness</span><span class="bw"><span class="bar2 c-wit" id="bSweep"></span></span><span class="sec" id="sSweep"></span></div>
-          <div class="oterm"><span class="chip c-str"></span><span class="nm">обвязка + commit + egress</span><span class="bw"><span class="bar2 c-str" id="bWrap"></span></span><span class="sec" id="sWrap"></span></div>
-          <div class="oterm"><span class="chip c-br"></span><span class="nm">мост (η-колонки)</span><span class="bw"><span class="bar2 c-br" id="bBr"></span></span><span class="sec" id="sBr"></span></div>
-          <div class="oterm"><span class="chip c-qd"></span><span class="nm">quad + lin тесты</span><span class="bw"><span class="bar2 c-qd" id="bQd"></span></span><span class="sec" id="sQd"></span></div>
-          <div class="oterm"><span class="chip c-ovh"></span><span class="nm">enrollment (аморт.)</span><span class="bw"><span class="bar2 c-ovh" id="bEnr"></span></span><span class="sec" id="sEnr"></span></div>
+          <div class="oterm"><span class="chip c-wit"></span><span class="nm">прогоны модели</span><span class="bw"><span class="bar2 c-wit" id="bSweep"></span></span><span class="sec" id="sSweep"></span></div>
+          <div class="oterm"><span class="chip c-str"></span><span class="nm">упаковка и выгрузка</span><span class="bw"><span class="bar2 c-str" id="bWrap"></span></span><span class="sec" id="sWrap"></span></div>
+          <div class="oterm"><span class="chip c-br"></span><span class="nm">сверка с регистрацией</span><span class="bw"><span class="bar2 c-br" id="bBr"></span></span><span class="sec" id="sBr"></span></div>
+          <div class="oterm"><span class="chip c-qd"></span><span class="nm">проверки корректности</span><span class="bw"><span class="bar2 c-qd" id="bQd"></span></span><span class="sec" id="sQd"></span></div>
+          <div class="oterm"><span class="chip c-ovh"></span><span class="nm">регистрация модели</span><span class="bw"><span class="bar2 c-ovh" id="bEnr"></span></span><span class="sec" id="sEnr"></span></div>
         </div>
         <div class="anchors" id="kAnchors">
-          Якоря <span class="pill meas">замер</span>: свипы 960/960/564 s, мост-C 580 s, quad 677,
-          lin 93, hash 23, откр. 18, egress 207, enrollment 633 — A100 SXM4, 15.08.
-          <span class="pill ind">косвенно</span>: обвязка раундов ≈ 1 900 s (из траектории 3/5 свипов
-          за 88 мин). <span class="pill model">модель</span>: множители карт H100/RTX8000, масштаб по S,
-          эффект message cache и дискового store — предсказания, не измерения.
+          <span class="pill meas">замерено</span> на A100 15.08: прогоны 960/960/564 s, сверка 580,
+          проверки 677/93/23/18, выгрузка 207, регистрация 633.
+          <span class="pill ind">оценено</span> из хода прогона: упаковка ≈ 1 900 s.
+          <span class="pill model">предсказание</span>: другие видеокарты, длина запроса,
+          эффект от диска — не измерялись.
         </div>
       </div>
     </div>
@@ -362,26 +356,22 @@
     <h2>Хронология измерений</h2>
     <div class="tblwrap"><table>
       <tr><th>Дата · железо</th><th>Что мерили</th><th>Результат</th></tr>
-      <tr><td class="mono">14.08 · RTX 8000</td><td>мост изолированно, слайсы до 464M весов</td>
-        <td class="num">enroll 49 нс/парам · prove 0.38 нс/парам · ACCEPT</td></tr>
-      <tr><td class="mono">14.08 · L40S</td><td>полный Maverick, standalone-мост (400.7B весов)</td>
-        <td class="num">enroll 649 s · мост B+C 1 051 s · drift-free · ACCEPT</td></tr>
-      <tr><td class="mono">15.08 · A100 SXM4</td><td>интегрированный пруф: shakedown 2 слоя + admission</td>
-        <td class="num">shakedown prove 225.6 s ACCEPT · Sz бит-в-бит · admission 8 939/14 400 s</td></tr>
-      <tr><td class="mono">15.08 · A100 SXM4</td><td>финальный полный пруф (48 слоёв, S=1000)</td>
-        <td class="num dead">3/5 свипов за 88 мин; бокс погиб до сбора результата — число утрачено</td></tr>
+      <tr><td class="mono">14.08 · RTX 8000</td><td>сверка отдельно от прувера, до 464 млн весов</td>
+        <td class="num">проверка проходит</td></tr>
+      <tr><td class="mono">14.08 · L40S</td><td>вся модель, 400.7 млрд весов</td>
+        <td class="num">регистрация 649 s · сверка 1 051 s · проверка проходит</td></tr>
+      <tr><td class="mono">15.08 · A100</td><td>полный протокол на 2 слоях реальной модели</td>
+        <td class="num">доказательство 226 s · проверка проходит · результат прогона совпал побитово</td></tr>
+      <tr><td class="mono">15.08 · A100</td><td>полное доказательство, 48 слоёв, 1000 токенов</td>
+        <td class="num dead">3 прогона из 5 за 88 мин, дальше машина умерла — итоговое время не получено</td></tr>
     </table></div>
-    <div class="prose" style="margin-top:12px"><p>Интегрированный гейт: <b>83 теста / 13 сьютов</b>
-      зелёные, включая конец-в-конец через Rust-твина и все негативы (чужой ρ, тампер P_trace,
-      подмена модели, чужие η, переполненный ledger, несвязанная копия P_trace). Статус-документ:
-      <code>analysis/wc-lcrl-stc-status.md</code>; родственные страницы —
-      <a href="https://claude.ai/code/artifact/21556b18-1b64-42a4-ab7a-7d60c196bce3">кост-модель прувера</a>
-      и <a href="https://claude.ai/code/artifact/4478fd6b-b774-44f9-9481-26f973a4309f">нота о проекции</a>.</p></div>
+    <div class="prose" style="margin-top:12px"><p><b>83 теста проходят</b>, включая попытки
+      обмануть проверку: подменить модель, подправить свёртку весов, выбрать точки сверки самому,
+      превысить ресурс регистрации — все отклоняются. Рядом:
+      <a href="https://claude.ai/code/artifact/21556b18-1b64-42a4-ab7a-7d60c196bce3">из чего складывается время доказательства</a>
+      и <a href="https://claude.ai/code/artifact/4478fd6b-b774-44f9-9481-26f973a4309f">как работает проекция</a>.</p></div>
   </section>
 
-  <div class="foot">Исходник: <span class="mono">analysis/bench/wc_bridge_explainer.html</span> ·
-    спека <span class="mono">analysis/wc-lcrl-stc-spec.md</span> · ветка <span class="mono">wc-lcrl-stc</span> ·
-    якоря: admission.json + prove.log бокса d88192cd5769 (A100 SXM4, 15.08.2026)</div>
 </div>
 
 <script>
@@ -420,7 +410,7 @@
     var ok=total<3600;
     var v=$('kVerdict'); v.className='verdict '+(ok?'ok':'no');
     $('kSub').textContent=(ok?'укладываемся в час':'больше часа')+
-      ' · '+Math.round(total)+' s · бюджет масок: '+Math.floor(1024/qw)+' пруфов/enrollment';
+      ' · '+Math.floor(1024/qw)+' доказательств на одну регистрацию';
     var parts=[['bSweep','sSweep',sweeps],['bWrap','sWrap',wrapAll],['bBr','sBr',bridge],
                ['bQd','sQd',tests],['bEnr','sEnr',enroll]];
     for(var i=0;i<parts.length;i++){
