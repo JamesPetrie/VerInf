@@ -203,7 +203,7 @@
   <div class="facts">
     <div class="fact good"><div class="n">−42 min</div><div class="l">of weight work removed from every proof</div></div>
     <div class="fact"><div class="n">+10 min</div><div class="l">is what the check that replaced it costs</div></div>
-    <div class="fact"><div class="n">11 min</div><div class="l">to register the model, once per 25 proofs</div></div>
+    <div class="fact"><div class="n">11 min</div><div class="l">to register the model, paid once, not per proof</div></div>
     <div class="fact dead"><div class="n">60 min</div><div class="l">the new bottleneck, the model runs five times over</div></div>
   </div>
 
@@ -370,7 +370,7 @@
         <span class="row"><span class="op">+</span> <span class="t-qd">correctness checks: 677 + 93 + 23 + 18 s</span> <span class="tag">← unchanged</span></span>
         <span class="row"><span class="op">+</span> <span class="t-str">packing, loading the model, writing the file: 602 + 59 + 207 s</span> <span class="tag">← plus 700 s of fixed protocol allowances</span></span>
         <span class="row"><span class="op">+</span> <span class="t-dead">weight reprocessing 2 423 + weight opening 74 s</span> <span class="tag">← gone</span></span>
-        <span class="row"><span class="op">(registering the model 633 s, once per 25 proofs, so 25 s each)</span></span>
+        <span class="row"><span class="op">(registering the model 633 s once, the next 25 proofs pay nothing for it)</span></span>
       </div>
       <div class="eta">85 minutes against 117 before the change. In the real run the model runs took
         longer than the model predicts, 60 minutes instead of 36, and they now set the pace rather
@@ -472,7 +472,6 @@
           <label class="chk" style="margin-top:8px"><input type="checkbox" id="cCoset"> faster encoding <span class="dsc" style="font-size:10.5px">(only helps on large blocks)</span></label>
           <label class="chk" style="margin-top:8px"><input type="checkbox" id="cProj" checked> project the expert multiplications <span class="dsc" style="font-size:10.5px">(only the chosen expert, folded by a random number)</span></label>
           <label class="chk" style="margin-top:8px"><input type="checkbox" id="cWc" checked> <b>register the model instead of reprocessing the weights</b> <span class="dsc" style="font-size:10.5px">(what this page is about)</span></label>
-          <label class="chk" style="margin-top:8px"><input type="checkbox" id="cWcAmort" checked> spread the registration cost over the proofs it lasts</label>
           <label class="chk" style="margin-top:8px"><input type="checkbox" id="cWcDisk"> keep the registration on disk and read only the points needed</label>
           <div class="ctrl" style="margin-top:8px"><div class="lab"><span class="nm">check points</span><span class="vl" id="vQw">40</span></div>
             <input type="range" id="cQw" min="16" max="128" step="4" value="40">
@@ -488,6 +487,7 @@
         <div class="verdict ok" id="oVerdict">
           <div class="big" id="oTotal">—</div>
           <div class="sub" id="oVerdictTxt"></div>
+          <div class="sub" id="oFirst" style="opacity:.85"></div>
           <div class="sub" id="oTotalH" style="opacity:.75"></div>
         </div>
         <div class="oterms-head">where the time goes</div>
@@ -498,7 +498,6 @@
           <div class="oterm"><span class="chip cl2"></span><span class="nm">linear checks</span><span class="bw"><span class="bar cl2" id="bLn"></span></span><span class="sec" id="sLn"></span></div>
           <div class="oterm"><span class="chip co"></span><span class="nm">overheads</span><span class="bw"><span class="bar co" id="bOvh"></span></span><span class="sec" id="sOvh"></span></div>
           <div class="oterm"><span class="chip cbr"></span><span class="nm">check against registration</span><span class="bw"><span class="bar cbr" id="bChk"></span></span><span class="sec" id="sChk"></span></div>
-          <div class="oterm"><span class="chip creg"></span><span class="nm">registration, per proof</span><span class="bw"><span class="bar creg" id="bReg"></span></span><span class="sec" id="sReg"></span></div>
         </div>
         <div class="snd">
           <div class="snd-head">Assurance <b id="oSoundBits">—</b> bits<span class="snd-bind" id="oSoundBind"></span></div>
@@ -597,7 +596,7 @@
         var proofsPerReg=Math.max(1,Math.floor(1024/qw));
         checkS=$('cWcDisk').checked ? (8*scaleW*(qw/40))/diskBw+30*scaleW
                                     : 580*scaleW*(0.8+0.2*qw/40);
-        regS=$('cWcAmort').checked ? 633*scaleW/proofsPerReg : 633*scaleW;
+        regS=633*scaleW;                      // разовая, не размазывается по доказательствам
       }
       var ELLexp=+$('cELL').value, maxELL=K-8, ELLcap=Math.pow(2,ELLexp)>maxELL, ELL=cl(Math.pow(2,ELLexp),512,maxELL);
       $('vELL').textContent='2'+sup(ELLexp)+(ELLcap?' → '+eng(ELL)+' (cap K−8)':' = '+eng(ELL));
@@ -645,17 +644,21 @@
       // Fit to 39 saved runs; floor+overhead lands within ±30% of measured. NOT
       // byte-dependent, so BabyBear does not halve it.
       var ovhS=22e-6*Math.min(mtot,5e6);
-      var total=witS+strS+qdS+lnS+ovhS+checkS+regS;
+      var total=witS+strS+qdS+lnS+ovhS+checkS;   // время ОДНОГО доказательства
       var total0=witS0+strS0+qdS+lnS+ovhS;           // baseline (opts off) for the delta
 
       var sum=total;                                 // formula sum (for the bars/breakdown)
       $('oTotal').textContent=(total>=3600? (total/3600).toFixed(2)+' ч' : Math.round(total/60)+' мин');
       var vd=$('oVerdict'); vd.className='verdict '+(total<3600?'ok':'no');
-      $('oVerdictTxt').textContent=(total<3600?'under an hour':'over an hour')+
-        ' · '+fmtS(total)+' s';
-      $('sChk').textContent=fmtS(checkS)+' s'; $('sReg').textContent=fmtS(regS)+' s';
+      $('oVerdictTxt').textContent='one proof against an existing registration · '
+        +fmtS(total)+' s · '+(total<3600?'under an hour':'over an hour');
+      $('sChk').textContent=fmtS(checkS)+' s';
       $('bChk').style.width=(100*checkS/(sum||1)).toFixed(1)+'%';
-      $('bReg').style.width=(100*regS/(sum||1)).toFixed(1)+'%';
+      $('oFirst').textContent = wcOn
+        ? ('first proof after registering: '+fmtS(total+regS)+' s'
+           + ' · registration itself '+fmtS(regS)+' s, then '
+           + Math.max(1,Math.floor(1024/qw))+' proofs need none')
+        : '';
       var saved=total0-total, hdr='≈ '+(total/3600).toFixed(2)+' h';
       if(saved>1) hdr+='  ·  −'+fmtS(saved)+' s (−'+(100*saved/total0).toFixed(0)+'%) vs base '+fmtS(total0)+' s';
       $('oTotalH').textContent=hdr;
@@ -708,14 +711,13 @@
       if(cosetOn&&K<262144) w.push('⚠ faster encoding does nothing below block size 2¹⁸.');
       if(projOn&&wmode!=='notebook') w.push('⚠ projection is only modelled in notebook mode.');
       if($('cWcDisk').checked&&!wcOn) w.push('⚠ keeping the registration on disk needs the registration switched on.');
-      if($('cWcAmort').checked&&!wcOn) w.push('⚠ spreading the registration cost needs the registration switched on.');
       // The BabyBear status lives under its own checkbox (#bbStat) — why the time
       // changes or not; not duplicated here.
       $('cWarn').innerHTML=w.join('<br>');
     }
     function preset(o){ for(var kk in o){ var el=$(kk); if(el){ if(el.type==='checkbox') el.checked=o[kk]; else el.value=o[kk]; } } compute(); }
     ['cD','cSeq','cL','cFF','cH','cV','cE','cMoe','cK','cRho','cELL','cT','cScale','cR','cP',
-     'cWmode','cBB','cSpill','cBw','cCoset','cProj','cWc','cWcAmort','cWcDisk','cQw'].forEach(function(id){
+     'cWmode','cBB','cSpill','cBw','cCoset','cProj','cWc','cWcDisk','cQw'].forEach(function(id){
       var el=$(id);
       if(!el) throw new Error('missing control '+id);
       el.addEventListener('input',compute); el.addEventListener('change',compute);
