@@ -349,9 +349,11 @@
         проходом, который и так читает каждый вес.</p>
         <div class="f">Wρ + свёртка масок</div></div>
       <div class="step"><h3>4 · Выбор 40 точек проверки</h3>
-        <p>Теперь появляются ещё случайные числа: по одному на блок весов (чтобы смешать все блоки
-        в один) и <b>40 разных точек</b>, в которых будет проверка. Прувер отдаёт значения своей
-        смеси в этих точках.</p>
+        <p>Теперь появляются ещё случайные числа, по одному на блок весов, чтобы смешать все блоки
+        в один, и 40 разных точек, в которых будет проверка. Прувер отдаёт значения своей смеси
+        в этих точках. Точек именно 40, потому что каждая добавляет примерно бит надёжности,
+        а 40 дают 2⁻⁴⁰. Брать больше можно, но каждая точка тратит ресурс регистрации, и с 64
+        точками одной регистрации хватит уже на 16 доказательств вместо 25.</p>
         <div class="f">40 точек из 32768 возможных</div></div>
       <div class="step"><h3>5 · Сверка</h3>
         <p>Проверяющий берёт те же 40 точек из регистрации модели и смотрит, совпали ли значения.
@@ -481,6 +483,9 @@
           <label class="chk" style="margin-top:8px"><input type="checkbox" id="cWc" checked> <b>регистрация модели вместо работы с весами</b> <span class="dsc" style="font-size:10.5px">(то, что описано выше; требует включённой проекции)</span></label>
           <label class="chk" style="margin-top:8px"><input type="checkbox" id="cWcAmort" checked> делить стоимость регистрации на 25 доказательств (её ресурс)</label>
           <label class="chk" style="margin-top:8px"><input type="checkbox" id="cWcDisk"> хранить регистрацию на диске и читать только нужные точки</label>
+          <div class="ctrl" style="margin-top:8px"><div class="lab"><span class="nm">точек сверки</span><span class="vl" id="vQw">40</span></div>
+            <input type="range" id="cQw" min="16" max="128" step="4" value="40">
+            <div class="dsc">каждая точка добавляет около бита надёжности и тратит ресурс регистрации</div></div>
           <div class="optnote">Переключатели выставлены в то состояние, в котором код находится сейчас.
             Прогоны модели ручка считает точно как замеренные (60 минут на пять прогонов), остальные
             стадии — по асимптотической модели: она консервативна и даёт больше, чем показал реальный
@@ -522,6 +527,8 @@
           <span>ELL <b id="dELL">—</b></span>
           <span>бит в аккумуляторе <b id="dB">—</b></span>
           <span>поле <b id="dField">—</b></span>
+          <span>надёжность сверки <b id="dWcBits">—</b></span>
+          <span>доказательств на регистрацию <b id="dWcBudget">—</b></span>
           <span>M (lookup) <b id="dMq">—</b></span>
           <span>размер файла <b id="dProof">—</b></span>
           <span>проверка <b id="dVerify">—</b></span>
@@ -590,14 +597,17 @@
       // Регистрация модели: веса выходят из witness, их пересчёт и раскрытие исчезают,
       // вместо них — сверка в 40 точках (замер 580 s на 400.7 млрд весов) и доля
       // регистрации (633 s). Работает независимо от проекции.
+      var qw=+$('cQw').value; $('vQw').textContent=qw;
       var wcOn=$('cWc').checked, regS=0, checkS=0,
           WwOrig=(L*4*d*d+Ld*3*d*dff+Lm*Ex*3*d*dff+2*vocab*d), scaleW=WwOrig/4.00e11,
           diskBw=+$('cBw').value;
       if(wcOn){
         if(Ww>0){ W=Math.max(W-Ww,0); Q=0.204*W; Llin=0.190*W; Ww=0; }
         persistS=0;
-        checkS=$('cWcDisk').checked ? (8*scaleW*(T/40))/diskBw+30*scaleW : 580*scaleW;
-        regS=$('cWcAmort').checked ? 633*scaleW/25 : 633*scaleW;
+        var proofsPerReg=Math.max(1,Math.floor(1024/qw));
+        checkS=$('cWcDisk').checked ? (8*scaleW*(qw/40))/diskBw+30*scaleW
+                                    : 580*scaleW*(0.8+0.2*qw/40);
+        regS=$('cWcAmort').checked ? 633*scaleW/proofsPerReg : 633*scaleW;
       }
       var ELLexp=+$('cELL').value, maxELL=K-8, ELLcap=Math.pow(2,ELLexp)>maxELL, ELL=cl(Math.pow(2,ELLexp),512,maxELL);
       $('vELL').textContent='2'+sup(ELLexp)+(ELLcap?' → '+eng(ELL)+' (cap K−8)':' = '+eng(ELL));
@@ -688,6 +698,8 @@
       else { bbEl.className='bbstat off';
         bbEl.textContent='To enable BabyBear: lower s (now 2'+sup(sExp)+') or R (now '+R+') until the accumulator b is < 31 (now b='+b.toFixed(1)+'). Soundness already passes.'; }
       $('dMq').textContent=eng(M);
+      $('dWcBits').textContent = wcOn ? ('2^-'+qw.toFixed(0)) : '—';
+      $('dWcBudget').textContent = wcOn ? Math.max(1,Math.floor(1024/qw)) : '—';
       $('dProof').textContent=(proof_b/1e9).toFixed(1)+' GB'; $('dVerify').textContent=(verify_s/3600).toFixed(1)+' h';
 
       var w=[];
@@ -707,7 +719,7 @@
     }
     function preset(o){ for(var kk in o){ var el=$(kk); if(el){ if(el.type==='checkbox') el.checked=o[kk]; else el.value=o[kk]; } } compute(); }
     ['cD','cSeq','cL','cFF','cH','cV','cE','cMoe','cK','cRho','cELL','cT','cScale','cR','cP',
-     'cWmode','cBB','cSpill','cBw','cCoset','cProj','cWc','cWcAmort','cWcDisk'].forEach(function(id){
+     'cWmode','cBB','cSpill','cBw','cCoset','cProj','cWc','cWcAmort','cWcDisk','cQw'].forEach(function(id){
       var el=$(id);
       if(!el) throw new Error('нет элемента управления '+id);
       el.addEventListener('input',compute); el.addEventListener('change',compute);
