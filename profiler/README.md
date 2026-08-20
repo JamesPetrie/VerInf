@@ -161,7 +161,9 @@ in-flight weights, allocator slack) is a measurement task, done with
   every variable, so their rows are exact.
 - The DAG's ideal-speedup figure covers *witness generation* parallelism
   only; encode/hash work is per-row shardable regardless of the DAG, and the
-  four protocol rounds are hard barriers (`prover/core.py:2516`).
+  four streaming sweeps are hard barriers (per the prove_streaming
+  docstring; the 5-message sequential-FS transcript on current main
+  does not add a fifth sweep).
 - `extract.py` is written against the tape API but has not yet run on GPU
   hardware — item 1 above is the gate before trusting extracted manifests.
   Claim labels/layers on that path are parsed from output-variable names
