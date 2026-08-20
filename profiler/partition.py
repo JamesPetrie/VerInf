@@ -22,7 +22,11 @@ Traffic model (deliberately explicit about its approximations):
   a shared table mutates a local copy of the mult vector, and settlement
   needs their sum — each participating remote shard ships one T_LEN-sized
   partial to the settlement shard per sweep (extracted manifests only;
-  synth does not model tables).
+  synth does not model tables). Settlement z inputs reduce even harder:
+  the global balance needs only Σz per shard, so each remote producing
+  shard ships ONE field element per settlement, never the z vectors
+  (which are output-sized and would dominate all other traffic ~1000x —
+  the artifact this rule replaces).
 - Witness activations regenerate every sweep, so activation+reduction
   traffic recurs x4 (the round structure) unless the scheduler caches — the
   per-sweep number is the honest unit; the x4 total is also shown.
@@ -155,6 +159,7 @@ def evaluate(m: Manifest, assignment: List[int], n: int,
         elif claimcosts.canonical(c.type) == "table_settle":
             settle_claims.append((c, s))
     reducible_idx = {c.idx for c, _ in reducible_claims}
+    settle_idx = {c.idx for c, _ in settle_claims}
 
     # Weight streaming: each shard loads the weights its claims consume.
     shard_weight_slots = [0.0] * n
@@ -175,7 +180,8 @@ def evaluate(m: Manifest, assignment: List[int], n: int,
             continue
         p = assignment[v.producer]
         remote = {assignment[ci] for ci in v.consumers
-                  if ci not in reducible_idx} - {p}
+                  if ci not in reducible_idx
+                  and ci not in settle_idx} - {p}
         act_bytes += v.length * BYTES_PER_SLOT * len(remote)
     red_bytes = 0.0
     for c, s in reducible_claims:
@@ -194,18 +200,28 @@ def evaluate(m: Manifest, assignment: List[int], n: int,
                      if i in by_name and by_name[i].producer is not None
                      and by_name[i].length == out_len} - {s}
         red_bytes += len(producers) * out_len * BYTES_PER_SLOT
-    # LogUp multiplicity reduction: mult is the settlement's producer-less
-    # non-persistent input (z's arrive as ordinary activations above, w is
-    # its output); every remote shard holding lookups that increment it
-    # sends one summed partial of the full table length.
+    # LogUp settlement reduction. mult (the producer-less non-persistent
+    # input): every remote shard holding lookups that increment it sends one
+    # summed partial of the full table length. z inputs (each produced by
+    # its own lookup/rescale claim): the settlement's global balance needs
+    # only Σz per shard, so each remote producing shard sends ONE summed
+    # field element per settlement — never the z vectors themselves (they
+    # are excluded from the activation loop above; shipping them whole was
+    # the ~1000x traffic artifact found on the first extracted-manifest
+    # scorecard, 2026-08-19).
     mult_bytes = 0.0
     for c, s in settle_claims:
+        z_shards = set()
         for name in c.inputs:
             v = by_name.get(name)
-            if v is None or v.persistent or v.producer is not None:
+            if v is None or v.persistent:
                 continue
-            senders = {assignment[ci] for ci in v.consumers} - {s}
-            mult_bytes += len(senders) * v.length * BYTES_PER_SLOT
+            if v.producer is None:
+                senders = {assignment[ci] for ci in v.consumers} - {s}
+                mult_bytes += len(senders) * v.length * BYTES_PER_SLOT
+            else:
+                z_shards.add(assignment[v.producer])
+        mult_bytes += len(z_shards - {s}) * BYTES_PER_SLOT
 
     # Compute time per shard (whole-proof floor constants) + even split of
     # the dependency-free commit work: weights and producer-less run inputs

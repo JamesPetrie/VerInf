@@ -559,14 +559,20 @@ def test_consumers():
     assign[e0_idx] = 0
     ev = partition.evaluate(m2, assign, 2, mp)
     assert ev["red_bytes_per_sweep"] == 64, ev["red_bytes_per_sweep"]
-    # logup mult reduction: both lookups remote from the settlement shard
-    # send ONE summed multiplicity partial of T_LEN slots (32,768 B), not
-    # zero (mult is producer-less, so the activation loop skips it)
+    # logup settlement reduction: the remote shard sends ONE summed
+    # multiplicity partial of T_LEN slots (32,768 B) plus ONE summed z
+    # field element (8 B) — z vectors themselves must NOT ship (they are
+    # output-sized; shipping them whole was the ~1000x traffic artifact
+    # on the first extracted-manifest scorecard, 2026-08-19)
     settle_idx = next(c.idx for c in m2.claims if c.type == "TableSettlement")
     assign2 = [0] * len(m2.claims)
     assign2[settle_idx] = 1
     ev2 = partition.evaluate(m2, assign2, 2, mp)
-    assert ev2["mult_bytes_per_sweep"] == T_LEN * 8, ev2["mult_bytes_per_sweep"]
+    assert ev2["mult_bytes_per_sweep"] == T_LEN * 8 + 8, \
+        ev2["mult_bytes_per_sweep"]
+    # with only the settlement remote, every other edge is co-located and
+    # its z inputs are reduction-handled: zero activation traffic
+    assert ev2["act_bytes_per_sweep"] == 0, ev2["act_bytes_per_sweep"]
     assert ev2["traffic_per_sweep"] >= T_LEN * 8
     # slot accounting: one-shard partition covers every slot totals() counts
     tot = predict.totals(m2)
