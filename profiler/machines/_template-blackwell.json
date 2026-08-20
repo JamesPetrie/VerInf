@@ -1,0 +1,32 @@
+{
+  "name": "CHANGE-ME (e.g. b200-node, gb200-nvl72-partition)",
+  "description": "Template for a Blackwell target. Copy, rename without the leading underscore, and fill by running the calibration suite (profiler/README.md) on the box. Null fields make predictions degrade explicitly, not silently.",
+  "gpu": {
+    "count": null,
+    "mem_GB": null,
+    "mem_bandwidth_GBps": null,
+    "field_mul_Gps": null,
+    "blake3_compress_Gps": null,
+    "blake3_bulk_GBps": null,
+    "ntt_ns_per_elem": null
+  },
+  "prove_constants": {
+    "A_ns_per_slot": null,
+    "B_ns_per_cid": null,
+    "C_ns_per_product": null,
+    "aggregate_ns_per_slot": null
+  },
+  "verify": {
+    "bytes_per_row": 700,
+    "cores": null
+  },
+  "io": {
+    "disk_read_GBps": null,
+    "h2d_GBps": null,
+    "proof_dump_MBps": null
+  },
+  "interconnect": null,
+  "provenance": {
+    "_note": "Record where every number came from (bench name + date). First-order Blackwell expectation: A/C scale with aggregate memory bandwidth, B with compute — see analysis/maverick-cost-model.md 'Scaling across machines'."
+  }
+}
