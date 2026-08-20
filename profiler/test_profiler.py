@@ -609,9 +609,12 @@ def test_enrolled_weights():
     one = [0] * len(m2.claims)
     ev_leg = partition.evaluate(m2, one, 1, mp)
     ev_enr = partition.evaluate(m2, one, 1, mp, enrolled_weights=True)
+    inputs = sum(v.length for v in m2.variables
+                 if v.producer is None and not v.persistent)
     want = ((predict.ENROLLED_QLIN_RATIO + predict.ENROLLED_OPEN_RATIO - 1.0)
             * A * weights
-            + predict.ENROLLED_OPEN_RATIO * A * ev_leg["shard_W"][0]) * 1e-9
+            + predict.ENROLLED_OPEN_RATIO * A
+            * (ev_leg["shard_W"][0] + inputs)) * 1e-9
     got = ev_enr["shard_t"][0] - ev_leg["shard_t"][0]
     assert abs(got - want) < 1e-12, (got, want)
 
@@ -682,13 +685,28 @@ def test_projected_protocol():
                         params=dict(L=32)),
             ClaimRecord(idx=3, type="MatmulClaim",
                         label="h@L1_Wd3#4", layer=1,
+                        inputs=["h", "L1_Wd3"],
+                        params=dict(m=4, k=8, n=8)),
+            # reviewer repro: an ATTENTION matmul whose activation
+            # ancestry passed through a routed claim — output label
+            # carries _Wg0, but its weight input is W_Q: backbone
+            ClaimRecord(idx=4, type="MatmulClaim",
+                        label="rp[x@L2_Wg0..]_rs@L3_W_Q#5", layer=3,
+                        inputs=["a", "W_Q_L3"],
                         params=dict(m=4, k=8, n=8)),
         ],
-        variables=[VariableRecord(name="v", length=8)])
+        variables=[VariableRecord(name="v", length=8),
+                   VariableRecord(name="h", length=8),
+                   VariableRecord(name="a", length=8),
+                   VariableRecord(name="L1_Wd3", length=8, persistent=True),
+                   VariableRecord(name="W_Q_L3", length=8, persistent=True)])
     a4 = partition.assign_experts(m3, 4)
     bb = partition.assign_layers(m3, 4)
     assert a4[:3] == bb[:3], (a4, bb)     # routed family: backbone
     assert a4[3] == 3                      # per-expert matmul: expert 3
+    assert a4[4] == bb[4] == 3, (a4, bb)  # attention matmul: backbone (L3)
+    # type-aware note: nothing here is expert-assignable except idx 3
+    assert not partition._no_expert_labels(m3)
 
 
 def test_cli_validation():

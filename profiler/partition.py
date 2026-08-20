@@ -136,19 +136,36 @@ def assign_layers(m: Manifest, n: int) -> List[int]:
     return out
 
 
+def _expert_of_claim(c, by_name) -> Optional[int]:
+    """Expert identity of a claim, or None (backbone). Only per-expert
+    matmuls have one, and it is derived from the claim's PERSISTENT
+    WEIGHT INPUT's name — never the output label: matmul output names
+    concatenate both operands, so an ordinary matmul whose activation
+    ancestry passed through a routed claim inherits a _Wg0 substring
+    (rp[..@L2_Wg0..]_rs@L3_W_Q), and routed claims themselves are named
+    from their first shard. Weight-variable names are unambiguous:
+    synth "L1.e3.W_gate", extracted "L1_Wg0"; attention (W_Q_L0) and
+    shared-expert (L1_Wgs) weights never match."""
+    if claimcosts.canonical(c.type) != "matmul":
+        return None
+    for name in c.inputs:
+        v = by_name.get(name)
+        if v is not None and v.persistent:
+            e = _expert_of(v.name)
+            if e is not None:
+                return e
+    return None
+
+
 def assign_experts(m: Manifest, n: int) -> List[int]:
     """Expert matmuls spread expert->shard round-robin; everything else runs
     on the layer-pipeline backbone. The combine claims sit on the backbone
     and receive per-shard partials."""
     backbone = assign_layers(m, n)
+    by_name = m.var_by_name()
     out = []
     for c, b in zip(m.claims, backbone):
-        # Expert parsing applies ONLY to per-expert matmuls: a routed
-        # claim (and its rescale/descendants) inherits the FIRST weight
-        # shard name (rp[..@L1_Wg0..], prover/routed_projected.py), and
-        # matching it would dump whole 128-expert claims on shard 0.
-        e = (_expert_of(c.label)
-             if claimcosts.canonical(c.type) == "matmul" else None)
+        e = _expert_of_claim(c, by_name)
         out.append(e % n if e is not None else b)
     return out
 
@@ -272,8 +289,12 @@ def evaluate(m: Manifest, assignment: List[int], n: int,
         # fresh_open stage: OPEN_RATIO * A over the shard's fresh slots);
         # the legacy floor never priced openings, stated in predict.
         fro = ENROLLED_OPEN_RATIO * A if enrolled_weights else 0.0
+        # Fresh openings cover ALL fresh rows: claim witness AND the
+        # producer-less input commitments (matching predict's
+        # W_fresh = W - W_weights, which includes inputs).
+        iopen = fro * total_input_slots / n
         shard_t = [(A * shard_W[s] + B * shard_cids[s] + C * shard_Q[s]
-                    + wcommit + icommit + fro * shard_W[s]
+                    + wcommit + icommit + fro * shard_W[s] + iopen
                     + enr * shard_weight_slots[s]) * 1e-9
                    for s in range(n)]
     # Opened-column payload per shard: T_QUERIES x that shard's rows x 8B —
@@ -320,7 +341,8 @@ def _verdict(frac: Optional[float]) -> str:
 
 
 def _no_expert_labels(m: Manifest) -> bool:
-    return all(_expert_of(c.label) is None for c in m.claims)
+    by_name = m.var_by_name()
+    return all(_expert_of_claim(c, by_name) is None for c in m.claims)
 
 
 def report(m: Manifest, strategy: str, n: int, mp: MachineProfile, *,
@@ -335,7 +357,9 @@ def report(m: Manifest, strategy: str, n: int, mp: MachineProfile, *,
                   skip_weight_commit=skip_weight_commit,
                   enrolled_weights=enrolled_weights)
     L = [f"== partition scorecard: {strategy} x{n} on {mp.name} "
-         f"({m.model.get('name', '?')} S={m.run.get('seq', '?')}) =="]
+         f"({m.model.get('name', '?')} S={m.run.get('seq', '?')})"
+         + (" — ENROLLED weights (qlin+open passes; one-time enroll and "
+            "refresh cycle unpriced)" if enrolled_weights else "") + " =="]
     if strategy == "experts" and _no_expert_labels(m):
         L.append("NOTE: no expert labels ('.eN.' or '_Wg|u|dN') in this "
                  "manifest — assignment is identical to the layers backbone.")
@@ -375,7 +399,9 @@ def compare(m: Manifest, n: int, mp: MachineProfile, *,
             skip_weight_commit=False, enrolled_weights=False) -> str:
     L = [f"== strategy comparison x{n} on {mp.name} "
          f"({m.model.get('name', '?')} S={m.run.get('seq', '?')}, "
-         f"floor model, {n_sweeps(m)} sweeps) ==", ""]
+         f"floor model, {n_sweeps(m)} sweeps"
+         + (", ENROLLED weights — one-time enroll + refresh unpriced"
+            if enrolled_weights else "") + ") ==", ""]
     header = (f"{'strategy':10s} {'wall':>12s} {'speedup':>8s} {'imbal':>6s} "
               f"{'traffic/sweep':>14s} {'wstream max':>12s} {'opened max':>11s}")
     header += "".join(f"{f'@{int(bw)}GB/s':>12s}" for bw in bandwidths)

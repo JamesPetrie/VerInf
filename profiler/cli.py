@@ -108,9 +108,10 @@ def main(argv=None):
                     help="price weights as ENROLLED (per-shard qlin+open "
                          "over owned slots; no per-proof encode split)")
     pt.add_argument("--skip-weight-commit", action="store_true",
-                    # diagnostic knob, NOT a protocol mode (see
-                    # --enrolled-weights for the kept-trees model)
-                    help="model a reused persistent weight commitment")
+                    help="DIAGNOSTIC: drop all weight-commit cost from "
+                         "shard time (not a protocol mode — use "
+                         "--enrolled-weights for the kept-trees/enrollment "
+                         "model)")
 
     sub.add_parser("machines", help="list machine profiles")
 
