@@ -28,8 +28,9 @@ Traffic model (deliberately explicit about its approximations):
   (which are output-sized and would dominate all other traffic ~1000x —
   the artifact this rule replaces).
 - Witness activations regenerate every sweep, so activation+reduction
-  traffic recurs x4 (the round structure) unless the scheduler caches — the
-  per-sweep number is the honest unit; the x4 total is also shown.
+  traffic recurs x4 — x5 when the tape has a phase-3 commitment sweep
+  (routed-projected claims; see n_sweeps) — unless the scheduler caches;
+  the per-sweep number is the honest unit and the total is also shown.
 - Weight-commit work (dependency-free) is split evenly across shards;
   weight *streaming* for witness compute is charged to each shard that
   consumes the weight (per sweep), and rides disk/host lanes, not the
@@ -53,7 +54,22 @@ from predict import (_fmt_s, _gb, BYTES_PER_SLOT,
 
 REDUCIBLE = {"freivalds_combine"}
 DEFAULT_BANDWIDTHS_GBPS = (25.0, 100.0, 450.0, 900.0)   # IB .. NVLink-domain
-SWEEPS = 4
+SWEEPS = 4        # base sweeps: R1, R2, test polynomials, openings
+
+
+def n_sweeps(m: Manifest) -> int:
+    """Streaming-sweep count for this tape. prove_streaming runs R1, R2,
+    a CONDITIONAL R3 commitment sweep (only when phase-3 late-aux
+    variables exist), the test polynomials, and the openings — so 5 for
+    routed-projected tapes (their f_y/f_u/f_p are phase 3), 4 otherwise.
+    Detected from variable phases (extracted manifests) with a claim-type
+    fallback (synth pools the routed aux instead of emitting vars)."""
+    if any(v.phase >= 3 for v in m.variables):
+        return SWEEPS + 1
+    if any(claimcosts.canonical(c.type) == "routed_projected"
+           for c in m.claims):
+        return SWEEPS + 1
+    return SWEEPS
 # Expert id from a claim label, both conventions: synth labels expert claims
 # "L3.moe.e12.gate"; extracted labels are output-variable names, which carry
 # the demo weight names L{n}_Wg{e}/Wu{e}/Wd{e} via the "a@b" derivation
@@ -127,7 +143,12 @@ def assign_experts(m: Manifest, n: int) -> List[int]:
     backbone = assign_layers(m, n)
     out = []
     for c, b in zip(m.claims, backbone):
-        e = _expert_of(c.label)
+        # Expert parsing applies ONLY to per-expert matmuls: a routed
+        # claim (and its rescale/descendants) inherits the FIRST weight
+        # shard name (rp[..@L1_Wg0..], prover/routed_projected.py), and
+        # matching it would dump whole 128-expert claims on shard 0.
+        e = (_expert_of(c.label)
+             if claimcosts.canonical(c.type) == "matmul" else None)
         out.append(e % n if e is not None else b)
     return out
 
@@ -141,8 +162,10 @@ STRATEGIES: Dict[str, Callable] = {
 
 def evaluate(m: Manifest, assignment: List[int], n: int,
              mp: MachineProfile, *, weight_bytes_per_param: float = 1.0,
-             skip_weight_commit: bool = False, sweeps: int = SWEEPS,
+             skip_weight_commit: bool = False, sweeps: Optional[int] = None,
              enrolled_weights: bool = False) -> dict:
+    if sweeps is None:
+        sweeps = n_sweeps(m)
     by_name = m.var_by_name()
     shard_W = [0.0] * n
     shard_cids = [0.0] * n
@@ -245,8 +268,12 @@ def evaluate(m: Manifest, assignment: List[int], n: int,
         icommit = A * total_input_slots / n
         enr = (ENROLLED_QLIN_RATIO + ENROLLED_OPEN_RATIO) * A \
             if enrolled_weights else 0.0
+        # Enrolled mode also prices the fresh-row opening pass (Ed's
+        # fresh_open stage: OPEN_RATIO * A over the shard's fresh slots);
+        # the legacy floor never priced openings, stated in predict.
+        fro = ENROLLED_OPEN_RATIO * A if enrolled_weights else 0.0
         shard_t = [(A * shard_W[s] + B * shard_cids[s] + C * shard_Q[s]
-                    + wcommit + icommit
+                    + wcommit + icommit + fro * shard_W[s]
                     + enr * shard_weight_slots[s]) * 1e-9
                    for s in range(n)]
     # Opened-column payload per shard: T_QUERIES x that shard's rows x 8B —
@@ -348,7 +375,7 @@ def compare(m: Manifest, n: int, mp: MachineProfile, *,
             skip_weight_commit=False, enrolled_weights=False) -> str:
     L = [f"== strategy comparison x{n} on {mp.name} "
          f"({m.model.get('name', '?')} S={m.run.get('seq', '?')}, "
-         f"floor model, {SWEEPS} sweeps) ==", ""]
+         f"floor model, {n_sweeps(m)} sweeps) ==", ""]
     header = (f"{'strategy':10s} {'wall':>12s} {'speedup':>8s} {'imbal':>6s} "
               f"{'traffic/sweep':>14s} {'wstream max':>12s} {'opened max':>11s}")
     header += "".join(f"{f'@{int(bw)}GB/s':>12s}" for bw in bandwidths)

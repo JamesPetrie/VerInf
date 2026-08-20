@@ -108,6 +108,8 @@ def main(argv=None):
                     help="price weights as ENROLLED (per-shard qlin+open "
                          "over owned slots; no per-proof encode split)")
     pt.add_argument("--skip-weight-commit", action="store_true",
+                    # diagnostic knob, NOT a protocol mode (see
+                    # --enrolled-weights for the kept-trees model)
                     help="model a reused persistent weight commitment")
 
     sub.add_parser("machines", help="list machine profiles")
@@ -140,6 +142,11 @@ def main(argv=None):
             dagmod.save(d, a.out)
             print(f"full DAG -> {a.out}")
     elif a.cmd == "partition":
+        if a.enrolled_weights and a.skip_weight_commit:
+            p.error("--enrolled-weights and --skip-weight-commit are "
+                    "mutually exclusive: enrollment PRICES the reused "
+                    "commitment (qlin+open passes); skip drops all weight "
+                    "cost (diagnostic only)")
         man = _load_manifest(p, a.manifest)
         mp = MachineProfile.load(a.machine)
         kw = dict(weight_bytes_per_param=a.weight_bytes_per_param,

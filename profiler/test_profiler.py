@@ -597,15 +597,21 @@ def test_enrolled_weights():
     mp = MachineProfile.load("gb10-spark")
     r = predict.report(m2, mp, enrolled_weights=True)
     assert "enrolled block qlin+open" in r
+    assert "open (fresh rows)" in r
+    assert "enrollment lifecycle" in r
     assert "N/A under enrollment" in r          # aggregate doesn't transfer
     assert "fresh only" in r
+    # legacy mode states its opening omission instead
+    assert "legacy floor excludes column-opening" in \
+        predict.report(m2, mp)
     A = mp.get("prove_constants", "A_ns_per_slot")
     weights = sum(v.length for v in m2.variables if v.persistent)
     one = [0] * len(m2.claims)
     ev_leg = partition.evaluate(m2, one, 1, mp)
     ev_enr = partition.evaluate(m2, one, 1, mp, enrolled_weights=True)
-    want = (predict.ENROLLED_QLIN_RATIO + predict.ENROLLED_OPEN_RATIO - 1.0) \
-        * A * weights * 1e-9
+    want = ((predict.ENROLLED_QLIN_RATIO + predict.ENROLLED_OPEN_RATIO - 1.0)
+            * A * weights
+            + predict.ENROLLED_OPEN_RATIO * A * ev_leg["shard_W"][0]) * 1e-9
     got = ev_enr["shard_t"][0] - ev_leg["shard_t"][0]
     assert abs(got - want) < 1e-12, (got, want)
 
@@ -651,6 +657,38 @@ def test_projected_protocol():
     mv = synth.BUILDERS["maverick"](1000)
     pw = lambda man: sum(v.length for v in man.variables if v.persistent)  # noqa: E731
     assert pw(m) == pw(mv) == 402_724_618_240
+    # routed tapes take FIVE streaming sweeps (conditional R3 commitment
+    # for phase-3 late aux); classic tapes stay at four
+    assert partition.n_sweeps(m) == 5
+    assert partition.n_sweeps(mv) == 4
+    mp = MachineProfile.load("gb10-spark")
+    assert partition.evaluate(
+        m, [0] * len(m.claims), 1, mp)["sweeps"] == 5
+    # extracted routed claims inherit the FIRST weight shard's name
+    # (rp[..@L1_Wg0..]) — expert parsing must NOT send them (or their
+    # rescale/silu descendants) to expert 0; only per-expert matmuls parse
+    from manifest import VariableRecord
+    m3 = Manifest(
+        run=dict(seq=4, ligero=dict(ELL=8192)),
+        claims=[
+            ClaimRecord(idx=0, type="RoutedProjectedMatmulClaim",
+                        label="x_r@L0_Wg0#1", layer=0,
+                        params=dict(T=4, K=8, J=8, E=4)),
+            ClaimRecord(idx=1, type="RescaleClaim",
+                        label="x_r@L0_Wg0#1_rs", layer=0,
+                        params=dict(length=32)),
+            ClaimRecord(idx=2, type="SiluClaim",
+                        label="x_r@L0_Wg0#1_rs@silu#2", layer=0,
+                        params=dict(L=32)),
+            ClaimRecord(idx=3, type="MatmulClaim",
+                        label="h@L1_Wd3#4", layer=1,
+                        params=dict(m=4, k=8, n=8)),
+        ],
+        variables=[VariableRecord(name="v", length=8)])
+    a4 = partition.assign_experts(m3, 4)
+    bb = partition.assign_layers(m3, 4)
+    assert a4[:3] == bb[:3], (a4, bb)     # routed family: backbone
+    assert a4[3] == 3                      # per-expert matmul: expert 3
 
 
 def test_cli_validation():

@@ -179,11 +179,15 @@ def report(m: Manifest, mp: MachineProfile, gpus: int = 1,
         tB = B * t.cids * 1e-9 / cp_scale
         tC = C * t.Q * 1e-9 / bw_scale
         floor = tA + tB + tC
-        tE = 0.0
+        tE = tOF = 0.0
         if enrolled_weights:
             tE = ((ENROLLED_QLIN_RATIO + ENROLLED_OPEN_RATIO)
                   * A * t.W_weights * 1e-9 / bw_scale)
-            floor += tE
+            # Fresh rows are opened by the same final sweep — priced at the
+            # same OPEN ratio (matches the fresh_open stage of
+            # routed_projected_4h_model.py exactly: 0.5*A*fresh slots).
+            tOF = ENROLLED_OPEN_RATIO * A * W_fresh * 1e-9 / bw_scale
+            floor += tE + tOF
         L.append(f"  floor (NTT-bound, post-reorg target):  {_fmt_s(floor)}")
         wlab = "A*Wf   (encode+lin fold, fresh only" if enrolled_weights \
             else "A*W    (encode+lin fold"
@@ -193,10 +197,21 @@ def report(m: Manifest, mp: MachineProfile, gpus: int = 1,
         if enrolled_weights:
             L.append(f"    enrolled block qlin+open ({ENROLLED_QLIN_RATIO:g}+"
                      f"{ENROLLED_OPEN_RATIO:g})*A*Ww       : {_fmt_s(tE)}")
-            L.append("    (enrolled weights: zero per-proof RS encode; their "
+            L.append(f"    open (fresh rows) {ENROLLED_OPEN_RATIO:g}*A*Wf"
+                     f"                 : {_fmt_s(tOF)}")
+            L.append("    (enrolled weights: zero per-proof RS encode; "
                      "fold+opening passes priced per "
                      "routed_projected_4h_model.py ratios)")
-    if enrolled_weights and agg is not None:
+            kd = lig.get("K_DEG", 16384)
+            budget = max(0, (kd - ELL) // 2)
+            L.append(f"    enrollment lifecycle (unpriced): one-time enroll "
+                     f"of the weight block; refresh after {budget:,} "
+                     f"distinct opened columns ((K_DEG-ELL)/2) — "
+                     f">= {budget // max(T_Q, 1)} proofs at T={T_Q}")
+        else:
+            L.append("    (legacy floor excludes column-opening passes; "
+                     "enrolled mode prices them)")
+    if enrolled_weights:
         L.append("  aggregate: N/A under enrollment — calibrated on runs "
                  "that commit weights per proof")
     elif agg is None:
