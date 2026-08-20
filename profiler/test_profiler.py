@@ -604,6 +604,15 @@ def test_enrolled_weights():
     # legacy mode states its opening omission instead
     assert "legacy floor excludes column-opening" in \
         predict.report(m2, mp)
+    # copied partition output is self-describing in both non-default modes
+    r_enr = partition.report(m2, "layers", 2, mp, enrolled_weights=True)
+    assert "ENROLLED" in r_enr and "refresh after" in r_enr
+    r_diag = partition.report(m2, "layers", 2, mp, skip_weight_commit=True)
+    assert "DIAGNOSTIC" in r_diag
+    c_enr = partition.compare(m2, 2, mp, enrolled_weights=True)
+    assert "ENROLLED" in c_enr and "refresh after" in c_enr
+    assert "DIAGNOSTIC" in partition.compare(m2, 2, mp,
+                                             skip_weight_commit=True)
     A = mp.get("prove_constants", "A_ns_per_slot")
     weights = sum(v.length for v in m2.variables if v.persistent)
     one = [0] * len(m2.claims)

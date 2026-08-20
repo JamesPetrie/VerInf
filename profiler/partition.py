@@ -340,6 +340,26 @@ def _verdict(frac: Optional[float]) -> str:
     return "BINDING"
 
 
+def _mode_suffix(m: Manifest, enrolled_weights: bool,
+                 skip_weight_commit: bool) -> str:
+    """Header marker for non-default cost modes, so copied output is
+    self-describing: DIAGNOSTIC when weight cost was deliberately
+    dropped; the enrollment assumption (refresh budget, matching
+    predict's lifecycle line) when enrolled."""
+    if skip_weight_commit:
+        return " — DIAGNOSTIC: weight commitment omitted (not a protocol mode)"
+    if enrolled_weights:
+        lig = m.run.get("ligero", {})
+        ell = lig.get("ELL", 8192)
+        kd = lig.get("K_DEG", 16384)
+        tq = lig.get("T_QUERIES", 40)
+        budget = max(0, (kd - ell) // 2)
+        return (f" — ENROLLED weights (qlin+open passes; one-time enroll "
+                f"unpriced; refresh after {budget:,} distinct opened "
+                f"columns >= {budget // max(tq, 1)} proofs at T={tq})")
+    return ""
+
+
 def _no_expert_labels(m: Manifest) -> bool:
     by_name = m.var_by_name()
     return all(_expert_of_claim(c, by_name) is None for c in m.claims)
@@ -358,8 +378,7 @@ def report(m: Manifest, strategy: str, n: int, mp: MachineProfile, *,
                   enrolled_weights=enrolled_weights)
     L = [f"== partition scorecard: {strategy} x{n} on {mp.name} "
          f"({m.model.get('name', '?')} S={m.run.get('seq', '?')})"
-         + (" — ENROLLED weights (qlin+open passes; one-time enroll and "
-            "refresh cycle unpriced)" if enrolled_weights else "") + " =="]
+         + _mode_suffix(m, enrolled_weights, skip_weight_commit) + " =="]
     if strategy == "experts" and _no_expert_labels(m):
         L.append("NOTE: no expert labels ('.eN.' or '_Wg|u|dN') in this "
                  "manifest — assignment is identical to the layers backbone.")
@@ -399,9 +418,9 @@ def compare(m: Manifest, n: int, mp: MachineProfile, *,
             skip_weight_commit=False, enrolled_weights=False) -> str:
     L = [f"== strategy comparison x{n} on {mp.name} "
          f"({m.model.get('name', '?')} S={m.run.get('seq', '?')}, "
-         f"floor model, {n_sweeps(m)} sweeps"
-         + (", ENROLLED weights — one-time enroll + refresh unpriced"
-            if enrolled_weights else "") + ") ==", ""]
+         f"floor model, {n_sweeps(m)} sweeps)"
+         + _mode_suffix(m, enrolled_weights, skip_weight_commit)
+         + " ==", ""]
     header = (f"{'strategy':10s} {'wall':>12s} {'speedup':>8s} {'imbal':>6s} "
               f"{'traffic/sweep':>14s} {'wstream max':>12s} {'opened max':>11s}")
     header += "".join(f"{f'@{int(bw)}GB/s':>12s}" for bw in bandwidths)
