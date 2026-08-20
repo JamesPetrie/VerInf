@@ -81,6 +81,9 @@ def main(argv=None):
     pp.add_argument("--bandwidth-ratio", type=_posfloat, default=None,
                     help="aggregate memory-bandwidth ratio vs the profile "
                          "(overrides --gpus for the A/C terms)")
+    pp.add_argument("--enrolled-weights", action="store_true",
+                    help="price weights as ENROLLED (no per-proof encode; "
+                         "qlin+open passes instead — the kept-trees path)")
     pp.add_argument("--compute-ratio", type=_posfloat, default=None,
                     help="compute ratio vs the profile (for the B term)")
 
@@ -101,6 +104,9 @@ def main(argv=None):
     pt.add_argument("--weight-bytes-per-param", type=_posfloat, default=1.0,
                     help="on-disk bytes/param for weight streaming "
                          "(~0.7 GGUF Q4_K, 2.0 bf16 safetensors)")
+    pt.add_argument("--enrolled-weights", action="store_true",
+                    help="price weights as ENROLLED (per-shard qlin+open "
+                         "over owned slots; no per-proof encode split)")
     pt.add_argument("--skip-weight-commit", action="store_true",
                     help="model a reused persistent weight commitment")
 
@@ -123,6 +129,7 @@ def main(argv=None):
         man = _load_manifest(p, a.manifest)
         mp = MachineProfile.load(a.machine)
         print(predict.report(man, mp, gpus=a.gpus,
+                             enrolled_weights=a.enrolled_weights,
                              bandwidth_ratio=a.bandwidth_ratio,
                              compute_ratio=a.compute_ratio))
     elif a.cmd == "dag":
@@ -136,7 +143,8 @@ def main(argv=None):
         man = _load_manifest(p, a.manifest)
         mp = MachineProfile.load(a.machine)
         kw = dict(weight_bytes_per_param=a.weight_bytes_per_param,
-                  skip_weight_commit=a.skip_weight_commit)
+                  skip_weight_commit=a.skip_weight_commit,
+                  enrolled_weights=a.enrolled_weights)
         if a.bandwidths:
             kw["bandwidths"] = a.bandwidths
         if a.strategy:

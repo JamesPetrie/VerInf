@@ -48,7 +48,8 @@ from typing import Callable, Dict, List, Optional
 import claimcosts
 from manifest import Manifest
 from machine import MachineProfile
-from predict import _fmt_s, _gb, BYTES_PER_SLOT
+from predict import (_fmt_s, _gb, BYTES_PER_SLOT,
+                     ENROLLED_QLIN_RATIO, ENROLLED_OPEN_RATIO)
 
 REDUCIBLE = {"freivalds_combine"}
 DEFAULT_BANDWIDTHS_GBPS = (25.0, 100.0, 450.0, 900.0)   # IB .. NVLink-domain
@@ -140,7 +141,8 @@ STRATEGIES: Dict[str, Callable] = {
 
 def evaluate(m: Manifest, assignment: List[int], n: int,
              mp: MachineProfile, *, weight_bytes_per_param: float = 1.0,
-             skip_weight_commit: bool = False, sweeps: int = SWEEPS) -> dict:
+             skip_weight_commit: bool = False, sweeps: int = SWEEPS,
+             enrolled_weights: bool = False) -> dict:
     by_name = m.var_by_name()
     shard_W = [0.0] * n
     shard_cids = [0.0] * n
@@ -235,10 +237,18 @@ def evaluate(m: Manifest, assignment: List[int], n: int,
                             if v.producer is None and not v.persistent)
     shard_t = None
     if None not in (A, B, C):
-        wcommit = 0.0 if skip_weight_commit else A * total_weight_slots / n
+        # Enrolled weights: no per-proof encode; each shard instead pays
+        # the qlin+open passes over the enrolled slots it owns (ratios
+        # per predict.ENROLLED_*_RATIO / routed_projected_4h_model.py).
+        wcommit = 0.0 if (skip_weight_commit or enrolled_weights) \
+            else A * total_weight_slots / n
         icommit = A * total_input_slots / n
+        enr = (ENROLLED_QLIN_RATIO + ENROLLED_OPEN_RATIO) * A \
+            if enrolled_weights else 0.0
         shard_t = [(A * shard_W[s] + B * shard_cids[s] + C * shard_Q[s]
-                    + wcommit + icommit) * 1e-9 for s in range(n)]
+                    + wcommit + icommit
+                    + enr * shard_weight_slots[s]) * 1e-9
+                   for s in range(n)]
     # Opened-column payload per shard: T_QUERIES x that shard's rows x 8B —
     # today's single-GPU 35 GB term, and how sharding shrinks it.
     lig = m.run.get("ligero", {})
@@ -288,14 +298,15 @@ def _no_expert_labels(m: Manifest) -> bool:
 
 def report(m: Manifest, strategy: str, n: int, mp: MachineProfile, *,
            bandwidths=DEFAULT_BANDWIDTHS_GBPS, weight_bytes_per_param=1.0,
-           skip_weight_commit=False) -> str:
+           skip_weight_commit=False, enrolled_weights=False) -> str:
     try:
         assignment = STRATEGIES[strategy](m, n)
     except ValueError as e:
         return f"== partition scorecard: {strategy} x{n} ==\nUNAVAILABLE: {e}"
     ev = evaluate(m, assignment, n, mp,
                   weight_bytes_per_param=weight_bytes_per_param,
-                  skip_weight_commit=skip_weight_commit)
+                  skip_weight_commit=skip_weight_commit,
+                  enrolled_weights=enrolled_weights)
     L = [f"== partition scorecard: {strategy} x{n} on {mp.name} "
          f"({m.model.get('name', '?')} S={m.run.get('seq', '?')}) =="]
     if strategy == "experts" and _no_expert_labels(m):
@@ -334,7 +345,7 @@ def report(m: Manifest, strategy: str, n: int, mp: MachineProfile, *,
 
 def compare(m: Manifest, n: int, mp: MachineProfile, *,
             bandwidths=DEFAULT_BANDWIDTHS_GBPS, weight_bytes_per_param=1.0,
-            skip_weight_commit=False) -> str:
+            skip_weight_commit=False, enrolled_weights=False) -> str:
     L = [f"== strategy comparison x{n} on {mp.name} "
          f"({m.model.get('name', '?')} S={m.run.get('seq', '?')}, "
          f"floor model, {SWEEPS} sweeps) ==", ""]
@@ -350,7 +361,8 @@ def compare(m: Manifest, n: int, mp: MachineProfile, *,
             continue
         ev = evaluate(m, assignment, n, mp,
                       weight_bytes_per_param=weight_bytes_per_param,
-                      skip_weight_commit=skip_weight_commit)
+                      skip_weight_commit=skip_weight_commit,
+                      enrolled_weights=enrolled_weights)
         if ev["shard_t"] is None:
             L.append(f"{name:10s}  (no prove_constants on this machine)")
             continue

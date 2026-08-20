@@ -584,6 +584,32 @@ def test_consumers():
     assert abs(ev1["shard_W"][0] + inputs + weights - tot.W) < 1e-6
 
 
+def test_enrolled_weights():
+    # Enrollment (kept-trees, main): weights leave the per-proof ENCODE but
+    # pay qlin (1.0*A) + open (0.5*A) passes per proof. Net vs legacy
+    # (weights inside A*W): +0.5*A*W_weights on the floor — enrollment buys
+    # statefulness and zero re-encode, not per-proof floor time.
+    man = _build_manifest()
+    with tempfile.TemporaryDirectory() as td:
+        path = os.path.join(td, "fake_man.json")
+        man.save(path)
+        m2 = Manifest.load(path)
+    mp = MachineProfile.load("gb10-spark")
+    r = predict.report(m2, mp, enrolled_weights=True)
+    assert "enrolled block qlin+open" in r
+    assert "N/A under enrollment" in r          # aggregate doesn't transfer
+    assert "fresh only" in r
+    A = mp.get("prove_constants", "A_ns_per_slot")
+    weights = sum(v.length for v in m2.variables if v.persistent)
+    one = [0] * len(m2.claims)
+    ev_leg = partition.evaluate(m2, one, 1, mp)
+    ev_enr = partition.evaluate(m2, one, 1, mp, enrolled_weights=True)
+    want = (predict.ENROLLED_QLIN_RATIO + predict.ENROLLED_OPEN_RATIO - 1.0) \
+        * A * weights * 1e-9
+    got = ev_enr["shard_t"][0] - ev_leg["shard_t"][0]
+    assert abs(got - want) < 1e-12, (got, want)
+
+
 def test_cli_validation():
     bad = [
         ["predict", "x.json", "--gpus", "0"],
@@ -631,6 +657,7 @@ def main():
     test_consumers()
     test_cli_validation()
     test_rows_approx_label()
+    test_enrolled_weights()
     print("profiler regression tests OK (no torch needed)")
 
 

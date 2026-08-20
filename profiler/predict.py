@@ -22,6 +22,15 @@ from manifest import Manifest
 from machine import MachineProfile
 
 BYTES_PER_SLOT = 8            # Goldilocks element = u64
+
+# Enrolled-weight per-proof passes. Under enrollment (core.WeightCommitment,
+# the kept-trees/opening-ledger path on main) the weight block is never
+# re-encoded per proof, but its linear fold and its opening remain per-proof
+# work over the whole enrolled block. Ratios mirror the admissible rates in
+# analysis/routed_projected_4h_model.py: qlin at the full A per-slot rate,
+# opening at half — validation mode (README roadmap 2) refines both.
+ENROLLED_QLIN_RATIO = 1.0
+ENROLLED_OPEN_RATIO = 0.5
 PROOF_JSON_BYTES_PER_VALUE = 21.4   # empirical: 93.6 GB / (40 * 109.27 M) — decimal-ASCII u64 + separators
 
 
@@ -106,7 +115,8 @@ def _gb(x: float) -> str:
 
 
 def report(m: Manifest, mp: MachineProfile, gpus: int = 1,
-           bandwidth_ratio: float = None, compute_ratio: float = None) -> str:
+           bandwidth_ratio: float = None, compute_ratio: float = None,
+           enrolled_weights: bool = False) -> str:
     t = totals(m)
     lig = m.run.get("ligero", {})
     ELL = lig.get("ELL", 8192)
@@ -164,15 +174,32 @@ def report(m: Manifest, mp: MachineProfile, gpus: int = 1,
     else:
         bw_scale = (bandwidth_ratio or gpus)   # A/C ride aggregate bandwidth
         cp_scale = (compute_ratio or gpus)     # B rides compute
-        tA = A * t.W * 1e-9 / bw_scale
+        W_fresh = (t.W - t.W_weights) if enrolled_weights else t.W
+        tA = A * W_fresh * 1e-9 / bw_scale
         tB = B * t.cids * 1e-9 / cp_scale
         tC = C * t.Q * 1e-9 / bw_scale
         floor = tA + tB + tC
+        tE = 0.0
+        if enrolled_weights:
+            tE = ((ENROLLED_QLIN_RATIO + ENROLLED_OPEN_RATIO)
+                  * A * t.W_weights * 1e-9 / bw_scale)
+            floor += tE
         L.append(f"  floor (NTT-bound, post-reorg target):  {_fmt_s(floor)}")
-        L.append(f"    A*W    (encode+lin fold, BANDWIDTH-bound): {_fmt_s(tA)}")
+        wlab = "A*Wf   (encode+lin fold, fresh only" if enrolled_weights \
+            else "A*W    (encode+lin fold"
+        L.append(f"    {wlab}, BANDWIDTH-bound): {_fmt_s(tA)}")
         L.append(f"    B*cids (challenge hash,  COMPUTE-bound)  : {_fmt_s(tB)}")
         L.append(f"    C*Q    (quad fold,       BANDWIDTH-bound): {_fmt_s(tC)}")
-    if agg is None:
+        if enrolled_weights:
+            L.append(f"    enrolled block qlin+open ({ENROLLED_QLIN_RATIO:g}+"
+                     f"{ENROLLED_OPEN_RATIO:g})*A*Ww       : {_fmt_s(tE)}")
+            L.append("    (enrolled weights: zero per-proof RS encode; their "
+                     "fold+opening passes priced per "
+                     "routed_projected_4h_model.py ratios)")
+    if enrolled_weights and agg is not None:
+        L.append("  aggregate: N/A under enrollment — calibrated on runs "
+                 "that commit weights per proof")
+    elif agg is None:
         L.append("  aggregate: UNAVAILABLE — aggregate_ns_per_slot not calibrated")
     else:
         taggr = agg * t.W * 1e-9 / (bandwidth_ratio or gpus)
