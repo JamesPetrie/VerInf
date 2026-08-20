@@ -81,7 +81,37 @@ from model_config import ModelConfig
 
 # T_QUERIES overridable via env (e.g. =4 for a fast non-sound timing/feasibility
 # run; production soundness uses 80).
-CFG = LigeroConfig(ELL=8192, K_DEG=16384, N_LIG=65536,
+# N_LIG was 8x the 2*K_DEG minimum, so every row was transformed to 4x more
+# points than the code needs. Holding the code rate at K_DEG/N_LIG = 1/4 (the
+# rate this project shipped with) and shrinking the whole triple:
+#   ELL 8192 K 16384 N 65536   33.0 / 25.8 / 58.8s /  23.7MB   (original)
+#   ELL 4096 K  8192 N 32768   24.7 / 13.5 / 38.1s /  29.7MB
+#   ELL 2048 K  4096 N 16384   20.4 /  9.8 / 30.1s /  43.3MB   <-- here
+#   ELL 1024 K  2048 N  8192   19.6 /  8.8 / 28.3s /  70.8MB   (flattens; 64%
+#                                                               bigger proof for
+#                                                               1.8s)
+# Going the OTHER way is sharply worse -- ELL 16384/K 32768 measured 119.5s,
+# because K_DEG sets the degree of the q_lin fold (ARCHITECTURE.md: "q_lin
+# dominates, about 54% of prove") and drives the verifier too. K_DEG, not row
+# count, is the cost driver.
+#
+# SOUNDNESS: rate 1/4 here matches the original default. N_LIG=65536 at the same
+# ELL/K_DEG gives rate 1/16 (larger relative distance, higher catch probability
+# per opened column) for 36.8s instead of 30.1s -- take that if you want margin
+# above the shipped baseline rather than speed.
+#
+# Proof size grows as rows do (23.7 -> 43.3MB). Free here; may invert at the
+# full-model scale the README quotes (93.6GB). Treat as small-model tuning.
+# ZK slack (K_DEG-ELL = 2048) still far exceeds T_QUERIES.
+# The verifier reads ELL/K_DEG/N_LIG/T_QUERIES from the proof: no Rust change.
+# Env overrides so the sizing can be swept without editing this file:
+#   LIGERO_ELL / LIGERO_KDEG / LIGERO_NLIG
+# LigeroConfig asserts the invariants (powers of two, ELL<=K_DEG<=N_LIG,
+# 2*K_DEG<=N_LIG), so a bad combination fails at import rather than mid-proof.
+_ELL = int(os.environ.get("LIGERO_ELL", "2048"))
+_KDEG = int(os.environ.get("LIGERO_KDEG", "4096"))
+_NLIG = int(os.environ.get("LIGERO_NLIG", "16384"))
+CFG = LigeroConfig(ELL=_ELL, K_DEG=_KDEG, N_LIG=_NLIG,
                    T_QUERIES=int(os.environ.get("LIGERO_T_QUERIES", "80")))
 
 
@@ -101,7 +131,28 @@ RANDOM_WEIGHTS_CFG = ModelConfig(
 #    they do not move to ModelConfig. ──
 SCALE_BITS = 12                       # Q-format fractional bits  (S = 2^SCALE_BITS)
 S          = 1 << SCALE_BITS
-OUTPUT_WIDTH = 26                     # rescale range-table width; real range ±2^(OUTPUT_WIDTH-1)/S
+# Measured: the rescale range table is 2^OUTPUT_WIDTH entries and costs
+# 2*T_LEN witness slots (mult_var + w_var), which at 26 was 16,384 rows --
+# 41%% of every row in the proof. Sweep on llama-160m (12 layers, SEQ=36):
+#   26 -> 69.8s ACCEPT   25 -> 64.4s   24 -> 61.2s   23 -> 59.8s   22 -> REJECT
+# U was 0.4022 at every width, so the bound is unaffected. 24 keeps one bit
+# of headroom over the 23 threshold. Narrowing is FAIL-SAFE: an out-of-range
+# value makes the LogUp identity unsatisfiable and the verifier REJECTs -- it
+# cannot silently accept. The Rust verifier reads the width from the claim
+# (handlers.rs: cl.scalar("output_width")), so no verifier change is needed.
+# NOTE: the table is named by width, so every caller must use the SAME value
+# or you get two tables and save nothing -- keep this in step with
+# interlock_challenge.py's UI_LM_OW and subsample_challenge.py's.
+# Softmax aux range table, 2^AUX_CHUNK_WIDTH entries, same 2*T_LEN row cost as
+# the rescale table. Sweep on llama-160m at OUTPUT_WIDTH=24:
+#   24 -> 61.2s ACCEPT   20 -> 58.3s ACCEPT   16 -> prover asserts
+#     "softmax[58]: c2 52255 out of [-2^15, 2^15); raise aux_chunk_width"
+# That value needs 18 bits, so 20 keeps two bits of headroom. Fail-safe: too
+# narrow asserts at prove time rather than producing a bad proof.
+AUX_CHUNK_WIDTH = 20                  # softmax aux table width (2^n entries)
+OUTPUT_WIDTH = 24                     # rescale range-table width; real range ±2^(OUTPUT_WIDTH-1)/S
+EPS_REAL   = 1e-5                     # Llama rmsnorm epsilon
+EPS_INT    = round(EPS_REAL * S * S)  # ε at scale S²   (168 @ 2^12, 42 @ 2^11)
 Z_NONZERO_REAL = 40000 / 4096         # softmax non-zero exp region (~9.77·s_c)
 Z_MAX      = round(Z_NONZERO_REAL * S)  # softmax saturation at scale S (40000 @ 2^12)
 SILU_CFG   = SiluConfig(b=4, T_LEN=1 << 14, b_2=1 << 16, b_3=1 << 32, b_4=1 << 48,
@@ -246,7 +297,7 @@ def _run_block(tape, x, weights, *, mcfg: ModelConfig):
                           s_a=S, s_b=S, s_out=S, output_width=OUTPUT_WIDTH)
     sm_scores = tape.softmax(scores, M=SEQ, s_x=S, s_c=S, s_y=S,
                               Z_max=Z_MAX, saturate=True,
-                              Z_high_width=16, aux_chunk_width=24,
+                              Z_high_width=16, aux_chunk_width=AUX_CHUNK_WIDTH,
                               causal=True, heads=H)
     attn_out = tape.matmul(sm_scores, v, heads=H, head_dim=SEQ,
                             s_a=S, s_b=S, s_out=S, output_width=OUTPUT_WIDTH)
@@ -337,7 +388,8 @@ def _run_unexplained_info(tape, logits, *, vocab_size, seq, output_tokens=None,
                                    s_c=s_c, s_y=s_y, s_b=s_b, gap_max=gap_max,
                                    sum_positions=sum_positions, reveal=True)
     n = len(sum_positions) if sum_positions is not None else seq
-    return Sz, dict(s_b=s_b, tokens=tokens, n=n, reveal_pin=h.get('reveal_pin'))
+    return Sz, dict(s_b=s_b, tokens=tokens, n=n, reveal_pin=h.get('reveal_pin'),
+                    tok=h.get('tok'))
 
 
 def _report_unexplained_info(tape, Sz, info, *, seq, vocab_size):
@@ -349,6 +401,8 @@ def _report_unexplained_info(tape, Sz, info, *, seq, vocab_size):
     print(f"  unexplained-information bound: U = {U:.4f} bits "
           f"over {n} hidden output token(s)")
     return U
+
+
 
 
 def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
@@ -371,7 +425,8 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
           ui_lm_ow: int = UI_COARSE_OW,
           ui_s_c: int = UI_S_C,
           ui_positions: Optional[list] = None,
-          token_ids: Optional[list] = None):
+          token_ids: Optional[list] = None,
+          pre_prove_hook=None):
     global SEQ
     mcfg = (ModelConfig.from_hf(from_hf) if from_hf is not None
             else RANDOM_WEIGHTS_CFG)
@@ -619,7 +674,41 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
     print(f"  claims: {len(tape.claims)}  ({dict(sorted(counts.items()))})")
     torch.cuda.synchronize()
     t0 = time.time()
-    proof = tape.prove(seed=b"xformer-single-tape", verbose=verbose)
+    # Persistent weight commitment (analysis/persistent-weights.md, P3). The W
+    # block is ~26% of all rows and is IDENTICAL across proofs of different
+    # prompts -- R_W is deterministic given the model + master_seed -- yet it is
+    # re-committed on every proof by default ("W-ref False" in the stream-sound
+    # line). Point LIGERO_WEIGHT_COMMITMENT at a cache file and R1's weight
+    # commit and R4's weight rebuild are skipped instead.
+    #
+    # The first proof pays to build it; later ones load it. Staleness is
+    # fail-safe: a commitment from different weights or a different LigeroConfig
+    # yields a root mismatch and the verifier REJECTs -- it cannot silently
+    # accept. Keep the cache path tied to the model (and N_LIG) for that reason.
+    # Last chance to append claims to THIS tape, so anything added here lands
+    # under the same Merkle root and the same four-round transcript as the model
+    # proof -- one proof, one verification, one set of committed variables to
+    # pin against. The interlock's key binding enters here.
+    if pre_prove_hook is not None:
+        pre_prove_hook(tape, {"seq": SEQ,
+                              "ui_tok": (ui_info or {}).get("tok")
+                              if unexplained_info else None})
+
+    _wc = None
+    _wc_path = os.environ.get("LIGERO_WEIGHT_COMMITMENT")
+    if _wc_path:
+        from core import WeightCommitment
+        if os.path.exists(_wc_path):
+            _wc = WeightCommitment.load(_wc_path)
+            print(f"  weight commitment: loaded {_wc_path} (m_w={_wc.m_w} rows)")
+        else:
+            _t_wc = time.time()
+            _wc = WeightCommitment.from_tape(tape, CFG)
+            _wc.save(_wc_path)
+            print(f"  weight commitment: built in {time.time()-_t_wc:.1f}s -> {_wc_path} "
+                  f"(m_w={_wc.m_w} rows; later proofs of ANY prompt reuse it)")
+    proof = tape.prove(seed=b"xformer-single-tape", verbose=verbose,
+                       weight_commitment=_wc)
     torch.cuda.synchronize()
     t_prove = time.time() - t0
     # Verification is the standalone Rust verifier's job (verifier-rs/verify_proof
