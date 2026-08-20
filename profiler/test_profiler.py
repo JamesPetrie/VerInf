@@ -610,6 +610,49 @@ def test_enrolled_weights():
     assert abs(got - want) < 1e-12, (got, want)
 
 
+def test_projected_protocol():
+    # Formulas from the compile functions (prover/routed_projected.py,
+    # prover/rescale_claim.py), regression-locked to the exact block
+    # ledger of analysis/routed_projected_4h_model.py.
+    import synth
+    T, K, J, E = 7, 11, 13, 5
+    W, cids, Q = claimcosts.cost("RoutedProjectedMatmulClaim",
+                                 dict(T=T, K=K, J=J, E=E))
+    assert W == T * J + E * K + 2 * T * K + T + 3 * E
+    assert cids == E * K + 2 * T + 2 * E + 1
+    assert Q == T * K + E
+    assert claimcosts.cost("RescaleClaim", dict(length=100)) == \
+        (500.0, 200.0, 200.0)
+
+    m = synth.BUILDERS["maverick-projected"](1000)
+    rp = [c for c in m.claims if c.type == "routed_projected"]
+    rs = [c for c in m.claims if c.type == "rescale_claim"]
+    assert len(rp) == 72 and len(rs) == 72       # 24 MoE layers x gate/up/down
+    trip = [claimcosts.cost(c.type, c.params) for c in rp]
+    # Ed's ledger, exact: L_ROUTE = R + 2*72*S + 72*(2E+1),
+    # Q_ROUTE = N + 72*E with N = 24*S*(2d+f), R = 24*E*(2d+f)
+    N, R = 442_368_000, 56_623_104
+    assert sum(t[1] for t in trip) == 56_785_608          # L_ROUTE
+    assert sum(t[2] for t in trip) == 442_377_216         # Q_ROUTE
+    # raw W: Q+H (2N) + P (R) + yr (72*S) + f-vectors (72*3E) + Y (T*J sums)
+    y_slots = 24 * 1000 * (8192 + 8192 + 5120)
+    assert sum(t[0] for t in trip) == \
+        2 * N + R + 72 * 1000 + 72 * 3 * 128 + y_slots
+    # rescale side: 5/2/2 per selected element; the 2-cids/2-Q sums are
+    # exactly the ledger's LQ_SELECTED_OLD
+    rst = [claimcosts.cost(c.type, c.params) for c in rs]
+    assert sum(c.params["length"] for c in rs) == y_slots == 516_096_000
+    assert sum(t[1] for t in rst) == sum(t[2] for t in rst) == 1_032_192_000
+    # the projected builder drops the three per-layer expert combines but
+    # keeps s_rep: 24 freivalds_combine claims, not 96
+    assert sum(1 for c in m.claims
+               if c.type == "freivalds_combine") == 24
+    # per-expert weight vars are the enrolled block: unchanged total
+    mv = synth.BUILDERS["maverick"](1000)
+    pw = lambda man: sum(v.length for v in man.variables if v.persistent)  # noqa: E731
+    assert pw(m) == pw(mv) == 402_724_618_240
+
+
 def test_cli_validation():
     bad = [
         ["predict", "x.json", "--gpus", "0"],
@@ -658,6 +701,7 @@ def main():
     test_cli_validation()
     test_rows_approx_label()
     test_enrolled_weights()
+    test_projected_protocol()
     print("profiler regression tests OK (no torch needed)")
 
 

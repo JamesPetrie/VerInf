@@ -170,8 +170,35 @@ def _freivalds_combine(p) -> Triple:
 
 # Canonical name -> formula. Prover dataclass names are aliased below so the
 # tape extractor and the synthetic builders hit the same rows.
+def _routed_projected(p):
+    """RoutedProjectedMatmulClaim (prover/routed_projected.py): one routed
+    expert matmul under the projected protocol. Own witness: Y (T*J raw
+    routed output; the following rescale_claim binds the scaled output),
+    P (E*K projected weights), Q and H (T*K each), yr (T), f_y/f_u/f_p
+    (E each). Constraints per routed_compile: E*K (P = W rho) + T
+    (yr = Y rho) + T (sum_k H = yr) + E (f_y) + E (f_u) + 1 (final
+    scalar). Quads: H = X*Q (T*K) + f_p = f_u*f_y (E). Verified against
+    analysis/routed_projected_4h_model.py's L_ROUTE/Q_ROUTE ledger."""
+    T, K, J, E = p["T"], p["K"], p["J"], p["E"]
+    W = T * J + E * K + 2 * T * K + T + 3 * E
+    cids = E * K + 2 * T + 2 * E + 1
+    Q = T * K + E
+    return (float(W), float(cids), float(Q))
+
+
+def _rescale_claim(p):
+    """RescaleClaim (prover/rescale_claim.py): the standalone signed-floor
+    rescale that follows every routed raw output. Own witness: x, x_low,
+    x_shifted, z_low, z_shifted (5L); two linears (2L cids); two per-slot
+    LogUp-inverse quad families (2L)."""
+    L = p["length"]
+    return (5.0 * L, 2.0 * L, 2.0 * L)
+
+
 _FORMULAS = {
     "matmul": _matmul,
+    "routed_projected": _routed_projected,
+    "rescale_claim": _rescale_claim,
     "rmsnorm": _rmsnorm,
     "softmax": _softmax,
     "silu": _silu,
@@ -203,6 +230,8 @@ _ALIASES = {
     "RangeWordClaim": "range_word",
     "TableSettlement": "table_settle",
     "FreivaldsCombineClaim": "freivalds_combine",
+    "RoutedProjectedMatmulClaim": "routed_projected",
+    "RescaleClaim": "rescale_claim",
 }
 
 _warned: set = set()
