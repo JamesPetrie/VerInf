@@ -613,6 +613,22 @@ def test_enrolled_weights():
     assert "ENROLLED" in c_enr and "refresh after" in c_enr
     assert "DIAGNOSTIC" in partition.compare(m2, 2, mp,
                                              skip_weight_commit=True)
+    # contradictory modes are rejected at the LIBRARY boundary, not just
+    # the CLI — all three public entry points, one validator
+    for fn in (lambda: partition.evaluate(m2, [0] * len(m2.claims), 1, mp,
+                                          enrolled_weights=True,
+                                          skip_weight_commit=True),
+               lambda: partition.report(m2, "layers", 2, mp,
+                                        enrolled_weights=True,
+                                        skip_weight_commit=True),
+               lambda: partition.compare(m2, 2, mp,
+                                         enrolled_weights=True,
+                                         skip_weight_commit=True)):
+        try:
+            fn()
+            raise AssertionError("contradictory modes accepted")
+        except ValueError as e:
+            assert "mutually exclusive" in str(e)
     A = mp.get("prove_constants", "A_ns_per_slot")
     weights = sum(v.length for v in m2.variables if v.persistent)
     one = [0] * len(m2.claims)

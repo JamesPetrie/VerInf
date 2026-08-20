@@ -181,6 +181,7 @@ def evaluate(m: Manifest, assignment: List[int], n: int,
              mp: MachineProfile, *, weight_bytes_per_param: float = 1.0,
              skip_weight_commit: bool = False, sweeps: Optional[int] = None,
              enrolled_weights: bool = False) -> dict:
+    _check_modes(enrolled_weights, skip_weight_commit)
     if sweeps is None:
         sweeps = n_sweeps(m)
     by_name = m.var_by_name()
@@ -340,6 +341,18 @@ def _verdict(frac: Optional[float]) -> str:
     return "BINDING"
 
 
+def _check_modes(enrolled_weights: bool, skip_weight_commit: bool) -> None:
+    """One validator for every public entry point: the two modes are
+    contradictory (enrollment PRICES the reused commitment, skip DROPS
+    all weight cost), and silently letting one win mislabels output."""
+    if enrolled_weights and skip_weight_commit:
+        raise ValueError(
+            "enrolled_weights and skip_weight_commit are mutually "
+            "exclusive: enrollment prices the reused commitment "
+            "(qlin+open passes); skip_weight_commit drops all weight "
+            "cost (diagnostic only)")
+
+
 def _mode_suffix(m: Manifest, enrolled_weights: bool,
                  skip_weight_commit: bool) -> str:
     """Header marker for non-default cost modes, so copied output is
@@ -368,6 +381,7 @@ def _no_expert_labels(m: Manifest) -> bool:
 def report(m: Manifest, strategy: str, n: int, mp: MachineProfile, *,
            bandwidths=DEFAULT_BANDWIDTHS_GBPS, weight_bytes_per_param=1.0,
            skip_weight_commit=False, enrolled_weights=False) -> str:
+    _check_modes(enrolled_weights, skip_weight_commit)
     try:
         assignment = STRATEGIES[strategy](m, n)
     except ValueError as e:
@@ -416,6 +430,7 @@ def report(m: Manifest, strategy: str, n: int, mp: MachineProfile, *,
 def compare(m: Manifest, n: int, mp: MachineProfile, *,
             bandwidths=DEFAULT_BANDWIDTHS_GBPS, weight_bytes_per_param=1.0,
             skip_weight_commit=False, enrolled_weights=False) -> str:
+    _check_modes(enrolled_weights, skip_weight_commit)
     L = [f"== strategy comparison x{n} on {mp.name} "
          f"({m.model.get('name', '?')} S={m.run.get('seq', '?')}, "
          f"floor model, {n_sweeps(m)} sweeps)"
