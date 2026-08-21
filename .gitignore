@@ -26,3 +26,14 @@ verifier/target/
 proof*.json
 logits*.npy
 .claude/
+
+# Local environment — reproduced from requirements.txt and the HF cache, not
+# committed: the venv is ~5 GB and the model checkpoints ~11 GB.
+venv/
+models/
+.hf_cache/
+
+# Agent/editor backups — history is the place for old versions, not the tree
+*.bak
+*.bak[0-9]
+*.bak-*

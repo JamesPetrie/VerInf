@@ -277,6 +277,27 @@ from claims import (
 import compute_fns as _compute_fns
 
 
+def _rope_scaling_fields(rs):
+    """A config.json `rope_scaling` block as RoPEConfig keyword arguments.
+
+    Only the llama3 recipe is implemented. Anything else (yarn, linear, dynamic)
+    raises rather than being silently proved as plain RoPE — a proof that quietly
+    models a different function than the checkpoint is the exact failure this
+    whole layer exists to prevent."""
+    if not rs:
+        return {}
+    kind = (rs.get("rope_type") or rs.get("type") or "").lower()
+    if kind != "llama3":
+        raise NotImplementedError(
+            "rope_scaling type %r is not implemented; only 'llama3' is. Proving "
+            "this checkpoint with plain RoPE would model a different function "
+            "than the weights do." % kind)
+    return dict(scale_factor=float(rs["factor"]),
+                low_freq_factor=float(rs.get("low_freq_factor", 1.0)),
+                high_freq_factor=float(rs.get("high_freq_factor", 4.0)),
+                orig_max_pos=float(rs.get("original_max_position_embeddings", 8192)))
+
+
 # ============================================================
 # Tape abstraction
 # ============================================================
@@ -368,7 +389,7 @@ class Tape:
         cache = f"_range_{kind}_w{width}"
         if not hasattr(self, cache):
             tbl = self.register_table(f"{kind}_w{width}",
-                                       T_data=list(range(1 << width)))
+                                       T_data=range(1 << width))
             setattr(self, cache, tbl)
         return getattr(self, cache)
 
@@ -660,7 +681,23 @@ class Tape:
         """Allocate a shared-mult LogUp table. T_Y_data set → paired table
         (PairedTlookupClaim against it); T_Y_data None → range table
         (RangeWordClaim against it)."""
-        T = torch.tensor(T_data, dtype=torch.uint64, device="cuda")
+        # A `range` is built on the device instead of being materialised as a
+        # Python list first. The identity tables are the big ones -- the rescale
+        # table at OUTPUT_WIDTH=24 is 2^24 entries -- and `torch.tensor(list(...))`
+        # on 16.7M Python ints cost 1.1s EACH TIME a tape registered one, which
+        # the subsample path paid twice per run (once per tape). The values are
+        # identical by construction; only the route to the device changes.
+        # (The exp table already avoided this via np.arange -- see the note at
+        # the softmax exp-table registration.)
+        if isinstance(T_data, range):
+            assert T_data.start == 0 and T_data.step == 1, \
+                "only 0..n ranges are identity tables"
+            T = torch.arange(len(T_data), dtype=torch.int64,
+                             device="cuda").to(torch.uint64)
+        elif torch.is_tensor(T_data):
+            T = T_data.to(dtype=torch.uint64, device="cuda")
+        else:
+            T = torch.tensor(T_data, dtype=torch.uint64, device="cuda")
         T_Y = (torch.tensor(T_Y_data, dtype=torch.uint64, device="cuda")
                if T_Y_data is not None else None)
         T_LEN = T.numel()
@@ -751,22 +788,22 @@ class Tape:
         if not hasattr(self, "_silu_state"):
             sc = self.silu_config
             range_b = self.register_table(
-                f"silu_range_{sc.b}", T_data=list(range(sc.b)))
+                f"silu_range_{sc.b}", T_data=range(sc.b))
             range_w2 = self.register_table(
-                f"silu_range_w{sc.width_2}", T_data=list(range(1 << sc.width_2)))
+                f"silu_range_w{sc.width_2}", T_data=range(1 << sc.width_2))
             range_w3 = (range_w2 if sc.width_3 == sc.width_2 else
                         self.register_table(
                             f"silu_range_w{sc.width_3}",
-                            T_data=list(range(1 << sc.width_3))))
+                            T_data=range(1 << sc.width_3)))
             range_w4 = (range_w2 if sc.width_4 == sc.width_2 else
                         range_w3 if sc.width_4 == sc.width_3 else
                         self.register_table(
                             f"silu_range_w{sc.width_4}",
-                            T_data=list(range(1 << sc.width_4))))
+                            T_data=range(1 << sc.width_4)))
             T_pos, T_neg = silu_tpos_tneg(sc)
             silu_table = self.register_table(
                 "silu_paired",
-                T_data=list(range(2 * sc.T_LEN)),
+                T_data=range(2 * sc.T_LEN),
                 T_Y_data=T_pos + T_neg,
             )
             self._silu_state = (range_b, range_w2, range_w3, range_w4, silu_table)
@@ -898,7 +935,7 @@ class Tape:
         if not hasattr(self, cache_key):
             range_slack = self.register_table(
                 "rmsnorm_range_w16",
-                T_data=list(range(1 << 16)),
+                T_data=range(1 << 16),
             )
             setattr(self, cache_key, range_slack)
         range_slack = getattr(self, cache_key)
@@ -1140,7 +1177,7 @@ class Tape:
         if not hasattr(self, range_aux_attr):
             range_aux = self.register_table(
                 f"sm_range_w{aux_chunk_width}",
-                T_data=list(range(1 << aux_chunk_width)))
+                T_data=range(1 << aux_chunk_width))
             setattr(self, range_aux_attr, range_aux)
         range_aux = getattr(self, range_aux_attr)
 
@@ -1149,7 +1186,7 @@ class Tape:
             if not hasattr(self, zh_attr):
                 range_z_high_t = self.register_table(
                     f"sm_range_zhigh_w{Z_high_width}",
-                    T_data=list(range(1 << Z_high_width)))
+                    T_data=range(1 << Z_high_width))
                 setattr(self, zh_attr, range_z_high_t)
             range_z_high = getattr(self, zh_attr)
         else:
