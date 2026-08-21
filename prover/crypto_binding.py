@@ -38,9 +38,13 @@ WIRING IS THE WHOLE JOB. Three gadget instances that each independently commit
 Every pin is a LinComb over gathered wires -- no new verifier surface.
 
 WHAT THIS MODULE DOES NOT DO. The committed token integers here are local to
-this tape. Welding them to the model proof's tokens (so the bound tokens are
-provably the ones the forward pass consumed) is token-binding.md P4/P5; see
-`bind_tokens_to` for the seam that exists today.
+this tape; welding them to the model proof's tokens (token-binding.md P4/P5) is
+the CALLER's job, through `bind_tokens_to`. Both callers now do it, against the
+`tok` vector unexplained_info commits: interlock_challenge.py gathers the
+original sum_positions, subsample_challenge.py gathers range(_n) because it
+slices the residual to the response before the LM head. A caller that skips the
+weld gets a sound key binding over tokens that are not tied to any forward pass,
+which is why the result line distinguishes OK from OK-NOWELD.
 """
 from claims import EmbeddingLookupClaim
 from tape import WitnessTensor

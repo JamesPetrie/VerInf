@@ -6,9 +6,24 @@ forward pass it proves ONE randomly-chosen (token, layer) transition against
 committed activations, plus the tail (LM head + U).
 
     SOUNDNESS: detection probability is ~k/N over (layers x positions)
-    token-layers. With k=1 a cheating prover passes ~99% of the time. This
-    demonstrates the shape of the protocol; it does not prove the inference.
-    Never present a verdict from this path as a proof.
+    token-layers. With k=1 and TinyLlama (22 layers x 21 positions = 462) a
+    cheating prover passes ~99.8% of the time, and --t-queries 1 weakens even
+    the one transition that is opened. This demonstrates the shape of the
+    protocol; it does not prove the inference. Never present a verdict from
+    this path as a proof.
+
+    THE SEED MUST COME FROM THE VERIFIER. Without --seed the pick is derived
+    from the request and response bytes -- and the prover chooses the response,
+    so it can grind until the pick lands on a transition it computed honestly,
+    taking detection from 1/462 to ~0. infcli.do_challenge now draws 16 random
+    bytes after the response and both certs are fixed and sends them in band;
+    model_backend forwards them here. If you drive this script directly, pass
+    --seed or the number above is fiction.
+
+    WHAT IS PROVEN IN FULL: the key binding (B1/B2) is not subsampled, and the
+    response tokens ARE welded to the model's committed output tokens, so
+    keybind=OK means here what it means on the sound path. Only the forward
+    pass is sampled -- `pick=` reports how much of it was opened.
 
 How it works:
   Phase A  run the real forward on a tape (engine pass, no Ligero work) and
@@ -439,6 +454,7 @@ def main():
     _t = time.time()
     # ---- key binding (full, not subsampled) --------------------------------
     keybind = "n/a"
+    _welded = 0
     _kb = [a.nonce, a.key_commit, a.ct_in, a.ct_out]
     if all(_kb):
         import ilk_crypto as _ic
@@ -452,19 +468,47 @@ def main():
                   keybind="COMMIT-MISMATCH")
             return 1
         _t0 = time.time()
-        _cbnd.bind(tape, keymat=_km, key_commit=_kc,
-                   streams=[{"name": "in", "tokens": req_ids,
-                             "ct": bytes.fromhex(a.ct_in)},
-                            {"name": "out", "tokens": rsp_ids,
-                             "ct": bytes.fromhex(a.ct_out)}],
-                   reveal_tokens={"in"})
-        # NOTE: no weld here. This path does not build the model's output-token
-        # commitment (it proves one token-layer, not the LM head over every
-        # position), so the bound response tokens are a separate commitment.
-        # The key binding is sound on its own; what is missing is the link to
-        # the sampled forward pass -- which in this mode is a spot check anyway.
-        print("[subsample] key binding: +claims in %.1fs (no weld -- spot-check mode)"
-              % (time.time() - _t0), flush=True)
+        _res = _cbnd.bind(tape, keymat=_km, key_commit=_kc,
+                          streams=[{"name": "in", "tokens": req_ids,
+                                    "ct": bytes.fromhex(a.ct_in)},
+                                   {"name": "out", "tokens": rsp_ids,
+                                    "ct": bytes.fromhex(a.ct_out)}],
+                          reveal_tokens={"in"})
+        # WELD (token-binding.md P5). The comment that used to sit here said this
+        # path "does not build the model's output-token commitment (it proves one
+        # token-layer, not the LM head over every position)". That was stale: the
+        # tail above runs the LM head over exactly the positions U sums, and
+        # _run_unexplained_info hands back the same committed `tok` vector the
+        # sound path welds to. So the link is available, and it costs one gather
+        # plus one LinComb -- against a tail that was already being paid for.
+        #
+        # Note the indexing difference from interlock_challenge.py: there, ui_tok
+        # spans the whole sequence and the gather uses the original sum_positions.
+        # Here the residual was sliced to [_p0 : _p0+_n] before the head, so ui_tok
+        # is already response-local and the gather is range(_n).
+        #
+        # What this does and does not buy: it ties the decrypted wire tokens to the
+        # tokens the committed logits were scored on. The logits' own provenance is
+        # still only the one sampled transition, so this closes the token<->wire
+        # seam, not the subsampling. keybind=OK now means what it means in sound
+        # mode; `pick=` still says how much of the forward pass was opened.
+        _wtok = (ui_info or {}).get("tok")
+        _welded = 0
+        if _wtok is None:
+            print("[subsample] weld skipped: no committed output tokens "
+                  "(unexplained_info off)", flush=True)
+        elif _n != len(rsp_ids):
+            # U was subsampled, so only part of the response has a committed token
+            # behind it. Welding the covered subset and still reporting OK would
+            # overclaim, so refuse and keep the honest label.
+            print("[subsample] weld skipped: U covers %d of %d response positions"
+                  % (_n, len(rsp_ids)), flush=True)
+        else:
+            _g = _cbnd.pool_gather(tape, _wtok, "cb_weld_out", list(range(_n)))
+            _cbnd.bind_tokens_to(tape, _res["tok"]["out"], _g)
+            _welded = _n
+        print("[subsample] key binding: +claims in %.1fs (welded %d response tokens)"
+              % (time.time() - _t0, _welded), flush=True)
         keybind = "PENDING"
     elif any(_kb):
         print("[subsample] partial key-binding arguments; refusing to guess", flush=True)
@@ -508,12 +552,13 @@ def main():
           pick="%s,u=%d/%d,lm_cols=%s" % (pick, _upos, SEQ - len(req_ids),
                                           ("%d/%d" % (_n_lm, V)) if _lm_cols
                                           else "all"),
-          # OK-NOWELD, not OK: B1/B2 are proven in full, but this path never
-          # builds the model's output-token commitment, so the decrypted stream
-          # is not tied to the sampled forward pass. Reporting plain "OK" here
-          # would claim a link that does not exist.
-          keybind=("OK-NOWELD" if ok else "FAIL") if keybind == "PENDING"
-                  else keybind)
+          # OK only when the response tokens were actually welded to the
+          # model's committed output tokens. If the weld was skipped the old
+          # OK-NOWELD label stands -- B1/B2 are still proven in full, but the
+          # decrypted stream is not tied to the forward pass, and reporting
+          # plain OK would claim a link that does not exist.
+          keybind=(("OK" if _welded else "OK-NOWELD") if ok else "FAIL")
+                  if keybind == "PENDING" else keybind)
     return 0 if ok else 1
 
 

@@ -105,6 +105,11 @@ def main():
                                          "in the certified request (public, H2)")
     ap.add_argument("--ct-in", help="hex certified request ciphertext (public)")
     ap.add_argument("--ct-out", help="hex certified response ciphertext (public)")
+    # Accepted and ignored. The sound path proves every token-layer, so there is
+    # nothing for a verifier seed to select. It is declared so the one caller can
+    # pass --seed unconditionally, and so this path never fails on an argument the
+    # subsampled path needs.
+    ap.add_argument("--seed", default="", help="accepted and unused (see above)")
     args = ap.parse_args()
 
     req_ids, rsp_ids = _ids(args.request), _ids(args.response)
