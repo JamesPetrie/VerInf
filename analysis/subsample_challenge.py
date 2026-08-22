@@ -590,6 +590,16 @@ def main():
             _wc = _core.WeightCommitment.load(_wc_path)
             print("[enroll] loaded L%d handle: m_w=%d root=%s"
                   % (LAYER, _wc.m_w, _wc.root.hex()[:16]), flush=True)
+            if os.environ.get("ENROLL_LEDGER", "1") == "0":
+                # Every run treated as the first: the ledger is emptied on load and
+                # never written back, so the opening budget never depletes and
+                # check_openings can never refuse a proof. Fine for a demo on public
+                # weights that reuses one prompt; NOT fine on a private model, where
+                # the cumulative union of opened columns is exactly the leak the pad
+                # is rationing. Unset this (default 1) to track it again.
+                _wc.opened_columns = []
+                print("[enroll] ledger DISABLED -- pad budget not tracked, every run "
+                      "counts as the first", flush=True)
         else:
             _t0 = time.time()
             _seed = hashlib.sha256(b"interlock-enroll|%d" % LAYER).digest()
@@ -609,13 +619,16 @@ def main():
         # hiding and the enrolment must be refreshed. An unsaved ledger is a
         # silently reusable pad -- core.record_openings' own warning. Spending
         # budget for a proof whose later write fails is the conservative order.
-        try:
-            _wc.record_openings(proof.Q_cols)
-            _wc.save(_wc_path)
-        except Exception as _e:
-            print("[enroll] WARNING: opening ledger not booked (%s: %s) -- the pad "
-                  "budget is no longer being tracked for L%d"
-                  % (type(_e).__name__, _e, LAYER), flush=True)
+        # ENROLL_LEDGER=0 skips this; the ledger was already cleared on load, so
+        # nothing accumulates and every run counts as the first.
+        if os.environ.get("ENROLL_LEDGER", "1") != "0":
+            try:
+                _wc.record_openings(proof.Q_cols)
+                _wc.save(_wc_path)
+            except Exception as _e:
+                print("[enroll] WARNING: opening ledger not booked (%s: %s) -- the "
+                      "pad budget is no longer being tracked for L%d"
+                      % (type(_e).__name__, _e, LAYER), flush=True)
     torch.cuda.synchronize()
     _mark("prove", _t)
     t_b = time.time() - t_b
