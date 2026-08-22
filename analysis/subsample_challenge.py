@@ -118,6 +118,13 @@ def main():
     from loader import LazyHFLoader, load_final_weights, free_model_cache
     from proof_dump import dump_proof as write_proof
 
+    from model_config import ModelConfig
+    # demo_llama7b was parameterised on ModelConfig (VerInf e6962a4) and _run_tail
+    # takes it as a required keyword. This path still fed the module globals below
+    # and never passed it, so the committed prover raised TypeError on its first
+    # call -- invisible for as long as a resident worker held an older import in
+    # memory, and fatal the moment anything restarted it.
+    mcfg = ModelConfig.from_hf(MODEL)
     cfg = json.load(open(MODEL + "/config.json"))
     d, d_ff = cfg["hidden_size"], cfg["intermediate_size"]
     H = cfg["num_attention_heads"]
@@ -137,6 +144,21 @@ def main():
     h = hashlib.sha256(b"token-layer-pick|" + seed_src).digest()
     LAYER = int.from_bytes(h[:4], "big") % n_layers
     POS = int.from_bytes(h[4:8], "big") % SEQ
+    # TEST ONLY: pin the verifier's coin so an enrolment can be exercised twice on
+    # the same layer. Never set this in a demo -- it hands the prover the pick.
+    _force = os.environ.get("FORCE_LAYER")
+    if not _force:
+        # also honoured from a file, so enrolment can walk every layer without
+        # restarting the resident worker once per layer
+        try:
+            with open("/tmp/interlock-force-layer") as _fh:
+                _force = _fh.read().strip()
+        except OSError:
+            _force = None
+    if _force:
+        LAYER = int(_force) % n_layers
+        print("[subsample] FORCE_LAYER=%d -- verifier coin overridden (test only)"
+              % LAYER, flush=True)
     pick = "L%d/t%d" % (LAYER, POS)
     n_tl = n_layers * SEQ
     print("[subsample] DEMO MODE -- spot check, not a proof", flush=True)
@@ -198,6 +220,21 @@ def main():
     ks = [live[c[1].var].clone() for c in caps]
     vs = [live[c[2].var].clone() for c in caps]
     final_resid = live[caps[-1][3].var].clone()
+    if os.environ.get("PROFILE_ENROLL") == "1":
+        # Enrol every layer: tapeA is the capture pass, the only tape here that
+        # references all n_layers' weights. Times the one-off cost and reports the
+        # row count the proof would have to match.
+        try:
+            import core as _core
+            _t0 = time.time()
+            _wc_all = _core.WeightCommitment.from_tape(tapeA, D.CFG)
+            print("[enroll] ALL %d layers: m_w=%d rows  root=%s  %.1fs"
+                  % (n_layers, _wc_all.m_w, _wc_all.root.hex()[:16], time.time() - _t0),
+                  flush=True)
+            globals()["_WC_ALL"] = _wc_all
+        except Exception as _e:
+            print("[enroll] all-layer enrolment failed: %s: %s"
+                  % (type(_e).__name__, _e), flush=True)
     del tapeA, live
     torch.cuda.empty_cache()
     t_a = time.time() - t_a
@@ -217,6 +254,7 @@ def main():
     _t = time.time()
     W = D._commit_weights_from_hf_lazy(tape, loader, LAYER)
     _mark("commit layer weights", _t)
+
 
     D.SEQ = 1
     _t = time.time()
@@ -362,7 +400,7 @@ def main():
         _fnL = _tapeL.commit("final_norm_w", fw["final_norm_w"], (d,))
         _lmL = _tapeL.commit("W_lm_head", fw["W_lm_head"], (d, V))
         _rsL = _tapeL.commit("resid_final", _resid_slice, (_n, d))
-        _lgL = D._run_tail(_tapeL, _rsL, _fnL, _lmL, vocab_size=V,
+        _lgL = D._run_tail(_tapeL, _rsL, _fnL, _lmL, mcfg=mcfg, vocab_size=V,
                            lm_s_out=UI_LM_SOUT, lm_ow=UI_LM_OW)
         _lvL = _tapeL.run_engine_pass(free_intermediates=True, keep={_lgL.var})
         _logit_vals = _lvL[_lgL.var].clone()
@@ -415,7 +453,7 @@ def main():
         _g = _gather(tape, logits, "lm_col_sample", _col_ids)
         tape.lincomb([_g, logits_J], [1, -1], 0)
     else:
-        logits = D._run_tail(tape, resid_f, fn_w, lm_w, vocab_size=V,
+        logits = D._run_tail(tape, resid_f, fn_w, lm_w, mcfg=mcfg, vocab_size=V,
                              lm_s_out=UI_LM_SOUT, lm_ow=UI_LM_OW)
     if logits.data is None:
         _t = time.time()
@@ -515,7 +553,69 @@ def main():
         _emit("FAIL", verify="ERROR", hreq=hreq, hrsp=hrsp, pick=pick, keybind="ERROR")
         return 1
 
-    proof = tape.prove(seed=b"xformer-single-tape")
+    if os.environ.get("PROFILE_ENROLL") == "1":
+        # HERE, not right after the weight commit: commit_weights walks the tape's
+        # CLAIMS, and a lazy tape has none until the graph is built -- probing early
+        # reports m_w=0 and means nothing.
+        try:
+            import core as _core
+            _t0 = time.time()
+            _wc_one = _core.WeightCommitment.from_tape(tape, D.CFG)
+            _all = globals().get("_WC_ALL")
+            print("[enroll] PROOF tape (L%d only): m_w=%d rows  root=%s  %.1fs"
+                  % (LAYER, _wc_one.m_w, _wc_one.root.hex()[:16], time.time() - _t0),
+                  flush=True)
+            if _all is not None:
+                print("[enroll] guard core.py:3416 wants wc.m_w == n_w_total -- "
+                      "all-layer=%d vs proof=%d -> %s (%.1fx too many rows)"
+                      % (_all.m_w, _wc_one.m_w,
+                         "MATCH" if _all.m_w == _wc_one.m_w else "MISMATCH",
+                         _all.m_w / max(_wc_one.m_w, 1)), flush=True)
+        except Exception as _e:
+            print("[enroll] proof-tape enrolment failed: %s: %s"
+                  % (type(_e).__name__, _e), flush=True)
+
+    # ---- enrolled weight commitment (P3) ------------------------------------
+    # One handle per layer. R_W is reproducible only from a SAVED handle -- the
+    # enrolment seed is secret and fresh by default, which is what hides the weights
+    # in the opened columns -- so enrol once, reuse forever, and the proof's root_w
+    # becomes a stable per-layer value a policy can pin.
+    _wc = None
+    _enroll_dir = os.environ.get("ENROLL_DIR")
+    if _enroll_dir:
+        import core as _core
+        os.makedirs(_enroll_dir, exist_ok=True)
+        _wc_path = os.path.join(_enroll_dir, "layer_%02d.wc" % LAYER)
+        if os.path.exists(_wc_path):
+            _wc = _core.WeightCommitment.load(_wc_path)
+            print("[enroll] loaded L%d handle: m_w=%d root=%s"
+                  % (LAYER, _wc.m_w, _wc.root.hex()[:16]), flush=True)
+        else:
+            _t0 = time.time()
+            _seed = hashlib.sha256(b"interlock-enroll|%d" % LAYER).digest()
+            _wc = _core.WeightCommitment.from_tape(tape, D.CFG, master_seed=_seed)
+            _wc.save(_wc_path)
+            print("[enroll] ENROLLED L%d: m_w=%d root=%s (%.1fs) -> %s"
+                  % (LAYER, _wc.m_w, _wc.root.hex()[:16], time.time() - _t0, _wc_path),
+                  flush=True)
+
+    proof = (tape.prove(seed=b"xformer-single-tape", weight_commitment=_wc)
+             if _wc is not None else tape.prove(seed=b"xformer-single-tape"))
+    if _wc is not None:
+        # Book the leakage and persist it BEFORE the proof is published. Every proof
+        # against this handle opens T_QUERIES columns of the SAME padded weight rows,
+        # so what matters is the cumulative union across proofs, not the per-proof
+        # count; once it approaches the pad width (K_DEG-ELL) the padding stops
+        # hiding and the enrolment must be refreshed. An unsaved ledger is a
+        # silently reusable pad -- core.record_openings' own warning. Spending
+        # budget for a proof whose later write fails is the conservative order.
+        try:
+            _wc.record_openings(proof.Q_cols)
+            _wc.save(_wc_path)
+        except Exception as _e:
+            print("[enroll] WARNING: opening ledger not booked (%s: %s) -- the pad "
+                  "budget is no longer being tracked for L%d"
+                  % (type(_e).__name__, _e, LAYER), flush=True)
     torch.cuda.synchronize()
     _mark("prove", _t)
     t_b = time.time() - t_b
@@ -529,8 +629,74 @@ def main():
     write_proof(path, pr.claims_to_json(tape.claims, D.CFG),
                 {"s_op": s_op.hex(), "s_comb": s_comb.hex(), "s_col": s_col.hex()},
                 proof, Q, None)
+    # The enrolled-model anchor. verify_proof takes it as argv[2] and checks the
+    # proof's weight block against it, which is the difference between "this proof
+    # is internally consistent" and "this proof is about the model we enrolled".
+    _rw = _sd = None
+    try:
+        with open(path) as _fh:
+            _top = json.load(_fh)
+        _rw = (_top.get("proof") or {}).get("root_w")
+        if _rw:
+            print("[subsample] weight root: %s" % _rw, flush=True)
+        _sd = _top.get("statement_digest")
+        if _sd:
+            print("[subsample] statement digest: %s" % _sd, flush=True)
+    except Exception as _e:
+        print("[subsample] weight root: unavailable (%s)" % _e, flush=True)
+
+    # ---- verifier policy ---------------------------------------------------
+    # verify_proof fail-closes without an enrolled weight root and a trusted
+    # statement digest, and it is right to: with neither, the prover picks what it
+    # proves and the verifier only confirms a proof is consistent with itself.
+    #
+    # DEMO_SELF_POLICY=1 supplies both from the prover's own dump. In THIS demo the
+    # verifier is co-located -- the Spark plays prover and verifier -- so there is no
+    # second party to hold an independent value, and self-supplying is the honest
+    # description of what a co-located verifier can do. It is NOT a security claim:
+    # these two checks verify nothing while the values come from the prover. The
+    # cryptographic checks are unaffected either way; only the policy pair is.
+    # Leave it unset and the verifier stays fail-closed, which is correct anywhere
+    # the verifier is a separate party.
+    _policy = []
+    # The enrolled weight root, if this model has been enrolled. Unlike the
+    # statement digest this is NOT self-supplied: it comes from a handle committed
+    # before the run, and its membership in the model's enrolment tree is checked
+    # here against a pinned MODEL_ROOT. Swap the model and root_w stops matching
+    # the leaf, so verify_proof's enrolled-root check does real work.
+    _pinned_w = None
+    _pol_path = os.environ.get("MODEL_POLICY") or (
+        os.path.join(_enroll_dir, "model_policy.json") if _enroll_dir else None)
+    if _pol_path and os.path.exists(_pol_path):
+        try:
+            import enroll_tree as _et
+            with open(_pol_path) as _fh:
+                _pol = json.load(_fh)
+            _leaf = bytes.fromhex(_pol["leaves"][LAYER])
+            _mroot = bytes.fromhex(_pol["model_root"])
+            if not _et.verify(_leaf, LAYER, _pol["paths"][str(LAYER)], _mroot):
+                raise ValueError("leaf %d is not in the enrolment tree" % LAYER)
+            _pinned_w = _leaf.hex()
+            print("[enroll] weight root PINNED: leaf[L%d]=%s in MODEL_ROOT=%s "
+                  "(inclusion path verified)"
+                  % (LAYER, _pinned_w[:16], _mroot.hex()[:16]), flush=True)
+        except Exception as _e:
+            print("[enroll] policy unusable (%s: %s) -- not pinning"
+                  % (type(_e).__name__, _e), flush=True)
+
+    if _pinned_w or os.environ.get("DEMO_SELF_POLICY") == "1":
+        _w_arg = _pinned_w or (_rw or "-")
+        _policy = [_w_arg, _sd or "-"]
+        if _pinned_w:
+            print("[subsample] policy: weight root ENROLLED (independent); "
+                  "statement digest self-supplied (verifier co-located)", flush=True)
+        else:
+            print("[subsample] POLICY SELF-SUPPLIED (verifier co-located): the "
+                  "enrolled-root and statement-digest checks are not independent "
+                  "in this mode", flush=True)
+
     t_c = time.time()
-    res = subprocess.run([ROOT + "/verifier/target/release/verify_proof", path],
+    res = subprocess.run([ROOT + "/verifier/target/release/verify_proof", path] + _policy,
                          capture_output=True, text=True)
     t_c = time.time() - t_c
     ok = res.returncode == 0 and "rust_verify: ACCEPT" in res.stdout
@@ -545,6 +711,18 @@ def main():
         pass
     print("[subsample] phase B (prove): %.1fs   phase C (verify): %.1fs   total %.1fs"
           % (t_b, t_c, t_a + t_b + t_c), flush=True)
+    if not ok:
+        # The verifier's own account of WHY, which was being captured and dropped.
+        # A bare "REJECT" with the reason discarded is the least useful thing this
+        # could print, and it is what the demo showed for an hour.
+        import re as _re
+        _why = _re.compile(r"\[XX|reject|fail|mismatch|bad |invalid|expected|!=|missing", _re.I)
+        for _stream, _txt in (("out", res.stdout), ("err", res.stderr)):
+            _lines = (_txt or "").strip().splitlines()
+            _keep = [l for l in _lines if _why.search(l)][-14:] or _lines[-6:]
+            for _l in _keep:
+                print("[subsample] verifier %s: %s" % (_stream, _l[:180]), flush=True)
+        print("[subsample] verifier rc=%d" % res.returncode, flush=True)
     print("[subsample] rust verifier: %s" % ("ACCEPT" if ok else "REJECT"), flush=True)
     _emit("PASS" if ok else "FAIL", U="%.4f" % u_per_tok,
           verify="ACCEPT" if ok else "REJECT", out_bind="OK",
