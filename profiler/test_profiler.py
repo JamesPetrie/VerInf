@@ -548,6 +548,11 @@ def test_consumers():
     mp = MachineProfile.load("gb10-spark")
     rep = predict.report(m2, mp)
     assert "workload totals" in rep
+    # production transport is u64le/base64 (11 B/value); legacy decimal
+    # JSON (21.4 B/value) stays as the archive-validated reference
+    assert "u64le/base64, production" in rep
+    assert "legacy decimal JSON" in rep
+    assert "A100 reference" in rep     # gb10 has no compact measurement
     # extracted manifests itemize every slot: rows are exact, no approx label
     assert "(approx" not in rep
     assert predict.live_set_peak(m2) is not None

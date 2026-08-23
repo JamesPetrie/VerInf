@@ -32,6 +32,15 @@ BYTES_PER_SLOT = 8            # Goldilocks element = u64
 ENROLLED_QLIN_RATIO = 1.0
 ENROLLED_OPEN_RATIO = 0.5
 PROOF_JSON_BYTES_PER_VALUE = 21.4   # empirical: 93.6 GB / (40 * 109.27 M) — decimal-ASCII u64 + separators
+# Production transport on current main is JSON-framed u64le/base64 (legacy
+# decimal JSON still verifies but is not the fast path): 10.67 B/value for
+# base64 of 8 canonical bytes, 11 covering the envelope — the convention of
+# analysis/routed_projected_4h_model.py, whose demonstrated run wrote
+# 35.46 GB at ~751 MB/s (47.2 s), I/O-bound rather than string-building
+# bound. Machine profiles may carry io.proof_dump_compact_MBps once
+# measured per box; until then the report quotes the A100 reference.
+PROOF_COMPACT_BYTES_PER_VALUE = 11
+PROOF_COMPACT_REF_MBPS = 751
 
 
 @dataclass
@@ -248,12 +257,25 @@ def report(m: Manifest, mp: MachineProfile, gpus: int = 1,
     L.append("")
 
     L.append(f"-- proof & verify --")
-    proof = T_Q * m_rows * PROOF_JSON_BYTES_PER_VALUE
-    L.append(f"  proof size (JSON, T={T_Q}): {_gb(proof)}")
+    values = T_Q * m_rows
+    proof_c = values * PROOF_COMPACT_BYTES_PER_VALUE
+    proof_j = values * PROOF_JSON_BYTES_PER_VALUE
+    L.append(f"  proof size (u64le/base64, production, T={T_Q}): "
+             f"{_gb(proof_c)}")
+    L.append(f"  proof size (legacy decimal JSON): {_gb(proof_j)}")
     bpr = mp.get("verify", "bytes_per_row")
     if bpr:
         L.append(f"  verifier peak RSS (~{bpr} B/row, wide error bar): {_gb(m_rows * bpr)}")
+    dump_c = mp.get("io", "proof_dump_compact_MBps")
+    if dump_c:
+        L.append(f"  proof dump time (compact, ~{dump_c} MB/s measured): "
+                 f"{_fmt_s(proof_c / (dump_c * 1e6))}")
+    else:
+        L.append(f"  proof dump time (compact, ~{PROOF_COMPACT_REF_MBPS} "
+                 f"MB/s A100 reference — unbenchmarked on this machine): "
+                 f"{_fmt_s(proof_c / (PROOF_COMPACT_REF_MBPS * 1e6))}")
     dump = mp.get("io", "proof_dump_MBps")
     if dump:
-        L.append(f"  proof dump time (~{dump} MB/s, Python-bound): {_fmt_s(proof / (dump * 1e6))}")
+        L.append(f"  proof dump time (legacy JSON, ~{dump} MB/s, "
+                 f"Python-bound): {_fmt_s(proof_j / (dump * 1e6))}")
     return "\n".join(L)
