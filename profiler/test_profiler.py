@@ -203,6 +203,28 @@ class TableSettlement:
     table: Table
 
 
+@dataclass
+class RoutedProjectedMatmulClaim:
+    # real spellings per prover/routed_projected.py: W is a LIST of
+    # per-expert Variables and is NOT in the deferred input list (the
+    # claim is in core.STREAMING_INPUT_CLAIMS; shards stream one at a
+    # time); f_y/f_u/f_p are phase 3 (the conditional R3 sweep)
+    X: Variable; Y: Variable; M: Variable
+    W: List[Variable]
+    Pj: Variable; Qm: Variable; Hd: Variable; yr: Variable
+    f_y: Variable; f_u: Variable; f_p: Variable
+    T: int; K: int; J: int; E: int
+
+
+@dataclass
+class RescaleClaim:
+    x_full: Variable; x: Variable; x_low: Variable; x_shifted: Variable
+    z_low: Variable; z_shifted: Variable
+    range_rescale: Table; range_output: Table
+    length: int; rescale_bits: int
+    output_width: int = 24
+
+
 class FakeTape:
     def __init__(self, cfg, lazy=True):
         self.cfg, self.lazy = cfg, lazy
@@ -739,6 +761,76 @@ def test_projected_protocol():
     assert not partition._no_expert_labels(m3)
 
 
+def test_projected_extraction():
+    # The extraction walker has never met the projected claims on real
+    # hardware; this locks the structural contract first: list-valued W
+    # fields traverse, omitted-from-deferred persistent shards classify
+    # as run inputs, phase-3 aux records as phase 3 (driving n_sweeps on
+    # EXTRACTED manifests), and w_slots equals the compile-derived
+    # formulas exactly.
+    T_, K_, J_, E_ = 4, 6, 5, 3
+    t = FakeTape(Cfg())
+    x = Variable("xr_L1", T_ * K_)
+    mask = Variable("rt1_m", T_ * E_)
+    shards = [Variable(f"L1_Wg{e}", K_ * J_, persistent=True)
+              for e in range(E_)]
+    name = f"rp[{x.name}@{shards[0].name}..]"
+    Y = Variable(name, T_ * J_)
+    rp = RoutedProjectedMatmulClaim(
+        X=x, Y=Y, M=mask, W=shards,
+        Pj=Variable(name + ".P", E_ * K_, phase=2),
+        Qm=Variable(name + ".Q", T_ * K_, phase=2),
+        Hd=Variable(name + ".H", T_ * K_, phase=2),
+        yr=Variable(name + ".yr", T_, phase=2),
+        f_y=Variable(name + ".f_y", E_, phase=3),
+        f_u=Variable(name + ".f_u", E_, phase=3),
+        f_p=Variable(name + ".f_p", E_, phase=3),
+        T=T_, K=K_, J=J_, E=E_)
+    t.add(rp, [x, mask])          # W shards deliberately NOT deferred inputs
+    L_ = T_ * J_
+    zl = Variable(name + "_rs_zlow", L_, phase=2)
+    zs = Variable(name + "_rs_zshift", L_, phase=2)
+    tb_r = Table("rescale_w12", Variable("rescale_w12_mult", 1 << 4),
+                 Variable("rescale_w12_w", 1 << 4), [zl])
+    tb_o = Table("output_w24", Variable("output_w24_mult", 1 << 5),
+                 Variable("output_w24_w", 1 << 5), [zs])
+    rs = RescaleClaim(
+        x_full=Y, x=Variable(name + "_rs", L_),
+        x_low=Variable(name + "_rs_low", L_),
+        x_shifted=Variable(name + "_rs_shift", L_),
+        z_low=zl, z_shifted=zs,
+        range_rescale=tb_r, range_output=tb_o,
+        length=L_, rescale_bits=12, output_width=24)
+    t.add(rs, [Y])
+    with _fake_core():
+        man = extract_tape(t, model=dict(name="projected-stub"), seq=T_)
+    by = man.var_by_name()
+    c_rp, c_rs = man.claims[0], man.claims[1]
+    # params: scalars only — the W list must NOT leak into params
+    assert c_rp.type == "RoutedProjectedMatmulClaim"
+    assert c_rp.params == dict(T=T_, K=K_, J=J_, E=E_), c_rp.params
+    # shards: extra inputs via the persistent rule, producer-less,
+    # consumed by the routed claim
+    for e in range(E_):
+        nm = f"L1_Wg{e}"
+        assert nm in c_rp.inputs
+        v = by[nm]
+        assert v.persistent and v.producer is None and 0 in v.consumers
+    # outputs and exact W agree with the compile-derived formula
+    assert c_rp.w_slots ==         claimcosts.cost("RoutedProjectedMatmulClaim", c_rp.params)[0]
+    assert by[name + ".f_y"].phase == 3
+    assert partition.n_sweeps(man) == 5      # extracted-phase detection
+    # the routed claim itself rides the backbone despite its _Wg0 label
+    assert partition._expert_of_claim(c_rp, by) is None
+    # rescale: params, exact W = 5L, and the range tables settle
+    assert c_rs.params["length"] == L_ and c_rs.params["rescale_bits"] == 12
+    assert c_rs.w_slots == 5 * L_ ==         claimcosts.cost("RescaleClaim", c_rs.params)[0]
+    settles = [c for c in man.claims if c.type == "TableSettlement"]
+    assert len(settles) == 2
+    z_consumers = set(by[name + "_rs_zlow"].consumers)
+    assert any(c.idx in z_consumers for c in settles)
+
+
 def test_cli_validation():
     bad = [
         ["predict", "x.json", "--gpus", "0"],
@@ -788,6 +880,7 @@ def main():
     test_rows_approx_label()
     test_enrolled_weights()
     test_projected_protocol()
+    test_projected_extraction()
     print("profiler regression tests OK (no torch needed)")
 
 
