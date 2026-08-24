@@ -247,10 +247,48 @@ def main():
         _emit("FAIL", U="%.4f" % u_per_tok, verify="ERROR", out_bind="?",
               hreq=hreq, hrsp=hrsp)
         return 1
+    # ---- verifier policy ---------------------------------------------------
+    # verify_proof fail-closes without a trusted weight root and a trusted
+    # statement digest, and it is right to: with neither, the prover picks what
+    # it proves and the verifier only confirms the proof is consistent with
+    # itself. Unlike the subsampled path, this proof commits ALL layers under a
+    # single W-block root, and enrolment (.enroll) pins PER-LAYER leaves -- so
+    # there is no enrolled value of this proof's shape to pin against yet.
+    # DEMO_SELF_POLICY=1 supplies both from the prover's own dump, which is the
+    # honest description of what a co-located verifier can do and NOT a security
+    # claim; leave it unset and the verifier stays fail-closed, which is correct
+    # anywhere the verifier is a separate party.
+    policy = []
+    if os.environ.get("DEMO_SELF_POLICY") == "1":
+        try:
+            with open(proof) as fh:
+                top = json.load(fh)
+            rw = (top.get("proof") or {}).get("root_w")
+            sd = top.get("statement_digest")
+            policy = [rw or "-", sd or "-"]
+            print("[challenge] POLICY SELF-SUPPLIED (verifier co-located): the "
+                  "enrolled-root and statement-digest checks are not independent "
+                  "in this mode", flush=True)
+        except Exception as e:
+            print("[challenge] self-policy unavailable (%s: %s) -- verifier "
+                  "will fail closed" % (type(e).__name__, e), flush=True)
+
     print("[challenge] verifying with the independent Rust verifier ...", flush=True)
-    res = subprocess.run([str(vbin), str(proof)], capture_output=True, text=True)
+    res = subprocess.run([str(vbin), str(proof)] + policy,
+                         capture_output=True, text=True)
     accept = res.returncode == 0 and "rust_verify: ACCEPT" in res.stdout
     verify = "ACCEPT" if accept else "REJECT"
+    if not accept:
+        # The verifier's own account of WHY -- a bare REJECT with the reason
+        # discarded is the least useful thing this could print.
+        why = re.compile(r"\[XX|reject|fail|mismatch|bad |invalid|expected|!=|missing",
+                         re.I)
+        for stream, txt in (("out", res.stdout), ("err", res.stderr)):
+            lines = (txt or "").strip().splitlines()
+            keep = [l for l in lines if why.search(l)][-14:] or lines[-6:]
+            for l in keep:
+                print("[challenge] verifier %s: %s" % (stream, l[:180]), flush=True)
+        print("[challenge] verifier rc=%d" % res.returncode, flush=True)
     print("[challenge] rust verifier: %s" % verify, flush=True)
     try:
         proof.unlink()                            # the proof never leaves this box
