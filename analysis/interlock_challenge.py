@@ -101,7 +101,7 @@ def main():
     ap.add_argument("--nonce", help="hex; the per-request nonce from the CERTIFIED "
                                     "request. The key is re-derived from it here "
                                     "against this box's PSK and never transits.")
-    ap.add_argument("--key-commit", help="hex SHA256(key||iv_in||iv_out) as carried "
+    ap.add_argument("--key-commit", help="hex Poseidon(key||iv_in||iv_out) as carried "
                                          "in the certified request (public, H2)")
     ap.add_argument("--ct-in", help="hex certified request ciphertext (public)")
     ap.add_argument("--ct-out", help="hex certified response ciphertext (public)")
@@ -154,7 +154,7 @@ def main():
 
     # ---------------- key binding (token-binding.md B1 + B2) ----------------
     # Adds, to the SAME tape as the forward pass:
-    #     SHA256(key||iv_in||iv_out) == KEY_COMMIT          (from the certified request)
+    #     Poseidon(key||iv_in||iv_out) == KEY_COMMIT        (from the certified request)
     #     AES128-CTR(key, iv_in,  req_ids) == ct_in         (certified request bytes)
     #     AES128-CTR(key, iv_out, rsp_ids) == ct_out        (certified response bytes)
     # and welds the response side to the model's OWN committed output tokens, so the
