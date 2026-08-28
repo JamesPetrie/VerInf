@@ -22,8 +22,16 @@ from typing import Iterable
 import blake3
 import protocol
 import torch
-from claims import AddClaim, HadamardClaim, MatmulClaim
+from claims import (
+    AddClaim,
+    ConcatClaim,
+    HadamardClaim,
+    LinCombClaim,
+    MatmulClaim,
+    WordExtractionClaim,
+)
 from cuda_primitives import P, gl_matvec, gl_mul, gl_sub
+from rescale_claim import RescaleClaim
 
 from layergkr import sumcheck as sc
 
@@ -53,7 +61,8 @@ CLAIM_PROOF_FAMILIES = {
 }
 
 MATERIALIZED_PROOF_CLAIMS = frozenset({
-    "AddClaim", "HadamardClaim", "MatmulClaim"})
+    "AddClaim", "ConcatClaim", "HadamardClaim", "LinCombClaim",
+    "MatmulClaim", "RescaleClaim", "WordExtractionClaim"})
 
 
 def proof_family(claim: object) -> str:
@@ -246,7 +255,20 @@ def _relation_terms(claim: object, live: dict, *, claim_index: int,
     rounds = size.bit_length() - 1
     tau = protocol.op_vec(
         challenge, claim_index, "sampled-sumcheck-eq", rounds)
-    eq = _eq_weights(tau, live[claim.a].device)
+    if isinstance(claim, (AddClaim, HadamardClaim)):
+        anchor = claim.a
+    elif isinstance(claim, ConcatClaim):
+        anchor = claim.dst
+    elif isinstance(claim, LinCombClaim):
+        anchor = claim.xs[0]
+    elif isinstance(claim, WordExtractionClaim):
+        anchor = claim.x
+    elif isinstance(claim, RescaleClaim):
+        anchor = claim.x_full
+    else:
+        raise TypeError(
+            f"no sumcheck relation builder for {type(claim).__name__}")
+    eq = _eq_weights(tau, live[anchor].device)
 
     if isinstance(claim, AddClaim):
         a = _pad_pow2(live[claim.a], length)
@@ -260,15 +282,65 @@ def _relation_terms(claim: object, live: dict, *, claim_index: int,
         return "add", [
             (1, [a, eq]), (1, [b, eq]), (P - 1, [c, eq])]
 
-    if not isinstance(claim, HadamardClaim):
-        raise TypeError(
-            f"no sumcheck relation builder for {type(claim).__name__}")
-    a = _pad_pow2(live[claim.a], length)
-    b = _pad_pow2(live[claim.b], length)
-    target = claim.c_full if claim.rescale_bits > 0 else claim.c
-    c = _pad_pow2(live[target], length)
-    return "hadamard", [
-        (1, [a, b, eq]), (P - 1, [c, eq])]
+    if isinstance(claim, HadamardClaim):
+        a = _pad_pow2(live[claim.a], length)
+        b = _pad_pow2(live[claim.b], length)
+        target = claim.c_full if claim.rescale_bits > 0 else claim.c
+        c = _pad_pow2(live[target], length)
+        return "hadamard", [
+            (1, [a, b, eq]), (P - 1, [c, eq])]
+
+    if isinstance(claim, ConcatClaim):
+        joined = torch.cat([
+            live[var].detach().contiguous().view(-1) for var in claim.srcs])
+        src = _pad_pow2(joined, length)
+        dst = _pad_pow2(live[claim.dst], length)
+        return "concat", [
+            (1, [src, eq]), (P - 1, [dst, eq])]
+
+    if isinstance(claim, LinCombClaim):
+        terms = [(int(coef) % P,
+                  [_pad_pow2(live[var], length), eq])
+                 for var, coef in zip(claim.xs, claim.coefs)]
+        rhs = torch.zeros(size, dtype=torch.uint64, device=eq.device)
+        if len(claim.rhs) == 1:
+            rhs[:length] = int(claim.rhs[0]) % P
+        else:
+            rhs[:length] = torch.tensor(
+                claim.rhs, dtype=torch.uint64, device=eq.device)
+        terms.append((P - 1, [rhs, eq]))
+        return "lincomb", terms
+
+    if isinstance(claim, WordExtractionClaim):
+        terms = [(1, [_pad_pow2(live[claim.x], length), eq])]
+        for word, coef in zip(claim.words, claim.coeffs):
+            terms.append(((P - int(coef)) % P,
+                          [_pad_pow2(live[word], length), eq]))
+        if claim.shift % P:
+            shift = torch.zeros(
+                size, dtype=torch.uint64, device=eq.device)
+            shift[:length] = claim.shift % P
+            terms.append((1, [shift, eq]))
+        return "word-extraction", terms
+
+    # Batch the two public rescale linears with an independent random tag so
+    # errors in one cannot cancel errors in the other except with 1/|F| chance.
+    gamma = protocol.op_vec(
+        challenge, claim_index, "sampled-rescale-batch", 1)[0]
+    x_full = _pad_pow2(live[claim.x_full], length)
+    x = _pad_pow2(live[claim.x], length)
+    low = _pad_pow2(live[claim.x_low], length)
+    shifted = _pad_pow2(live[claim.x_shifted], length)
+    offset = torch.zeros(size, dtype=torch.uint64, device=eq.device)
+    offset[:length] = 1 << (claim.output_width - 1)
+    return "rescale-linear", [
+        (1, [x_full, eq]),
+        ((P - (1 << claim.rescale_bits)) % P, [x, eq]),
+        (P - 1, [low, eq]),
+        (gamma, [shifted, eq]),
+        ((P - gamma) % P, [x, eq]),
+        ((P - gamma) % P, [offset, eq]),
+    ]
 
 
 def _sumcheck_coins(challenge: bytes, claim_index: int, rounds: int):

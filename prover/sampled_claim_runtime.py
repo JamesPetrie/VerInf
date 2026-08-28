@@ -29,9 +29,18 @@ import core as prover_core
 import protocol
 import sampled_local_proofs
 import torch
-from claims import AddClaim, HadamardClaim, LinCombClaim, MatmulClaim, RangeWordClaim
+from claims import (
+    AddClaim,
+    ConcatClaim,
+    HadamardClaim,
+    LinCombClaim,
+    MatmulClaim,
+    RangeWordClaim,
+    WordExtractionClaim,
+)
 from core import STREAMING_INPUT_CLAIMS, P, Variable
 from cuda_primitives import gl_add, gl_mul, hash_columns_streamed
+from rescale_claim import RescaleClaim
 
 from layergkr.sampled_audit import AuditParams, VerifierSession
 
@@ -490,7 +499,9 @@ class ClaimWindowAudit:
                 return self._exact_check(block, live)
             return True, "ok"
 
-        if isinstance(claim, (AddClaim, HadamardClaim)):
+        if isinstance(claim, (AddClaim, ConcatClaim, HadamardClaim,
+                              LinCombClaim, RescaleClaim,
+                              WordExtractionClaim)):
             proof = sampled_local_proofs.prove_sumcheck(
                 claim, live, claim_index=block.index, challenge=challenge)
             ok, why = sampled_local_proofs.verify_sumcheck(
@@ -507,7 +518,11 @@ class ClaimWindowAudit:
             })
             if not ok:
                 return False, why
-            if isinstance(claim, HadamardClaim) and claim.rescale_bits > 0:
+            needs_residual_exact = (
+                isinstance(claim, RescaleClaim)
+                or (isinstance(claim, HadamardClaim)
+                    and claim.rescale_bits > 0))
+            if needs_residual_exact:
                 self.exact_fallback_counts[claim_name] += 1
                 return self._exact_check(block, live)
             return True, "ok"

@@ -12,6 +12,7 @@ import core
 import pytest
 import torch
 from cuda_primitives import hash_columns_streamed
+from rescale_claim import rescale
 from routing_claim import freivalds_combine
 from sampled_claim_runtime import ClaimWindowAudit, _finish_tensor_digest, _tensor_digest_parts
 from tape import Tape
@@ -107,7 +108,9 @@ def test_real_tape_observer_accepts_without_replay():
     assert result["accepted"] is True
     assert result["claims"] == result["selected"] == 1
     assert len(result["c0_root"]) == 64
-    assert result["local_argument"] == "exact-recomputation"
+    assert result["local_argument"] == "sumcheck"
+    assert result["materialized_local_proof_counts"] == {"sumcheck": 1}
+    assert result["exact_fallbacks"] == 0
     assert result["cryptographic_local_proofs"] is False
     assert result["rs_openings_materialized"] is False
 
@@ -146,7 +149,7 @@ def test_window_rs_commit_opens_and_binds_selected_wire():
 
     assert result["accepted"] is True
     assert result["rs_openings_materialized"] is True
-    assert result["binding"] == "rs-window+striped-blake3 exact-local runtime"
+    assert result["binding"] == "rs-window+striped-blake3 sumcheck runtime"
     assert result["rs_commit_s"] > 0
     assert result["rs_open_s"] > 0
     assert result["rs_verify_s"] > 0
@@ -308,6 +311,74 @@ def test_large_relation_uses_gpu_sumcheck_fast_path():
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA runtime test")
+def test_lincomb_materializes_sumcheck():
+    tape = Tape(CFG, lazy=True)
+    values_i64 = torch.arange(1, 9, dtype=torch.int64, device="cuda")
+    values = values_i64.to(torch.uint64)
+    a = tape.commit("lc_a", values, (8,))
+    b = tape.commit("lc_b", (values_i64 + 3).to(torch.uint64), (8,))
+    rhs = (2 * values.view(torch.int64)
+           + 3 * b.data.view(torch.int64)).tolist()
+    tape.lincomb([a, b], [2, 3], rhs)
+    admission.prepare(tape, CFG)
+    audit = ClaimWindowAudit(
+        tape, CFG, b"v" * 32, b"public" * 4, b"model" * 6 + b"xx",
+        expected_claims=0, window_size=1, sample_per_window=1,
+        heartbeat_every=1000)
+    tape.run_engine_pass(observer=audit)
+    result = audit.finish()
+
+    assert result["accepted"] is True
+    assert result["materialized_local_proof_counts"] == {"sumcheck": 1}
+    assert result["exact_fallbacks"] == 0
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA runtime test")
+def test_word_extraction_sumcheck_with_explicit_lookup_fallbacks():
+    tape = Tape(CFG, lazy=True)
+    x = tape.commit(
+        "word_x", torch.tensor(
+            [0, 1, 5, 10, 15], dtype=torch.uint64, device="cuda"), (5,))
+    table = tape.register_table("word2", range(4))
+    words = tape.word_extract(x, table, B=2, N=2)
+    admission.prepare(tape, CFG)
+    audit = ClaimWindowAudit(
+        tape, CFG, b"v" * 32, b"public" * 4, b"model" * 6 + b"xx",
+        expected_claims=0, window_size=1, sample_per_window=1,
+        heartbeat_every=1000)
+    tape.run_engine_pass(free_intermediates=True,
+                         keep={word.var for word in words}, observer=audit)
+    result = audit.finish()
+
+    assert result["accepted"] is True
+    assert result["claims"] == result["selected"] == 3
+    assert result["materialized_local_proof_counts"] == {"sumcheck": 1}
+    assert result["exact_fallback_counts"] == {"RangeWordClaim": 2}
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA runtime test")
+def test_rescale_linears_use_sumcheck_and_ranges_stay_exact():
+    tape = Tape(CFG, lazy=True)
+    raw = tape.commit(
+        "raw", torch.tensor(
+            [0, 1, 17, 31, 63], dtype=torch.uint64, device="cuda"), (5,))
+    out = rescale(tape, raw, s_in=16, s_out=4, output_width=8)
+    admission.prepare(tape, CFG)
+    audit = ClaimWindowAudit(
+        tape, CFG, b"v" * 32, b"public" * 4, b"model" * 6 + b"xx",
+        expected_claims=0, window_size=1, sample_per_window=1,
+        heartbeat_every=1000)
+    tape.run_engine_pass(free_intermediates=True, keep={out.var},
+                         observer=audit)
+    result = audit.finish()
+
+    assert result["accepted"] is True
+    assert result["local_argument"] == "sumcheck+exact-recomputation"
+    assert result["materialized_local_proof_counts"] == {"sumcheck": 1}
+    assert result["exact_fallback_counts"] == {"RescaleClaim": 1}
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA runtime test")
 def test_real_tape_observer_rejects_tampered_selected_output():
     tape, dst, audit = _case()
 
@@ -323,8 +394,7 @@ def test_real_tape_observer_rejects_tampered_selected_output():
 
     assert result["accepted"] is False
     assert len(result["failures"]) == 1
-    assert result["failures"][0].startswith("claim 0: cat_a_b#")
-    assert result["failures"][0].endswith(": local operation mismatch")
+    assert result["failures"][0].startswith("claim 0: sumcheck")
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA runtime test")

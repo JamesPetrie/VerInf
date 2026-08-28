@@ -156,13 +156,17 @@ def predict(geometry: Geometry = Geometry(), rates: RateCard = RateCard()) -> di
                 "real_maverick_timing_measured": False,
                 "materialized_claim_types": {
                     "freivalds": ["MatmulClaim"],
-                    "sumcheck": ["AddClaim", "HadamardClaim"],
+                    "sumcheck": [
+                        "AddClaim", "ConcatClaim", "HadamardClaim",
+                        "LinCombClaim", "RescaleClaim",
+                        "WordExtractionClaim",
+                    ],
                 },
-                "manifest_claims_materialized": 1330,
-                "manifest_fraction_materialized": 1330 / 2596,
+                "manifest_claims_materialized": 1429,
+                "manifest_fraction_materialized": 1429 / 2596,
                 "family_coverage": {
                     "freivalds": {"materialized": 458, "total": 554},
-                    "sumcheck": {"materialized": 872, "total": 1287},
+                    "sumcheck": {"materialized": 971, "total": 1287},
                     "product-tree": {"materialized": 0, "total": 755},
                 },
                 "transcript_order": (

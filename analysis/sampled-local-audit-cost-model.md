@@ -101,7 +101,11 @@ claim types after their window commitments are fixed:
 
 - `MatmulClaim`: multi-head and `transpose_b` Freivalds projections;
 - `AddClaim`: eq-weighted sumcheck, including public pins;
-- `HadamardClaim`: eq-weighted sumcheck for the raw product relation.
+- `HadamardClaim`: eq-weighted sumcheck for the raw product relation;
+- `ConcatClaim`, `LinCombClaim`, and `WordExtractionClaim`: eq-weighted
+  linear sumchecks;
+- `RescaleClaim`: randomly batched sumcheck for both linear identities, with
+  its two range lookups still handled by an explicitly counted exact fallback.
 
 The proof messages are copied to host, independently verified against the
 selected A/B/C wires, hashed into per-claim receipts, and those receipts are
@@ -110,8 +114,8 @@ is therefore `window commitments -> secret sample -> local proofs -> secret
 columns`. A 32,768-element test exercises the GPU sumcheck path, and a
 cancelling-error test demonstrates why the random eq weighting is necessary.
 
-These three types account for 1,330/2,596 manifest claims: 458/554 of the
-Freivalds family and 872/1,287 of the sumcheck family. Product-tree coverage is
+These bridged types account for 1,429/2,596 manifest claims: 458/554 of the
+Freivalds family and 971/1,287 of the sumcheck family. Product-tree coverage is
 still 0/755 in the real adapter. In particular, `RangeWordClaim` currently has
 only a table-global multiplicity wire; a sound local product-tree needs a
 per-claim multiplicity commitment fixed before its random fingerprint. The
