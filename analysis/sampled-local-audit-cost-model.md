@@ -117,6 +117,12 @@ claim types after their window commitments are fixed:
 - `PairedTlookupClaim`: compact position-tagged GPU product trees bind
   `(x + shift, y)` to `(T[index], T_Y[index])`, with `x + shift` as the
   already committed index and an explicit table-bound check.
+- `FreivaldsCombineClaim`: a post-commit random output-axis projection binds
+  every expert stream and the committed combined output, then checks the
+  route-mask contraction in the field.
+- `RoutedProjectedMatmulClaim`: streaming expert-weight projections `W_e rho`
+  are bound to the model weight variables, and the verifier checks
+  `sum_k X * (M P) = Y rho` without materializing all expert outputs.
 
 The proof messages are copied to host, independently verified against the
 selected A/B/C wires, hashed into per-claim receipts, and those receipts are
@@ -125,8 +131,8 @@ is therefore `window commitments -> secret sample -> local proofs -> secret
 columns`. A 32,768-element test exercises the GPU sumcheck path, and a
 cancelling-error test demonstrates why the random eq weighting is necessary.
 
-These bridged types account for 2,184/2,596 manifest claims: 458/554 of the
-Freivalds family, 971/1,287 of the sumcheck family, and all 755/755 of the
+These bridged types account for 2,280/2,596 manifest claims: all 554/554 of
+the Freivalds family, 971/1,287 of the sumcheck family, and all 755/755 of the
 product-tree family.
 The runtime keeps all remaining types as explicitly counted exact fallbacks
 and continues to report `cryptographic_local_proofs: false`.

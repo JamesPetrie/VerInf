@@ -33,8 +33,10 @@ from claims import (
     RangeWordClaim,
     WordExtractionClaim,
 )
-from cuda_primitives import P, gl_add, gl_matvec, gl_mul, gl_sub
+from cuda_primitives import P, gl_add, gl_matmul, gl_matvec, gl_mul, gl_sub
 from rescale_claim import RescaleClaim
+from routed_projected import RoutedProjectedMatmulClaim
+from routing_claim import FreivaldsCombineClaim
 
 from layergkr import sumcheck as sc
 
@@ -65,8 +67,9 @@ CLAIM_PROOF_FAMILIES = {
 
 MATERIALIZED_PROOF_CLAIMS = frozenset({
     "AddClaim", "ConcatClaim", "EmbeddingLookupClaim", "HadamardClaim",
-    "LinCombClaim", "MatmulClaim", "PairedTlookupClaim", "RangeWordClaim",
-    "RescaleClaim", "WordExtractionClaim"})
+    "FreivaldsCombineClaim", "LinCombClaim", "MatmulClaim",
+    "PairedTlookupClaim", "RangeWordClaim", "RescaleClaim",
+    "RoutedProjectedMatmulClaim", "WordExtractionClaim"})
 
 
 def proof_family(claim: object) -> str:
@@ -198,6 +201,178 @@ def verify_matmul(claim: MatmulClaim, live: dict,
             a[:, head, :].contiguous(), w_message[w_lo:w_hi])
         if not torch.equal(contraction, c_message[c_lo:c_hi]):
             return False, "Freivalds contraction failed"
+    return True, "ok"
+
+
+@dataclass
+class CombineFreivaldsProof:
+    """Host messages for the masked expert-stream contraction."""
+
+    claim_index: int
+    challenge: bytes
+    expert_projections: torch.Tensor
+    output_projection: torch.Tensor
+
+    @property
+    def byte_size(self) -> int:
+        return (self.expert_projections.numel()
+                + self.output_projection.numel()) * 8
+
+    @property
+    def digest(self) -> bytes:
+        h = blake3.blake3(b"verinf/sampled/combine-freivalds/v1")
+        h.update(self.claim_index.to_bytes(8, "little"))
+        h.update(len(self.challenge).to_bytes(8, "little"))
+        h.update(self.challenge)
+        for tensor in (self.expert_projections, self.output_projection):
+            h.update(tensor.numel().to_bytes(8, "little"))
+            h.update(tensor.contiguous().numpy().tobytes())
+        return h.digest()
+
+
+def _combine_rho(challenge: bytes, claim_index: int, length: int) -> list[int]:
+    return protocol.op_vec(
+        challenge, claim_index, "sampled-combine-freivalds-rho", length)
+
+
+def _combine_projections(claim: FreivaldsCombineClaim, live: dict,
+                         rho_t: torch.Tensor):
+    expert = []
+    for var in claim.xs:
+        value = live[var]
+        if callable(value):
+            value = value()
+        expert.append(gl_matvec(value.reshape(claim.T, claim.F), rho_t))
+    output = gl_matvec(live[claim.y].reshape(claim.T, claim.F), rho_t)
+    return torch.stack(expert), output
+
+
+def prove_freivalds_combine(
+        claim: FreivaldsCombineClaim, live: dict, *, claim_index: int,
+        challenge: bytes) -> CombineFreivaldsProof:
+    rho_t = _cuda_vec(_combine_rho(challenge, claim_index, claim.F))
+    expert, output = _combine_projections(claim, live, rho_t)
+    return CombineFreivaldsProof(
+        claim_index=claim_index,
+        challenge=bytes(challenge),
+        expert_projections=_host(expert),
+        output_projection=_host(output),
+    )
+
+
+def verify_freivalds_combine(
+        claim: FreivaldsCombineClaim, live: dict,
+        proof: CombineFreivaldsProof, *, claim_index: int,
+        challenge: bytes) -> tuple[bool, str]:
+    if proof.claim_index != claim_index or proof.challenge != challenge:
+        return False, "combine Freivalds transcript challenge mismatch"
+    if (proof.expert_projections.numel() != claim.E * claim.T
+            or proof.output_projection.numel() != claim.T):
+        return False, "combine Freivalds projection shape mismatch"
+    rho_t = _cuda_vec(_combine_rho(challenge, claim_index, claim.F))
+    expected_expert, expected_output = _combine_projections(
+        claim, live, rho_t)
+    expert_message = proof.expert_projections.to("cuda").reshape(
+        claim.E, claim.T)
+    output_message = proof.output_projection.to("cuda")
+    if not torch.equal(expected_expert, expert_message):
+        return False, "combine expert projections are not witness-bound"
+    if not torch.equal(expected_output, output_message):
+        return False, "combine output projection is not witness-bound"
+    mask = live[claim.m].reshape(claim.T, claim.E)
+    projected_by_token = expert_message.T.contiguous()
+    masked = gl_mul(mask, projected_by_token)
+    ones = torch.ones(claim.E, dtype=torch.uint64, device=mask.device)
+    contraction = gl_matvec(masked.contiguous(), ones)
+    if not torch.equal(contraction, output_message):
+        return False, "combine Freivalds contraction failed"
+    return True, "ok"
+
+
+@dataclass
+class RoutedFreivaldsProof:
+    """Projected expert weights and routed output for one selected claim."""
+
+    claim_index: int
+    challenge: bytes
+    weight_projections: torch.Tensor
+    output_projection: torch.Tensor
+
+    @property
+    def byte_size(self) -> int:
+        return (self.weight_projections.numel()
+                + self.output_projection.numel()) * 8
+
+    @property
+    def digest(self) -> bytes:
+        h = blake3.blake3(b"verinf/sampled/routed-freivalds/v1")
+        h.update(self.claim_index.to_bytes(8, "little"))
+        h.update(len(self.challenge).to_bytes(8, "little"))
+        h.update(self.challenge)
+        for tensor in (self.weight_projections, self.output_projection):
+            h.update(tensor.numel().to_bytes(8, "little"))
+            h.update(tensor.contiguous().numpy().tobytes())
+        return h.digest()
+
+
+def _routed_rho(challenge: bytes, claim_index: int, length: int) -> list[int]:
+    return protocol.op_vec(
+        challenge, claim_index, "sampled-routed-freivalds-rho", length)
+
+
+def _routed_projections(claim: RoutedProjectedMatmulClaim, live: dict,
+                        rho_t: torch.Tensor):
+    projected_weights = []
+    for var in claim.W:
+        value = live[var]
+        if callable(value):
+            value = value()
+        projected_weights.append(
+            gl_matvec(value.reshape(claim.K, claim.J), rho_t))
+    output = gl_matvec(live[claim.Y].reshape(claim.T, claim.J), rho_t)
+    return torch.stack(projected_weights), output
+
+
+def prove_routed_matmul(
+        claim: RoutedProjectedMatmulClaim, live: dict, *, claim_index: int,
+        challenge: bytes) -> RoutedFreivaldsProof:
+    rho_t = _cuda_vec(_routed_rho(challenge, claim_index, claim.J))
+    weights, output = _routed_projections(claim, live, rho_t)
+    return RoutedFreivaldsProof(
+        claim_index=claim_index,
+        challenge=bytes(challenge),
+        weight_projections=_host(weights),
+        output_projection=_host(output),
+    )
+
+
+def verify_routed_matmul(
+        claim: RoutedProjectedMatmulClaim, live: dict,
+        proof: RoutedFreivaldsProof, *, claim_index: int,
+        challenge: bytes) -> tuple[bool, str]:
+    if proof.claim_index != claim_index or proof.challenge != challenge:
+        return False, "routed Freivalds transcript challenge mismatch"
+    if (proof.weight_projections.numel() != claim.E * claim.K
+            or proof.output_projection.numel() != claim.T):
+        return False, "routed Freivalds projection shape mismatch"
+    rho_t = _cuda_vec(_routed_rho(challenge, claim_index, claim.J))
+    expected_weights, expected_output = _routed_projections(
+        claim, live, rho_t)
+    weight_message = proof.weight_projections.to("cuda").reshape(
+        claim.E, claim.K)
+    output_message = proof.output_projection.to("cuda")
+    if not torch.equal(expected_weights, weight_message):
+        return False, "routed weight projections are not model-bound"
+    if not torch.equal(expected_output, output_message):
+        return False, "routed output projection is not witness-bound"
+    mask = live[claim.M].reshape(claim.T, claim.E)
+    routed_projection = gl_matmul(mask, weight_message)
+    products = gl_mul(live[claim.X].reshape(claim.T, claim.K),
+                      routed_projection)
+    ones = torch.ones(claim.K, dtype=torch.uint64, device=mask.device)
+    contraction = gl_matvec(products.contiguous(), ones)
+    if not torch.equal(contraction, output_message):
+        return False, "routed Freivalds contraction failed"
     return True, "ok"
 
 

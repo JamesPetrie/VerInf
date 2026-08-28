@@ -28,8 +28,9 @@ def test_headline_cost_row():
     assert campaign["prior_failed_attempt"]["timed_audit_lower_bound_s"] > 3600
     bridge = campaign["post_campaign_local_bridge"]
     assert bridge["real_maverick_timing_measured"] is False
-    assert bridge["manifest_claims_materialized"] == 2184
-    assert bridge["manifest_fraction_materialized"] == 2184 / 2596
+    assert bridge["manifest_claims_materialized"] == 2280
+    assert bridge["manifest_fraction_materialized"] == 2280 / 2596
+    assert bridge["family_coverage"]["freivalds"]["materialized"] == 554
     assert bridge["family_coverage"]["product-tree"]["materialized"] == 755
     diagnostics = campaign["diagnostics"]
     assert diagnostics["estimated_nonpersistent_witness_gib"] > 500

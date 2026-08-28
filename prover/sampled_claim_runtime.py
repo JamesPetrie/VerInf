@@ -43,6 +43,8 @@ from claims import (
 from core import STREAMING_INPUT_CLAIMS, P, Variable
 from cuda_primitives import gl_add, gl_mul, hash_columns_streamed
 from rescale_claim import RescaleClaim
+from routed_projected import RoutedProjectedMatmulClaim
+from routing_claim import FreivaldsCombineClaim
 
 from layergkr.sampled_audit import AuditParams, VerifierSession
 
@@ -500,6 +502,40 @@ class ClaimWindowAudit:
                 self.exact_fallback_counts[claim_name] += 1
                 return self._exact_check(block, live)
             return True, "ok"
+
+        if isinstance(claim, FreivaldsCombineClaim):
+            proof = sampled_local_proofs.prove_freivalds_combine(
+                claim, live, claim_index=block.index, challenge=challenge)
+            ok, why = sampled_local_proofs.verify_freivalds_combine(
+                claim, live, proof, claim_index=block.index,
+                challenge=challenge)
+            self.materialized_local_proof_counts[family] += 1
+            self.local_proof_bytes += proof.byte_size
+            self.local_proof_digests.append({
+                "claim": block.index,
+                "claim_type": claim_name,
+                "family": family,
+                "bytes": proof.byte_size,
+                "digest": proof.digest.hex(),
+            })
+            return ok, why
+
+        if isinstance(claim, RoutedProjectedMatmulClaim):
+            proof = sampled_local_proofs.prove_routed_matmul(
+                claim, live, claim_index=block.index, challenge=challenge)
+            ok, why = sampled_local_proofs.verify_routed_matmul(
+                claim, live, proof, claim_index=block.index,
+                challenge=challenge)
+            self.materialized_local_proof_counts[family] += 1
+            self.local_proof_bytes += proof.byte_size
+            self.local_proof_digests.append({
+                "claim": block.index,
+                "claim_type": claim_name,
+                "family": family,
+                "bytes": proof.byte_size,
+                "digest": proof.digest.hex(),
+            })
+            return ok, why
 
         if isinstance(claim, (AddClaim, ConcatClaim, HadamardClaim,
                               LinCombClaim, RescaleClaim,

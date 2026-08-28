@@ -13,6 +13,7 @@ import pytest
 import torch
 from cuda_primitives import hash_columns_streamed
 from rescale_claim import rescale
+from routed_projected import routed_projected_matmul
 from routing_claim import freivalds_combine
 from sampled_claim_runtime import ClaimWindowAudit, _finish_tensor_digest, _tensor_digest_parts
 from tape import Tape
@@ -543,6 +544,159 @@ def test_paired_lookup_product_tree_rejects_out_of_range_key():
 
     assert result["accepted"] is False
     assert any("outside the public table" in failure
+               for failure in result["failures"])
+
+
+def _freivalds_combine_case():
+    tape = Tape(CFG, lazy=True)
+    mask = tape.commit(
+        "fc_mask", torch.tensor(
+            [1, 0, 0, 0, 0, 1], dtype=torch.uint64,
+            device="cuda"), (2, 3))
+    xs = []
+    for expert in range(3):
+        values = torch.tensor(
+            [10 + expert, 20 + expert, 30 + expert, 40 + expert],
+            dtype=torch.uint64, device="cuda")
+        xs.append(tape.commit(f"fc_x{expert}", values, (2, 2)))
+    out = freivalds_combine(tape, mask, xs, T=2, E=3, F=2)
+    admission.prepare(tape, CFG)
+    audit = ClaimWindowAudit(
+        tape, CFG, b"v" * 32, b"public" * 4, b"model" * 6 + b"xx",
+        expected_claims=0, window_size=1, sample_per_window=1,
+        heartbeat_every=1000)
+    return tape, out, audit
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA runtime test")
+def test_freivalds_combine_materializes_projection_proof():
+    tape, out, audit = _freivalds_combine_case()
+    tape.run_engine_pass(free_intermediates=True, keep={out.var},
+                         observer=audit)
+    result = audit.finish()
+
+    assert result["accepted"] is True
+    assert result["local_argument"] == "freivalds"
+    assert result["materialized_local_proof_counts"] == {"freivalds": 1}
+    assert result["local_proof_bytes"] == (3 * 2 + 2) * 8
+    assert result["exact_fallbacks"] == 0
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA runtime test")
+def test_freivalds_combine_rejects_wrong_output():
+    tape, out, audit = _freivalds_combine_case()
+
+    def tamper_then_observe(index, claim, input_vars, input_data, outs, live):
+        bad = outs[out.var].clone()
+        bad[0] = 99
+        outs[out.var] = bad
+        live[out.var] = bad
+        audit(index, claim, input_vars, input_data, outs, live)
+
+    tape.run_engine_pass(observer=tamper_then_observe)
+    result = audit.finish()
+
+    assert result["accepted"] is False
+    assert any("combine Freivalds contraction failed" in failure
+               for failure in result["failures"])
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA runtime test")
+def test_freivalds_combine_rejects_wrong_route_mask():
+    tape, _out, audit = _freivalds_combine_case()
+
+    def tamper_then_observe(index, claim, input_vars, input_data, outs, live):
+        bad = live[claim.m].clone()
+        bad[0] = 0
+        bad[1] = 1
+        input_data[claim.m] = bad
+        live[claim.m] = bad
+        audit(index, claim, input_vars, input_data, outs, live)
+
+    tape.run_engine_pass(observer=tamper_then_observe)
+    result = audit.finish()
+
+    assert result["accepted"] is False
+    assert any("combine Freivalds contraction failed" in failure
+               for failure in result["failures"])
+
+
+def _routed_matmul_case():
+    tape = Tape(CFG, lazy=True)
+    x = tape.commit(
+        "routed_x", torch.tensor(
+            [1, 2, 3, 4, 5, 6], dtype=torch.uint64,
+            device="cuda"), (3, 2))
+    mask = tape.commit(
+        "routed_mask", torch.tensor(
+            [1, 0, 0, 1, 1, 0], dtype=torch.uint64,
+            device="cuda"), (3, 2))
+    weights = []
+    for expert in range(2):
+        values = torch.arange(
+            1 + expert * 4, 5 + expert * 4,
+            dtype=torch.int64, device="cuda").to(torch.uint64)
+        weights.append(tape.commit(f"routed_w{expert}", values, (2, 2)))
+    out = routed_projected_matmul(
+        tape, x, mask, weights, T=3, K=2, J=2, E=2)
+    admission.prepare(tape, CFG)
+    audit = ClaimWindowAudit(
+        tape, CFG, b"v" * 32, b"public" * 4, b"model" * 6 + b"xx",
+        expected_claims=0, window_size=1, sample_per_window=1,
+        heartbeat_every=1000)
+    return tape, out, audit
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA runtime test")
+def test_routed_matmul_materializes_freivalds_seam():
+    tape, out, audit = _routed_matmul_case()
+    tape.run_engine_pass(free_intermediates=True, keep={out.var},
+                         observer=audit)
+    result = audit.finish()
+
+    assert result["accepted"] is True
+    assert result["local_argument"] == "freivalds"
+    assert result["materialized_local_proof_counts"] == {"freivalds": 1}
+    assert result["local_proof_bytes"] == (2 * 2 + 3) * 8
+    assert result["exact_fallbacks"] == 0
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA runtime test")
+def test_routed_matmul_freivalds_rejects_wrong_output():
+    tape, out, audit = _routed_matmul_case()
+
+    def tamper_then_observe(index, claim, input_vars, input_data, outs, live):
+        bad = outs[out.var].clone()
+        bad[0] = 99
+        outs[out.var] = bad
+        live[out.var] = bad
+        audit(index, claim, input_vars, input_data, outs, live)
+
+    tape.run_engine_pass(observer=tamper_then_observe)
+    result = audit.finish()
+
+    assert result["accepted"] is False
+    assert any("routed Freivalds contraction failed" in failure
+               for failure in result["failures"])
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA runtime test")
+def test_routed_matmul_freivalds_rejects_wrong_route():
+    tape, _out, audit = _routed_matmul_case()
+
+    def tamper_then_observe(index, claim, input_vars, input_data, outs, live):
+        bad = live[claim.M].clone()
+        bad[0] = 0
+        bad[1] = 1
+        input_data[claim.M] = bad
+        live[claim.M] = bad
+        audit(index, claim, input_vars, input_data, outs, live)
+
+    tape.run_engine_pass(observer=tamper_then_observe)
+    result = audit.finish()
+
+    assert result["accepted"] is False
+    assert any("routed Freivalds contraction failed" in failure
                for failure in result["failures"])
 
 
