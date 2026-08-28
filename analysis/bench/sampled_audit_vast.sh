@@ -70,6 +70,7 @@ required = {"wall_s", "forward_s", "c0_commit_s", "selected_local_arguments_s",
             "cryptographic_local_proofs", "rs_openings_materialized",
             "cryptographic_local_proof_coverage", "rs_geometry", "rs_rows",
             "rs_opened_values", "manifest_proof_family_counts",
+            "manifest_materialized_local_proofs",
             "selected_proof_family_counts", "materialized_local_proof_counts",
             "materialized_local_proofs", "exact_fallbacks", "local_proof_bytes",
             "local_proof_digests", "local_receipts", "rs_column_samples"}
@@ -82,25 +83,22 @@ assert abs(r["fraction"] - 265 / 2596) < 1e-12
 assert r["binding"] == ("rs-window+striped-blake3 "
                          + r["local_argument"] + " runtime")
 argument_families = set(r["local_argument"].split("+"))
-assert {"freivalds", "sumcheck", "exact-recomputation"} <= argument_families
-assert argument_families <= {
-    "freivalds", "product-tree", "sumcheck", "exact-recomputation"}
-assert r["cryptographic_local_proofs"] is False
+assert argument_families == {"freivalds", "product-tree", "sumcheck"}
+assert r["cryptographic_local_proofs"] is True
 assert r["manifest_proof_family_counts"] == {
     "freivalds": 554, "product-tree": 755, "sumcheck": 1287}
-assert r["materialized_local_proof_counts"].get("freivalds", 0) > 0
-assert r["materialized_local_proof_counts"].get("sumcheck", 0) > 0
-if r["materialized_local_proof_counts"].get("product-tree", 0):
-    assert "product-tree" in argument_families
+assert r["manifest_materialized_local_proofs"] == r["claims"] == 2596
+assert set(r["materialized_local_proof_counts"]) == argument_families
 assert r["materialized_local_proofs"] == len(r["local_proof_digests"])
+assert r["materialized_local_proofs"] == r["selected"] == 265
+assert r["exact_fallbacks"] == 0
 assert len(r["local_receipts"]) == r["selected"]
 assert len(r["rs_column_samples"]) == 53
 assert sum(s["local_receipts"] for s in r["rs_column_samples"]) == r["selected"]
 assert all(len(s["columns"]) == len(set(s["columns"])) == 61
            for s in r["rs_column_samples"])
-assert r["materialized_local_proofs"] + r["exact_fallbacks"] >= r["selected"]
 assert r["local_proof_bytes"] > 0
-assert 0 < r["cryptographic_local_proof_coverage"] < 1
+assert r["cryptographic_local_proof_coverage"] == 1
 assert r["rs_openings_materialized"] is True
 assert r["rs_geometry"] == {"ELL": 16322, "K_DEG": 16384, "N_LIG": 32768}
 assert int(r["rs_rows"]) > 0

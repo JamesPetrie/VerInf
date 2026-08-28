@@ -96,16 +96,19 @@ separate portable 2,596-block smoke and were not bridged to real Tape claims.
 
 ### Post-campaign local-proof bridge
 
-The branch now materializes real Tape proof messages for three production
-claim types after their window commitments are fixed:
+The branch now materializes real Tape proof messages for every production
+claim type after its window commitments are fixed:
 
-- `MatmulClaim`: multi-head and `transpose_b` Freivalds projections;
+- `MatmulClaim`: multi-head and `transpose_b` Freivalds projections; fused
+  signed-floor output linears and both range checks are included in the same
+  receipt when rescaling is enabled;
 - `AddClaim`: eq-weighted sumcheck, including public pins;
-- `HadamardClaim`: eq-weighted sumcheck for the raw product relation;
+- `HadamardClaim`: eq-weighted sumcheck for the raw product relation, fused
+  rescale linears, and compact low/shifted range products;
 - `ConcatClaim`, `LinCombClaim`, and `WordExtractionClaim`: eq-weighted
   linear sumchecks;
-- `RescaleClaim`: randomly batched sumcheck for both linear identities, with
-  its two range lookups still handled by an explicitly counted exact fallback.
+- `RescaleClaim`: randomly batched sumcheck for both linear identities plus
+  compact products for both public range tables;
 - `RangeWordClaim`: compact GPU product trees over the query values and the
   indexed public range table. Because every production range table has
   `T[j] = j`, the already committed query is also its index wire, so this adds
@@ -131,6 +134,14 @@ claim types after their window commitments are fixed:
 - `SiluClaim`: all committed algebraic relations are batched into one
   sumcheck, while four range lookups and the paired activation lookup are
   checked by compact product trees in the same receipt.
+- `RmsNormClaim`: committed norm, limb, bracket, carry, quadratic, projected
+  output, and optional output-rescale relations are batched into a sumcheck;
+  every limb/range family is bound by compact products.
+- `SoftmaxClaim`: causal/saturation mux, decomposition, row-sum, bracket, and
+  optional rescale relations are batched into a sumcheck; its range and paired
+  exponential lookup products are included in the same receipt.
+- `MaxClaim` and `InfoFinalizeClaim`: all committed linear/quadratic relations
+  plus their gap, quotient, and remainder ranges are materialized.
 
 The proof messages are copied to host, independently verified against the
 selected A/B/C wires, hashed into per-claim receipts, and those receipts are
@@ -139,11 +150,32 @@ is therefore `window commitments -> secret sample -> local proofs -> secret
 columns`. A 32,768-element test exercises the GPU sumcheck path, and a
 cancelling-error test demonstrates why the random eq weighting is necessary.
 
-These bridged types account for 2,449/2,596 manifest claims: all 554/554 of
-the Freivalds family, 1,140/1,287 of the sumcheck family, and all 755/755 of
-the product-tree family.
-The runtime keeps all remaining types as explicitly counted exact fallbacks
-and continues to report `cryptographic_local_proofs: false`.
+These bridged types account for **2,596/2,596** manifest claims: all 554/554
+of the Freivalds family, all 1,287/1,287 of the sumcheck family, and all
+755/755 of the product-tree family. A successful complete-manifest run reports
+`materialized_local_proofs = selected`, `exact_fallbacks = 0`,
+`cryptographic_local_proof_coverage = 1`, and
+`cryptographic_local_proofs: true`; the flag is derived fail-closed rather than
+hard-coded.
+
+The existing Vast launcher now rejects any other combination before accepting
+an artifact. Its original limits remain unchanged: 600 s for the timed audit
+and 780 s for the process including build/load grace. JSONL telemetry records
+`local_proof_start`, `local_proof_complete`, or `local_proof_error` for every
+selected claim with claim type, family, synchronized proof duration, message
+bytes, fallback delta, acceptance reason, elapsed time, and GPU memory. Thus a
+timeout identifies the exact proof and window instead of leaving only a final
+process exit code.
+
+The reproducible local preflight
+`analysis/bench/sampled_local_proof_preflight.py` exercises the largest
+eq-weighted relation geometry: the T=8, V=202,048 LM-head output has 1,616,384
+slots and pads to 2,097,152, with 12 factor occurrences matching the fused
+matmul rounding relation. On the local Tesla V100-SXM3-32GB it accepted in
+0.270 s prover time plus 0.025 s verifier time and peaked at 0.188 GiB. This
+isolates the sumcheck kernel; it does not include GGUF weight reload/projection,
+product roots, RS work, or claim-distribution effects, so it is a launch gate
+and not a substitute for the real 400B timing.
 
 This bridge landed after the 415.973 s campaign. Its real Maverick timing is
 therefore **not measured yet**, and the saved campaign total is not rewritten
@@ -228,8 +260,8 @@ These changes are regression-tested locally, but the 599.5 s projection remains
 `analysis/bench/sampled_audit_vast.sh` first runs the executable 2,596-block
 protocol smoke, then invokes `demo/demo_maverick_full.py` directly in
 `--sampled-audit-out` mode. The timed region excludes download/model loading
-and includes one engine pass, streaming C0 hashing, and the 265 selected exact
-local checks. It requires an existing model enrollment and verifier-owned
+and includes one engine pass, streaming C0 hashing, and the 265 selected local
+proof arguments. It requires an existing model enrollment and verifier-owned
 secret:
 
 ```bash

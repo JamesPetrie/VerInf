@@ -161,8 +161,9 @@ def predict(geometry: Geometry = Geometry(), rates: RateCard = RateCard()) -> di
                     ],
                     "sumcheck": [
                         "AddClaim", "ConcatClaim", "HadamardClaim",
-                        "LinCombClaim", "RescaleClaim",
-                        "RoPEClaim", "RoutingClaim", "SiluClaim",
+                        "InfoFinalizeClaim", "LinCombClaim", "MaxClaim",
+                        "RescaleClaim", "RmsNormClaim", "RoPEClaim",
+                        "RoutingClaim", "SiluClaim", "SoftmaxClaim",
                         "WordExtractionClaim",
                     ],
                     "product-tree": [
@@ -170,21 +171,46 @@ def predict(geometry: Geometry = Geometry(), rates: RateCard = RateCard()) -> di
                         "RangeWordClaim",
                     ],
                 },
-                "manifest_claims_materialized": 2449,
-                "manifest_fraction_materialized": 2449 / 2596,
+                "manifest_claims_materialized": 2596,
+                "manifest_fraction_materialized": 1.0,
                 "family_coverage": {
                     "freivalds": {"materialized": 554, "total": 554},
-                    "sumcheck": {"materialized": 1140, "total": 1287},
+                    "sumcheck": {"materialized": 1287, "total": 1287},
                     "product-tree": {"materialized": 755, "total": 755},
+                },
+                "production_launch_gate": {
+                    "manifest_materialized": 2596,
+                    "selected_materialized": 265,
+                    "exact_fallbacks": 0,
+                    "cryptographic_local_proof_coverage": 1.0,
+                    "audit_timeout_s": 600,
+                    "process_timeout_s": 780,
                 },
                 "transcript_order": (
                     "window commitments -> secret block sample -> local proof "
                     "receipts -> 61 secret RS columns"
                 ),
                 "gpu_sumcheck_gate_elements": 32768,
+                "local_proof_preflight": {
+                    "script": (
+                        "analysis/bench/sampled_local_proof_preflight.py"),
+                    "gpu": "Tesla V100-SXM3-32GB",
+                    "maverick_lm_output_elements": 1616384,
+                    "padded_elements": 2097152,
+                    "factor_occurrences": 12,
+                    "prove_s": 0.2703629960305989,
+                    "verify_s": 0.025114766787737608,
+                    "peak_gpu_gib": 0.18750238418579102,
+                    "accepted": True,
+                    "scope": (
+                        "largest eq-weighted relation kernel only; excludes "
+                        "GGUF weight reload/projection and RS work"
+                    ),
+                },
                 "limitation": (
                     "the prior 415.973 s campaign predates this bridge; "
-                    "remaining claim types still use counted exact fallbacks"
+                    "the complete local-proof timing on the real 400B witness "
+                    "has not been measured yet"
                 ),
             },
         },

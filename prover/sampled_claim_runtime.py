@@ -38,15 +38,19 @@ from claims import (
     MatmulClaim,
     PairedTlookupClaim,
     RangeWordClaim,
+    RmsNormClaim,
     RoPEClaim,
     SiluClaim,
+    SoftmaxClaim,
     WordExtractionClaim,
 )
 from core import STREAMING_INPUT_CLAIMS, P, Variable
 from cuda_primitives import gl_add, gl_mul, hash_columns_streamed
+from max_claim import MaxClaim
 from rescale_claim import RescaleClaim
 from routed_projected import RoutedProjectedMatmulClaim
 from routing_claim import FreivaldsCombineClaim, RoutingClaim
+from ui_claim import InfoFinalizeClaim
 
 from layergkr.sampled_audit import AuditParams, VerifierSession
 
@@ -214,6 +218,9 @@ class ClaimWindowAudit:
         # silently inherit the exact-recomputation fallback.
         self.manifest_proof_family_counts = (
             sampled_local_proofs.manifest_family_counts(tape.claims))
+        self.manifest_materialized_local_proofs = sum(
+            sampled_local_proofs.has_materialized_proof(claim)
+            for claim in tape.claims)
         self.wire_digests: Dict[Variable, bytes] = {}
         self.pending_digests: Dict[Variable, tuple] = {}
         self.wire_order: List[Variable] = []
@@ -494,16 +501,7 @@ class ClaimWindowAudit:
                 "bytes": proof.byte_size,
                 "digest": proof.digest.hex(),
             })
-            if not ok:
-                return False, why
-            # The Freivalds contraction binds the raw matmul.  A legacy fused
-            # rescale also carries rounding/range relations which do not yet
-            # have the sumcheck bridge, so check only that residual part via
-            # the visibly counted fallback.
-            if claim.rescale_bits > 0:
-                self.exact_fallback_counts[claim_name] += 1
-                return self._exact_check(block, live)
-            return True, "ok"
+            return ok, why
 
         if isinstance(claim, FreivaldsCombineClaim):
             proof = sampled_local_proofs.prove_freivalds_combine(
@@ -573,12 +571,10 @@ class ClaimWindowAudit:
             })
             return ok, why
 
-        if isinstance(claim, (AddClaim, ConcatClaim, HadamardClaim,
-                              LinCombClaim, RescaleClaim,
-                              RoutingClaim, WordExtractionClaim)):
-            proof = sampled_local_proofs.prove_sumcheck(
+        if isinstance(claim, RmsNormClaim):
+            proof = sampled_local_proofs.prove_rmsnorm_sumcheck(
                 claim, live, claim_index=block.index, challenge=challenge)
-            ok, why = sampled_local_proofs.verify_sumcheck(
+            ok, why = sampled_local_proofs.verify_rmsnorm_sumcheck(
                 claim, live, proof, claim_index=block.index,
                 challenge=challenge)
             self.materialized_local_proof_counts[family] += 1
@@ -590,16 +586,86 @@ class ClaimWindowAudit:
                 "bytes": proof.byte_size,
                 "digest": proof.digest.hex(),
             })
-            if not ok:
-                return False, why
-            needs_residual_exact = (
+            return ok, why
+
+        if isinstance(claim, SoftmaxClaim):
+            proof = sampled_local_proofs.prove_softmax_sumcheck(
+                claim, live, claim_index=block.index, challenge=challenge)
+            ok, why = sampled_local_proofs.verify_softmax_sumcheck(
+                claim, live, proof, claim_index=block.index,
+                challenge=challenge)
+            self.materialized_local_proof_counts[family] += 1
+            self.local_proof_bytes += proof.byte_size
+            self.local_proof_digests.append({
+                "claim": block.index,
+                "claim_type": claim_name,
+                "family": family,
+                "bytes": proof.byte_size,
+                "digest": proof.digest.hex(),
+            })
+            return ok, why
+
+        if isinstance(claim, MaxClaim):
+            proof = sampled_local_proofs.prove_max_sumcheck(
+                claim, live, claim_index=block.index, challenge=challenge)
+            ok, why = sampled_local_proofs.verify_max_sumcheck(
+                claim, live, proof, claim_index=block.index,
+                challenge=challenge)
+            self.materialized_local_proof_counts[family] += 1
+            self.local_proof_bytes += proof.byte_size
+            self.local_proof_digests.append({
+                "claim": block.index, "claim_type": claim_name,
+                "family": family, "bytes": proof.byte_size,
+                "digest": proof.digest.hex(),
+            })
+            return ok, why
+
+        if isinstance(claim, InfoFinalizeClaim):
+            proof = sampled_local_proofs.prove_info_sumcheck(
+                claim, live, claim_index=block.index, challenge=challenge)
+            ok, why = sampled_local_proofs.verify_info_sumcheck(
+                claim, live, proof, claim_index=block.index,
+                challenge=challenge)
+            self.materialized_local_proof_counts[family] += 1
+            self.local_proof_bytes += proof.byte_size
+            self.local_proof_digests.append({
+                "claim": block.index, "claim_type": claim_name,
+                "family": family, "bytes": proof.byte_size,
+                "digest": proof.digest.hex(),
+            })
+            return ok, why
+
+        if isinstance(claim, (AddClaim, ConcatClaim, HadamardClaim,
+                              LinCombClaim, RescaleClaim,
+                              RoutingClaim, WordExtractionClaim)):
+            has_rounding = (
                 isinstance(claim, RescaleClaim)
                 or (isinstance(claim, HadamardClaim)
                     and claim.rescale_bits > 0))
-            if needs_residual_exact:
-                self.exact_fallback_counts[claim_name] += 1
-                return self._exact_check(block, live)
-            return True, "ok"
+            if has_rounding:
+                proof = sampled_local_proofs.prove_rounding_sumcheck(
+                    claim, live, claim_index=block.index,
+                    challenge=challenge)
+                ok, why = sampled_local_proofs.verify_rounding_sumcheck(
+                    claim, live, proof, claim_index=block.index,
+                    challenge=challenge)
+            else:
+                proof = sampled_local_proofs.prove_sumcheck(
+                    claim, live, claim_index=block.index,
+                    challenge=challenge)
+                ok, why = sampled_local_proofs.verify_sumcheck(
+                    claim, live, proof, claim_index=block.index,
+                    challenge=challenge)
+            self.materialized_local_proof_counts[family] += 1
+            self.local_proof_bytes += proof.byte_size
+            self.local_proof_digests.append({
+                "claim": block.index,
+                "claim_type": claim_name,
+                "family": family,
+                "bytes": proof.byte_size,
+                "digest": proof.digest.hex(),
+            })
+            return ok, why
 
         if isinstance(claim, RangeWordClaim) and claim.local_indices is not None:
             proof = sampled_local_proofs.prove_range_product_tree(
@@ -786,9 +852,52 @@ class ClaimWindowAudit:
         by_index = {b.index: b for b in self.window_blocks}
         t0 = time.perf_counter()
         for index in selected:
+            block = by_index[index]
+            claim_type = type(block.claim).__name__
+            family = sampled_local_proofs.proof_family(block.claim)
             challenge = self.verifier._challenge(
                 self.statement_digest, window_root, index)
-            ok, why = self._check(by_index[index], challenge)
+            proof_bytes_before = self.local_proof_bytes
+            fallbacks_before = sum(self.exact_fallback_counts.values())
+            self._progress(
+                "local_proof_start", window=window_index, claim=index,
+                claim_type=claim_type, family=family)
+            print(f"[sampled-audit-progress] local_proof_start "
+                  f"claim={index + 1}/{len(self.tape.claims)} "
+                  f"type={claim_type} family={family}",
+                  file=sys.stderr, flush=True)
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            proof_t0 = time.perf_counter()
+            try:
+                ok, why = self._check(block, challenge)
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+            except Exception as exc:
+                proof_s = time.perf_counter() - proof_t0
+                self._progress(
+                    "local_proof_error", window=window_index, claim=index,
+                    claim_type=claim_type, family=family, proof_s=proof_s,
+                    error_type=type(exc).__name__, error=str(exc))
+                print(f"[sampled-audit-progress] local_proof_error "
+                      f"claim={index + 1} type={claim_type} "
+                      f"proof_s={proof_s:.3f} error={type(exc).__name__}: "
+                      f"{exc}", file=sys.stderr, flush=True)
+                raise
+            proof_s = time.perf_counter() - proof_t0
+            proof_bytes = self.local_proof_bytes - proof_bytes_before
+            fallback_delta = (sum(self.exact_fallback_counts.values())
+                              - fallbacks_before)
+            self._progress(
+                "local_proof_complete", window=window_index, claim=index,
+                claim_type=claim_type, family=family, proof_s=proof_s,
+                proof_bytes=proof_bytes, exact_fallbacks=fallback_delta,
+                accepted=ok, reason=why)
+            print(f"[sampled-audit-progress] local_proof_complete "
+                  f"claim={index + 1} type={claim_type} "
+                  f"proof_s={proof_s:.3f} bytes={proof_bytes} "
+                  f"fallbacks={fallback_delta} accepted={ok}",
+                  file=sys.stderr, flush=True)
             self.selected.append(index)
             proof_record = next(
                 (record for record in reversed(self.local_proof_digests)
@@ -798,9 +907,7 @@ class ClaimWindowAudit:
             receipt = _b3(
                 b"verinf/claim-audit/local-receipt/v1",
                 index.to_bytes(8, "little"), challenge,
-                by_index[index].commitment, proof_digest,
-                sampled_local_proofs.proof_family(
-                    by_index[index].claim).encode(),
+                block.commitment, proof_digest, family.encode(),
                 b"accepted" if ok else b"rejected", why.encode())
             self.local_receipts.append({
                 "claim": index,
@@ -858,6 +965,11 @@ class ClaimWindowAudit:
                      self.model_root, witness_root)
         materialized = sum(self.materialized_local_proof_counts.values())
         exact_fallbacks = sum(self.exact_fallback_counts.values())
+        cryptographic_local_proofs = bool(
+            self.selected
+            and self.manifest_materialized_local_proofs == len(self.tape.claims)
+            and materialized == len(self.selected)
+            and exact_fallbacks == 0)
         materialized_families = set(self.materialized_local_proof_counts)
         proof_label = "+".join(sorted(materialized_families))
         if materialized and exact_fallbacks:
@@ -893,6 +1005,8 @@ class ClaimWindowAudit:
             "rs_opened_values": self.rs_opened_values,
             "fold_retained_peak_bytes": self.fold_retained_peak_bytes,
             "manifest_proof_family_counts": self.manifest_proof_family_counts,
+            "manifest_materialized_local_proofs": (
+                self.manifest_materialized_local_proofs),
             "selected_proof_family_counts": dict(sorted(
                 self.selected_proof_family_counts.items())),
             "materialized_local_proof_counts": dict(sorted(
@@ -910,7 +1024,7 @@ class ClaimWindowAudit:
             "binding": (("rs-window+striped-blake3 " if self.enable_rs_binding
                          else "striped-blake3 ") + binding_argument + " runtime"),
             "local_argument": local_argument,
-            "cryptographic_local_proofs": False,
+            "cryptographic_local_proofs": cryptographic_local_proofs,
             "cryptographic_local_proof_coverage": (
                 materialized / len(self.selected) if self.selected else 0.0),
             "rs_openings_materialized": self.enable_rs_binding,
