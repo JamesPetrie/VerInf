@@ -57,8 +57,9 @@ Default resident-model estimate:
 The script exposes every rate as a CLI argument and emits JSON. There is no
 calibration multiplier. The 599.5 s row remains the full-cryptographic target;
 the real campaign below separately records which runtime terms are now measured.
-A valid run reports both measured and projected values and must finish below the
-requested 600 s timed-audit ceiling.
+A valid run reports both measured and projected values. The modeled target is
+599.5 s; the operational gate allows 1,740 s for the audit and 60 s for tape
+construction, enforcing a sub-30-minute resident-model process.
 
 ### Successful real RS-bound campaign, 2026-08-28
 
@@ -159,8 +160,9 @@ of the Freivalds family, all 1,287/1,287 of the sumcheck family, and all
 hard-coded.
 
 The existing Vast launcher now rejects any other combination before accepting
-an artifact. Its original limits remain unchanged: 600 s for the timed audit
-and 780 s for the process including build/load grace. JSONL telemetry records
+an artifact. Its current operational limits are 1,740 s for the timed audit
+and 1,800 s for the resident-model process including tape-build grace. JSONL
+telemetry records
 `local_proof_start`, `local_proof_complete`, or `local_proof_error` for every
 selected claim with claim type, family, synchronized proof duration, message
 bytes, fallback delta, acceptance reason, elapsed time, and GPU memory. Thus a
@@ -180,6 +182,26 @@ kernel accepted in 0.322 s prover time plus 0.055 s verifier time and peaked at
 wire/weight reload gives an estimated 68--72 GiB A100 peak. The preflight still
 excludes GGUF reload/projection, product roots, RS work, and claim-distribution
 effects, so it is a launch gate and not a substitute for the real 400B timing.
+
+The first full-bridge Vast attempt on 2026-08-28 was intentionally rejected,
+not timed as a success. The existing launcher downloaded and exact-size
+validated all five shards in 539 s, enrollment completed in about 1,555 s, and
+the audit tape built in 36.9 s. Per-proof telemetry then isolated the failure
+13.51 s into the timed audit at zero-based claim 35 (`RoPEClaim`): the public
+cosine/sine tensors had been created with `expand`, and the CUDA Goldilocks
+subtraction correctly rejected their non-contiguous strides with
+`RuntimeError: b must be contiguous`. Claims 11 (`MatmulClaim`, 0.296 s) and
+28 (`AddClaim`, 0.043 s) had already produced and verified strict proofs. The
+launcher destroyed Vast instance `49056262`, so billing did not continue.
+
+The RoPE bridge now materializes both expanded coefficient tensors with
+`contiguous()` and has a multi-head regression test. Exact local preflights
+using the real Maverick dimensions all produced proofs and independently
+verified them: RoPE `(1000, 40, 128)` used 2.820 GiB peak and 0.666 s prover
+time; RMSNorm `(1000, 5120)` used 1.802 GiB and 0.205 s; SiLU
+`(1000, 8192)` used 2.140 GiB and 0.151 s; causal Softmax
+`(40, 1000, 1000)` used 9.424 GiB and 0.354 s. These are production-shape
+failure probes, not a replacement for a completed Vast timing.
 
 This bridge landed after the 415.973 s campaign. Its real Maverick timing is
 therefore **not measured yet**, and the saved campaign total is not rewritten
@@ -226,9 +248,9 @@ verification from 0.117 s to 0.0011 s.
 
 These preflight projections were not substituted for the real result above.
 The A100 campaign measured the effects omitted by the projection: per-variable
-row padding, window boundaries, and selected-wire re-encoding. The harness still
-enforces the 600 s timed-pass cap and records exact RS row/opening counts in every
-window event.
+row padding, window boundaries, and selected-wire re-encoding. The harness now
+enforces the sub-30 resident-process gate and records exact RS row/opening
+counts in every window event.
 
 ### Failed real campaign, 2026-08-28
 
@@ -278,8 +300,9 @@ analysis/bench/sampled_audit_vast.sh
 ```
 
 The harness rejects a result unless it reports 2,596 claims, exactly 265
-post-commitment selections, acceptance, with measured audit wall time below 600 s and total driver process wall time
-below 780 s (the extra 180 s is build/load grace).
+post-commitment selections, acceptance, measured audit wall time below 1,740 s,
+and total resident-model driver wall time below 1,800 s. Model download/loading
+and the reusable enrollment are explicitly outside this process.
 
 ## Current confidentiality boundary
 

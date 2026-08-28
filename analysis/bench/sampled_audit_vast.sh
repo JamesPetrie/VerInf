@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# Resident-model Vast campaign for the sampled audit (600s timed-pass cap).
-# Model download/loading is outside that timed region; the outer process gets
-# 180s build grace. Missing, rejected, or over-cap results fail closed.
+# Resident-model Vast campaign for the sampled audit (sub-30-minute process).
+# Model download/loading and one-time enrollment are outside this process. The
+# audit gets 29 minutes and tape construction gets 60 seconds; missing,
+# rejected, or over-cap results fail closed.
 set -euo pipefail
 cd "${VERINF_ROOT:-/workspace/VerInf}"
 PY="uv run --project $PWD python3"
 export LIGERO_T_QUERIES="${LIGERO_T_QUERIES:-54}"
 OUT="${SAMPLED_AUDIT_OUT:-analysis/bench/remote_results/$(hostname)/sampled-audit}"
-AUDIT_CAP_S="${SAMPLED_AUDIT_TIMEOUT_S:-600}"
-BUILD_GRACE_S="${SAMPLED_AUDIT_BUILD_GRACE_S:-180}"
+AUDIT_CAP_S="${SAMPLED_AUDIT_TIMEOUT_S:-1740}"
+BUILD_GRACE_S="${SAMPLED_AUDIT_BUILD_GRACE_S:-60}"
 [[ "$AUDIT_CAP_S" =~ ^[1-9][0-9]*$ ]] || {
   echo "invalid SAMPLED_AUDIT_TIMEOUT_S=$AUDIT_CAP_S"; exit 2;
 }

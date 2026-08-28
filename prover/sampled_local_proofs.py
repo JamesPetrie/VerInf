@@ -610,10 +610,10 @@ def _relation_terms(claim: object, live: dict, *, claim_index: int,
         cos_l, sin_l = _rope_cos_sin(cfg)
         cos = torch.tensor(
             cos_l, dtype=torch.uint64, device=x.device).reshape(
-                seq, 1, half).expand(seq, heads, half)
+                seq, 1, half).expand(seq, heads, half).contiguous()
         sin = torch.tensor(
             sin_l, dtype=torch.uint64, device=x.device).reshape(
-                seq, 1, half).expand(seq, heads, half)
+                seq, 1, half).expand(seq, heads, half).contiguous()
         zero = torch.zeros_like(cos)
         neg_cos = gl_sub(zero, cos)
         self_coeff = torch.cat([neg_cos, neg_cos], dim=2).reshape(-1)

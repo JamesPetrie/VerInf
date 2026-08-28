@@ -809,14 +809,15 @@ def test_routed_matmul_freivalds_rejects_wrong_route():
                for failure in result["failures"])
 
 
-def _rope_sumcheck_case():
+def _rope_sumcheck_case(heads=1):
     tape = Tape(CFG, lazy=True)
+    length = 2 * heads * 4
     x = tape.commit(
-        "rope_x", torch.tensor(
-            [1, 2, 3, 4, 5, 6, 7, 8], dtype=torch.uint64,
-            device="cuda"), (2, 4))
+        "rope_x", torch.arange(
+            1, length + 1, dtype=torch.int64,
+            device="cuda").to(torch.uint64), (2, heads * 4))
     out = tape.rope(
-        x, SEQ=2, d_h=4, heads=1, s_x=4, s_out=4,
+        x, SEQ=2, d_h=4, heads=heads, s_x=4, s_out=4,
         output_width=8)
     admission.prepare(tape, CFG)
     audit = ClaimWindowAudit(
@@ -836,6 +837,17 @@ def test_rope_materializes_rotation_rescale_and_ranges():
     assert result["accepted"] is True
     assert result["local_argument"] == "sumcheck"
     assert result["materialized_local_proof_counts"] == {"sumcheck": 1}
+    assert result["exact_fallbacks"] == 0
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA runtime test")
+def test_rope_multihead_expanded_coefficients_are_contiguous():
+    tape, out, audit = _rope_sumcheck_case(heads=3)
+    tape.run_engine_pass(free_intermediates=True, keep={out.var},
+                         observer=audit)
+    result = audit.finish()
+
+    assert result["accepted"] is True
     assert result["exact_fallbacks"] == 0
 
 
