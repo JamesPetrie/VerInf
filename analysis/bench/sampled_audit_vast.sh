@@ -63,7 +63,8 @@ p, wall, cap, process_cap = sys.argv[1], *map(int, sys.argv[2:])
 r = json.load(open(p))
 required = {"wall_s", "forward_s", "c0_commit_s", "selected_exact_local_checks_s",
             "rs_open_s", "verify_s", "accepted", "claims", "selected",
-            "fraction", "c0_root", "binding"}
+            "fraction", "c0_root", "binding", "local_argument",
+            "cryptographic_local_proofs", "rs_openings_materialized"}
 missing = sorted(required - set(r))
 assert not missing, f"missing stage fields: {missing}"
 assert r["accepted"] is True, f"sampled verifier rejected: {r.get('failures')}"
@@ -71,6 +72,9 @@ assert r["claims"] == 2596, f"expected 2596 blocks, got {r['claims']}"
 assert r["selected"] == 265, f"expected 265 sampled blocks, got {r['selected']}"
 assert abs(r["fraction"] - 265 / 2596) < 1e-12
 assert r["binding"] == "striped-blake3 exact-local runtime"
+assert r["local_argument"] == "exact-recomputation"
+assert r["cryptographic_local_proofs"] is False
+assert r["rs_openings_materialized"] is False
 assert float(r["wall_s"]) <= cap, \
     f"timed protocol {r['wall_s']:.1f}s exceeds {cap}s cap"
 assert wall <= process_cap, f"process wall {wall}s exceeds {process_cap}s cap"

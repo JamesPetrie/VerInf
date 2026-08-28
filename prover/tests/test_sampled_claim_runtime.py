@@ -47,6 +47,9 @@ def test_real_tape_observer_accepts_without_replay():
     assert result["accepted"] is True
     assert result["claims"] == result["selected"] == 1
     assert len(result["c0_root"]) == 64
+    assert result["local_argument"] == "exact-recomputation"
+    assert result["cryptographic_local_proofs"] is False
+    assert result["rs_openings_materialized"] is False
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA runtime test")

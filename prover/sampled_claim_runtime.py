@@ -461,6 +461,9 @@ class ClaimWindowAudit:
             "accepted": not self.failures,
             "failures": self.failures,
             "binding": "striped-blake3 exact-local runtime",
+            "local_argument": "exact-recomputation",
+            "cryptographic_local_proofs": False,
+            "rs_openings_materialized": False,
         }
         self._progress("audit_complete", accepted=result["accepted"],
                        selected=result["selected"], failures=len(self.failures))
