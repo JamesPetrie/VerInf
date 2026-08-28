@@ -32,9 +32,11 @@ import torch
 from claims import (
     AddClaim,
     ConcatClaim,
+    EmbeddingLookupClaim,
     HadamardClaim,
     LinCombClaim,
     MatmulClaim,
+    PairedTlookupClaim,
     RangeWordClaim,
     WordExtractionClaim,
 )
@@ -531,6 +533,40 @@ class ClaimWindowAudit:
             proof = sampled_local_proofs.prove_range_product_tree(
                 claim, live, claim_index=block.index, challenge=challenge)
             ok, why = sampled_local_proofs.verify_range_product_tree(
+                claim, live, proof, claim_index=block.index,
+                challenge=challenge)
+            self.materialized_local_proof_counts[family] += 1
+            self.local_proof_bytes += proof.byte_size
+            self.local_proof_digests.append({
+                "claim": block.index,
+                "claim_type": claim_name,
+                "family": family,
+                "bytes": proof.byte_size,
+                "digest": proof.digest.hex(),
+            })
+            return ok, why
+
+        if isinstance(claim, EmbeddingLookupClaim):
+            proof = sampled_local_proofs.prove_embedding_product_tree(
+                claim, live, claim_index=block.index, challenge=challenge)
+            ok, why = sampled_local_proofs.verify_embedding_product_tree(
+                claim, live, proof, claim_index=block.index,
+                challenge=challenge)
+            self.materialized_local_proof_counts[family] += 1
+            self.local_proof_bytes += proof.byte_size
+            self.local_proof_digests.append({
+                "claim": block.index,
+                "claim_type": claim_name,
+                "family": family,
+                "bytes": proof.byte_size,
+                "digest": proof.digest.hex(),
+            })
+            return ok, why
+
+        if isinstance(claim, PairedTlookupClaim):
+            proof = sampled_local_proofs.prove_paired_lookup_product_tree(
+                claim, live, claim_index=block.index, challenge=challenge)
+            ok, why = sampled_local_proofs.verify_paired_lookup_product_tree(
                 claim, live, proof, claim_index=block.index,
                 challenge=challenge)
             self.materialized_local_proof_counts[family] += 1

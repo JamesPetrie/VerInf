@@ -110,6 +110,13 @@ claim types after their window commitments are fixed:
   indexed public range table. Because every production range table has
   `T[j] = j`, the already committed query is also its index wire, so this adds
   no witness slots.
+- `EmbeddingLookupClaim`: compact position-tagged GPU product trees compare
+  the committed lookup output with rows selected from the committed embedding
+  by the public token IDs. The position tag prevents a reordered output from
+  passing as the same multiset and adds no witness slots.
+- `PairedTlookupClaim`: compact position-tagged GPU product trees bind
+  `(x + shift, y)` to `(T[index], T_Y[index])`, with `x + shift` as the
+  already committed index and an explicit table-bound check.
 
 The proof messages are copied to host, independently verified against the
 selected A/B/C wires, hashed into per-claim receipts, and those receipts are
@@ -118,10 +125,9 @@ is therefore `window commitments -> secret sample -> local proofs -> secret
 columns`. A 32,768-element test exercises the GPU sumcheck path, and a
 cancelling-error test demonstrates why the random eq weighting is necessary.
 
-These bridged types account for 1,503/2,596 manifest claims: 458/554 of the
-Freivalds family, 971/1,287 of the sumcheck family, and 74/755 of the
-product-tree family. `EmbeddingLookupClaim` and `PairedTlookupClaim` still need
-their nontrivial query-to-table index witness fixed before the fingerprint.
+These bridged types account for 2,184/2,596 manifest claims: 458/554 of the
+Freivalds family, 971/1,287 of the sumcheck family, and all 755/755 of the
+product-tree family.
 The runtime keeps all remaining types as explicitly counted exact fallbacks
 and continues to report `cryptographic_local_proofs: false`.
 

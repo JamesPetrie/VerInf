@@ -25,13 +25,15 @@ import torch
 from claims import (
     AddClaim,
     ConcatClaim,
+    EmbeddingLookupClaim,
     HadamardClaim,
     LinCombClaim,
     MatmulClaim,
+    PairedTlookupClaim,
     RangeWordClaim,
     WordExtractionClaim,
 )
-from cuda_primitives import P, gl_matvec, gl_mul, gl_sub
+from cuda_primitives import P, gl_add, gl_matvec, gl_mul, gl_sub
 from rescale_claim import RescaleClaim
 
 from layergkr import sumcheck as sc
@@ -62,9 +64,9 @@ CLAIM_PROOF_FAMILIES = {
 }
 
 MATERIALIZED_PROOF_CLAIMS = frozenset({
-    "AddClaim", "ConcatClaim", "HadamardClaim", "LinCombClaim",
-    "MatmulClaim", "RangeWordClaim", "RescaleClaim",
-    "WordExtractionClaim"})
+    "AddClaim", "ConcatClaim", "EmbeddingLookupClaim", "HadamardClaim",
+    "LinCombClaim", "MatmulClaim", "PairedTlookupClaim", "RangeWordClaim",
+    "RescaleClaim", "WordExtractionClaim"})
 
 
 def proof_family(claim: object) -> str:
@@ -469,4 +471,166 @@ def verify_range_product_tree(
         return False, "table product-tree root is not index-bound"
     if proof.query_root != proof.indexed_table_root:
         return False, "lookup product-tree roots differ"
+    return True, "ok"
+
+
+@dataclass
+class EmbeddingProductTreeProof:
+    """Compact multiset equality for public-index rows of committed E."""
+
+    claim_index: int
+    challenge: bytes
+    output_root: int
+    embedding_root: int
+
+    @property
+    def byte_size(self) -> int:
+        return 16
+
+    @property
+    def digest(self) -> bytes:
+        return blake3.blake3(
+            b"verinf/sampled/embedding-product-tree/v1"
+            + self.claim_index.to_bytes(8, "little")
+            + self.challenge
+            + int(self.output_root).to_bytes(8, "little")
+            + int(self.embedding_root).to_bytes(8, "little")).digest()
+
+
+def _embedding_products(claim: EmbeddingLookupClaim, live: dict, *,
+                        claim_index: int, challenge: bytes):
+    alpha, beta = protocol.op_vec(
+        challenge, claim_index, "sampled-embedding-alpha-beta", 2)
+    embedding = live[claim.E].detach().contiguous().view(-1)
+    output = live[claim.x].detach().contiguous().view(-1)
+    vocab = embedding.numel() // claim.d
+    indices = torch.tensor(
+        claim.token_ids, dtype=torch.int64, device=embedding.device)
+    valid = bool(((indices >= 0) & (indices < vocab)).all().item())
+    safe = indices.clamp(0, vocab - 1)
+    selected = embedding.view(vocab, claim.d).index_select(
+        0, safe).contiguous().view(-1)
+    alpha_t = torch.full_like(output, alpha)
+    beta_t = torch.full_like(output, beta)
+    positions = torch.arange(
+        output.numel(), dtype=torch.int64,
+        device=output.device).to(torch.uint64)
+    output_fp = gl_add(output, gl_mul(beta_t, positions))
+    selected_fp = gl_add(selected, gl_mul(beta_t, positions))
+    return (
+        _product_tree_root(gl_sub(alpha_t, output_fp)),
+        _product_tree_root(gl_sub(alpha_t, selected_fp)),
+        valid,
+    )
+
+
+def prove_embedding_product_tree(
+        claim: EmbeddingLookupClaim, live: dict, *, claim_index: int,
+        challenge: bytes) -> EmbeddingProductTreeProof:
+    output_root, embedding_root, _valid = _embedding_products(
+        claim, live, claim_index=claim_index, challenge=challenge)
+    return EmbeddingProductTreeProof(
+        claim_index, bytes(challenge), output_root, embedding_root)
+
+
+def verify_embedding_product_tree(
+        claim: EmbeddingLookupClaim, live: dict,
+        proof: EmbeddingProductTreeProof, *, claim_index: int,
+        challenge: bytes) -> tuple[bool, str]:
+    if proof.claim_index != claim_index or proof.challenge != challenge:
+        return False, "embedding product-tree transcript mismatch"
+    output_root, embedding_root, valid = _embedding_products(
+        claim, live, claim_index=claim_index, challenge=challenge)
+    if not valid:
+        return False, "embedding token index is outside the public table"
+    if output_root != proof.output_root:
+        return False, "embedding output product root is not witness-bound"
+    if embedding_root != proof.embedding_root:
+        return False, "embedding table product root is not witness-bound"
+    if proof.output_root != proof.embedding_root:
+        return False, "embedding product-tree roots differ"
+    return True, "ok"
+
+
+@dataclass
+class PairedLookupProductTreeProof:
+    """Compact equality of position-tagged committed and public pairs."""
+
+    claim_index: int
+    challenge: bytes
+    query_root: int
+    table_root: int
+
+    @property
+    def byte_size(self) -> int:
+        return 16
+
+    @property
+    def digest(self) -> bytes:
+        return blake3.blake3(
+            b"verinf/sampled/paired-lookup-product-tree/v1"
+            + self.claim_index.to_bytes(8, "little")
+            + self.challenge
+            + int(self.query_root).to_bytes(8, "little")
+            + int(self.table_root).to_bytes(8, "little")).digest()
+
+
+def _paired_lookup_products(
+        claim: PairedTlookupClaim, live: dict, *, claim_index: int,
+        challenge: bytes):
+    alpha, beta, gamma = protocol.op_vec(
+        challenge, claim_index, "sampled-paired-lookup-challenges", 3)
+    x = live[claim.x].detach().contiguous().view(-1)
+    y = live[claim.y].detach().contiguous().view(-1)
+    shift_t = torch.full_like(x, claim.shift % P)
+    keys = gl_add(x, shift_t)
+    indices = keys.view(torch.int64)
+    table_x = claim.table.T.detach().contiguous().view(-1)
+    table_y = claim.table.T_Y.detach().contiguous().view(-1)
+    safe = indices.clamp(0, table_x.numel() - 1)
+    selected_x = table_x.index_select(0, safe)
+    selected_y = table_y.index_select(0, safe)
+    positions = torch.arange(
+        x.numel(), dtype=torch.int64, device=x.device).to(torch.uint64)
+    alpha_t = torch.full_like(x, alpha)
+    beta_t = torch.full_like(x, beta)
+    gamma_t = torch.full_like(x, gamma)
+    position_tags = gl_mul(gamma_t, positions)
+    query_fp = gl_add(gl_add(keys, gl_mul(beta_t, y)), position_tags)
+    table_fp = gl_add(
+        gl_add(selected_x, gl_mul(beta_t, selected_y)), position_tags)
+    return (
+        _product_tree_root(gl_sub(alpha_t, query_fp)),
+        _product_tree_root(gl_sub(alpha_t, table_fp)),
+        indices,
+        table_x.numel(),
+    )
+
+
+def prove_paired_lookup_product_tree(
+        claim: PairedTlookupClaim, live: dict, *, claim_index: int,
+        challenge: bytes) -> PairedLookupProductTreeProof:
+    query_root, table_root, _indices, _table_len = _paired_lookup_products(
+        claim, live, claim_index=claim_index, challenge=challenge)
+    return PairedLookupProductTreeProof(
+        claim_index, bytes(challenge), query_root, table_root)
+
+
+def verify_paired_lookup_product_tree(
+        claim: PairedTlookupClaim, live: dict,
+        proof: PairedLookupProductTreeProof, *, claim_index: int,
+        challenge: bytes) -> tuple[bool, str]:
+    if proof.claim_index != claim_index or proof.challenge != challenge:
+        return False, "paired lookup product-tree transcript mismatch"
+    query_root, table_root, indices, table_len = _paired_lookup_products(
+        claim, live, claim_index=claim_index, challenge=challenge)
+    valid = bool(((indices >= 0) & (indices < table_len)).all().item())
+    if not valid:
+        return False, "paired lookup index is outside the public table"
+    if query_root != proof.query_root:
+        return False, "paired lookup query root is not witness-bound"
+    if table_root != proof.table_root:
+        return False, "paired lookup table root is not index-bound"
+    if proof.query_root != proof.table_root:
+        return False, "paired lookup product-tree roots differ"
     return True, "ok"

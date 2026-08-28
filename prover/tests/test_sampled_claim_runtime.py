@@ -429,6 +429,123 @@ def test_range_product_tree_rejects_out_of_range_query_index():
                for failure in result["failures"])
 
 
+def _embedding_product_case():
+    tape = Tape(CFG, lazy=True)
+    embedding = tape.commit(
+        "embedding", torch.arange(
+            1, 13, dtype=torch.int64,
+            device="cuda").to(torch.uint64), (4, 3))
+    out = tape.embed(embedding, token_ids=[2, 0, 2], d=3)
+    admission.prepare(tape, CFG)
+    audit = ClaimWindowAudit(
+        tape, CFG, b"v" * 32, b"public" * 4, b"model" * 6 + b"xx",
+        expected_claims=0, window_size=1, sample_per_window=1,
+        heartbeat_every=1000)
+    return tape, out, audit
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA runtime test")
+def test_embedding_lookup_materializes_product_tree():
+    tape, out, audit = _embedding_product_case()
+    tape.run_engine_pass(free_intermediates=True, keep={out.var},
+                         observer=audit)
+    result = audit.finish()
+
+    assert result["accepted"] is True
+    assert result["local_argument"] == "product-tree"
+    assert result["materialized_local_proof_counts"] == {"product-tree": 1}
+    assert result["local_proof_bytes"] == 16
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA runtime test")
+def test_embedding_product_tree_rejects_positional_permutation():
+    tape, out, audit = _embedding_product_case()
+
+    def tamper_then_observe(index, claim, input_vars, input_data, outs, live):
+        bad = outs[out.var].clone()
+        first = bad[0].clone()
+        bad[0] = bad[1]
+        bad[1] = first
+        outs[out.var] = bad
+        live[out.var] = bad
+        audit(index, claim, input_vars, input_data, outs, live)
+
+    tape.run_engine_pass(observer=tamper_then_observe)
+    result = audit.finish()
+
+    assert result["accepted"] is False
+    assert any("embedding product-tree roots differ" in failure
+               for failure in result["failures"])
+
+
+def _paired_product_case():
+    tape = Tape(CFG, lazy=True)
+    x = tape.commit(
+        "paired_x", torch.tensor(
+            [2, 0, 3, 2], dtype=torch.uint64, device="cuda"), (4,))
+    table = tape.register_table(
+        "paired4", T_data=range(4), T_Y_data=[11, 22, 33, 44])
+    y = tape.paired_tlookup(x, table)
+    admission.prepare(tape, CFG)
+    audit = ClaimWindowAudit(
+        tape, CFG, b"v" * 32, b"public" * 4, b"model" * 6 + b"xx",
+        expected_claims=0, window_size=1, sample_per_window=1,
+        heartbeat_every=1000)
+    return tape, y, audit
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA runtime test")
+def test_paired_lookup_materializes_product_tree():
+    tape, y, audit = _paired_product_case()
+    tape.run_engine_pass(free_intermediates=True, keep={y.var},
+                         observer=audit)
+    result = audit.finish()
+
+    assert result["accepted"] is True
+    assert result["local_argument"] == "product-tree"
+    assert result["materialized_local_proof_counts"] == {"product-tree": 1}
+    assert result["local_proof_bytes"] == 16
+    assert result["exact_fallbacks"] == 0
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA runtime test")
+def test_paired_lookup_product_tree_rejects_wrong_value():
+    tape, y, audit = _paired_product_case()
+
+    def tamper_then_observe(index, claim, input_vars, input_data, outs, live):
+        bad = outs[y.var].clone()
+        bad[0] = 99
+        outs[y.var] = bad
+        live[y.var] = bad
+        audit(index, claim, input_vars, input_data, outs, live)
+
+    tape.run_engine_pass(observer=tamper_then_observe)
+    result = audit.finish()
+
+    assert result["accepted"] is False
+    assert any("paired lookup product-tree roots differ" in failure
+               for failure in result["failures"])
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA runtime test")
+def test_paired_lookup_product_tree_rejects_out_of_range_key():
+    tape, _y, audit = _paired_product_case()
+
+    def tamper_then_observe(index, claim, input_vars, input_data, outs, live):
+        bad = live[claim.x].clone()
+        bad[0] = 99
+        input_data[claim.x] = bad
+        live[claim.x] = bad
+        audit(index, claim, input_vars, input_data, outs, live)
+
+    tape.run_engine_pass(observer=tamper_then_observe)
+    result = audit.finish()
+
+    assert result["accepted"] is False
+    assert any("outside the public table" in failure
+               for failure in result["failures"])
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA runtime test")
 def test_real_tape_observer_rejects_tampered_selected_output():
     tape, dst, audit = _case()
