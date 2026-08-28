@@ -168,14 +168,18 @@ timeout identifies the exact proof and window instead of leaving only a final
 process exit code.
 
 The reproducible local preflight
-`analysis/bench/sampled_local_proof_preflight.py` exercises the largest
-eq-weighted relation geometry: the T=8, V=202,048 LM-head output has 1,616,384
-slots and pads to 2,097,152, with 12 factor occurrences matching the fused
-matmul rounding relation. On the local Tesla V100-SXM3-32GB it accepted in
-0.270 s prover time plus 0.025 s verifier time and peaked at 0.188 GiB. This
-isolates the sumcheck kernel; it does not include GGUF weight reload/projection,
-product roots, RS work, or claim-distribution effects, so it is a launch gate
-and not a substitute for the real 400B timing.
+`analysis/bench/sampled_local_proof_preflight.py` exercises the largest real
+statement geometry. The remote script uses T=1,000 and V=202,048, so the
+LM-head output has 202,048,000 slots and pads to 268,435,456. An initial audit
+found that separately padding all six rounding terms could push a selected LM
+claim above the A100-80GB ceiling. The implementation now challenge-batches the
+committed-wire residuals before padding and proves the two-factor
+`residual * eq` relation. On the local Tesla V100-SXM3-32GB that full `2^28`
+kernel accepted in 0.322 s prover time plus 0.055 s verifier time and peaked at
+10.000 GiB. Combining this with the measured real tail baseline and selected
+wire/weight reload gives an estimated 68--72 GiB A100 peak. The preflight still
+excludes GGUF reload/projection, product roots, RS work, and claim-distribution
+effects, so it is a launch gate and not a substitute for the real 400B timing.
 
 This bridge landed after the 415.973 s campaign. Its real Maverick timing is
 therefore **not measured yet**, and the saved campaign total is not rewritten

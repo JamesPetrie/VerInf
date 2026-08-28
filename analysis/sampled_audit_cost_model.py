@@ -195,16 +195,18 @@ def predict(geometry: Geometry = Geometry(), rates: RateCard = RateCard()) -> di
                     "script": (
                         "analysis/bench/sampled_local_proof_preflight.py"),
                     "gpu": "Tesla V100-SXM3-32GB",
-                    "maverick_lm_output_elements": 1616384,
-                    "padded_elements": 2097152,
-                    "factor_occurrences": 12,
-                    "prove_s": 0.2703629960305989,
-                    "verify_s": 0.025114766787737608,
-                    "peak_gpu_gib": 0.18750238418579102,
+                    "maverick_tokens": 1000,
+                    "maverick_vocab": 202048,
+                    "maverick_lm_output_elements": 202048000,
+                    "padded_elements": 268435456,
+                    "factor_occurrences": 2,
+                    "prove_s": 0.32244307501241565,
+                    "verify_s": 0.05510713066905737,
+                    "peak_gpu_gib": 10.000002384185791,
                     "accepted": True,
                     "scope": (
-                        "largest eq-weighted relation kernel only; excludes "
-                        "GGUF weight reload/projection and RS work"
+                        "largest memory-safe batched-residual sumcheck kernel; "
+                        "excludes GGUF weight reload/projection and RS work"
                     ),
                 },
                 "limitation": (

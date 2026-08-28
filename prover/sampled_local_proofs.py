@@ -469,6 +469,28 @@ def _eq_weights(tau: list[int], device) -> torch.Tensor:
     return weights
 
 
+def _scale(value: torch.Tensor, coefficient: int) -> torch.Tensor:
+    return gl_mul(torch.full_like(value, coefficient % P), value)
+
+
+def _batch_residuals(residuals, coefficients, length: int) -> torch.Tensor:
+    """Challenge-batch ragged committed-wire residuals before MLE padding.
+
+    The verifier derives the same vector from authenticated selected wires.
+    Padding only this vector, rather than every source wire, is what keeps a
+    selected 202M-slot UI/LM claim below the A100 memory ceiling.
+    """
+    first = residuals[0].reshape(-1)
+    aggregate = torch.zeros(
+        length, dtype=torch.uint64, device=first.device)
+    for coefficient, residual in zip(coefficients, residuals):
+        flat = residual.reshape(-1)
+        count = flat.numel()
+        aggregate[:count] = gl_add(
+            aggregate[:count].contiguous(), _scale(flat, coefficient))
+    return aggregate
+
+
 def _relation_terms(claim: object, live: dict, *, claim_index: int,
                     challenge: bytes):
     length = (claim.x.length
@@ -508,76 +530,75 @@ def _relation_terms(claim: object, live: dict, *, claim_index: int,
     eq = _eq_weights(tau, live[anchor].device)
 
     if isinstance(claim, AddClaim):
-        a = _pad_pow2(live[claim.a], length)
+        a = live[claim.a].detach().contiguous().view(-1)
         if claim.public_rhs is not None:
-            rhs = torch.zeros(size, dtype=torch.uint64, device=a.device)
-            rhs[:length] = int(claim.public_rhs) % P
+            residual = gl_sub(
+                a, torch.full_like(a, int(claim.public_rhs) % P))
             return "add-public", [
-                (1, [a, eq]), (P - 1, [rhs, eq])]
-        b = _pad_pow2(live[claim.b], length)
-        c = _pad_pow2(live[claim.c], length)
+                (1, [_pad_pow2(residual, length), eq])]
+        residual = gl_sub(
+            gl_add(a, live[claim.b].detach().contiguous().view(-1)),
+            live[claim.c].detach().contiguous().view(-1))
         return "add", [
-            (1, [a, eq]), (1, [b, eq]), (P - 1, [c, eq])]
+            (1, [_pad_pow2(residual, length), eq])]
 
     if isinstance(claim, HadamardClaim):
-        a = _pad_pow2(live[claim.a], length)
-        b = _pad_pow2(live[claim.b], length)
         target = claim.c_full if claim.rescale_bits > 0 else claim.c
-        c = _pad_pow2(live[target], length)
-        terms = [
-            (1, [a, b, eq]), (P - 1, [c, eq])]
+        raw = gl_sub(
+            gl_mul(live[claim.a].detach().contiguous().view(-1),
+                   live[claim.b].detach().contiguous().view(-1)),
+            live[target].detach().contiguous().view(-1))
         if claim.rescale_bits == 0:
-            return "hadamard", terms
+            return "hadamard", [
+                (1, [_pad_pow2(raw, length), eq])]
         gamma, delta = protocol.op_vec(
             challenge, claim_index, "sampled-hadamard-rescale-batch", 2)
-        out = _pad_pow2(live[claim.c], length)
-        low = _pad_pow2(live[claim.c_low], length)
-        shifted = _pad_pow2(live[claim.c_shifted], length)
-        offset = torch.zeros(size, dtype=torch.uint64, device=eq.device)
-        offset[:length] = 1 << (claim.output_width - 1)
-        terms.extend([
-            (gamma, [c, eq]),
-            ((P - gamma * (1 << claim.rescale_bits) % P) % P,
-             [out, eq]),
-            ((P - gamma) % P, [low, eq]),
-            (delta, [shifted, eq]),
-            ((P - delta) % P, [out, eq]),
-            ((P - delta) % P, [offset, eq]),
-        ])
-        return "hadamard-rescale", terms
+        full = live[claim.c_full].detach().contiguous().view(-1)
+        out = live[claim.c].detach().contiguous().view(-1)
+        low = live[claim.c_low].detach().contiguous().view(-1)
+        shifted = live[claim.c_shifted].detach().contiguous().view(-1)
+        rescale = gl_sub(gl_sub(full, _scale(
+            out, 1 << claim.rescale_bits)), low)
+        shift = gl_sub(
+            gl_sub(shifted, out),
+            torch.full_like(out, 1 << (claim.output_width - 1)))
+        aggregate = _batch_residuals(
+            [raw, rescale, shift], [1, gamma, delta], length)
+        return "hadamard-rescale", [
+            (1, [_pad_pow2(aggregate, length), eq])]
 
     if isinstance(claim, ConcatClaim):
         joined = torch.cat([
             live[var].detach().contiguous().view(-1) for var in claim.srcs])
-        src = _pad_pow2(joined, length)
-        dst = _pad_pow2(live[claim.dst], length)
+        residual = gl_sub(
+            joined, live[claim.dst].detach().contiguous().view(-1))
         return "concat", [
-            (1, [src, eq]), (P - 1, [dst, eq])]
+            (1, [_pad_pow2(residual, length), eq])]
 
     if isinstance(claim, LinCombClaim):
-        terms = [(int(coef) % P,
-                  [_pad_pow2(live[var], length), eq])
-                 for var, coef in zip(claim.xs, claim.coefs)]
-        rhs = torch.zeros(size, dtype=torch.uint64, device=eq.device)
+        lhs = torch.zeros(length, dtype=torch.uint64, device=eq.device)
+        for var, coefficient in zip(claim.xs, claim.coefs):
+            lhs = gl_add(lhs, _scale(
+                live[var].detach().contiguous().view(-1), coefficient))
         if len(claim.rhs) == 1:
-            rhs[:length] = int(claim.rhs[0]) % P
+            rhs = torch.full_like(lhs, int(claim.rhs[0]) % P)
         else:
-            rhs[:length] = torch.tensor(
+            rhs = torch.tensor(
                 claim.rhs, dtype=torch.uint64, device=eq.device)
-        terms.append((P - 1, [rhs, eq]))
-        return "lincomb", terms
+        return "lincomb", [
+            (1, [_pad_pow2(gl_sub(lhs, rhs), length), eq])]
 
     if isinstance(claim, WordExtractionClaim):
-        terms = [(1, [_pad_pow2(live[claim.x], length), eq])]
+        residual = live[claim.x].detach().contiguous().view(-1).clone()
         for word, coef in zip(claim.words, claim.coeffs):
-            terms.append(((P - int(coef)) % P,
-                          [_pad_pow2(live[word], length), eq]))
+            residual = gl_sub(
+                residual, _scale(
+                    live[word].detach().contiguous().view(-1), coef))
         if claim.shift % P:
-            shift = torch.zeros(
-                size, dtype=torch.uint64, device=eq.device)
-            shift[:length] = claim.shift % P
-            terms.append((1, [shift, eq]))
-        return "word-extraction", terms
+            residual = gl_add(
+                residual, torch.full_like(residual, claim.shift % P))
+        return "word-extraction", [
+            (1, [_pad_pow2(residual, length), eq])]
 
     if isinstance(claim, RoPEClaim):
         cfg = claim.config
@@ -1032,19 +1053,19 @@ def _relation_terms(claim: object, live: dict, *, claim_index: int,
     # errors in one cannot cancel errors in the other except with 1/|F| chance.
     gamma = protocol.op_vec(
         challenge, claim_index, "sampled-rescale-batch", 1)[0]
-    x_full = _pad_pow2(live[claim.x_full], length)
-    x = _pad_pow2(live[claim.x], length)
-    low = _pad_pow2(live[claim.x_low], length)
-    shifted = _pad_pow2(live[claim.x_shifted], length)
-    offset = torch.zeros(size, dtype=torch.uint64, device=eq.device)
-    offset[:length] = 1 << (claim.output_width - 1)
+    x_full = live[claim.x_full].detach().contiguous().view(-1)
+    x = live[claim.x].detach().contiguous().view(-1)
+    low = live[claim.x_low].detach().contiguous().view(-1)
+    shifted = live[claim.x_shifted].detach().contiguous().view(-1)
+    rescale = gl_sub(
+        gl_sub(x_full, _scale(x, 1 << claim.rescale_bits)), low)
+    shift = gl_sub(
+        gl_sub(shifted, x),
+        torch.full_like(x, 1 << (claim.output_width - 1)))
+    aggregate = _batch_residuals(
+        [rescale, shift], [1, gamma], length)
     return "rescale-linear", [
-        (1, [x_full, eq]),
-        ((P - (1 << claim.rescale_bits)) % P, [x, eq]),
-        (P - 1, [low, eq]),
-        (gamma, [shifted, eq]),
-        ((P - gamma) % P, [x, eq]),
-        ((P - gamma) % P, [offset, eq]),
+        (1, [_pad_pow2(aggregate, length), eq]),
     ]
 
 
@@ -1196,19 +1217,19 @@ def _matmul_rounding_terms(claim: MatmulClaim, live: dict, *,
     eq = _eq_weights(tau, live[full_var].device)
     gamma = protocol.op_vec(
         challenge, claim_index, "sampled-matmul-rescale-batch", 1)[0]
-    full = _pad_pow2(live[full_var], length)
-    out = _pad_pow2(live[out_var], length)
-    low = _pad_pow2(live[low_var], length)
-    shifted = _pad_pow2(live[shifted_var], length)
-    offset = torch.zeros(size, dtype=torch.uint64, device=eq.device)
-    offset[:length] = 1 << (output_width - 1)
+    full = live[full_var].detach().contiguous().view(-1)
+    out = live[out_var].detach().contiguous().view(-1)
+    low = live[low_var].detach().contiguous().view(-1)
+    shifted = live[shifted_var].detach().contiguous().view(-1)
+    rescale = gl_sub(gl_sub(full, _scale(
+        out, 1 << rescale_bits)), low)
+    shift = gl_sub(
+        gl_sub(shifted, out),
+        torch.full_like(out, 1 << (output_width - 1)))
+    aggregate = _batch_residuals(
+        [rescale, shift], [1, gamma], length)
     return "matmul-rescale", [
-        (1, [full, eq]),
-        ((P - (1 << rescale_bits)) % P, [out, eq]),
-        (P - 1, [low, eq]),
-        (gamma, [shifted, eq]),
-        ((P - gamma) % P, [out, eq]),
-        ((P - gamma) % P, [offset, eq]),
+        (1, [_pad_pow2(aggregate, length), eq]),
     ]
 
 

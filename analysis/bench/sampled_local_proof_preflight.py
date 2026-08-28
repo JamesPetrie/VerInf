@@ -1,8 +1,8 @@
 """Reproducible GPU preflight for the largest sampled relation sumcheck.
 
-The real T=8 Maverick LM-head output has 8 * 202,048 = 1,616,384 slots,
-which pads to 2^21 for an eq-weighted relation.  Six two-factor terms match
-the factor-occurrence count of the fused matmul rounding relation.
+The real Vast statement has T=1,000 and V=202,048, so its LM-head output has
+202,048,000 slots and pads to 2^28.  Large relations are challenge-batched into
+one residual vector before padding, leaving the two factors ``residual * eq``.
 """
 from __future__ import annotations
 
@@ -16,12 +16,11 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "prover"), str(ROOT)]
 
 import torch  # noqa: E402
-from protocol import P  # noqa: E402
 
 from layergkr import sumcheck as sc  # noqa: E402
 
 
-def run(elements: int = 1 << 21) -> dict:
+def run(elements: int = 1 << 28) -> dict:
     if elements <= 0 or elements & (elements - 1):
         raise ValueError("elements must be a positive power of two")
     if not torch.cuda.is_available():
@@ -31,12 +30,7 @@ def run(elements: int = 1 << 21) -> dict:
 
     zero = torch.zeros(elements, dtype=torch.uint64, device="cuda")
     one = torch.ones(elements, dtype=torch.uint64, device="cuda")
-    terms = []
-    for coefficient in (1, 3, 5):
-        terms.extend([
-            (coefficient, [zero, one]),
-            ((P - coefficient) % P, [zero, one]),
-        ])
+    terms = [(1, [zero, one])]
     rounds = elements.bit_length() - 1
     coins = list(range(1, rounds + 1))
 
@@ -56,7 +50,9 @@ def run(elements: int = 1 << 21) -> dict:
         "kind": "sampled-local-proof-preflight-v1",
         "gpu": torch.cuda.get_device_name(),
         "elements": elements,
-        "maverick_lm_output_elements": 8 * 202_048,
+        "maverick_tokens": 1_000,
+        "maverick_vocab": 202_048,
+        "maverick_lm_output_elements": 1_000 * 202_048,
         "factor_occurrences": sum(len(factors) for _coef, factors in terms),
         "rounds": rounds,
         "prove_s": prove_s,
@@ -72,7 +68,7 @@ def run(elements: int = 1 << 21) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--elements", type=int, default=1 << 21)
+    parser.add_argument("--elements", type=int, default=1 << 28)
     args = parser.parse_args()
     print(json.dumps(run(args.elements), indent=2, sort_keys=True))
     return 0
