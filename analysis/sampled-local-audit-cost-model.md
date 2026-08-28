@@ -88,6 +88,22 @@ exact selected-claim recomputation and reports zero RS/proof-verifier time. The
 separate portable smoke validates Freivalds/sumcheck/lookup proof objects and
 61 RS openings functionally, but not at the 400B witness scale.
 
+### RS/Merkle preflight for the next real campaign
+
+Before enabling RS in the paid run, the exact production streaming primitives
+were measured locally on a V100 at `ELL=16322`, `K_DEG=16384`, `N_LIG=32768`.
+This leaves 62 independent padding slots for 61 opened columns and keeps the
+code rate close to 1/2. An 8,192-row probe took 0.181 s to encode/hash/commit and
+0.116 s to rebuild and extract the 61 post-commitment columns. Linear projection
+over the measured 508.5406 GiB witness is 92.3 s commit plus 59.3 s opening.
+Streaming the opened-column BLAKE3 digests on GPU reduced the probe's Merkle
+verification from 0.117 s to 0.0011 s.
+
+These are preflight measurements, not a replacement for the real A100 run:
+per-variable row padding, window boundaries, and selected-wire re-encoding are
+measured only by the campaign. The harness therefore still enforces the 600 s
+timed-pass cap and records exact RS row/opening counts in every window event.
+
 ### Failed real campaign, 2026-08-28
 
 The first sampled campaign was manually stopped after a directly observed

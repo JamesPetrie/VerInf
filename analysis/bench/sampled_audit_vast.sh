@@ -43,6 +43,9 @@ timeout --signal=TERM --kill-after=30s "${PROCESS_TIMEOUT_S}s" \
   --public-sz "$PUBLIC_SZ" --verifier-secret-file "$VERIFIER_SECRET" \
   --sampled-audit-out "$OUT/stage_times.json" \
   --sampled-audit-progress "$OUT/progress.jsonl" \
+  --sampled-audit-rs-binding \
+  --sampled-audit-rs-ell 16322 --sampled-audit-rs-k-deg 16384 \
+  --sampled-audit-rs-n-lig 32768 \
   --sampled-audit-timeout-s "$AUDIT_CAP_S" \
   2>&1 | tee "$OUT/full.log"
 run_rc=${PIPESTATUS[0]}
@@ -64,17 +67,23 @@ r = json.load(open(p))
 required = {"wall_s", "forward_s", "c0_commit_s", "selected_exact_local_checks_s",
             "rs_open_s", "verify_s", "accepted", "claims", "selected",
             "fraction", "c0_root", "binding", "local_argument",
-            "cryptographic_local_proofs", "rs_openings_materialized"}
+            "cryptographic_local_proofs", "rs_openings_materialized",
+            "rs_geometry", "rs_rows", "rs_opened_values"}
 missing = sorted(required - set(r))
 assert not missing, f"missing stage fields: {missing}"
 assert r["accepted"] is True, f"sampled verifier rejected: {r.get('failures')}"
 assert r["claims"] == 2596, f"expected 2596 blocks, got {r['claims']}"
 assert r["selected"] == 265, f"expected 265 sampled blocks, got {r['selected']}"
 assert abs(r["fraction"] - 265 / 2596) < 1e-12
-assert r["binding"] == "striped-blake3 exact-local runtime"
+assert r["binding"] == "rs-window+striped-blake3 exact-local runtime"
 assert r["local_argument"] == "exact-recomputation"
 assert r["cryptographic_local_proofs"] is False
-assert r["rs_openings_materialized"] is False
+assert r["rs_openings_materialized"] is True
+assert r["rs_geometry"] == {"ELL": 16322, "K_DEG": 16384, "N_LIG": 32768}
+assert int(r["rs_rows"]) > 0
+assert int(r["rs_opened_values"]) == int(r["rs_rows"]) * 61
+assert float(r["rs_open_s"]) > 0
+assert float(r["verify_s"]) > 0
 assert float(r["wall_s"]) <= cap, \
     f"timed protocol {r['wall_s']:.1f}s exceeds {cap}s cap"
 assert wall <= process_cap, f"process wall {wall}s exceeds {process_cap}s cap"

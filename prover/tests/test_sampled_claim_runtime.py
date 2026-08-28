@@ -71,6 +71,52 @@ def test_c0_is_independent_of_window_batching():
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA runtime test")
+def test_window_rs_commit_opens_and_binds_selected_wire():
+    tape, dst, _raw = _case()
+    audit = ClaimWindowAudit(
+        tape, CFG, b"v" * 32, b"public" * 4, b"model" * 6 + b"xx",
+        expected_claims=0, window_size=1, sample_per_window=1,
+        enable_rs_binding=True, rs_columns=4,
+        rs_ell=3, rs_k_deg=8, rs_n_lig=32,
+        heartbeat_every=1000)
+
+    tape.run_engine_pass(free_intermediates=True, keep={dst.var},
+                         observer=audit)
+    result = audit.finish()
+
+    assert result["accepted"] is True
+    assert result["rs_openings_materialized"] is True
+    assert result["binding"] == "rs-window+striped-blake3 exact-local runtime"
+    assert result["rs_commit_s"] > 0
+    assert result["rs_open_s"] > 0
+    assert result["rs_verify_s"] > 0
+    assert result["rs_geometry"] == {"ELL": 3, "K_DEG": 8, "N_LIG": 32}
+    assert result["rs_opened_values"] == result["rs_rows"] * 4
+    assert len(audit.rs_roots) == 1
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA runtime test")
+def test_window_rs_rejects_invalid_merkle_opening(monkeypatch):
+    tape, dst, _raw = _case()
+    audit = ClaimWindowAudit(
+        tape, CFG, b"v" * 32, b"public" * 4, b"model" * 6 + b"xx",
+        expected_claims=0, window_size=1, sample_per_window=1,
+        enable_rs_binding=True, rs_columns=4,
+        rs_ell=3, rs_k_deg=8, rs_n_lig=32,
+        heartbeat_every=1000)
+    monkeypatch.setattr(core, "merkle_verify",
+                        lambda _leaf, _path, _root: False)
+
+    tape.run_engine_pass(free_intermediates=True, keep={dst.var},
+                         observer=audit)
+    result = audit.finish()
+
+    assert result["accepted"] is False
+    assert any("RS Merkle opening failed" in failure
+               for failure in result["failures"])
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA runtime test")
 def test_real_tape_observer_rejects_tampered_selected_output():
     tape, dst, audit = _case()
 

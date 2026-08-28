@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import secrets
 import sys
 import time
 from dataclasses import dataclass
@@ -23,6 +24,7 @@ from typing import Dict, List, Sequence
 
 import blake3
 import compute_fns
+import core as prover_core
 import protocol
 import torch
 from claims import AddClaim, LinCombClaim, RangeWordClaim
@@ -129,17 +131,38 @@ class _Block:
     commitment: bytes
 
 
+class _HashingColumnSink(prover_core.ColumnSink):
+    """Land selected columns on host and hash them while still on the GPU."""
+
+    def __init__(self, n_rows: int, columns: List[int], row_base: int = 0):
+        super().__init__(n_rows, columns, row_base)
+        self._digest_acc = prover_core._make_merkle_acc(len(columns), n_rows)
+
+    def write(self, abs_row: int, chunk: torch.Tensor,
+              columns: List[int]) -> None:
+        self._digest_acc.update(chunk.contiguous())
+        super().write(abs_row, chunk, columns)
+
+    def finish_with_digests(self):
+        opened = super().finish()
+        raw = self._digest_acc.finalize().cpu().numpy()
+        return opened, [bytes(row.tolist()) for row in raw]
+
+
 class ClaimWindowAudit:
     """Observer passed directly to `Tape.run_engine_pass`."""
 
     def __init__(self, tape, cfg, verifier_secret: bytes, public_io_digest: bytes,
                  model_root: bytes, *, expected_claims: int = 2596,
                  window_size: int = 49, sample_per_window: int = 5,
-                 progress_path: str | None = None, heartbeat_every: int = 25):
+                 progress_path: str | None = None, heartbeat_every: int = 25,
+                 enable_rs_binding: bool = False, rs_columns: int = 61,
+                 rs_ell: int | None = None, rs_k_deg: int | None = None,
+                 rs_n_lig: int | None = None):
         self.tape = tape
         self.cfg = cfg
         self.params = AuditParams(len(tape.claims), window_size,
-                                  sample_per_window, 61)
+                                  sample_per_window, rs_columns)
         self.total_windows = ((len(tape.claims) + window_size - 1) //
                               window_size)
         if expected_claims and len(tape.claims) != expected_claims:
@@ -177,6 +200,26 @@ class ClaimWindowAudit:
         self.failures: List[str] = []
         self.commit_s = 0.0
         self.local_s = 0.0
+        self.enable_rs_binding = bool(enable_rs_binding)
+        self.rs_cfg = prover_core.LigeroConfig(
+            ELL=cfg.ELL if rs_ell is None else int(rs_ell),
+            K_DEG=cfg.K_DEG if rs_k_deg is None else int(rs_k_deg),
+            N_LIG=cfg.N_LIG if rs_n_lig is None else int(rs_n_lig),
+            T_QUERIES=rs_columns)
+        if (self.enable_rs_binding
+                and self.rs_cfg.N_LIG < self.params.rs_columns):
+            raise ValueError("RS N_LIG is smaller than requested columns")
+        if (self.enable_rs_binding
+                and self.rs_cfg.K_DEG - self.rs_cfg.ELL <= rs_columns):
+            raise ValueError("RS padding must exceed opened-column count")
+        self.rs_seed_t = (prover_core._master_seed_to_cuda(secrets.token_bytes(32))
+                          if self.enable_rs_binding else None)
+        self.rs_row_cursor = 0
+        self.rs_opened_values = 0
+        self.rs_roots: List[bytes] = []
+        self.rs_commit_s = 0.0
+        self.rs_open_s = 0.0
+        self.rs_verify_s = 0.0
         self.started_at = time.perf_counter()
         self.claim_started_at = self.started_at
         self.heartbeat_every = max(1, int(heartbeat_every))
@@ -188,7 +231,12 @@ class ClaimWindowAudit:
         self._progress("audit_start", claims=len(tape.claims),
                        fold_wires=len(self.fold_last_use),
                        window_size=self.params.window_size,
-                       sample_per_window=self.params.sample_per_window)
+                       sample_per_window=self.params.sample_per_window,
+                       rs_binding=self.enable_rs_binding,
+                       rs_geometry={"ELL": self.rs_cfg.ELL,
+                                    "K_DEG": self.rs_cfg.K_DEG,
+                                    "N_LIG": self.rs_cfg.N_LIG,
+                                    "columns": self.params.rs_columns})
 
     def _gpu_memory(self) -> dict:
         if not torch.cuda.is_available():
@@ -273,6 +321,9 @@ class ClaimWindowAudit:
             pre_observer_s=max(0.0, t0 - self.claim_started_at),
             observer_s=done_at - t0, commit_total_s=self.commit_s,
             local_checks_total_s=self.local_s,
+            rs_commit_total_s=self.rs_commit_s,
+            rs_open_total_s=self.rs_open_s,
+            rs_verify_total_s=self.rs_verify_s,
             fold_retained_bytes=self.fold_retained_bytes)
 
     def _finalize_pending_digests(self) -> None:
@@ -377,12 +428,104 @@ class ClaimWindowAudit:
                 return False, f"{var.name}: local operation mismatch"
         return True, "ok"
 
+    def _rs_window_commit(self):
+        """Commit the current window with the production RS/Merkle encoder."""
+        if not self.enable_rs_binding:
+            return None, [], []
+        variables = list(self.window_values)
+        row_base = self.rs_row_cursor
+        layout = []
+        cursor = row_base
+        for var in variables:
+            rows = var.n_rows(self.rs_cfg.ELL)
+            layout.append((var, cursor, rows))
+            cursor += rows
+        n_rows = cursor - row_base
+        t0 = time.perf_counter()
+        accumulator = prover_core._make_merkle_acc(self.rs_cfg.N_LIG, n_rows)
+        prover_core._stream_phase(
+            variables, self.window_values, self.rs_cfg,
+            master_seed=self.rs_seed_t, abs_row_offset=row_base,
+            merkle_acc=accumulator)
+        artifact = prover_core._finalize_merkle_artifact(accumulator)
+        elapsed = time.perf_counter() - t0
+        self.rs_commit_s += elapsed
+        self.rs_row_cursor = cursor
+        self.rs_roots.append(artifact.root)
+        return artifact, layout, variables
+
+    def _rs_window_open_and_verify(self, artifact, layout, variables,
+                                   selected, window_index):
+        """Open post-local-proof RS columns and bind selected wire messages."""
+        if not self.enable_rs_binding or not layout:
+            return
+        row_base = layout[0][1] if layout else self.rs_row_cursor
+        n_rows = sum(rows for _var, _start, rows in layout)
+        transcript = _b3(
+            b"verinf/claim-audit/window-local/v1",
+            window_index.to_bytes(8, "little"),
+            b"".join(self.block_commitments[i] for i in selected),
+            _canonical([f for f in self.failures
+                        if f.startswith(tuple(f"claim {i}:" for i in selected))]))
+        columns = self.verifier._columns(
+            self.statement_digest, self.window_blocks[0].index, transcript,
+            self.params.rs_columns, self.rs_cfg.N_LIG)
+
+        t0 = time.perf_counter()
+        sink = _HashingColumnSink(n_rows, columns, row_base)
+        prover_core._stream_phase(
+            variables, self.window_values, self.rs_cfg,
+            master_seed=self.rs_seed_t, abs_row_offset=row_base,
+            columns_at=columns, column_sink=sink)
+        opened, opened_digests = sink.finish_with_digests()
+        self.rs_opened_values += n_rows * len(columns)
+        self.rs_open_s += time.perf_counter() - t0
+
+        t0 = time.perf_counter()
+        for k, column in enumerate(columns):
+            path = prover_core.merkle_path(artifact.levels, column)
+            if not prover_core.merkle_verify(
+                    opened_digests[k], path, artifact.root):
+                self.failures.append(
+                    f"window {window_index}: RS Merkle opening failed at {column}")
+
+        selected_vars = []
+        seen = set()
+        selected_set = set(selected)
+        for block in self.window_blocks:
+            if block.index not in selected_set:
+                continue
+            for var in block.variables:
+                if (not var.persistent and not var.external
+                        and var not in seen):
+                    seen.add(var)
+                    selected_vars.append(var)
+        positions = {var: (start, rows) for var, start, rows in layout}
+        for var in selected_vars:
+            start, rows = positions[var]
+            expected_sink = prover_core.ColumnSink(rows, columns, start)
+            prover_core._stream_phase(
+                [var], {var: self.window_values[var]}, self.rs_cfg,
+                master_seed=self.rs_seed_t, abs_row_offset=start,
+                columns_at=columns, column_sink=expected_sink)
+            expected = expected_sink.finish()
+            lo = start - row_base
+            for column in columns:
+                if not torch.equal(expected[column],
+                                   opened[column][lo:lo + rows]):
+                    self.failures.append(
+                        f"window {window_index}: {var.name} is not RS-bound")
+                    break
+        self.rs_verify_s += time.perf_counter() - t0
+
     def _flush_window(self):
         if not self.window_blocks:
             return
         window_index = self.window_blocks[0].index // self.params.window_size
         commit_t0 = time.perf_counter()
         self._finalize_pending_digests()
+        rs_artifact, rs_layout, rs_variables = self._rs_window_commit()
+        rs_root = rs_artifact.root if rs_artifact is not None else b""
         commitments = []
         for block in self.window_blocks:
             refs = {}
@@ -398,7 +541,7 @@ class ClaimWindowAudit:
                 b"verinf/claim-audit/block/v1",
                 block.index.to_bytes(8, "little"),
                 _canonical(self.claim_descriptors[block.index]),
-                _canonical(refs))
+                _canonical(refs), rs_root)
             commitments.append(block.commitment)
             self.block_commitments.append(block.commitment)
         self.commit_s += time.perf_counter() - commit_t0
@@ -411,9 +554,11 @@ class ClaimWindowAudit:
             self.selected.append(index)
             if not ok:
                 self.failures.append(f"claim {index}: {why}")
-        torch.cuda.empty_cache()
         window_check_s = time.perf_counter() - t0
         self.local_s += window_check_s
+        self._rs_window_open_and_verify(
+            rs_artifact, rs_layout, rs_variables, selected, window_index)
+        torch.cuda.empty_cache()
         window_last = self.window_blocks[-1].index
         for var in [v for v, last in self.fold_last_use.items()
                     if last <= window_last and v in self.fold_values]:
@@ -425,6 +570,11 @@ class ClaimWindowAudit:
             last_claim=window_last, selected=selected, check_s=window_check_s,
             commit_total_s=self.commit_s,
             local_checks_total_s=self.local_s,
+            rs_commit_total_s=self.rs_commit_s,
+            rs_open_total_s=self.rs_open_s,
+            rs_verify_total_s=self.rs_verify_s,
+            rs_rows_total=self.rs_row_cursor,
+            rs_opened_values=self.rs_opened_values,
             fold_retained_bytes=self.fold_retained_bytes,
             failures=len(self.failures))
         print(f"[sampled-audit-progress] window_complete {window_index + 1}/"
@@ -441,8 +591,12 @@ class ClaimWindowAudit:
         leaves = [_b3(b"verinf/claim-audit/wire/v1", var.name.encode(),
                       self.wire_digests[var]) for var in self.wire_order]
         witness_root = _tree_root(leaves)
-        c0 = _b3(b"verinf/claim-audit/C0/v1", self.statement_digest,
-                 self.model_root, witness_root)
+        if self.enable_rs_binding:
+            c0 = _b3(b"verinf/claim-audit/C0/v1", self.statement_digest,
+                     self.model_root, witness_root, _tree_root(self.rs_roots))
+        else:
+            c0 = _b3(b"verinf/claim-audit/C0/v1", self.statement_digest,
+                     self.model_root, witness_root)
         result = {
             "kind": "sampled-claim-audit-v1",
             "claims": len(self.tape.claims),
@@ -452,18 +606,28 @@ class ClaimWindowAudit:
             "window": self.params.window_size,
             "sample_per_window": self.params.sample_per_window,
             "rs_columns": self.params.rs_columns,
+            "rs_geometry": {"ELL": self.rs_cfg.ELL,
+                            "K_DEG": self.rs_cfg.K_DEG,
+                            "N_LIG": self.rs_cfg.N_LIG},
             "statement_digest": self.statement_digest.hex(),
             "model_root": self.model_root.hex(),
             "c0_root": c0.hex(),
             "commit_s": self.commit_s,
             "local_checks_s": self.local_s,
+            "rs_commit_s": self.rs_commit_s,
+            "rs_open_s": self.rs_open_s,
+            "rs_verify_s": self.rs_verify_s,
+            "rs_rows": self.rs_row_cursor,
+            "rs_opened_values": self.rs_opened_values,
             "fold_retained_peak_bytes": self.fold_retained_peak_bytes,
             "accepted": not self.failures,
             "failures": self.failures,
-            "binding": "striped-blake3 exact-local runtime",
+            "binding": ("rs-window+striped-blake3 exact-local runtime"
+                        if self.enable_rs_binding
+                        else "striped-blake3 exact-local runtime"),
             "local_argument": "exact-recomputation",
             "cryptographic_local_proofs": False,
-            "rs_openings_materialized": False,
+            "rs_openings_materialized": self.enable_rs_binding,
         }
         self._progress("audit_complete", accepted=result["accepted"],
                        selected=result["selected"], failures=len(self.failures))

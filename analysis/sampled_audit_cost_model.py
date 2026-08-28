@@ -121,6 +121,26 @@ def predict(geometry: Geometry = Geometry(), rates: RateCard = RateCard()) -> di
                 "warm_window_batched_hash_gib_s_high": 31.8,
                 "local_128_mib_effective_commit_gib_s": 1.79,
             },
+            "rs_preflight": {
+                "date": "2026-08-28",
+                "status": "measured_local_production_geometry",
+                "gpu": "Tesla V100-SXM3-32GB",
+                "geometry": {"ELL": 16322, "K_DEG": 16384,
+                             "N_LIG": 32768, "columns": 61},
+                "padding_slots": 62,
+                "probe_rows": 8192,
+                "probe_commit_s": 0.1808278919197619,
+                "probe_open_s": 0.11607919121161103,
+                "probe_verify_s": 0.001089682336896658,
+                "projected_508_5406_gib_commit_s": 92.30763332463916,
+                "projected_508_5406_gib_open_s": 59.25521392317395,
+                "second_full_lde_for_opening": True,
+                "limitation": (
+                    "linear projection from a synthetic 8192-row V100 probe; "
+                    "per-variable padding, selected-wire re-encoding, and the "
+                    "real A100 window distribution require the Vast campaign"
+                ),
+            },
         },
         "evidence": {
             "forward": "measured: analysis/bench/remote_results/0b51ac2023c5/witness.log",

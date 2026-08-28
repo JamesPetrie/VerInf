@@ -308,6 +308,13 @@ def main():
     ap.add_argument("--sampled-audit-progress", default=None,
                     help="JSONL claim/window timings; defaults to "
                          "<sampled-audit-out>.progress.jsonl")
+    ap.add_argument("--sampled-audit-rs-binding", action="store_true",
+                    help="commit each 49-claim window with production RS/Merkle "
+                         "and open verifier-selected columns")
+    ap.add_argument("--sampled-audit-rs-ell", type=int, default=16322,
+                    help="RS message slots; default leaves 62 hiding slots")
+    ap.add_argument("--sampled-audit-rs-k-deg", type=int, default=16384)
+    ap.add_argument("--sampled-audit-rs-n-lig", type=int, default=32768)
     ap.add_argument("--sampled-audit-timeout-s", type=float, default=0.0,
                     help="hard watchdog for the timed engine pass only; zero "
                          "disables it")
@@ -513,7 +520,11 @@ def main():
             tape, CFG, load_secret(a.verifier_secret_file), public_io_digest,
             wc.root, expected_claims=expected_claims,
             window_size=49, sample_per_window=5,
-            progress_path=progress_path)
+            progress_path=progress_path,
+            enable_rs_binding=a.sampled_audit_rs_binding,
+            rs_ell=a.sampled_audit_rs_ell,
+            rs_k_deg=a.sampled_audit_rs_k_deg,
+            rs_n_lig=a.sampled_audit_rs_n_lig)
         _log(f"sampled audit progress: {progress_path}")
 
         torch.cuda.synchronize()
@@ -545,14 +556,16 @@ def main():
         result.update({
             "wall_s": wall_s,
             "forward_s": max(0.0, wall_s - result["commit_s"]
-                              - result["local_checks_s"]),
+                              - result["local_checks_s"]
+                              - result["rs_open_s"]
+                              - result["rs_verify_s"]),
             "c0_commit_s": result["commit_s"],
             "selected_exact_local_checks_s": result["local_checks_s"],
-            # The production adapter records raw C0 hashes and exact local
-            # recomputation. The executable portable protocol smoke run owns
-            # the real 61-column RS openings and proof-object verification.
-            "rs_open_s": 0.0,
-            "verify_s": 0.0,
+            # RS window commitments/openings are production primitives when
+            # --sampled-audit-rs-binding is enabled. Local arguments remain
+            # exact recomputation until the claim-proof bridge lands.
+            "rs_open_s": result["rs_open_s"],
+            "verify_s": result["rs_verify_s"],
             "peak_gpu_gb": torch.cuda.max_memory_allocated() / 2**30,
             "public_sz": a.public_sz,
         })
