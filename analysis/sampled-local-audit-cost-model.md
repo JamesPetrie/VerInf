@@ -58,7 +58,64 @@ The script exposes every rate as a CLI argument and emits JSON. There is no
 calibration multiplier. Only the 289.1 s forward term is currently measured for
 this exact real-model path; the other rows are admission targets until the Vast
 campaign records them. A valid full run must report both measured and projected
-values and must finish below 1,200 s (the requested 20-minute hard ceiling).
+values and must finish below the requested 600 s timed-audit ceiling.
+
+### Successful real runtime campaign, 2026-08-28
+
+The repaired one-pass adapter completed on a real 48-layer Maverick tape and
+A100-SXM4-80GB with **ACCEPT** in **406.775 s (6.780 min)**. It processed all
+2,596 claims, sampled 265 post-commitment claims (10.208%), reported zero
+failures, and produced
+`C0 = 6979947a47cdead273a0efeac6b4fd920f89a421c8f00b45237ed27384181c3d`.
+The measured split was:
+
+| measured runtime-adapter term | seconds |
+|---|---:|
+| engine operations | 360.138 |
+| striped/window-batched `C0` | 8.890 |
+| 265 selected exact local checks | 37.748 |
+| **timed adapter total** | **406.775** |
+
+Peak allocated GPU memory was 61.747 GiB. The outer driver, including 48.7 s
+of build/load grace, took 495 s. Model download (732 s through the existing
+aria2 x16/j5 path) and one-time model enrollment (1,471.4 s) were excluded.
+The full result and 1.5 MB claim/window trace are under
+`analysis/bench/remote_results/5c40ddad035b/`.
+
+This validates the one-pass/fold/C0/sampling runtime under the 600 s cap. It
+does **not** validate the full 599.5 s cryptographic row: the real adapter used
+exact selected-claim recomputation and reports zero RS/proof-verifier time. The
+separate portable smoke validates Freivalds/sumcheck/lookup proof objects and
+61 RS openings functionally, but not at the 400B witness scale.
+
+### Failed real campaign, 2026-08-28
+
+The first sampled campaign was manually stopped after a directly observed
+timed-audit lower bound of **4,147.5 s (69.1 min)**; process elapsed time was at
+least 4,226 s including the 78.5 s tape build. It did not validate the 599.5 s
+row and must not be presented as a successful timing result.
+
+Root cause was not model download or loading. The sampled driver forced
+`LIGERO_NO_FOLD=1` so its window-local plaintext buffer could later recompute a
+selected `FreivaldsCombineClaim`. That disabled Maverick's incremental MoE fold,
+where 128 expert streams are absorbed and released as they are produced. The
+same real geometry had previously measured 5.5 min with folding enabled. A
+second bottleneck flattened every wire into one serial GPU hash column; a local
+128 MiB probe measured only 0.027 GiB/s. A third harness bug used a post-exit
+1,200 s assertion instead of terminating the workload, so the bad run continued
+past its cap.
+
+The repaired adapter keeps folding enabled and retains only fold-boundary host
+wires until the combine's committed window is sampled. The campaign harness now
+uses a 600 s timed-pass watchdog plus a 780 s outer GNU `timeout` and
+writes per-claim/per-window JSONL telemetry. `C0` now stripes each wire across
+up to 4,096 columns and batches equal-height matrices once per 49-claim window;
+warm 128 MiB hashing probes measured 23.0--31.8 GiB/s. The reconstructed real
+tape contains about 508.54 GiB of non-persistent witness, its largest window is
+27.91 GiB, and its largest temporary hash batch is 16.56 GiB. Those are
+diagnostics rather than a replacement for the real campaign measurement.
+These changes are regression-tested locally, but the 599.5 s projection remains
+**unvalidated** until a new real campaign completes below the cap.
 
 ## Real Maverick / Vast campaign
 
@@ -79,8 +136,8 @@ analysis/bench/sampled_audit_vast.sh
 ```
 
 The harness rejects a result unless it reports 2,596 claims, exactly 265
-post-commitment selections, acceptance, and both measured audit wall time and
-process wall time below 1,200 seconds.
+post-commitment selections, acceptance, with measured audit wall time below 600 s and total driver process wall time
+below 780 s (the extra 180 s is build/load grace).
 
 ## Current confidentiality boundary
 

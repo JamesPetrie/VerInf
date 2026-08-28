@@ -1430,6 +1430,10 @@ class Tape:
             val = live[v]
             return val() if callable(val) else val
         for i, (claim, input_vars, side_effects) in enumerate(self._deferred):
+            if observer is not None:
+                before_claim = getattr(observer, "before_claim", None)
+                if before_claim is not None:
+                    before_claim(i, claim)
             if self.time_ops:
                 torch.cuda.synchronize()
                 t0 = time.perf_counter()

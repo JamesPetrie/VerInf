@@ -78,9 +78,54 @@ def predict(geometry: Geometry = Geometry(), rates: RateCard = RateCard()) -> di
         "total_min": total / 60,
         "within_10_min": total <= 600,
         "within_20_min": total <= 1200,
+        "real_campaign": {
+            "date": "2026-08-28",
+            "status": "accepted_runtime_adapter",
+            "artifact": "analysis/bench/remote_results/5c40ddad035b/campaign_results.json",
+            "target_s": 600.0,
+            "runtime_adapter_validated_within_10_min": True,
+            "full_cryptographic_599_5_row_validated": False,
+            "claims": 2596,
+            "selected": 265,
+            "accepted": True,
+            "binding": "striped-blake3 exact-local runtime",
+            "wall_s": 406.7752990722656,
+            "forward_s": 360.1375698968768,
+            "c0_stream_commit_s": 8.88972863741219,
+            "selected_exact_local_checks_s": 37.74800053797662,
+            "rs_open_s": 0.0,
+            "verify_s": 0.0,
+            "peak_gpu_gib": 61.747413635253906,
+            "c0_root": "6979947a47cdead273a0efeac6b4fd920f89a421c8f00b45237ed27384181c3d",
+            "limitation": (
+                "the real adapter measured exact selected-claim recomputation; "
+                "Freivalds/sumcheck/lookup proof objects and 61 RS openings "
+                "were validated by the separate portable protocol smoke but "
+                "were not timed on the 400B witness"
+            ),
+            "prior_failed_attempt": {
+                "status": "manually_aborted_over_cap",
+                "timed_audit_lower_bound_s": 4147.5,
+                "process_elapsed_lower_bound_s": 4226.0,
+                "root_cause": (
+                    "LIGERO_NO_FOLD=1, one-column C0 hashing, and a post-exit "
+                    "rather than process-killing timeout"
+                ),
+            },
+            "diagnostics": {
+                "estimated_nonpersistent_witness_gib": 508.5406,
+                "largest_49_claim_window_gib": 27.91,
+                "largest_hash_batch_temporary_gib": 16.559,
+                "old_one_column_hash_gib_s": 0.027,
+                "warm_window_batched_hash_gib_s_low": 23.0,
+                "warm_window_batched_hash_gib_s_high": 31.8,
+                "local_128_mib_effective_commit_gib_s": 1.79,
+            },
+        },
         "evidence": {
             "forward": "measured: analysis/bench/remote_results/0b51ac2023c5/witness.log",
-            "other_terms": "projected hypotheses pending sampled-audit Vast campaign",
+            "runtime_adapter": "measured: analysis/bench/remote_results/5c40ddad035b/campaign_results.json",
+            "full_crypto_terms": "projected hypotheses; portable protocol smoke is functional but not a real-400B timing",
         },
         "excluded": ["model download", "GGUF/model loading", "one-time verifier startup"],
     }

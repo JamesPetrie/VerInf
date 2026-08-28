@@ -38,6 +38,7 @@ import math
 import os
 import sys
 import pathlib
+import threading
 import time
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -304,6 +305,12 @@ def main():
     ap.add_argument("--sampled-audit-out", default=None,
                     help="SAMPLED AUDIT mode: atomically write the one-pass "
                          "5-of-49 audit result JSON to this path")
+    ap.add_argument("--sampled-audit-progress", default=None,
+                    help="JSONL claim/window timings; defaults to "
+                         "<sampled-audit-out>.progress.jsonl")
+    ap.add_argument("--sampled-audit-timeout-s", type=float, default=0.0,
+                    help="hard watchdog for the timed engine pass only; zero "
+                         "disables it")
     ap.add_argument("--verifier-secret-file", default=None,
                     help="persistent verifier secret (raw bytes or hex); "
                          "required by --sampled-audit-out")
@@ -500,20 +507,31 @@ def main():
         public_io_digest = blake3.blake3(
             json.dumps(public_doc, sort_keys=True,
                        separators=(",", ":")).encode()).digest()
+        progress_path = (a.sampled_audit_progress or
+                         str(a.sampled_audit_out) + ".progress.jsonl")
         auditor = ClaimWindowAudit(
             tape, CFG, load_secret(a.verifier_secret_file), public_io_digest,
             wc.root, expected_claims=expected_claims,
-            window_size=49, sample_per_window=5)
+            window_size=49, sample_per_window=5,
+            progress_path=progress_path)
+        _log(f"sampled audit progress: {progress_path}")
 
-        # Folded combines intentionally omit intermediate tensors. Disable
-        # folding for this mode so every claim has the exact local witness the
-        # observer must commit and (when selected) check. This is still one
-        # forward sweep; it only changes when intermediates are released.
-        old_no_fold = os.environ.get("LIGERO_NO_FOLD")
-        os.environ["LIGERO_NO_FOLD"] = "1"
+        torch.cuda.synchronize()
+        t0 = time.time()
+        watchdog = None
+        if a.sampled_audit_timeout_s > 0:
+            def hard_timeout():
+                auditor._progress(
+                    "audit_timeout", cap_s=a.sampled_audit_timeout_s)
+                print(f"[sampled-audit-progress] HARD TIMEOUT after "
+                      f"{a.sampled_audit_timeout_s:.1f}s",
+                      file=sys.stderr, flush=True)
+                os._exit(124)
+
+            watchdog = threading.Timer(a.sampled_audit_timeout_s, hard_timeout)
+            watchdog.daemon = True
+            watchdog.start()
         try:
-            torch.cuda.synchronize()
-            t0 = time.time()
             keep = {logits.var, Sz.var, handles["surprisal"].var}
             tape.run_engine_pass(free_intermediates=True, keep=keep,
                                  observer=auditor)
@@ -521,17 +539,15 @@ def main():
             torch.cuda.synchronize()
             wall_s = time.time() - t0
         finally:
-            if old_no_fold is None:
-                os.environ.pop("LIGERO_NO_FOLD", None)
-            else:
-                os.environ["LIGERO_NO_FOLD"] = old_no_fold
+            if watchdog is not None:
+                watchdog.cancel()
 
         result.update({
             "wall_s": wall_s,
             "forward_s": max(0.0, wall_s - result["commit_s"]
                               - result["local_checks_s"]),
             "c0_commit_s": result["commit_s"],
-            "local_proofs_s": result["local_checks_s"],
+            "selected_exact_local_checks_s": result["local_checks_s"],
             # The production adapter records raw C0 hashes and exact local
             # recomputation. The executable portable protocol smoke run owns
             # the real 61-column RS openings and proof-object verification.
