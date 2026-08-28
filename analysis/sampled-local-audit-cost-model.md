@@ -106,6 +106,10 @@ claim types after their window commitments are fixed:
   linear sumchecks;
 - `RescaleClaim`: randomly batched sumcheck for both linear identities, with
   its two range lookups still handled by an explicitly counted exact fallback.
+- `RangeWordClaim`: compact GPU product trees over the query values and the
+  indexed public range table. Because every production range table has
+  `T[j] = j`, the already committed query is also its index wire, so this adds
+  no witness slots.
 
 The proof messages are copied to host, independently verified against the
 selected A/B/C wires, hashed into per-claim receipts, and those receipts are
@@ -114,13 +118,12 @@ is therefore `window commitments -> secret sample -> local proofs -> secret
 columns`. A 32,768-element test exercises the GPU sumcheck path, and a
 cancelling-error test demonstrates why the random eq weighting is necessary.
 
-These bridged types account for 1,429/2,596 manifest claims: 458/554 of the
-Freivalds family and 971/1,287 of the sumcheck family. Product-tree coverage is
-still 0/755 in the real adapter. In particular, `RangeWordClaim` currently has
-only a table-global multiplicity wire; a sound local product-tree needs a
-per-claim multiplicity commitment fixed before its random fingerprint. The
-runtime keeps all remaining types as explicitly counted exact fallbacks and
-continues to report `cryptographic_local_proofs: false`.
+These bridged types account for 1,503/2,596 manifest claims: 458/554 of the
+Freivalds family, 971/1,287 of the sumcheck family, and 74/755 of the
+product-tree family. `EmbeddingLookupClaim` and `PairedTlookupClaim` still need
+their nontrivial query-to-table index witness fixed before the fingerprint.
+The runtime keeps all remaining types as explicitly counted exact fallbacks
+and continues to report `cryptographic_local_proofs: false`.
 
 This bridge landed after the 415.973 s campaign. Its real Maverick timing is
 therefore **not measured yet**, and the saved campaign total is not rewritten

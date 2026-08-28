@@ -20,16 +20,15 @@ def validate(root: pathlib.Path) -> dict:
     assert len(set(result["selected_indices"])) == result["selected"]
     assert abs(result["fraction"] - 265 / 2596) < 1e-12
     assert result["wall_s"] <= 600
-    allowed_arguments = {
-        "exact-recomputation": "rs-window+striped-blake3 exact-local runtime",
-        "freivalds+exact-recomputation": (
-            "rs-window+striped-blake3 freivalds+exact-recomputation runtime"),
-        "freivalds+sumcheck+exact-recomputation": (
-            "rs-window+striped-blake3 "
-            "freivalds+sumcheck+exact-recomputation runtime"),
-    }
-    assert result["local_argument"] in allowed_arguments
-    assert result["binding"] == allowed_arguments[result["local_argument"]]
+    if result["local_argument"] == "exact-recomputation":
+        expected_binding = "rs-window+striped-blake3 exact-local runtime"
+    else:
+        families = set(result["local_argument"].split("+"))
+        assert families <= {
+            "freivalds", "product-tree", "sumcheck", "exact-recomputation"}
+        expected_binding = ("rs-window+striped-blake3 "
+                            + result["local_argument"] + " runtime")
+    assert result["binding"] == expected_binding
     assert result["rs_openings_materialized"] is True
     assert result["cryptographic_local_proofs"] is False
     if result["local_argument"] != "exact-recomputation":

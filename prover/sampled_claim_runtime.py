@@ -527,6 +527,23 @@ class ClaimWindowAudit:
                 return self._exact_check(block, live)
             return True, "ok"
 
+        if isinstance(claim, RangeWordClaim) and claim.local_indices is not None:
+            proof = sampled_local_proofs.prove_range_product_tree(
+                claim, live, claim_index=block.index, challenge=challenge)
+            ok, why = sampled_local_proofs.verify_range_product_tree(
+                claim, live, proof, claim_index=block.index,
+                challenge=challenge)
+            self.materialized_local_proof_counts[family] += 1
+            self.local_proof_bytes += proof.byte_size
+            self.local_proof_digests.append({
+                "claim": block.index,
+                "claim_type": claim_name,
+                "family": family,
+                "bytes": proof.byte_size,
+                "digest": proof.digest.hex(),
+            })
+            return ok, why
+
         self.exact_fallback_counts[claim_name] += 1
         return self._exact_check(block, live)
 

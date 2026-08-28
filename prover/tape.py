@@ -688,7 +688,9 @@ class Tape:
         """Assert x ∈ table.T. Returns x itself (now range-proven)."""
         z = Variable(f"{x.var.name}_z", length=x.var.length, phase=2)
         table.z_vars.append(z)
-        claim = RangeWordClaim(x=x.var, z=z, table=table, length=x.var.length)
+        claim = RangeWordClaim(
+            x=x.var, z=z, table=table, length=x.var.length,
+            local_indices=x.var)
         def side_effects(values):
             lookup_multiplicities_into(values[x.var], table.T,
                                         self.inputs[table.mult_var])

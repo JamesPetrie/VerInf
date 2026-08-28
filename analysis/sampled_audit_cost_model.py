@@ -161,13 +161,14 @@ def predict(geometry: Geometry = Geometry(), rates: RateCard = RateCard()) -> di
                         "LinCombClaim", "RescaleClaim",
                         "WordExtractionClaim",
                     ],
+                    "product-tree": ["RangeWordClaim"],
                 },
-                "manifest_claims_materialized": 1429,
-                "manifest_fraction_materialized": 1429 / 2596,
+                "manifest_claims_materialized": 1503,
+                "manifest_fraction_materialized": 1503 / 2596,
                 "family_coverage": {
                     "freivalds": {"materialized": 458, "total": 554},
                     "sumcheck": {"materialized": 971, "total": 1287},
-                    "product-tree": {"materialized": 0, "total": 755},
+                    "product-tree": {"materialized": 74, "total": 755},
                 },
                 "transcript_order": (
                     "window commitments -> secret block sample -> local proof "

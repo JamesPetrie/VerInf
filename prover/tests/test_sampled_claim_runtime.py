@@ -352,8 +352,9 @@ def test_word_extraction_sumcheck_with_explicit_lookup_fallbacks():
 
     assert result["accepted"] is True
     assert result["claims"] == result["selected"] == 3
-    assert result["materialized_local_proof_counts"] == {"sumcheck": 1}
-    assert result["exact_fallback_counts"] == {"RangeWordClaim": 2}
+    assert result["materialized_local_proof_counts"] == {
+        "product-tree": 2, "sumcheck": 1}
+    assert result["exact_fallbacks"] == 0
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA runtime test")
@@ -376,6 +377,56 @@ def test_rescale_linears_use_sumcheck_and_ranges_stay_exact():
     assert result["local_argument"] == "sumcheck+exact-recomputation"
     assert result["materialized_local_proof_counts"] == {"sumcheck": 1}
     assert result["exact_fallback_counts"] == {"RescaleClaim": 1}
+
+
+def _range_product_case():
+    tape = Tape(CFG, lazy=True)
+    x = tape.commit(
+        "range_x", torch.tensor(
+            [0, 3, 7, 3, 1], dtype=torch.uint64, device="cuda"), (5,))
+    table = tape.register_table("range8", range(8))
+    tape.range_word(x, table)
+    admission.prepare(tape, CFG)
+    audit = ClaimWindowAudit(
+        tape, CFG, b"v" * 32, b"public" * 4, b"model" * 6 + b"xx",
+        expected_claims=0, window_size=1, sample_per_window=1,
+        heartbeat_every=1000)
+    return tape, audit
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA runtime test")
+def test_range_word_materializes_compact_product_tree():
+    tape, audit = _range_product_case()
+    claim = tape.claims[0]
+    assert claim.local_indices is claim.x
+    tape.run_engine_pass(observer=audit)
+    result = audit.finish()
+
+    assert result["accepted"] is True
+    assert result["local_argument"] == "product-tree"
+    assert result["materialized_local_proof_counts"] == {"product-tree": 1}
+    assert result["local_proof_bytes"] == 16
+    assert result["exact_fallbacks"] == 0
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA runtime test")
+def test_range_product_tree_rejects_out_of_range_query_index():
+    tape, audit = _range_product_case()
+
+    def tamper_then_observe(index, claim, input_vars, input_data, outs, live):
+        bad = live[claim.local_indices].clone()
+        bad[0] = 99
+        input_data[claim.local_indices] = bad
+        live[claim.local_indices] = bad
+        audit(index, claim, input_vars, input_data, outs, live)
+
+    tape.run_engine_pass(observer=tamper_then_observe)
+    result = audit.finish()
+
+    assert result["accepted"] is False
+    assert result["materialized_local_proofs"] == 1
+    assert any("product-tree" in failure or "lookup" in failure
+               for failure in result["failures"])
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA runtime test")

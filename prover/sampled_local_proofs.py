@@ -28,6 +28,7 @@ from claims import (
     HadamardClaim,
     LinCombClaim,
     MatmulClaim,
+    RangeWordClaim,
     WordExtractionClaim,
 )
 from cuda_primitives import P, gl_matvec, gl_mul, gl_sub
@@ -62,7 +63,8 @@ CLAIM_PROOF_FAMILIES = {
 
 MATERIALIZED_PROOF_CLAIMS = frozenset({
     "AddClaim", "ConcatClaim", "HadamardClaim", "LinCombClaim",
-    "MatmulClaim", "RescaleClaim", "WordExtractionClaim"})
+    "MatmulClaim", "RangeWordClaim", "RescaleClaim",
+    "WordExtractionClaim"})
 
 
 def proof_family(claim: object) -> str:
@@ -382,3 +384,89 @@ def verify_sumcheck(claim: object, live: dict,
     _coins, coin = _sumcheck_coins(challenge, claim_index, rounds)
     ok, why = sc.verify_terms(proof.sumcheck, terms, coin)
     return ok, why if not ok else "ok"
+
+
+@dataclass
+class RangeProductTreeProof:
+    """Two compact roots of the query and indexed-table product trees."""
+
+    claim_index: int
+    challenge: bytes
+    query_root: int
+    indexed_table_root: int
+
+    @property
+    def byte_size(self) -> int:
+        return 16
+
+    @property
+    def digest(self) -> bytes:
+        return blake3.blake3(
+            b"verinf/sampled/range-product-tree/v1"
+            + self.claim_index.to_bytes(8, "little")
+            + self.challenge
+            + int(self.query_root).to_bytes(8, "little")
+            + int(self.indexed_table_root).to_bytes(8, "little")).digest()
+
+
+def _product_tree_root(values: torch.Tensor) -> int:
+    level = values.detach().contiguous().view(-1).to(torch.uint64)
+    if not level.numel():
+        return 1
+    while level.numel() > 1:
+        if level.numel() & 1:
+            level = torch.cat([
+                level, torch.ones(1, dtype=torch.uint64,
+                                   device=level.device)])
+        level = gl_mul(level[0::2].contiguous(),
+                       level[1::2].contiguous())
+    return int(level[0].item())
+
+
+def _range_products(claim: RangeWordClaim, live: dict, *, claim_index: int,
+                    challenge: bytes):
+    if claim.local_indices is None:
+        raise ValueError("RangeWordClaim has no pre-commit local index wire")
+    alpha = protocol.op_vec(
+        challenge, claim_index, "sampled-lookup-alpha", 1)[0]
+    query = live[claim.x].detach().contiguous().view(-1)
+    indices = live[claim.local_indices].detach().contiguous().view(-1)
+    signed_indices = indices.view(torch.int64)
+    table = claim.table.T.detach().contiguous().view(-1)
+    safe = signed_indices.clamp(0, table.numel() - 1)
+    indexed_table = table.index_select(0, safe)
+    alpha_t = torch.full_like(query, alpha)
+    return (
+        _product_tree_root(gl_sub(alpha_t, query)),
+        _product_tree_root(gl_sub(alpha_t, indexed_table)),
+        signed_indices,
+        table.numel(),
+    )
+
+
+def prove_range_product_tree(
+        claim: RangeWordClaim, live: dict, *, claim_index: int,
+        challenge: bytes) -> RangeProductTreeProof:
+    query_root, table_root, _indices, _table_len = _range_products(
+        claim, live, claim_index=claim_index, challenge=challenge)
+    return RangeProductTreeProof(
+        claim_index, bytes(challenge), query_root, table_root)
+
+
+def verify_range_product_tree(
+        claim: RangeWordClaim, live: dict, proof: RangeProductTreeProof, *,
+        claim_index: int, challenge: bytes) -> tuple[bool, str]:
+    if proof.claim_index != claim_index or proof.challenge != challenge:
+        return False, "product-tree transcript challenge mismatch"
+    query_root, table_root, indices, table_len = _range_products(
+        claim, live, claim_index=claim_index, challenge=challenge)
+    valid = bool(((indices >= 0) & (indices < table_len)).all().item())
+    if not valid:
+        return False, "product-tree lookup index is outside the public table"
+    if query_root != proof.query_root:
+        return False, "query product-tree root is not witness-bound"
+    if table_root != proof.indexed_table_root:
+        return False, "table product-tree root is not index-bound"
+    if proof.query_root != proof.indexed_table_root:
+        return False, "lookup product-tree roots differ"
+    return True, "ok"

@@ -80,13 +80,18 @@ assert r["claims"] == 2596, f"expected 2596 blocks, got {r['claims']}"
 assert r["selected"] == 265, f"expected 265 sampled blocks, got {r['selected']}"
 assert abs(r["fraction"] - 265 / 2596) < 1e-12
 assert r["binding"] == ("rs-window+striped-blake3 "
-                         "freivalds+sumcheck+exact-recomputation runtime")
-assert r["local_argument"] == "freivalds+sumcheck+exact-recomputation"
+                         + r["local_argument"] + " runtime")
+argument_families = set(r["local_argument"].split("+"))
+assert {"freivalds", "sumcheck", "exact-recomputation"} <= argument_families
+assert argument_families <= {
+    "freivalds", "product-tree", "sumcheck", "exact-recomputation"}
 assert r["cryptographic_local_proofs"] is False
 assert r["manifest_proof_family_counts"] == {
     "freivalds": 554, "product-tree": 755, "sumcheck": 1287}
 assert r["materialized_local_proof_counts"].get("freivalds", 0) > 0
 assert r["materialized_local_proof_counts"].get("sumcheck", 0) > 0
+if r["materialized_local_proof_counts"].get("product-tree", 0):
+    assert "product-tree" in argument_families
 assert r["materialized_local_proofs"] == len(r["local_proof_digests"])
 assert len(r["local_receipts"]) == r["selected"]
 assert len(r["rs_column_samples"]) == 53
