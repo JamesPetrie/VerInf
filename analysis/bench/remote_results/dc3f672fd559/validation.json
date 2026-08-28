@@ -1,0 +1,12 @@
+{
+  "artifact": "analysis/bench/remote_results/dc3f672fd559",
+  "c0_root": "921d83cc9202731b4624140b4c4b3d0ab2682424b2d843bdcb867e7ef11213f9",
+  "claims": 2596,
+  "cryptographic_local_proofs": false,
+  "rs_opened_values": 256536537,
+  "rs_rows": 4205517,
+  "selected": 265,
+  "validated": true,
+  "wall_s": 415.9726252555847,
+  "windows": 53
+}

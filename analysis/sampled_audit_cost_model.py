@@ -80,28 +80,34 @@ def predict(geometry: Geometry = Geometry(), rates: RateCard = RateCard()) -> di
         "within_20_min": total <= 1200,
         "real_campaign": {
             "date": "2026-08-28",
-            "status": "accepted_runtime_adapter",
-            "artifact": "analysis/bench/remote_results/5c40ddad035b/campaign_results.json",
+            "status": "accepted_rs_bound_runtime_adapter",
+            "artifact": "analysis/bench/remote_results/dc3f672fd559/campaign_results.json",
             "target_s": 600.0,
             "runtime_adapter_validated_within_10_min": True,
             "full_cryptographic_599_5_row_validated": False,
             "claims": 2596,
             "selected": 265,
             "accepted": True,
-            "binding": "striped-blake3 exact-local runtime",
-            "wall_s": 406.7752990722656,
-            "forward_s": 360.1375698968768,
-            "c0_stream_commit_s": 8.88972863741219,
-            "selected_exact_local_checks_s": 37.74800053797662,
-            "rs_open_s": 0.0,
-            "verify_s": 0.0,
-            "peak_gpu_gib": 61.747413635253906,
-            "c0_root": "6979947a47cdead273a0efeac6b4fd920f89a421c8f00b45237ed27384181c3d",
+            "binding": "rs-window+striped-blake3 exact-local runtime",
+            "wall_s": 415.9726252555847,
+            "forward_s": 291.52320606474314,
+            "c0_stream_commit_s": 50.603701828855264,
+            "rs_commit_s": 42.20034906000001,
+            "selected_exact_local_checks_s": 31.44401770300101,
+            "rs_open_s": 37.9222010729718,
+            "verify_s": 4.479498586013506,
+            "rs_geometry": {"ELL": 16322, "K_DEG": 16384,
+                            "N_LIG": 32768, "columns": 61},
+            "rs_rows": 4205517,
+            "rs_opened_values": 256536537,
+            "rs_openings_materialized": True,
+            "peak_gpu_gib": 61.747414112091064,
+            "c0_root": "921d83cc9202731b4624140b4c4b3d0ab2682424b2d843bdcb867e7ef11213f9",
             "limitation": (
-                "the real adapter measured exact selected-claim recomputation; "
-                "Freivalds/sumcheck/lookup proof objects and 61 RS openings "
-                "were validated by the separate portable protocol smoke but "
-                "were not timed on the 400B witness"
+                "the real adapter measured production RS/Merkle commitments, "
+                "61-column openings, and exact selected-claim recomputation; "
+                "Freivalds/sumcheck/lookup proof objects were validated by the "
+                "separate portable protocol smoke, not bridged into the 400B run"
             ),
             "prior_failed_attempt": {
                 "status": "manually_aborted_over_cap",
@@ -135,6 +141,10 @@ def predict(geometry: Geometry = Geometry(), rates: RateCard = RateCard()) -> di
                 "projected_508_5406_gib_commit_s": 92.30763332463916,
                 "projected_508_5406_gib_open_s": 59.25521392317395,
                 "second_full_lde_for_opening": True,
+                "measured_a100_commit_s": 42.20034906000001,
+                "measured_a100_open_s": 37.9222010729718,
+                "measured_a100_verify_s": 4.479498586013506,
+                "measured_a100_rows": 4205517,
                 "limitation": (
                     "linear projection from a synthetic 8192-row V100 probe; "
                     "per-variable padding, selected-wire re-encoding, and the "
@@ -144,7 +154,8 @@ def predict(geometry: Geometry = Geometry(), rates: RateCard = RateCard()) -> di
         },
         "evidence": {
             "forward": "measured: analysis/bench/remote_results/0b51ac2023c5/witness.log",
-            "runtime_adapter": "measured: analysis/bench/remote_results/5c40ddad035b/campaign_results.json",
+            "runtime_adapter": "measured: analysis/bench/remote_results/dc3f672fd559/campaign_results.json",
+            "raw_runtime_baseline": "measured: analysis/bench/remote_results/5c40ddad035b/campaign_results.json",
             "full_crypto_terms": "projected hypotheses; portable protocol smoke is functional but not a real-400B timing",
         },
         "excluded": ["model download", "GGUF/model loading", "one-time verifier startup"],

@@ -65,7 +65,7 @@ import json, sys
 p, wall, cap, process_cap = sys.argv[1], *map(int, sys.argv[2:])
 r = json.load(open(p))
 required = {"wall_s", "forward_s", "c0_commit_s", "selected_exact_local_checks_s",
-            "rs_open_s", "verify_s", "accepted", "claims", "selected",
+            "rs_commit_s", "rs_open_s", "verify_s", "accepted", "claims", "selected",
             "fraction", "c0_root", "binding", "local_argument",
             "cryptographic_local_proofs", "rs_openings_materialized",
             "rs_geometry", "rs_rows", "rs_opened_values"}
@@ -82,6 +82,7 @@ assert r["rs_openings_materialized"] is True
 assert r["rs_geometry"] == {"ELL": 16322, "K_DEG": 16384, "N_LIG": 32768}
 assert int(r["rs_rows"]) > 0
 assert int(r["rs_opened_values"]) == int(r["rs_rows"]) * 61
+assert float(r["rs_commit_s"]) > 0
 assert float(r["rs_open_s"]) > 0
 assert float(r["verify_s"]) > 0
 assert float(r["wall_s"]) <= cap, \

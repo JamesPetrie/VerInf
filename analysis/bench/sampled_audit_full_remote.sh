@@ -121,6 +121,11 @@ MODEL_DIR="$MODEL_DIR" \
 bash analysis/bench/sampled_audit_vast.sh || fail "sampled audit rejected or exceeded cap"
 
 step "6. publish campaign result"
+# The Vast launcher downloads only remote_results. Preserve the outer driver
+# log (network probe, aria2 progress, exact-size validation, enrollment and
+# timeout diagnostics) before publishing the marker that triggers download and
+# instance destruction.
+cp /workspace/suite.log "$OUT/driver.log" || true
 $PY - "$OUT" <<'PY'
 import json
 import pathlib

@@ -55,12 +55,46 @@ Default resident-model estimate:
 | **total** | **599.5 (9.992 min)** | model load/download excluded |
 
 The script exposes every rate as a CLI argument and emits JSON. There is no
-calibration multiplier. Only the 289.1 s forward term is currently measured for
-this exact real-model path; the other rows are admission targets until the Vast
-campaign records them. A valid full run must report both measured and projected
-values and must finish below the requested 600 s timed-audit ceiling.
+calibration multiplier. The 599.5 s row remains the full-cryptographic target;
+the real campaign below separately records which runtime terms are now measured.
+A valid run reports both measured and projected values and must finish below the
+requested 600 s timed-audit ceiling.
 
-### Successful real runtime campaign, 2026-08-28
+### Successful real RS-bound campaign, 2026-08-28
+
+The production RS/Merkle adapter completed on the real 48-layer Maverick tape
+and A100-SXM4-80GB with **ACCEPT** in **415.973 s (6.933 min)**. It committed
+4,205,517 RS rows, opened 61 post-local-transcript columns (256,536,537 field
+values), checked every Merkle path and selected-wire slice, sampled exactly
+265/2,596 claims, and reported zero failures. The binding root was
+`C0 = 921d83cc9202731b4624140b4c4b3d0ab2682424b2d843bdcb867e7ef11213f9`.
+
+| measured RS-bound runtime term | seconds |
+|---|---:|
+| engine operations | 291.523 |
+| total `C0` commit | 50.604 |
+| of which RS encode/hash | 42.200 |
+| selected exact local checks | 31.444 |
+| 61-column RS rebuild/open | 37.922 |
+| Merkle + selected-wire binding | 4.479 |
+| **timed adapter total** | **415.973** |
+
+Peak allocated GPU memory was 61.747 GiB. The same existing aria2 `x16/j5`
+downloader fetched and exact-size-validated the five public GGUF shards in 512 s;
+one-time enrollment committed 49,160,720 weight rows in 1,357.3 s. Both are
+excluded from the timed adapter. The launcher downloaded the artifacts and
+confirmed destruction of Vast instance `49040885`; evidence is under
+`analysis/bench/remote_results/dc3f672fd559/`.
+
+This validates the one-pass runtime plus real RS/Merkle commitment/opening path
+comfortably below ten minutes. It still does **not** validate the complete
+599.5 s cryptographic row: selected real claims were checked by exact
+recomputation and the result explicitly reports
+`cryptographic_local_proofs: false`. Freivalds/sumcheck/product-tree proof
+objects remain validated by the separate portable 2,596-block smoke, not yet
+bridged to the real Tape claim families.
+
+### Earlier raw-commit runtime campaign, 2026-08-28
 
 The repaired one-pass adapter completed on a real 48-layer Maverick tape and
 A100-SXM4-80GB with **ACCEPT** in **406.775 s (6.780 min)**. It processed all
@@ -88,7 +122,7 @@ exact selected-claim recomputation and reports zero RS/proof-verifier time. The
 separate portable smoke validates Freivalds/sumcheck/lookup proof objects and
 61 RS openings functionally, but not at the 400B witness scale.
 
-### RS/Merkle preflight for the next real campaign
+### RS/Merkle preflight used for the real campaign
 
 Before enabling RS in the paid run, the exact production streaming primitives
 were measured locally on a V100 at `ELL=16322`, `K_DEG=16384`, `N_LIG=32768`.
@@ -99,10 +133,11 @@ over the measured 508.5406 GiB witness is 92.3 s commit plus 59.3 s opening.
 Streaming the opened-column BLAKE3 digests on GPU reduced the probe's Merkle
 verification from 0.117 s to 0.0011 s.
 
-These are preflight measurements, not a replacement for the real A100 run:
-per-variable row padding, window boundaries, and selected-wire re-encoding are
-measured only by the campaign. The harness therefore still enforces the 600 s
-timed-pass cap and records exact RS row/opening counts in every window event.
+These preflight projections were not substituted for the real result above.
+The A100 campaign measured the effects omitted by the projection: per-variable
+row padding, window boundaries, and selected-wire re-encoding. The harness still
+enforces the 600 s timed-pass cap and records exact RS row/opening counts in every
+window event.
 
 ### Failed real campaign, 2026-08-28
 
