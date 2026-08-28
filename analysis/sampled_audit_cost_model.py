@@ -151,12 +151,42 @@ def predict(geometry: Geometry = Geometry(), rates: RateCard = RateCard()) -> di
                     "real A100 window distribution require the Vast campaign"
                 ),
             },
+            "post_campaign_local_bridge": {
+                "date": "2026-08-28",
+                "real_maverick_timing_measured": False,
+                "materialized_claim_types": {
+                    "freivalds": ["MatmulClaim"],
+                    "sumcheck": ["AddClaim", "HadamardClaim"],
+                },
+                "manifest_claims_materialized": 1330,
+                "manifest_fraction_materialized": 1330 / 2596,
+                "family_coverage": {
+                    "freivalds": {"materialized": 458, "total": 554},
+                    "sumcheck": {"materialized": 872, "total": 1287},
+                    "product-tree": {"materialized": 0, "total": 755},
+                },
+                "transcript_order": (
+                    "window commitments -> secret block sample -> local proof "
+                    "receipts -> 61 secret RS columns"
+                ),
+                "gpu_sumcheck_gate_elements": 32768,
+                "limitation": (
+                    "the prior 415.973 s campaign predates this bridge; "
+                    "remaining claim types still use counted exact fallbacks"
+                ),
+            },
         },
         "evidence": {
             "forward": "measured: analysis/bench/remote_results/0b51ac2023c5/witness.log",
-            "runtime_adapter": "measured: analysis/bench/remote_results/dc3f672fd559/campaign_results.json",
-            "raw_runtime_baseline": "measured: analysis/bench/remote_results/5c40ddad035b/campaign_results.json",
-            "full_crypto_terms": "projected hypotheses; portable protocol smoke is functional but not a real-400B timing",
+            "runtime_adapter": (
+                "measured: analysis/bench/remote_results/dc3f672fd559/"
+                "campaign_results.json"),
+            "raw_runtime_baseline": (
+                "measured: analysis/bench/remote_results/5c40ddad035b/"
+                "campaign_results.json"),
+            "full_crypto_terms": (
+                "projected hypotheses; portable protocol smoke is functional "
+                "but not a real-400B timing"),
         },
         "excluded": ["model download", "GGUF/model loading", "one-time verifier startup"],
     }

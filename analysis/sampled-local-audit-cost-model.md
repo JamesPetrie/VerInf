@@ -90,9 +90,37 @@ This validates the one-pass runtime plus real RS/Merkle commitment/opening path
 comfortably below ten minutes. It still does **not** validate the complete
 599.5 s cryptographic row: selected real claims were checked by exact
 recomputation and the result explicitly reports
-`cryptographic_local_proofs: false`. Freivalds/sumcheck/product-tree proof
-objects remain validated by the separate portable 2,596-block smoke, not yet
-bridged to the real Tape claim families.
+`cryptographic_local_proofs: false`. At the time of that campaign,
+Freivalds/sumcheck/product-tree proof objects were validated only by the
+separate portable 2,596-block smoke and were not bridged to real Tape claims.
+
+### Post-campaign local-proof bridge
+
+The branch now materializes real Tape proof messages for three production
+claim types after their window commitments are fixed:
+
+- `MatmulClaim`: multi-head and `transpose_b` Freivalds projections;
+- `AddClaim`: eq-weighted sumcheck, including public pins;
+- `HadamardClaim`: eq-weighted sumcheck for the raw product relation.
+
+The proof messages are copied to host, independently verified against the
+selected A/B/C wires, hashed into per-claim receipts, and those receipts are
+included in the verifier seed for the 61 RS columns. The enforced transcript
+is therefore `window commitments -> secret sample -> local proofs -> secret
+columns`. A 32,768-element test exercises the GPU sumcheck path, and a
+cancelling-error test demonstrates why the random eq weighting is necessary.
+
+These three types account for 1,330/2,596 manifest claims: 458/554 of the
+Freivalds family and 872/1,287 of the sumcheck family. Product-tree coverage is
+still 0/755 in the real adapter. In particular, `RangeWordClaim` currently has
+only a table-global multiplicity wire; a sound local product-tree needs a
+per-claim multiplicity commitment fixed before its random fingerprint. The
+runtime keeps all remaining types as explicitly counted exact fallbacks and
+continues to report `cryptographic_local_proofs: false`.
+
+This bridge landed after the 415.973 s campaign. Its real Maverick timing is
+therefore **not measured yet**, and the saved campaign total is not rewritten
+or presented as a cryptographic measurement.
 
 ### Earlier raw-commit runtime campaign, 2026-08-28
 

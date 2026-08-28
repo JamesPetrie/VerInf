@@ -560,10 +560,11 @@ def main():
                               - result["rs_open_s"]
                               - result["rs_verify_s"]),
             "c0_commit_s": result["commit_s"],
+            "selected_local_arguments_s": result["local_checks_s"],
+            # Backward-compatible field for old campaign readers. New runs
+            # report the exact split in materialized_local_proof_counts and
+            # exact_fallback_counts.
             "selected_exact_local_checks_s": result["local_checks_s"],
-            # RS window commitments/openings are production primitives when
-            # --sampled-audit-rs-binding is enabled. Local arguments remain
-            # exact recomputation until the claim-proof bridge lands.
             "rs_open_s": result["rs_open_s"],
             "verify_s": result["rs_verify_s"],
             "peak_gpu_gb": torch.cuda.max_memory_allocated() / 2**30,

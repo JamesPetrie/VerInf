@@ -64,20 +64,38 @@ $PY - "$OUT/stage_times.json" "$wall" "$AUDIT_CAP_S" "$PROCESS_TIMEOUT_S" <<'PY'
 import json, sys
 p, wall, cap, process_cap = sys.argv[1], *map(int, sys.argv[2:])
 r = json.load(open(p))
-required = {"wall_s", "forward_s", "c0_commit_s", "selected_exact_local_checks_s",
+required = {"wall_s", "forward_s", "c0_commit_s", "selected_local_arguments_s",
             "rs_commit_s", "rs_open_s", "verify_s", "accepted", "claims", "selected",
             "fraction", "c0_root", "binding", "local_argument",
             "cryptographic_local_proofs", "rs_openings_materialized",
-            "rs_geometry", "rs_rows", "rs_opened_values"}
+            "cryptographic_local_proof_coverage", "rs_geometry", "rs_rows",
+            "rs_opened_values", "manifest_proof_family_counts",
+            "selected_proof_family_counts", "materialized_local_proof_counts",
+            "materialized_local_proofs", "exact_fallbacks", "local_proof_bytes",
+            "local_proof_digests", "local_receipts", "rs_column_samples"}
 missing = sorted(required - set(r))
 assert not missing, f"missing stage fields: {missing}"
 assert r["accepted"] is True, f"sampled verifier rejected: {r.get('failures')}"
 assert r["claims"] == 2596, f"expected 2596 blocks, got {r['claims']}"
 assert r["selected"] == 265, f"expected 265 sampled blocks, got {r['selected']}"
 assert abs(r["fraction"] - 265 / 2596) < 1e-12
-assert r["binding"] == "rs-window+striped-blake3 exact-local runtime"
-assert r["local_argument"] == "exact-recomputation"
+assert r["binding"] == ("rs-window+striped-blake3 "
+                         "freivalds+sumcheck+exact-recomputation runtime")
+assert r["local_argument"] == "freivalds+sumcheck+exact-recomputation"
 assert r["cryptographic_local_proofs"] is False
+assert r["manifest_proof_family_counts"] == {
+    "freivalds": 554, "product-tree": 755, "sumcheck": 1287}
+assert r["materialized_local_proof_counts"].get("freivalds", 0) > 0
+assert r["materialized_local_proof_counts"].get("sumcheck", 0) > 0
+assert r["materialized_local_proofs"] == len(r["local_proof_digests"])
+assert len(r["local_receipts"]) == r["selected"]
+assert len(r["rs_column_samples"]) == 53
+assert sum(s["local_receipts"] for s in r["rs_column_samples"]) == r["selected"]
+assert all(len(s["columns"]) == len(set(s["columns"])) == 61
+           for s in r["rs_column_samples"])
+assert r["materialized_local_proofs"] + r["exact_fallbacks"] >= r["selected"]
+assert r["local_proof_bytes"] > 0
+assert 0 < r["cryptographic_local_proof_coverage"] < 1
 assert r["rs_openings_materialized"] is True
 assert r["rs_geometry"] == {"ELL": 16322, "K_DEG": 16384, "N_LIG": 32768}
 assert int(r["rs_rows"]) > 0

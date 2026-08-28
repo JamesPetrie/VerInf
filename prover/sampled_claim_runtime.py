@@ -19,6 +19,7 @@ import pathlib
 import secrets
 import sys
 import time
+from collections import Counter
 from dataclasses import dataclass
 from typing import Dict, List, Sequence
 
@@ -26,8 +27,9 @@ import blake3
 import compute_fns
 import core as prover_core
 import protocol
+import sampled_local_proofs
 import torch
-from claims import AddClaim, LinCombClaim, RangeWordClaim
+from claims import AddClaim, HadamardClaim, LinCombClaim, MatmulClaim, RangeWordClaim
 from core import STREAMING_INPUT_CLAIMS, P, Variable
 from cuda_primitives import gl_add, gl_mul, hash_columns_streamed
 
@@ -52,6 +54,23 @@ def _tree_root(leaves: Sequence[bytes]) -> bytes:
     cur = list(leaves)
     while len(cur) > 1:
         cur = [_b3(b"verinf/claim-audit/node/v1", cur[i],
+                   cur[i + 1] if i + 1 < len(cur) else cur[i])
+               for i in range(0, len(cur), 2)]
+    return cur[0]
+
+
+def _sampling_tree_root(leaves: Sequence[bytes]) -> bytes:
+    """The portable verifier's exact window-root convention.
+
+    Selection and the subsequent local challenge must bind the same committed
+    window.  C0 has a separate domain above, so keep this transcript root
+    explicit instead of accidentally reusing it.
+    """
+    if not leaves:
+        return _b3(b"verinf/audit/empty/v1")
+    cur = list(leaves)
+    while len(cur) > 1:
+        cur = [_b3(b"verinf/audit/node/v1", cur[i],
                    cur[i + 1] if i + 1 < len(cur) else cur[i])
                for i in range(0, len(cur), 2)]
     return cur[0]
@@ -176,6 +195,10 @@ class ClaimWindowAudit:
             bytes(public_io_digest), bytes(model_root))
         self.model_root = bytes(model_root)
         self.verifier = VerifierSession(verifier_secret)
+        # Fail closed at construction time: a newly introduced claim cannot
+        # silently inherit the exact-recomputation fallback.
+        self.manifest_proof_family_counts = (
+            sampled_local_proofs.manifest_family_counts(tape.claims))
         self.wire_digests: Dict[Variable, bytes] = {}
         self.pending_digests: Dict[Variable, tuple] = {}
         self.wire_order: List[Variable] = []
@@ -198,6 +221,13 @@ class ClaimWindowAudit:
         self.block_commitments: List[bytes] = []
         self.selected: List[int] = []
         self.failures: List[str] = []
+        self.selected_proof_family_counts = Counter()
+        self.materialized_local_proof_counts = Counter()
+        self.exact_fallback_counts = Counter()
+        self.local_proof_bytes = 0
+        self.local_proof_digests: List[dict] = []
+        self.local_receipts: List[dict] = []
+        self.rs_column_samples: List[dict] = []
         self.commit_s = 0.0
         self.local_s = 0.0
         self.enable_rs_binding = bool(enable_rs_binding)
@@ -408,9 +438,8 @@ class ClaimWindowAudit:
             return ok, "range lookup"
         return True, "no phase-1 outputs"
 
-    def _check(self, block: _Block) -> tuple[bool, str]:
+    def _exact_check(self, block: _Block, live) -> tuple[bool, str]:
         claim = block.claim
-        live = self._device_live(block)
         fn = compute_fns.COMPUTE_FNS.get(type(claim))
         if fn is None:
             return False, f"no local handler for {type(claim).__name__}"
@@ -427,6 +456,64 @@ class ClaimWindowAudit:
             if not _same(expected, actual):
                 return False, f"{var.name}: local operation mismatch"
         return True, "ok"
+
+    def _check(self, block: _Block, challenge: bytes) -> tuple[bool, str]:
+        claim = block.claim
+        claim_name = type(claim).__name__
+        family = sampled_local_proofs.proof_family(claim)
+        self.selected_proof_family_counts[family] += 1
+        live = self._device_live(block)
+
+        if isinstance(claim, MatmulClaim):
+            proof = sampled_local_proofs.prove_matmul(
+                claim, live, claim_index=block.index, challenge=challenge)
+            ok, why = sampled_local_proofs.verify_matmul(
+                claim, live, proof, claim_index=block.index,
+                challenge=challenge)
+            self.materialized_local_proof_counts[family] += 1
+            self.local_proof_bytes += proof.byte_size
+            self.local_proof_digests.append({
+                "claim": block.index,
+                "claim_type": claim_name,
+                "family": family,
+                "bytes": proof.byte_size,
+                "digest": proof.digest.hex(),
+            })
+            if not ok:
+                return False, why
+            # The Freivalds contraction binds the raw matmul.  A legacy fused
+            # rescale also carries rounding/range relations which do not yet
+            # have the sumcheck bridge, so check only that residual part via
+            # the visibly counted fallback.
+            if claim.rescale_bits > 0:
+                self.exact_fallback_counts[claim_name] += 1
+                return self._exact_check(block, live)
+            return True, "ok"
+
+        if isinstance(claim, (AddClaim, HadamardClaim)):
+            proof = sampled_local_proofs.prove_sumcheck(
+                claim, live, claim_index=block.index, challenge=challenge)
+            ok, why = sampled_local_proofs.verify_sumcheck(
+                claim, live, proof, claim_index=block.index,
+                challenge=challenge)
+            self.materialized_local_proof_counts[family] += 1
+            self.local_proof_bytes += proof.byte_size
+            self.local_proof_digests.append({
+                "claim": block.index,
+                "claim_type": claim_name,
+                "family": family,
+                "bytes": proof.byte_size,
+                "digest": proof.digest.hex(),
+            })
+            if not ok:
+                return False, why
+            if isinstance(claim, HadamardClaim) and claim.rescale_bits > 0:
+                self.exact_fallback_counts[claim_name] += 1
+                return self._exact_check(block, live)
+            return True, "ok"
+
+        self.exact_fallback_counts[claim_name] += 1
+        return self._exact_check(block, live)
 
     def _rs_window_commit(self):
         """Commit the current window with the production RS/Merkle encoder."""
@@ -461,15 +548,24 @@ class ClaimWindowAudit:
             return
         row_base = layout[0][1] if layout else self.rs_row_cursor
         n_rows = sum(rows for _var, _start, rows in layout)
+        selected_set = set(selected)
+        receipts = [receipt for receipt in self.local_receipts
+                    if receipt["claim"] in selected_set]
         transcript = _b3(
             b"verinf/claim-audit/window-local/v1",
             window_index.to_bytes(8, "little"),
             b"".join(self.block_commitments[i] for i in selected),
-            _canonical([f for f in self.failures
-                        if f.startswith(tuple(f"claim {i}:" for i in selected))]))
+            b"".join(bytes.fromhex(receipt["digest"])
+                     for receipt in receipts))
         columns = self.verifier._columns(
             self.statement_digest, self.window_blocks[0].index, transcript,
             self.params.rs_columns, self.rs_cfg.N_LIG)
+        self.rs_column_samples.append({
+            "window": window_index,
+            "local_receipts": len(receipts),
+            "transcript_digest": transcript.hex(),
+            "columns": columns,
+        })
 
         t0 = time.perf_counter()
         sink = _HashingColumnSink(n_rows, columns, row_base)
@@ -491,7 +587,6 @@ class ClaimWindowAudit:
 
         selected_vars = []
         seen = set()
-        selected_set = set(selected)
         for block in self.window_blocks:
             if block.index not in selected_set:
                 continue
@@ -547,11 +642,32 @@ class ClaimWindowAudit:
         self.commit_s += time.perf_counter() - commit_t0
         selected = self.verifier._window_selection(
             self.statement_digest, window_index, commitments, self.params)
+        window_root = _sampling_tree_root(commitments)
         by_index = {b.index: b for b in self.window_blocks}
         t0 = time.perf_counter()
         for index in selected:
-            ok, why = self._check(by_index[index])
+            challenge = self.verifier._challenge(
+                self.statement_digest, window_root, index)
+            ok, why = self._check(by_index[index], challenge)
             self.selected.append(index)
+            proof_record = next(
+                (record for record in reversed(self.local_proof_digests)
+                 if record["claim"] == index), None)
+            proof_digest = (bytes.fromhex(proof_record["digest"])
+                            if proof_record is not None else b"")
+            receipt = _b3(
+                b"verinf/claim-audit/local-receipt/v1",
+                index.to_bytes(8, "little"), challenge,
+                by_index[index].commitment, proof_digest,
+                sampled_local_proofs.proof_family(
+                    by_index[index].claim).encode(),
+                b"accepted" if ok else b"rejected", why.encode())
+            self.local_receipts.append({
+                "claim": index,
+                "proof_digest": proof_record["digest"]
+                if proof_record is not None else None,
+                "digest": receipt.hex(),
+            })
             if not ok:
                 self.failures.append(f"claim {index}: {why}")
         window_check_s = time.perf_counter() - t0
@@ -575,6 +691,9 @@ class ClaimWindowAudit:
             rs_verify_total_s=self.rs_verify_s,
             rs_rows_total=self.rs_row_cursor,
             rs_opened_values=self.rs_opened_values,
+            materialized_local_proofs=sum(
+                self.materialized_local_proof_counts.values()),
+            exact_fallbacks=sum(self.exact_fallback_counts.values()),
             fold_retained_bytes=self.fold_retained_bytes,
             failures=len(self.failures))
         print(f"[sampled-audit-progress] window_complete {window_index + 1}/"
@@ -597,6 +716,19 @@ class ClaimWindowAudit:
         else:
             c0 = _b3(b"verinf/claim-audit/C0/v1", self.statement_digest,
                      self.model_root, witness_root)
+        materialized = sum(self.materialized_local_proof_counts.values())
+        exact_fallbacks = sum(self.exact_fallback_counts.values())
+        materialized_families = set(self.materialized_local_proof_counts)
+        proof_label = "+".join(sorted(materialized_families))
+        if materialized and exact_fallbacks:
+            local_argument = f"{proof_label}+exact-recomputation"
+        elif materialized:
+            local_argument = proof_label
+        else:
+            local_argument = "exact-recomputation"
+        binding_argument = (
+            "exact-local" if local_argument == "exact-recomputation"
+            else local_argument)
         result = {
             "kind": "sampled-claim-audit-v1",
             "claims": len(self.tape.claims),
@@ -620,13 +752,27 @@ class ClaimWindowAudit:
             "rs_rows": self.rs_row_cursor,
             "rs_opened_values": self.rs_opened_values,
             "fold_retained_peak_bytes": self.fold_retained_peak_bytes,
+            "manifest_proof_family_counts": self.manifest_proof_family_counts,
+            "selected_proof_family_counts": dict(sorted(
+                self.selected_proof_family_counts.items())),
+            "materialized_local_proof_counts": dict(sorted(
+                self.materialized_local_proof_counts.items())),
+            "materialized_local_proofs": materialized,
+            "exact_fallback_counts": dict(sorted(
+                self.exact_fallback_counts.items())),
+            "exact_fallbacks": exact_fallbacks,
+            "local_proof_bytes": self.local_proof_bytes,
+            "local_proof_digests": self.local_proof_digests,
+            "local_receipts": self.local_receipts,
+            "rs_column_samples": self.rs_column_samples,
             "accepted": not self.failures,
             "failures": self.failures,
-            "binding": ("rs-window+striped-blake3 exact-local runtime"
-                        if self.enable_rs_binding
-                        else "striped-blake3 exact-local runtime"),
-            "local_argument": "exact-recomputation",
+            "binding": (("rs-window+striped-blake3 " if self.enable_rs_binding
+                         else "striped-blake3 ") + binding_argument + " runtime"),
+            "local_argument": local_argument,
             "cryptographic_local_proofs": False,
+            "cryptographic_local_proof_coverage": (
+                materialized / len(self.selected) if self.selected else 0.0),
             "rs_openings_materialized": self.enable_rs_binding,
         }
         self._progress("audit_complete", accepted=result["accepted"],

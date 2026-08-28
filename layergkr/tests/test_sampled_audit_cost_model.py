@@ -26,6 +26,11 @@ def test_headline_cost_row():
     assert campaign["rs_opened_values"] == campaign["rs_rows"] * 61
     assert campaign["rs_commit_s"] > 0 and campaign["rs_open_s"] > 0
     assert campaign["prior_failed_attempt"]["timed_audit_lower_bound_s"] > 3600
+    bridge = campaign["post_campaign_local_bridge"]
+    assert bridge["real_maverick_timing_measured"] is False
+    assert bridge["manifest_claims_materialized"] == 1330
+    assert bridge["manifest_fraction_materialized"] == 1330 / 2596
+    assert bridge["family_coverage"]["product-tree"]["materialized"] == 0
     diagnostics = campaign["diagnostics"]
     assert diagnostics["estimated_nonpersistent_witness_gib"] > 500
     assert diagnostics["warm_window_batched_hash_gib_s_low"] > 20

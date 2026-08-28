@@ -20,10 +20,33 @@ def validate(root: pathlib.Path) -> dict:
     assert len(set(result["selected_indices"])) == result["selected"]
     assert abs(result["fraction"] - 265 / 2596) < 1e-12
     assert result["wall_s"] <= 600
-    assert result["binding"] == "rs-window+striped-blake3 exact-local runtime"
+    allowed_arguments = {
+        "exact-recomputation": "rs-window+striped-blake3 exact-local runtime",
+        "freivalds+exact-recomputation": (
+            "rs-window+striped-blake3 freivalds+exact-recomputation runtime"),
+        "freivalds+sumcheck+exact-recomputation": (
+            "rs-window+striped-blake3 "
+            "freivalds+sumcheck+exact-recomputation runtime"),
+    }
+    assert result["local_argument"] in allowed_arguments
+    assert result["binding"] == allowed_arguments[result["local_argument"]]
     assert result["rs_openings_materialized"] is True
     assert result["cryptographic_local_proofs"] is False
-    assert result["local_argument"] == "exact-recomputation"
+    if result["local_argument"] != "exact-recomputation":
+        assert result["manifest_proof_family_counts"] == {
+            "freivalds": 554, "product-tree": 755, "sumcheck": 1287}
+        assert result["materialized_local_proofs"] > 0
+        assert result["materialized_local_proofs"] == len(
+            result["local_proof_digests"])
+        assert len(result["local_receipts"]) == result["selected"]
+        assert len(result["rs_column_samples"]) == 53
+        assert sum(sample["local_receipts"] for sample in
+                   result["rs_column_samples"]) == result["selected"]
+        assert all(len(sample["columns"]) ==
+                   len(set(sample["columns"])) == 61
+                   for sample in result["rs_column_samples"])
+        assert result["local_proof_bytes"] > 0
+        assert 0 < result["cryptographic_local_proof_coverage"] < 1
     assert result["rs_columns"] == 61
     assert result["rs_geometry"] == {
         "ELL": 16322, "K_DEG": 16384, "N_LIG": 32768}
@@ -70,6 +93,9 @@ def validate(root: pathlib.Path) -> dict:
         "rs_opened_values": result["rs_opened_values"],
         "c0_root": result["c0_root"],
         "cryptographic_local_proofs": result["cryptographic_local_proofs"],
+        "local_argument": result["local_argument"],
+        "materialized_local_proofs": result.get(
+            "materialized_local_proofs", 0),
     }
 
 
