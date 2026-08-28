@@ -20,6 +20,9 @@ Modes:
   --witness-only   run_engine_pass(free_intermediates) — no proof; prints the
                    REAL UI number + argmax-vs-continuation agreement and dumps
                    logits for the llama.cpp cross-check. (H100 safety run.)
+  --sampled-audit-out PATH
+                   one real pass, C0 witness commitment and verifier-secret
+                   5-of-49 local audit over all 2,596 Tape claims. (Vast run.)
   default          full streaming prove + streaming dump.   (Spark run.)
 
 Run:
@@ -29,6 +32,7 @@ Run:
       --dump-proof /tmp/maverick_full.json
 """
 import argparse
+import blake3
 import json
 import math
 import os
@@ -297,6 +301,12 @@ def main():
     ap.add_argument("--prompt-n", type=int, default=0, help="synthetic prompt len")
     ap.add_argument("--cont-n", type=int, default=0, help="synthetic continuation len")
     ap.add_argument("--witness-only", action="store_true")
+    ap.add_argument("--sampled-audit-out", default=None,
+                    help="SAMPLED AUDIT mode: atomically write the one-pass "
+                         "5-of-49 audit result JSON to this path")
+    ap.add_argument("--verifier-secret-file", default=None,
+                    help="persistent verifier secret (raw bytes or hex); "
+                         "required by --sampled-audit-out")
     ap.add_argument("--dump-proof", default=None)
     ap.add_argument("--logits-out", default=None)
     # --- enrollment / policy (demo/4h-production-runbook.md) ---------------
@@ -322,6 +332,15 @@ def main():
     ap.add_argument("--allow-dev-config", action="store_true",
                     help="permit a non-target Ligero config (dev only)")
     a = ap.parse_args()
+    sampled_audit = a.sampled_audit_out is not None
+    if sampled_audit and (a.witness_only or a.enroll_weights or a.dump_proof):
+        raise SystemExit(
+            "--sampled-audit-out is a distinct run mode; do not combine it "
+            "with --witness-only, --enroll-weights or --dump-proof")
+    if sampled_audit and a.wc_bridge:
+        raise SystemExit(
+            "sampled audit currently requires --weight-commitment; "
+            "--wc-bridge is not a compatible model binding")
     global WC_BRIDGE
     WC_BRIDGE = bool(a.wc_bridge)
     torch.manual_seed(7)
@@ -332,7 +351,19 @@ def main():
 
     # Policy is checked BEFORE the build: discovering a missing argument after
     # loading a 400B model is a wasted hour.
-    proving = not (a.enroll_weights or a.witness_only)
+    proving = not (a.enroll_weights or a.witness_only or sampled_audit)
+    if sampled_audit:
+        req = (("--weight-commitment", a.weight_commitment),
+               ("--expected-weight-root", a.expected_weight_root),
+               ("--public-sz", a.public_sz),
+               ("--verifier-secret-file", a.verifier_secret_file))
+        missing = [n for n, v in req if v is None]
+        if missing:
+            raise SystemExit(
+                "refusing sampled audit: missing " + ", ".join(missing))
+        for path in (a.weight_commitment, a.verifier_secret_file):
+            if not pathlib.Path(path).is_file():
+                raise SystemExit(f"refusing sampled audit: {path} does not exist")
     if proving:
         # Under the bridge the model reference is the WC enrollment root
         # (checked by the verifier against external policy), not a committed
@@ -380,7 +411,8 @@ def main():
         cont_ids = torch.randint(0, a.vocab, (a.cont_n or 4,), generator=g).tolist()
     T = len(prompt_ids) + len(cont_ids)
     _log(f"layers={a.layers} E={a.experts} T={T} V={a.vocab} "
-         f"T_QUERIES={CFG.T_QUERIES} witness_only={a.witness_only}")
+         f"T_QUERIES={CFG.T_QUERIES} witness_only={a.witness_only} "
+         f"sampled_audit={sampled_audit}")
 
     tape = Tape(CFG, silu_config=SILU_CFG, lazy=True)
     t0 = time.time()
@@ -445,6 +477,83 @@ def main():
     _log(f"public Sz={a.public_sz} pinned from the serving statement -> "
          f"{bits/len(sum_pos):.4f} bits/token over {len(sum_pos)} positions "
          f"(no reveal pass)")
+
+    # ---- SAMPLED AUDIT: one semantic pass, no model replay ---------------
+    if sampled_audit:
+        # Layout before serialization is load-bearing: it gives every wire a
+        # stable row identity used by the block descriptors and C0 binding.
+        _claims_bytes, manifest, stmt = admission.prepare(tape, CFG)
+        expected_claims = 0 if a.allow_dev_config else 2596
+        if expected_claims and manifest["n_claims"] != expected_claims:
+            raise SystemExit(
+                f"refusing sampled audit: production tape has "
+                f"{manifest['n_claims']} claims, expected {expected_claims}")
+
+        from sampled_claim_runtime import ClaimWindowAudit, load_secret
+        public_doc = {
+            "protocol": "sampled-claim-audit-v1",
+            "layers": a.layers, "experts": a.experts, "tokens": T,
+            "vocab": a.vocab, "d": a.d, "d_ff": a.d_ff,
+            "public_sz": a.public_sz,
+            "statement_digest": stmt.hex(),
+        }
+        public_io_digest = blake3.blake3(
+            json.dumps(public_doc, sort_keys=True,
+                       separators=(",", ":")).encode()).digest()
+        auditor = ClaimWindowAudit(
+            tape, CFG, load_secret(a.verifier_secret_file), public_io_digest,
+            wc.root, expected_claims=expected_claims,
+            window_size=49, sample_per_window=5)
+
+        # Folded combines intentionally omit intermediate tensors. Disable
+        # folding for this mode so every claim has the exact local witness the
+        # observer must commit and (when selected) check. This is still one
+        # forward sweep; it only changes when intermediates are released.
+        old_no_fold = os.environ.get("LIGERO_NO_FOLD")
+        os.environ["LIGERO_NO_FOLD"] = "1"
+        try:
+            torch.cuda.synchronize()
+            t0 = time.time()
+            keep = {logits.var, Sz.var, handles["surprisal"].var}
+            tape.run_engine_pass(free_intermediates=True, keep=keep,
+                                 observer=auditor)
+            result = auditor.finish()
+            torch.cuda.synchronize()
+            wall_s = time.time() - t0
+        finally:
+            if old_no_fold is None:
+                os.environ.pop("LIGERO_NO_FOLD", None)
+            else:
+                os.environ["LIGERO_NO_FOLD"] = old_no_fold
+
+        result.update({
+            "wall_s": wall_s,
+            "forward_s": max(0.0, wall_s - result["commit_s"]
+                              - result["local_checks_s"]),
+            "c0_commit_s": result["commit_s"],
+            "local_proofs_s": result["local_checks_s"],
+            # The production adapter records raw C0 hashes and exact local
+            # recomputation. The executable portable protocol smoke run owns
+            # the real 61-column RS openings and proof-object verification.
+            "rs_open_s": 0.0,
+            "verify_s": 0.0,
+            "peak_gpu_gb": torch.cuda.max_memory_allocated() / 2**30,
+            "public_sz": a.public_sz,
+        })
+        out = pathlib.Path(a.sampled_audit_out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        part = pathlib.Path(str(out) + ".part")
+        with open(part, "w") as f:
+            json.dump(result, f, sort_keys=True, indent=2)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(part, out)
+        _log(f"sampled audit: {'ACCEPT' if result['accepted'] else 'REJECT'}; "
+             f"{result['selected']}/{result['claims']} claims "
+             f"({100 * result['fraction']:.3f}%); C0={result['c0_root'][:16]}…; "
+             f"wall={wall_s:.1f}s; result={out}")
+        return 0 if result["accepted"] else 1
 
     # One call: the layout is assigned first, then the canonical bytes and the
     # digest are taken from the laid-out tape (row_start is -1 before that).

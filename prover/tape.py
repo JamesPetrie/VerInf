@@ -1387,7 +1387,8 @@ class Tape:
                                wnew_seed=wnew_seed, claims_bytes=claims_bytes,
                                zk_seed=zk_seed)
 
-    def run_engine_pass(self, free_intermediates: bool = False, keep=None):
+    def run_engine_pass(self, free_intermediates: bool = False, keep=None,
+                        observer=None):
         """Process self._deferred (recorded by tape.X in lazy mode): for
         each claim, compute via COMPUTE_FNS and run its side effects.
         Returns a `live` dict {Variable: tensor} that mirrors what
@@ -1405,7 +1406,15 @@ class Tape:
         effects) have run, keeping only `keep` (e.g. the logits Variable).
         Peak memory falls from O(all layers) to O(one layer) — long contexts
         fit. MUST NOT be used when the witnesses are needed afterwards (a
-        proof commits/opens every row); the proof path calls with no args."""
+        proof commits/opens every row); the proof path calls with no args.
+
+        `observer`, when supplied, is called synchronously as
+        `observer(i, claim, input_vars, input_data, outs, live)` after the
+        claim and its side effects finish but before any value is released.
+        It is the one-pass sampled-audit seam: an observer may commit/copy the
+        current claim witness while it is resident. It must not retain device
+        tensors after returning unless it owns the corresponding memory budget.
+        """
         keep = set(keep or ())
         last_use, consumed = {}, set()
         if free_intermediates:
@@ -1439,6 +1448,8 @@ class Tape:
                 live[v] = t
             if side_effects is not None:
                 side_effects({**input_data, **outs})
+            if observer is not None:
+                observer(i, claim, input_vars, input_data, outs, live)
             for v in list(outs):
                 fold.offer(v, live, allow_free=free_intermediates)
             if self.time_ops:
@@ -1463,4 +1474,3 @@ class Tape:
         # line with that contract.
         self.inputs.update(live)
         return live
-
