@@ -11,10 +11,11 @@ import compute_fns
 import core
 import pytest
 import torch
-from cuda_primitives import hash_columns_streamed
+from claims import SILU_TOY
+from cuda_primitives import gl_add, gl_sub, hash_columns_streamed
 from rescale_claim import rescale
 from routed_projected import routed_projected_matmul
-from routing_claim import freivalds_combine
+from routing_claim import RoutingClaim, freivalds_combine
 from sampled_claim_runtime import ClaimWindowAudit, _finish_tensor_digest, _tensor_digest_parts
 from tape import Tape
 
@@ -697,6 +698,191 @@ def test_routed_matmul_freivalds_rejects_wrong_route():
 
     assert result["accepted"] is False
     assert any("routed Freivalds contraction failed" in failure
+               for failure in result["failures"])
+
+
+def _rope_sumcheck_case():
+    tape = Tape(CFG, lazy=True)
+    x = tape.commit(
+        "rope_x", torch.tensor(
+            [1, 2, 3, 4, 5, 6, 7, 8], dtype=torch.uint64,
+            device="cuda"), (2, 4))
+    out = tape.rope(
+        x, SEQ=2, d_h=4, heads=1, s_x=4, s_out=4,
+        output_width=8)
+    admission.prepare(tape, CFG)
+    audit = ClaimWindowAudit(
+        tape, CFG, b"v" * 32, b"public" * 4, b"model" * 6 + b"xx",
+        expected_claims=0, window_size=1, sample_per_window=1,
+        heartbeat_every=1000)
+    return tape, out, audit
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA runtime test")
+def test_rope_materializes_rotation_rescale_and_ranges():
+    tape, out, audit = _rope_sumcheck_case()
+    tape.run_engine_pass(free_intermediates=True, keep={out.var},
+                         observer=audit)
+    result = audit.finish()
+
+    assert result["accepted"] is True
+    assert result["local_argument"] == "sumcheck"
+    assert result["materialized_local_proof_counts"] == {"sumcheck": 1}
+    assert result["exact_fallbacks"] == 0
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA runtime test")
+def test_rope_sumcheck_rejects_wrong_rotated_output():
+    tape, out, audit = _rope_sumcheck_case()
+
+    def tamper_then_observe(index, claim, input_vars, input_data, outs, live):
+        bad = outs[out.var].clone()
+        bad[0] = 99
+        outs[out.var] = bad
+        live[out.var] = bad
+        audit(index, claim, input_vars, input_data, outs, live)
+
+    tape.run_engine_pass(observer=tamper_then_observe)
+    result = audit.finish()
+
+    assert result["accepted"] is False
+    assert any("sumcheck" in failure for failure in result["failures"])
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA runtime test")
+def test_rope_product_tree_rejects_out_of_range_low_with_linears_intact():
+    tape, _out, audit = _rope_sumcheck_case()
+
+    def tamper_then_observe(index, claim, input_vars, input_data, outs, live):
+        one = torch.ones(1, dtype=torch.uint64, device="cuda")
+        step = torch.full((1,), 1 << claim.rescale_bits,
+                          dtype=torch.uint64, device="cuda")
+        low = outs[claim.x_rot_low].clone()
+        rotated = outs[claim.x_rot].clone()
+        shifted = outs[claim.x_rot_shifted].clone()
+        low[:1] = gl_add(low[:1], step)
+        rotated[:1] = gl_sub(rotated[:1], one)
+        shifted[:1] = gl_sub(shifted[:1], one)
+        for var, value in ((claim.x_rot_low, low),
+                           (claim.x_rot, rotated),
+                           (claim.x_rot_shifted, shifted)):
+            outs[var] = value
+            live[var] = value
+        audit(index, claim, input_vars, input_data, outs, live)
+
+    tape.run_engine_pass(observer=tamper_then_observe)
+    result = audit.finish()
+
+    assert result["accepted"] is False
+    assert any("RoPE low range index" in failure
+               for failure in result["failures"])
+
+
+def _routing_sumcheck_case():
+    tape = Tape(CFG, lazy=True)
+    r = tape.commit(
+        "routing_r", torch.tensor(
+            [40, 20, 30, 10, 15, 45, 25, 5], dtype=torch.uint64,
+            device="cuda"), (2, 4))
+    m = tape._alloc("routing_m", 8)
+    rt = tape._alloc("routing_rt", 8)
+    mrt = tape._alloc("routing_mrt", 8)
+    rstar = tape._alloc("routing_rstar", 2)
+    gap = tape._alloc("routing_gap", 8)
+    r_chosen = tape._alloc("routing_chosen", 2)
+    claim = RoutingClaim(
+        r=r.var, m=m, rt=rt, mrt=mrt, rstar=rstar, gap=gap,
+        r_chosen=r_chosen, T=2, E=4, L_bits=2)
+    tape._process_claim(claim, [r.var])
+    tape.claims.append(claim)
+    admission.prepare(tape, CFG)
+    audit = ClaimWindowAudit(
+        tape, CFG, b"v" * 32, b"public" * 4, b"model" * 6 + b"xx",
+        expected_claims=0, window_size=1, sample_per_window=1,
+        heartbeat_every=1000)
+    return tape, claim, audit
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA runtime test")
+def test_routing_materializes_all_relation_sumcheck():
+    tape, _claim, audit = _routing_sumcheck_case()
+    tape.run_engine_pass(observer=audit)
+    result = audit.finish()
+
+    assert result["accepted"] is True
+    assert result["local_argument"] == "sumcheck"
+    assert result["materialized_local_proof_counts"] == {"sumcheck": 1}
+    assert result["exact_fallbacks"] == 0
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA runtime test")
+@pytest.mark.parametrize("field", ["m", "rt", "mrt", "rstar", "gap",
+                                    "r_chosen"])
+def test_routing_sumcheck_rejects_tampered_relation(field):
+    tape, claim, audit = _routing_sumcheck_case()
+
+    def tamper_then_observe(index, op, input_vars, input_data, outs, live):
+        var = getattr(claim, field)
+        bad = outs[var].clone()
+        bad[0] = 99
+        outs[var] = bad
+        live[var] = bad
+        audit(index, op, input_vars, input_data, outs, live)
+
+    tape.run_engine_pass(observer=tamper_then_observe)
+    result = audit.finish()
+
+    assert result["accepted"] is False
+    assert any("sumcheck" in failure for failure in result["failures"])
+
+
+def _silu_sumcheck_case():
+    tape = Tape(CFG, silu_config=SILU_TOY, lazy=True)
+    x = tape.commit(
+        "silu_x", torch.tensor(
+            [0, 1, 2, 3], dtype=torch.uint64, device="cuda"), (4,))
+    out = tape.silu(x)
+    admission.prepare(tape, CFG)
+    audit = ClaimWindowAudit(
+        tape, CFG, b"v" * 32, b"public" * 4, b"model" * 6 + b"xx",
+        expected_claims=0, window_size=1, sample_per_window=1,
+        heartbeat_every=1000)
+    return tape, out, audit
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA runtime test")
+def test_silu_materializes_all_relations_and_lookups():
+    tape, out, audit = _silu_sumcheck_case()
+    tape.run_engine_pass(free_intermediates=True, keep={out.var},
+                         observer=audit)
+    result = audit.finish()
+
+    assert result["accepted"] is True
+    assert result["local_argument"] == "sumcheck"
+    assert result["materialized_local_proof_counts"] == {"sumcheck": 1}
+    assert result["exact_fallbacks"] == 0
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA runtime test")
+@pytest.mark.parametrize("field", ["output", "sign", "magnitude", "is_high",
+                                    "key", "y"])
+def test_silu_sumcheck_rejects_tampered_relation(field):
+    tape, _out, audit = _silu_sumcheck_case()
+    claim = tape.claims[0]
+
+    def tamper_then_observe(index, op, input_vars, input_data, outs, live):
+        var = getattr(claim, field)
+        bad = outs[var].clone()
+        bad[0] = 99
+        outs[var] = bad
+        live[var] = bad
+        audit(index, op, input_vars, input_data, outs, live)
+
+    tape.run_engine_pass(observer=tamper_then_observe)
+    result = audit.finish()
+
+    assert result["accepted"] is False
+    assert any("sumcheck" in failure or "SiLU" in failure
                for failure in result["failures"])
 
 

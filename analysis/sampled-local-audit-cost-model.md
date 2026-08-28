@@ -123,6 +123,14 @@ claim types after their window commitments are fixed:
 - `RoutedProjectedMatmulClaim`: streaming expert-weight projections `W_e rho`
   are bound to the model weight variables, and the verifier checks
   `sum_k X * (M P) = Y rho` without materializing all expert outputs.
+- `RoPEClaim`: one eq-weighted sumcheck batches the public rotation and both
+  rescale linears; compact product trees bind its low/shifted range checks.
+- `RoutingClaim`: seven linear/quadratic route relations are independently
+  randomized and batched into one post-commit sumcheck; its gap range remains
+  bound by the already materialized word/range claims.
+- `SiluClaim`: all committed algebraic relations are batched into one
+  sumcheck, while four range lookups and the paired activation lookup are
+  checked by compact product trees in the same receipt.
 
 The proof messages are copied to host, independently verified against the
 selected A/B/C wires, hashed into per-claim receipts, and those receipts are
@@ -131,9 +139,9 @@ is therefore `window commitments -> secret sample -> local proofs -> secret
 columns`. A 32,768-element test exercises the GPU sumcheck path, and a
 cancelling-error test demonstrates why the random eq weighting is necessary.
 
-These bridged types account for 2,280/2,596 manifest claims: all 554/554 of
-the Freivalds family, 971/1,287 of the sumcheck family, and all 755/755 of the
-product-tree family.
+These bridged types account for 2,449/2,596 manifest claims: all 554/554 of
+the Freivalds family, 1,140/1,287 of the sumcheck family, and all 755/755 of
+the product-tree family.
 The runtime keeps all remaining types as explicitly counted exact fallbacks
 and continues to report `cryptographic_local_proofs: false`.
 

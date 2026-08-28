@@ -31,12 +31,15 @@ from claims import (
     MatmulClaim,
     PairedTlookupClaim,
     RangeWordClaim,
+    RoPEClaim,
+    SiluClaim,
     WordExtractionClaim,
+    _rope_cos_sin,
 )
 from cuda_primitives import P, gl_add, gl_matmul, gl_matvec, gl_mul, gl_sub
 from rescale_claim import RescaleClaim
 from routed_projected import RoutedProjectedMatmulClaim
-from routing_claim import FreivaldsCombineClaim
+from routing_claim import FreivaldsCombineClaim, RoutingClaim
 
 from layergkr import sumcheck as sc
 
@@ -69,7 +72,8 @@ MATERIALIZED_PROOF_CLAIMS = frozenset({
     "AddClaim", "ConcatClaim", "EmbeddingLookupClaim", "HadamardClaim",
     "FreivaldsCombineClaim", "LinCombClaim", "MatmulClaim",
     "PairedTlookupClaim", "RangeWordClaim", "RescaleClaim",
-    "RoutedProjectedMatmulClaim", "WordExtractionClaim"})
+    "RoPEClaim", "RoutedProjectedMatmulClaim", "RoutingClaim", "SiluClaim",
+    "WordExtractionClaim"})
 
 
 def proof_family(claim: object) -> str:
@@ -429,7 +433,7 @@ def _eq_weights(tau: list[int], device) -> torch.Tensor:
 
 def _relation_terms(claim: object, live: dict, *, claim_index: int,
                     challenge: bytes):
-    length = claim.length
+    length = claim.x.length if isinstance(claim, RoPEClaim) else claim.length
     size = 1 << max(0, (length - 1).bit_length())
     rounds = size.bit_length() - 1
     tau = protocol.op_vec(
@@ -444,6 +448,12 @@ def _relation_terms(claim: object, live: dict, *, claim_index: int,
         anchor = claim.x
     elif isinstance(claim, RescaleClaim):
         anchor = claim.x_full
+    elif isinstance(claim, RoPEClaim):
+        anchor = claim.x
+    elif isinstance(claim, RoutingClaim):
+        anchor = claim.r
+    elif isinstance(claim, SiluClaim):
+        anchor = claim.x
     else:
         raise TypeError(
             f"no sumcheck relation builder for {type(claim).__name__}")
@@ -501,6 +511,163 @@ def _relation_terms(claim: object, live: dict, *, claim_index: int,
             shift[:length] = claim.shift % P
             terms.append((1, [shift, eq]))
         return "word-extraction", terms
+
+    if isinstance(claim, RoPEClaim):
+        cfg = claim.config
+        seq, heads, d_h = cfg.SEQ, cfg.heads, cfg.d_h
+        half = d_h // 2
+        x = live[claim.x].reshape(seq, heads, d_h)
+        x_lo, x_hi = x[:, :, :half], x[:, :, half:]
+        paired = torch.cat([x_hi, x_lo], dim=2).reshape(-1)
+        cos_l, sin_l = _rope_cos_sin(cfg)
+        cos = torch.tensor(
+            cos_l, dtype=torch.uint64, device=x.device).reshape(
+                seq, 1, half).expand(seq, heads, half)
+        sin = torch.tensor(
+            sin_l, dtype=torch.uint64, device=x.device).reshape(
+                seq, 1, half).expand(seq, heads, half)
+        zero = torch.zeros_like(cos)
+        neg_cos = gl_sub(zero, cos)
+        self_coeff = torch.cat([neg_cos, neg_cos], dim=2).reshape(-1)
+        pair_coeff = torch.cat(
+            [sin, gl_sub(zero, sin)], dim=2).reshape(-1)
+        target_var = (claim.x_rot_full if claim.rescale_bits > 0
+                      else claim.x_rot)
+        target = _pad_pow2(live[target_var], length)
+        terms = [
+            (1, [target, eq]),
+            (1, [_pad_pow2(x.reshape(-1), length),
+                 _pad_pow2(self_coeff, length), eq]),
+            (1, [_pad_pow2(paired, length),
+                 _pad_pow2(pair_coeff, length), eq]),
+        ]
+        if claim.rescale_bits == 0:
+            return "rope-rotation", terms
+        gamma, delta = protocol.op_vec(
+            challenge, claim_index, "sampled-rope-rescale-batch", 2)
+        rotated = _pad_pow2(live[claim.x_rot], length)
+        low = _pad_pow2(live[claim.x_rot_low], length)
+        shifted = _pad_pow2(live[claim.x_rot_shifted], length)
+        offset = torch.zeros(size, dtype=torch.uint64, device=eq.device)
+        offset[:length] = 1 << (claim.output_width - 1)
+        terms.extend([
+            (gamma, [target, eq]),
+            ((P - gamma * (1 << claim.rescale_bits) % P) % P,
+             [rotated, eq]),
+            ((P - gamma) % P, [low, eq]),
+            (delta, [shifted, eq]),
+            ((P - delta) % P, [rotated, eq]),
+            ((P - delta) % P, [offset, eq]),
+        ])
+        return "rope-rotation-rescale", terms
+
+    if isinstance(claim, RoutingClaim):
+        t_count, experts = claim.T, claim.E
+        r = live[claim.r].reshape(t_count, experts)
+        m = live[claim.m].reshape(t_count, experts)
+        rt = live[claim.rt].reshape(t_count, experts)
+        mrt = live[claim.mrt].reshape(t_count, experts)
+        gap = live[claim.gap].reshape(t_count, experts)
+        rstar = live[claim.rstar].reshape(t_count)
+        r_chosen = live[claim.r_chosen].reshape(t_count)
+        ones_e = torch.ones(experts, dtype=torch.uint64, device=r.device)
+        bonus_e = torch.arange(
+            experts - 1, -1, -1, dtype=torch.int64,
+            device=r.device).to(torch.uint64)
+        bonus = bonus_e.view(1, experts).expand_as(r).contiguous()
+        rstar_broadcast = rstar.view(
+            t_count, 1).expand_as(rt).contiguous()
+        scale = torch.full_like(r, 1 << claim.L_bits)
+        residuals = [
+            gl_sub(gl_sub(rt, gl_mul(scale, r)), bonus),
+            gl_sub(gl_matvec(m.contiguous(), ones_e),
+                   torch.ones(t_count, dtype=torch.uint64, device=r.device)),
+            gl_sub(gl_matvec(mrt.contiguous(), ones_e), rstar),
+            gl_sub(gl_add(gap, rt), rstar_broadcast),
+            gl_sub(gl_add(
+                gl_mul(torch.full_like(r_chosen, 1 << claim.L_bits),
+                       r_chosen),
+                gl_matvec(gl_mul(m, bonus).contiguous(),
+                          ones_e)), rstar),
+            gl_sub(gl_mul(m, m), m),
+            gl_sub(gl_mul(m, rt), mrt),
+        ]
+        gammas = protocol.op_vec(
+            challenge, claim_index, "sampled-routing-relation-batch", 7)
+        aggregate = torch.zeros(
+            length, dtype=torch.uint64, device=r.device)
+        for gamma, residual in zip(gammas, residuals):
+            flat = residual.reshape(-1)
+            padded = torch.zeros_like(aggregate)
+            padded[:flat.numel()] = flat
+            aggregate = gl_add(
+                aggregate,
+                gl_mul(torch.full_like(aggregate, gamma), padded))
+        return "routing-all-relations", [
+            (1, [_pad_pow2(aggregate, length), eq])]
+
+    if isinstance(claim, SiluClaim):
+        cfg = claim.config
+
+        def scale(value, scalar):
+            return gl_mul(torch.full_like(value, scalar % P), value)
+
+        x = live[claim.x].reshape(-1)
+        sign = live[claim.sign].reshape(-1)
+        magnitude = live[claim.magnitude].reshape(-1)
+        c_value = live[claim.C].reshape(-1)
+        a0 = live[claim.a_0].reshape(-1)
+        a1 = live[claim.a_1].reshape(-1)
+        a2 = live[claim.a_2].reshape(-1)
+        a3 = live[claim.a_3].reshape(-1)
+        a4 = live[claim.a_4].reshape(-1)
+        g = live[claim.g].reshape(-1)
+        inv_g = live[claim.inv_g].reshape(-1)
+        is_high = live[claim.is_high].reshape(-1)
+        key = live[claim.key].reshape(-1)
+        output_sat = live[claim.output_sat].reshape(-1)
+        mux_a = live[claim.mux_a].reshape(-1)
+        mux_b = live[claim.mux_b].reshape(-1)
+        lookup_y = live[claim.y].reshape(-1)
+        output = live[claim.output].reshape(-1)
+        residuals = [
+            gl_sub(gl_sub(x, magnitude), scale(c_value, 2)),
+            gl_sub(gl_sub(gl_sub(gl_sub(gl_sub(
+                magnitude, a0), scale(a1, cfg.b)),
+                scale(a2, cfg.b_2)), scale(a3, cfg.b_3)),
+                scale(a4, cfg.b_4)),
+            gl_sub(gl_sub(gl_sub(
+                g, scale(a2, cfg.b_2)), scale(a3, cfg.b_3)),
+                scale(a4, cfg.b_4)),
+            gl_sub(gl_sub(key, scale(sign, cfg.T_LEN)), a1),
+            gl_sub(gl_sub(x, output_sat), c_value),
+            gl_add(gl_sub(gl_sub(lookup_y, output), mux_a), mux_b),
+            gl_sub(gl_mul(sign, sign), sign),
+            gl_sub(gl_mul(sign, x), c_value),
+            gl_sub(gl_mul(g, inv_g), is_high),
+            gl_sub(gl_mul(is_high, g), g),
+            gl_sub(gl_mul(is_high, is_high), is_high),
+            gl_sub(gl_mul(is_high, lookup_y), mux_a),
+            gl_sub(gl_mul(is_high, output_sat), mux_b),
+        ]
+        if cfg.rescale_bits > 0:
+            x_in = live[claim.x_in].reshape(-1)
+            x_low = live[claim.x_low].reshape(-1)
+            x_shifted = live[claim.x_shifted].reshape(-1)
+            residuals.extend([
+                gl_sub(gl_sub(x_in, scale(x, 1 << cfg.rescale_bits)),
+                       x_low),
+                gl_sub(gl_sub(x_shifted, x), torch.full_like(
+                    x, 1 << (cfg.width_2 - 1))),
+            ])
+        gammas = protocol.op_vec(
+            challenge, claim_index, "sampled-silu-relation-batch",
+            len(residuals))
+        aggregate = torch.zeros_like(x)
+        for gamma, residual in zip(gammas, residuals):
+            aggregate = gl_add(aggregate, scale(residual, gamma))
+        return "silu-all-relations", [
+            (1, [_pad_pow2(aggregate, length), eq])]
 
     # Batch the two public rescale linears with an independent random tag so
     # errors in one cannot cancel errors in the other except with 1/|F| chance.
@@ -561,6 +728,214 @@ def verify_sumcheck(claim: object, live: dict,
     _coins, coin = _sumcheck_coins(challenge, claim_index, rounds)
     ok, why = sc.verify_terms(proof.sumcheck, terms, coin)
     return ok, why if not ok else "ok"
+
+
+@dataclass
+class RoPESumcheckProof:
+    """Rotation/rescale sumcheck plus both internal range product roots."""
+
+    relation: RelationSumcheckProof
+    low_query_root: int = 1
+    low_table_root: int = 1
+    shifted_query_root: int = 1
+    shifted_table_root: int = 1
+
+    @property
+    def byte_size(self) -> int:
+        extra = 32 if self.relation.relation.endswith("-rescale") else 0
+        return self.relation.byte_size + extra
+
+    @property
+    def digest(self) -> bytes:
+        h = blake3.blake3(b"verinf/sampled/rope-sumcheck/v1")
+        h.update(self.relation.digest)
+        for root in (self.low_query_root, self.low_table_root,
+                     self.shifted_query_root, self.shifted_table_root):
+            h.update(int(root).to_bytes(8, "little"))
+        return h.digest()
+
+
+def _range_value_products(value: torch.Tensor, table: torch.Tensor,
+                          alpha: int):
+    flat = value.detach().contiguous().view(-1)
+    indices = flat.view(torch.int64)
+    public = table.detach().contiguous().view(-1)
+    safe = indices.clamp(0, public.numel() - 1)
+    indexed = public.index_select(0, safe)
+    alpha_t = torch.full_like(flat, alpha)
+    return (_product_tree_root(gl_sub(alpha_t, flat)),
+            _product_tree_root(gl_sub(alpha_t, indexed)), indices,
+            public.numel())
+
+
+def prove_rope_sumcheck(
+        claim: RoPEClaim, live: dict, *, claim_index: int,
+        challenge: bytes) -> RoPESumcheckProof:
+    relation = prove_sumcheck(
+        claim, live, claim_index=claim_index, challenge=challenge)
+    if claim.rescale_bits == 0:
+        return RoPESumcheckProof(relation)
+    alpha_low, alpha_shifted = protocol.op_vec(
+        challenge, claim_index, "sampled-rope-range-alpha", 2)
+    low_query, low_table, _low_indices, _low_len = _range_value_products(
+        live[claim.x_rot_low], claim.range_rescale.T, alpha_low)
+    shifted_query, shifted_table, _shifted_indices, _shifted_len = (
+        _range_value_products(
+            live[claim.x_rot_shifted], claim.range_output.T, alpha_shifted))
+    return RoPESumcheckProof(
+        relation, low_query, low_table, shifted_query, shifted_table)
+
+
+def verify_rope_sumcheck(
+        claim: RoPEClaim, live: dict, proof: RoPESumcheckProof, *,
+        claim_index: int, challenge: bytes) -> tuple[bool, str]:
+    ok, why = verify_sumcheck(
+        claim, live, proof.relation, claim_index=claim_index,
+        challenge=challenge)
+    if not ok or claim.rescale_bits == 0:
+        return ok, why
+    alpha_low, alpha_shifted = protocol.op_vec(
+        challenge, claim_index, "sampled-rope-range-alpha", 2)
+    low_query, low_table, low_indices, low_len = _range_value_products(
+        live[claim.x_rot_low], claim.range_rescale.T, alpha_low)
+    shifted_query, shifted_table, shifted_indices, shifted_len = (
+        _range_value_products(
+            live[claim.x_rot_shifted], claim.range_output.T, alpha_shifted))
+    if not bool(((low_indices >= 0) & (low_indices < low_len)).all().item()):
+        return False, "RoPE low range index is outside the public table"
+    if not bool(((shifted_indices >= 0)
+                 & (shifted_indices < shifted_len)).all().item()):
+        return False, "RoPE shifted range index is outside the public table"
+    actual = (low_query, low_table, shifted_query, shifted_table)
+    message = (proof.low_query_root, proof.low_table_root,
+               proof.shifted_query_root, proof.shifted_table_root)
+    if actual != message:
+        return False, "RoPE range product roots are not witness-bound"
+    if low_query != low_table or shifted_query != shifted_table:
+        return False, "RoPE range product-tree roots differ"
+    return True, "ok"
+
+
+@dataclass
+class SiluSumcheckProof:
+    """All algebraic SiLU relations plus its range/paired lookups."""
+
+    relation: RelationSumcheckProof
+    range_roots: tuple[tuple[int, int], ...]
+    paired_query_root: int
+    paired_table_root: int
+
+    @property
+    def byte_size(self) -> int:
+        return self.relation.byte_size + 16 * (len(self.range_roots) + 1)
+
+    @property
+    def digest(self) -> bytes:
+        h = blake3.blake3(b"verinf/sampled/silu-sumcheck/v1")
+        h.update(self.relation.digest)
+        for query, table in self.range_roots:
+            h.update(int(query).to_bytes(8, "little"))
+            h.update(int(table).to_bytes(8, "little"))
+        h.update(int(self.paired_query_root).to_bytes(8, "little"))
+        h.update(int(self.paired_table_root).to_bytes(8, "little"))
+        return h.digest()
+
+
+def _silu_range_items(claim: SiluClaim, live: dict):
+    items = [
+        (live[claim.a_0], claim.range_b.T),
+        (live[claim.a_2], claim.range_w2.T),
+        (live[claim.a_3], claim.range_w3.T),
+        (live[claim.a_4], claim.range_w4.T),
+    ]
+    if claim.config.rescale_bits > 0:
+        items.extend([
+            (live[claim.x_low], claim.range_rescale.T),
+            (live[claim.x_shifted], claim.range_x.T),
+        ])
+    return items
+
+
+def _silu_paired_products(claim: SiluClaim, live: dict, *,
+                          claim_index: int, challenge: bytes):
+    alpha, beta, gamma = protocol.op_vec(
+        challenge, claim_index, "sampled-silu-paired-challenges", 3)
+    key = live[claim.key].detach().contiguous().view(-1)
+    value = live[claim.y].detach().contiguous().view(-1)
+    indices = key.view(torch.int64)
+    table_x = claim.silu_table.T.detach().contiguous().view(-1)
+    table_y = claim.silu_table.T_Y.detach().contiguous().view(-1)
+    safe = indices.clamp(0, table_x.numel() - 1)
+    selected_x = table_x.index_select(0, safe)
+    selected_y = table_y.index_select(0, safe)
+    positions = torch.arange(
+        key.numel(), dtype=torch.int64,
+        device=key.device).to(torch.uint64)
+    alpha_t = torch.full_like(key, alpha)
+    beta_t = torch.full_like(key, beta)
+    gamma_t = torch.full_like(key, gamma)
+    tags = gl_mul(gamma_t, positions)
+    query_fp = gl_add(gl_add(key, gl_mul(beta_t, value)), tags)
+    table_fp = gl_add(
+        gl_add(selected_x, gl_mul(beta_t, selected_y)), tags)
+    return (_product_tree_root(gl_sub(alpha_t, query_fp)),
+            _product_tree_root(gl_sub(alpha_t, table_fp)), indices,
+            table_x.numel())
+
+
+def prove_silu_sumcheck(
+        claim: SiluClaim, live: dict, *, claim_index: int,
+        challenge: bytes) -> SiluSumcheckProof:
+    relation = prove_sumcheck(
+        claim, live, claim_index=claim_index, challenge=challenge)
+    items = _silu_range_items(claim, live)
+    alphas = protocol.op_vec(
+        challenge, claim_index, "sampled-silu-range-alpha", len(items))
+    roots = []
+    for (value, table), alpha in zip(items, alphas):
+        query, public, _indices, _length = _range_value_products(
+            value, table, alpha)
+        roots.append((query, public))
+    paired_query, paired_table, _indices, _length = _silu_paired_products(
+        claim, live, claim_index=claim_index, challenge=challenge)
+    return SiluSumcheckProof(
+        relation, tuple(roots), paired_query, paired_table)
+
+
+def verify_silu_sumcheck(
+        claim: SiluClaim, live: dict, proof: SiluSumcheckProof, *,
+        claim_index: int, challenge: bytes) -> tuple[bool, str]:
+    ok, why = verify_sumcheck(
+        claim, live, proof.relation, claim_index=claim_index,
+        challenge=challenge)
+    if not ok:
+        return ok, why
+    items = _silu_range_items(claim, live)
+    if len(proof.range_roots) != len(items):
+        return False, "SiLU range product-tree shape mismatch"
+    alphas = protocol.op_vec(
+        challenge, claim_index, "sampled-silu-range-alpha", len(items))
+    actual_roots = []
+    for (value, table), alpha in zip(items, alphas):
+        query, public, indices, table_len = _range_value_products(
+            value, table, alpha)
+        if not bool(((indices >= 0) & (indices < table_len)).all().item()):
+            return False, "SiLU range index is outside the public table"
+        actual_roots.append((query, public))
+    if tuple(actual_roots) != proof.range_roots:
+        return False, "SiLU range product roots are not witness-bound"
+    if any(query != public for query, public in actual_roots):
+        return False, "SiLU range product-tree roots differ"
+    paired_query, paired_table, indices, table_len = _silu_paired_products(
+        claim, live, claim_index=claim_index, challenge=challenge)
+    if not bool(((indices >= 0) & (indices < table_len)).all().item()):
+        return False, "SiLU lookup index is outside the public table"
+    if (paired_query, paired_table) != (
+            proof.paired_query_root, proof.paired_table_root):
+        return False, "SiLU paired roots are not witness-bound"
+    if paired_query != paired_table:
+        return False, "SiLU paired product-tree roots differ"
+    return True, "ok"
 
 
 @dataclass

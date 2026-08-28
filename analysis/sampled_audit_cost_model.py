@@ -162,6 +162,7 @@ def predict(geometry: Geometry = Geometry(), rates: RateCard = RateCard()) -> di
                     "sumcheck": [
                         "AddClaim", "ConcatClaim", "HadamardClaim",
                         "LinCombClaim", "RescaleClaim",
+                        "RoPEClaim", "RoutingClaim", "SiluClaim",
                         "WordExtractionClaim",
                     ],
                     "product-tree": [
@@ -169,11 +170,11 @@ def predict(geometry: Geometry = Geometry(), rates: RateCard = RateCard()) -> di
                         "RangeWordClaim",
                     ],
                 },
-                "manifest_claims_materialized": 2280,
-                "manifest_fraction_materialized": 2280 / 2596,
+                "manifest_claims_materialized": 2449,
+                "manifest_fraction_materialized": 2449 / 2596,
                 "family_coverage": {
                     "freivalds": {"materialized": 554, "total": 554},
-                    "sumcheck": {"materialized": 971, "total": 1287},
+                    "sumcheck": {"materialized": 1140, "total": 1287},
                     "product-tree": {"materialized": 755, "total": 755},
                 },
                 "transcript_order": (

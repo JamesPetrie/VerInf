@@ -38,13 +38,15 @@ from claims import (
     MatmulClaim,
     PairedTlookupClaim,
     RangeWordClaim,
+    RoPEClaim,
+    SiluClaim,
     WordExtractionClaim,
 )
 from core import STREAMING_INPUT_CLAIMS, P, Variable
 from cuda_primitives import gl_add, gl_mul, hash_columns_streamed
 from rescale_claim import RescaleClaim
 from routed_projected import RoutedProjectedMatmulClaim
-from routing_claim import FreivaldsCombineClaim
+from routing_claim import FreivaldsCombineClaim, RoutingClaim
 
 from layergkr.sampled_audit import AuditParams, VerifierSession
 
@@ -537,9 +539,43 @@ class ClaimWindowAudit:
             })
             return ok, why
 
+        if isinstance(claim, RoPEClaim):
+            proof = sampled_local_proofs.prove_rope_sumcheck(
+                claim, live, claim_index=block.index, challenge=challenge)
+            ok, why = sampled_local_proofs.verify_rope_sumcheck(
+                claim, live, proof, claim_index=block.index,
+                challenge=challenge)
+            self.materialized_local_proof_counts[family] += 1
+            self.local_proof_bytes += proof.byte_size
+            self.local_proof_digests.append({
+                "claim": block.index,
+                "claim_type": claim_name,
+                "family": family,
+                "bytes": proof.byte_size,
+                "digest": proof.digest.hex(),
+            })
+            return ok, why
+
+        if isinstance(claim, SiluClaim):
+            proof = sampled_local_proofs.prove_silu_sumcheck(
+                claim, live, claim_index=block.index, challenge=challenge)
+            ok, why = sampled_local_proofs.verify_silu_sumcheck(
+                claim, live, proof, claim_index=block.index,
+                challenge=challenge)
+            self.materialized_local_proof_counts[family] += 1
+            self.local_proof_bytes += proof.byte_size
+            self.local_proof_digests.append({
+                "claim": block.index,
+                "claim_type": claim_name,
+                "family": family,
+                "bytes": proof.byte_size,
+                "digest": proof.digest.hex(),
+            })
+            return ok, why
+
         if isinstance(claim, (AddClaim, ConcatClaim, HadamardClaim,
                               LinCombClaim, RescaleClaim,
-                              WordExtractionClaim)):
+                              RoutingClaim, WordExtractionClaim)):
             proof = sampled_local_proofs.prove_sumcheck(
                 claim, live, claim_index=block.index, challenge=challenge)
             ok, why = sampled_local_proofs.verify_sumcheck(
