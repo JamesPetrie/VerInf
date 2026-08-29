@@ -205,7 +205,8 @@ def to_signed(f):
 _BUILD = [0]
 
 
-def max_gap(tape, logits, tokens, *, T, V, gap_max, force_argmax=None, O_ext=None):
+def max_gap(tape, logits, tokens, *, T, V, gap_max, force_argmax=None,
+            O_ext=None, _export=None):
     """Build the MaxClaim on committed `logits` (T,V) and committed output `tokens`
     (length T, blinded like the weights). Returns (gap, gap_o, neg_gap, vstar)
     WitnessTensors, where gap_o[t] = gap[t, tokens[t]] is the selected output gap.
@@ -236,6 +237,13 @@ def max_gap(tape, logits, tokens, *, T, V, gap_max, force_argmax=None, O_ext=Non
     # Output committed AS TOKENS (length T), blinded like weights; O is its one-hot.
     tok_t = torch.tensor(list(tokens), dtype=torch.int64, device="cuda")
     tok = tape.commit(f"{pfx}tok", tok_t.to(torch.uint64), (T,))
+    if _export is not None:
+        # The scored output tokens as committed INTEGERS, constrained by MaxClaim
+        # to tok = Sigma i*O over the same one-hot the surprisal is read through.
+        # Exported so an external gadget can pin the very same variable rather
+        # than a fresh commitment of equal values -- which is the whole
+        # difference between binding the run and binding a copy of it.
+        _export["tok"] = tok
     if O_ext is not None:
         assert O_ext.var.length == T * V, \
             f"O_ext length {O_ext.var.length} != T*V = {T * V}"

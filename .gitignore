@@ -26,3 +26,21 @@ verifier/target/
 proof*.json
 logits*.npy
 .claude/
+
+# Local environment — reproduced from requirements.txt and the HF cache, not
+# committed: the venv is ~5 GB and the model checkpoints ~11 GB.
+venv/
+models/
+.hf_cache/
+
+# Agent/editor backups — history is the place for old versions, not the tree
+*.bak
+*.bak[0-9]
+*.bak-*
+
+# Model enrolment handles. Each carries the SECRET zk-padding seed the weight
+# commitment was made under -- the padding is the only thing hiding the weights
+# in the columns a proof opens, so a published seed publishes the model. They
+# also carry the opening ledger, which is per-deployment state, not source.
+# Provision like the interlock PSK: minted once by app/enroll.sh, never committed.
+.enroll/

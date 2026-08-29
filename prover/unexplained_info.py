@@ -62,9 +62,10 @@ def prove_unexplained_info(tape, logits, tokens, *, T, V, s_c, s_y, s_b, gap_max
     k = s_c // s_b
 
     # ONE: exact max -> gap (>=0), hidden output select gap_o.
+    _mx = {}
     gap, gap_o, neg_gap, vstar = max_gap(tape, logits, tokens, T=T, V=V,
                                           gap_max=gap_max, force_argmax=force_argmax,
-                                          O_ext=O_ext)
+                                          O_ext=O_ext, _export=_mx)
 
     # exp-kernel table: e_i = EXP[gap_i] (also range-proves gap_i in [0,gap_max)).
     EXP = exp_table_values(gap_max, s_c, s_y)
@@ -87,7 +88,8 @@ def prove_unexplained_info(tape, logits, tokens, *, T, V, s_c, s_y, s_b, gap_max
                                       d_max=V * s_y, s_y=s_y, s_b=s_b, K=K)
     tape.paired_tlookup(b, pow_tbl, y_var=pw.var)   # binds pw = POW[b]
     Sz = _chain_sum(tape, surprisal, T, positions=sum_positions)
-    handles = dict(gap=gap, gap_o=gap_o, e=e, b=b, pw=pw, surprisal=surprisal, Sz=Sz)
+    handles = dict(gap=gap, gap_o=gap_o, e=e, b=b, pw=pw, surprisal=surprisal,
+                   Sz=Sz, tok=_mx.get("tok"))
     if reveal:
         # Expose the bound: pin committed Sz to a public value (filled post-witness).
         handles['reveal_pin'] = tape.reveal(Sz, value=None)

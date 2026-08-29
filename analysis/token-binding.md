@@ -437,6 +437,41 @@ oracle — a phase is done when honest proofs ACCEPT and its targeted tampers RE
   **P3 end-to-end 7/7 on the Spark** vs the Rust verifier: 1-block and
   3-block-partial positives against the recorder ciphertext; wrong-ct / key /
   plaintext / MixColumns-mid / IV cheats all REJECT.
+- **P5-interlock — LANDED 2026-08-18 (ahead of P4).** B1+B2 for both streams,
+  on the interlock's live encrypted wire, welded to the model's committed output
+  tokens, on the SAME tape as the forward pass. Deviations from the §2 statement,
+  both deliberate:
+  * **B1 pins the ciphertext PUBLIC instead of hashing it.** On the interlock the
+    verifier holds the ciphertext (it captured the frames; `commit.audit` already
+    proved the capture IS the certified traffic), so `SHA256(ct) == H1` is
+    replaced by pinning `ct` as a public constant — strictly stronger, and it
+    removes the multi-block SHA-256 the §2 form would have needed over the
+    payload. Only the single-block SHA-256 over the 40-byte key material remains,
+    which is exactly the P2 gadget as built.
+  * **`H2` = `KEY_COMMIT` carried in the request payload**, per §9.1, so the
+    INWARD digest fixes it before the response exists.
+  Output-side weld per §10.2: `max_gap` now exports its committed `tok` vector,
+  the response slice is gathered at `sum_positions` and pinned to the AES
+  plaintext tokens. Input side is pinned public — the forward pass already makes
+  input tokens public via `EmbeddingLookupClaim`, so P4 is still what hides them.
+  Gates: `prover/tests/test_crypto_binding.py` 9/9 with **blinding on**
+  (positive; wrong KEY_COMMIT; flipped ct byte each direction; swapped token;
+  AES key desynced from the hashed key material; IV reuse; weld positive; weld
+  cheat). End-to-end on hardware: `sound` PASS, `keybind=OK`, U=0.1478, 131 s.
+  Docs: `interlock/app/ENCRYPTION.md`.
+
+  **BUG FOUND AND FIXED — the SHA-256 gadget was broken under blinding.** P1–P3
+  all gate at `K_DEG = ELL`, where the ZK slack is empty, so `sha256_h2_gadget`
+  had never run with `K_DEG = 2·ELL`. It REJECTed on `lin_col`. Cause: `shr_pad`
+  routed SHR's constant-zero padding through a committed all-zeros vector, which
+  is zero only at the ELL message slots — the `K_DEG - ELL` slack of its row is
+  fresh randomness, so the schedule-add relation held on the message and failed
+  on the blinded columns. Fixed by omitting the operand instead of zeroing it
+  (`u ^ 0 = u` collapses `u + v - 2uv` to `u`, so those slots need no term).
+  `test_crypto_binding.py` now runs at `2·ELL` so the class cannot return. Worth
+  noting for the outstanding blinding audit: this is exactly the failure mode
+  that audit is meant to catch, and it was live.
+
 - **P4 — slim one-hot select (2 days).** `OneHotSelectClaim` per §10.1; swap the hidden
   path in `demo_maverick_full.py` off `route_top1`; add the input-side index-binding
   linear; share the output `tok` slots with `MaxClaim`; negative tests (two-hot,

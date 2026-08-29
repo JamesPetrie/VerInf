@@ -218,12 +218,21 @@ def sha256_h2_gadget(tape, sha_tables, byte_table, msg, digest, _tamper=None):
         return cols
 
     rot = lambda cols, k: [cols[(j + k) % 32] for j in range(32)]
-    shr_pad = lambda cols, k, zero: [cols[j + k] if j + k < 32 else zero
-                                     for j in range(32)]
 
-    # a committed, publicly-pinned all-zeros vector: the SHR padding operand
-    zero48 = _commit(tape, "sha_zero48", [0] * 48)
-    tape.lincomb([zero48], [1], 0)
+    # SHR pads the high bits with a CONSTANT zero. That constant must NOT be
+    # routed through a committed variable. A committed all-zeros vector is zero
+    # only at the ELL message slots; the K_DEG - ELL blinding slack of its row is
+    # fresh randomness, so every relation that quietly assumed "this operand is
+    # zero" holds on the message and fails on the blinded columns. That is
+    # precisely the lin_col rejection this gadget produced the first time it ran
+    # with K_DEG = 2*ELL -- the P1-P3 gates all use K_DEG = ELL, where there is no
+    # slack and a committed zero really is zero everywhere.
+    #
+    # The fix is to omit the operand rather than zero it: for bit j >= 32 - k the
+    # SHR input is absent, and the XOR expression u + v - 2uv with v = 0 collapses
+    # to u, so those slots need no term at all.
+    shr_opt = lambda cols, k: [cols[j + k] if j + k < 32 else None
+                               for j in range(32)]
 
     def xor_gadget(nm, u_cols, v_cols, x_rows):
         """x = u ^ v: p = hadamard(u, v); x committed; pin x = u + v - 2p.
@@ -248,15 +257,18 @@ def sha256_h2_gadget(tape, sha_tables, byte_table, msg, digest, _tamper=None):
     tbc, bc = xor_gadget("tbc_", b_bit, c_bit, t["tbc"])
     u = [tape.hadamard(a_bit[j], tbc[j]) for j in range(32)]
     # schedule: xm = s7^s18 (m1), m2 = xm*h3 ; xn = s17^s19 (n1), n2 = xn*h10
+    shm = shr_opt(wm_bit, 3)
     xm, m1 = xor_gadget("xm_", rot(wm_bit, 7), rot(wm_bit, 18), t["xm"])
-    m2 = [tape.hadamard(xm[j], shr_pad(wm_bit, 3, zero48)[j]) for j in range(32)]
+    m2 = [tape.hadamard(xm[j], shm[j]) if shm[j] is not None else None
+          for j in range(32)]
     # n products live on words [N_LO, N_HI) = the first 48 of the 50 n rows;
     # slice the n-bit columns down to 48 via partition views
     wn48 = [slice_view(f"sha_wn48_{j}", wn_bit[j], 0, _N_HI - _N_LO,
                        [row[j] for row in t["w_bit_n"]]) for j in range(32)]
-    zero48b = zero48
+    shn = shr_opt(wn48, 10)
     xn, n1 = xor_gadget("xn_", rot(wn48, 17), rot(wn48, 19), t["xn"])
-    n2 = [tape.hadamard(xn[j], shr_pad(wn48, 10, zero48b)[j]) for j in range(32)]
+    n2 = [tape.hadamard(xn[j], shn[j]) if shn[j] is not None else None
+          for j in range(32)]
 
     # --- carries ----------------------------------------------------------
     ce = _commit(tape, "sha_ce", t["ce"]); tape.range_word(ce, sha_tables["c8"])
@@ -299,10 +311,16 @@ def sha256_h2_gadget(tape, sha_tables, byte_table, msg, digest, _tamper=None):
     s_xs = [W_s, cw, W_r7, W_r16]
     s_cf = [1, _MOD32, -1, -1]
     for j in range(32):                      # -ssig0 (m), -ssig1 (n)
-        s_xs += [xm[j], shr_pad(wm_bit, 3, zero48)[j], m2[j]]
-        s_cf += [-two_j[j], -two_j[j], 2 * two_j[j]]
-        s_xs += [xn[j], shr_pad(wn48, 10, zero48b)[j], n2[j]]
-        s_cf += [-two_j[j], -two_j[j], 2 * two_j[j]]
+        s_xs += [xm[j]]
+        s_cf += [-two_j[j]]
+        if shm[j] is not None:               # absent past the SHR edge
+            s_xs += [shm[j], m2[j]]
+            s_cf += [-two_j[j], 2 * two_j[j]]
+        s_xs += [xn[j]]
+        s_cf += [-two_j[j]]
+        if shn[j] is not None:
+            s_xs += [shn[j], n2[j]]
+            s_cf += [-two_j[j], 2 * two_j[j]]
     # NOTE alignment: schedule round r=16+i uses m-index (r-15)-M_LO = i and
     # n-index (r-2)-N_LO = i — all length-48 vectors line up at i.
     tape.lincomb(s_xs, s_cf, 0)
@@ -333,7 +351,7 @@ import aes_trace as _at
 
 
 def aes_ctr_gadget(tape, tables, key, iv, plaintext, ct_public=None,
-                   _tamper=None):
+                   _tamper=None, export=None):
     """Prove ct = AES128-CTR(key, iv, plaintext) with the GCM counter layout,
     for committed key/iv/plaintext bytes. `tables` is
     register_binding_tables(tape, with_xor=True) — the P1 tables.
@@ -346,6 +364,15 @@ def aes_ctr_gadget(tape, tables, key, iv, plaintext, ct_public=None,
 
     Returns the dict of committed class WitnessTensors for that wiring.
     `_tamper(trace_dict)` is the TEST hook for negative cases.
+
+    `export`: if a dict is passed it is filled with {"pool", "idx", "gather",
+    "trace"} so a CALLER can gather any wire of this instance by its
+    (class, path) ref and pin it to another gadget -- which is how the
+    crypto binding forces both AES instances to use the same committed key
+    bytes, and forces the plaintext bytes to be the committed token bytes.
+    Returning it rather than re-deriving keeps one pool per instance: the
+    gather pool is the concatenation of the committed classes, so rebuilding
+    it caller-side would commit a second copy of every byte in the cipher.
     """
     from claims import EmbeddingLookupClaim
     from tape import WitnessTensor
@@ -398,4 +425,6 @@ def aes_ctr_gadget(tape, tables, key, iv, plaintext, ct_public=None,
         y_look = tape.paired_tlookup(x_g, tbl)
         tape.lincomb([y_look, y_g], [1, -1], 0)
 
+    if export is not None:
+        export.update(pool=pool, idx=idx, gather=gather, trace=t)
     return parts
