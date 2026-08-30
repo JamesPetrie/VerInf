@@ -1,0 +1,7 @@
+device: NVIDIA B200 sm=10.0  SMs=148
+config: columns=65536 blocks=256 threads=256  B_BLOCK=8 (Goldilocks/block)
+m=    8  cols= 65536  bytes=  4.00 MB  ms=  0.098  -> 3352.98 Mcols/s  3.35 Gcompress/s  214.59 GB/s absorbed
+m=   16  cols= 65536  bytes=  8.00 MB  ms=  0.116  -> 2820.16 Mcols/s  5.64 Gcompress/s  360.98 GB/s absorbed
+m=   32  cols= 65536  bytes= 16.00 MB  ms=  0.158  -> 2080.46 Mcols/s  8.32 Gcompress/s  532.60 GB/s absorbed
+m=   64  cols= 65536  bytes= 32.00 MB  ms=  0.259  -> 1264.82 Mcols/s  10.12 Gcompress/s  647.59 GB/s absorbed
+m=  128  cols= 65536  bytes= 64.00 MB  ms=  0.461  -> 710.27 Mcols/s  11.36 Gcompress/s  727.32 GB/s absorbed

@@ -1,0 +1,14 @@
+device: NVIDIA B200 sm=10.0  SMs=148  total mem=178.4 GB
+
+matmul sweep: A(16384, 5120) @ B^T(n, 5120) = Y(16384, n)
+Arithmetic floor at 312 Gmul/s (measured peak from bench_field_mul);
+naive kernel expected ~2-4x slower from memory traffic.
+
+n=    1  ops=8.39e+07  time/run=    3.01 ms  throughput= 27.91 Gmul/s  (11.2x peak floor)
+n=    2  ops=1.68e+08  time/run=    3.01 ms  throughput= 55.78 Gmul/s  (5.6x peak floor)
+n=    8  ops=6.71e+08  time/run=    3.02 ms  throughput=222.46 Gmul/s  (1.4x peak floor)
+n=   32  ops=2.68e+09  time/run=   10.03 ms  throughput=267.60 Gmul/s  (1.2x peak floor)
+n=  128  ops=1.07e+10  time/run=   39.92 ms  throughput=268.99 Gmul/s  (1.2x peak floor)
+n=  512  ops=4.29e+10  time/run=  158.12 ms  throughput=271.63 Gmul/s  (1.1x peak floor)
+n= 2048  ops=1.72e+11  time/run=  631.03 ms  throughput=272.25 Gmul/s  (1.1x peak floor)
+n= 8192  ops=6.87e+11  time/run= 2518.55 ms  throughput=272.85 Gmul/s  (1.1x peak floor)
