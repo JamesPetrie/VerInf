@@ -567,6 +567,11 @@ def test_consumers():
         path = os.path.join(td, "fake_man.json")
         man.save(path)
         m2 = Manifest.load(path)
+        # gzipped archives load transparently (analysis/blackwell-session-1)
+        import gzip
+        with open(path, "rb") as src, gzip.open(path + ".gz", "wb") as dst:
+            dst.write(src.read())
+        assert len(Manifest.load(path + ".gz").claims) == len(m2.claims)
     mp = MachineProfile.load("gb10-spark")
     rep = predict.report(m2, mp)
     assert "workload totals" in rep

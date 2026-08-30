@@ -14,6 +14,7 @@ SCHEMA_VERSION, keep old readers working (readers ignore unknown fields).
 """
 from __future__ import annotations
 
+import gzip
 import json
 from dataclasses import dataclass, field, asdict
 from typing import Dict, List, Optional
@@ -58,7 +59,10 @@ class Manifest:
 
     @staticmethod
     def load(path: str) -> "Manifest":
-        with open(path) as f:
+        # archived extractions ship gzipped (a Maverick S=1000 manifest is
+        # ~35 MB raw, ~1.7 MB compressed); read either form
+        opener = gzip.open if str(path).endswith(".gz") else open
+        with opener(path, "rt") as f:
             raw = json.load(f)
         if not isinstance(raw, dict):
             raise ValueError(
