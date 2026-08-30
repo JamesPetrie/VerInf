@@ -23,6 +23,7 @@ from machine import MachineProfile, list_machines   # noqa: E402
 import synth                            # noqa: E402
 import predict                          # noqa: E402
 import dag as dagmod                    # noqa: E402
+import weightsplit                      # noqa: E402
 import partition                        # noqa: E402
 
 
@@ -44,6 +45,17 @@ def _positive(cast):
 
 
 _posint, _posfloat = _positive(int), _positive(float)
+
+
+def _fraction(s):
+    """A share in [0, 1] — zero is a valid ownership (the N=8 optimum)."""
+    try:
+        v = float(s)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a number, got {s}")
+    if not math.isfinite(v) or v < 0.0 or v > 1.0:
+        raise argparse.ArgumentTypeError(f"must be in [0, 1], got {s}")
+    return v
 
 
 def _load_manifest(p, path):
@@ -113,6 +125,42 @@ def main(argv=None):
                          "--enrolled-weights for the kept-trees/enrollment "
                          "model)")
 
+    pw = sub.add_parser("weightsplit",
+                        help="stage-aware wall for the weight-split prover "
+                             "(coordinator + N-1 enrolled-block workers)")
+    pw.add_argument("manifest")
+    pw.add_argument("--machine", default="gb10-spark")
+    pw.add_argument("--gpus", type=_posint, nargs="+", default=[1, 2, 4, 8],
+                    help="device counts to tabulate (default 1 2 4 8)")
+    pw.add_argument("--bytes-per-param", type=_posfloat, default=None,
+                    help="flat packed bytes/param (default: per-variable "
+                         "GGUF quant table, Q4_K = 0.5625)")
+    pw.add_argument("--resident", action="store_true",
+                    help="devices hold their packed share in HBM (plans are "
+                         "optimised under mem_GB - workspace) instead of streaming")
+    pw.add_argument("--disk-GBps", type=_posfloat, default=None,
+                    help="streaming read rate (default: profile io.disk_read_GBps; "
+                         "streaming is UNAVAILABLE without one)")
+    pw.add_argument("--disk-mode", choices=weightsplit.DISK_MODES, default="shared",
+                    help="shared: one volume, aggregate bandwidth (default, "
+                         "the one-node deployment); per-device: a disk per GPU")
+    pw.add_argument("--io-overlap", choices=weightsplit.IO_OVERLAPS, default="none",
+                    help="none: resolve-then-encode as the loaders do today "
+                         "(default); perfect: idealised prefetch, max(compute, I/O)")
+    pw.add_argument("--workspace-GB", type=_posfloat, default=10.0)
+    pw.add_argument("--encode-share", type=_fraction, default=None,
+                    help="share of A*W_fresh in the commit sweeps (default 4/9, "
+                         "gb10-spark provenance); the report prints its sensitivity")
+    pw.add_argument("--static", action="store_true",
+                    help="one set of cuts for both stages (exact at N=2, "
+                         "heuristic at N>=3) instead of independent per-stage optima")
+    pw.add_argument("--x-fold", type=_fraction, default=None,
+                    help="coordinator's enrolled share in the fold stage [0, 1]")
+    pw.add_argument("--x-open", type=_fraction, default=None,
+                    help="coordinator's enrolled share in the open stage [0, 1]")
+    pw.add_argument("--intervals", type=_posint, default=None, metavar="N",
+                    help="also print both stage plans (fold and open) for N devices")
+
     sub.add_parser("machines", help="list machine profiles")
 
     a = p.parse_args(argv)
@@ -159,6 +207,26 @@ def main(argv=None):
             print(partition.report(man, a.strategy, a.shards, mp, **kw))
         else:
             print(partition.compare(man, a.shards, mp, **kw))
+    elif a.cmd == "weightsplit":
+        if a.static and (a.x_fold is not None or a.x_open is not None):
+            p.error("--static chooses the fraction itself; drop --x-fold/--x-open")
+        man = _load_manifest(p, a.manifest)
+        mp = MachineProfile.load(a.machine)
+        kw = dict(bytes_per_param=a.bytes_per_param, resident=a.resident,
+                  disk_GBps=a.disk_GBps, disk_mode=a.disk_mode,
+                  io_overlap=a.io_overlap, workspace_GB=a.workspace_GB,
+                  static=a.static, x_fold=a.x_fold, x_open=a.x_open)
+        if a.encode_share is not None:
+            kw["encode_share"] = a.encode_share
+        try:
+            print(weightsplit.report(man, mp, a.gpus, **kw))
+            if a.intervals:
+                ev = weightsplit.evaluate(man, mp, a.intervals, **kw)
+                if ev["wall"] is None:
+                    p.error(ev["reason"])
+                print(weightsplit.intervals_text(ev))
+        except ValueError as e:
+            p.error(str(e))
     elif a.cmd == "machines":
         for name in list_machines():
             print(name)

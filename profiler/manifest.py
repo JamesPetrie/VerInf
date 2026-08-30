@@ -42,6 +42,12 @@ class VariableRecord:
     persistent: bool = False       # model weight (streamed, own Merkle block)
     producer: Optional[int] = None  # claim idx, None = run input / weight
     consumers: List[int] = field(default_factory=list)
+    # persistent weights only, optional: on-disk provenance for storage
+    # models (weightsplit). `packed_bytes` is the exact packed source size
+    # when extraction knows it (a logical K/V variable can be several
+    # times its packed GGUF source); `quant` the GGUF block type.
+    quant: Optional[str] = None
+    packed_bytes: Optional[float] = None
 
 
 @dataclass
@@ -91,7 +97,8 @@ class Manifest:
                 m.variables.append(VariableRecord(
                     name=v["name"], length=v["length"], phase=v.get("phase", 1),
                     persistent=v.get("persistent", False),
-                    producer=v.get("producer"), consumers=v.get("consumers", [])))
+                    producer=v.get("producer"), consumers=v.get("consumers", []),
+                    quant=v.get("quant"), packed_bytes=v.get("packed_bytes")))
         except (KeyError, TypeError, AttributeError) as e:
             # structural failures (non-dict records, missing required keys)
             # normalize to ValueError: the CLI boundary catches that

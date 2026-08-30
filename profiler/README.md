@@ -57,6 +57,14 @@ python3 profiler/cli.py predict man.json --machine gb10-spark --gpus 8      # id
 python3 profiler/cli.py dag     man.json -o dag.json
 python3 profiler/cli.py partition man.json --shards 8 --weight-bytes-per-param 0.7   # compare strategies
 python3 profiler/cli.py partition man.json --shards 8 --strategy experts             # one in detail
+python3 profiler/cli.py weightsplit man.json --machine b200-runpod --resident --intervals 2
+#   stage-aware wall for the weight-split prover (coordinator + enrolled-block
+#   workers) from executable whole-variable plans with exact cuts: commit +
+#   max(fold) + max(open) across the s_col barrier; physical (row-padded) slots;
+#   resident (union hold vs HBM; capped tied plans exact at N=2, labelled
+#   -heuristic at N>=3) or streaming lower bound with --disk-mode
+#   shared|per-device and --io-overlap none|perfect; reports the kernel-floor
+#   ratio and the same-mode speedup (n/a when N=1 is not executable). Enrolled only.
 ```
 
 First findings from the evaluator (Maverick, 8 shards, floor model):

@@ -872,6 +872,235 @@ def test_rows_approx_label():
     assert "(approx" in predict.report(m, mp)
 
 
+def _hetero_manifest(n_vars=60, ELL=8, T_Q=4, seed=7):
+    # Many heterogeneous enrolled variables (mixed lengths, several
+    # non-ELL-aligned, mixed quant types) with no claims: exercises the
+    # interior-worker geometry, padding, and provenance paths that the
+    # two-weight fake manifest cannot.
+    import random
+    from manifest import VariableRecord
+    rng = random.Random(seed)
+    m = Manifest()
+    m.run = {"ligero": {"ELL": ELL, "T_QUERIES": T_Q}}
+    quants = ["Q4_K", "Q6_K", "Q5_K", None]
+    for i in range(n_vars):
+        length = rng.choice([ELL, 2 * ELL, 3 * ELL, 5 * ELL, ELL + 1, 2 * ELL - 3, 9])
+        m.variables.append(VariableRecord(name=f"w{i}", length=length, persistent=True,
+                                          quant=rng.choice(quants)))
+    m.variables.append(VariableRecord(name="x", length=ELL))    # a fresh input
+    return m
+
+
+def test_weightsplit():
+    # Stage-aware weight-ownership model (the M1 coordinator/worker
+    # architecture) from EXECUTABLE plans: wall = commit + max(fold) +
+    # max(open) across the s_col barrier; N=1 reproduces predict's enrolled
+    # floor exactly on an aligned manifest; plans are contiguous whole-
+    # variable runs with cuts solved EXACTLY (matches brute force); slots
+    # are physical (row-padded); holds are unions (interior workers do not
+    # nest); shared-volume streaming is aggregate-bandwidth bound; two
+    # metrics (kernel floor ratio, same-mode speedup); UNAVAILABLE when the
+    # profile lacks disk (streaming) or mem_GB (resident); invalid
+    # provenance fails; zero shares valid; HBM-constrained optimum found
+    # even when the feasible band is narrower than any fraction grid.
+    import weightsplit as ws
+    import cli
+    man = _build_manifest()
+    for v in man.variables:
+        if v.persistent:
+            v.quant = "Q6_K"
+    pv0 = [v for v in man.variables if v.persistent]
+    pv0[0].packed_bytes = 1.0          # exact size beats the quant table
+    with tempfile.TemporaryDirectory() as td:
+        path = os.path.join(td, "fake_man.json")
+        man.save(path)
+        m2 = Manifest.load(path)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            cli.main(["weightsplit", path, "--machine", "gb10-spark",
+                      "--gpus", "1", "2", "--resident", "--intervals", "2",
+                      "--x-fold", "0", "--x-open", "0.5"])
+        out = buf.getvalue()
+        assert "fold stage (x=0.000)" in out and "open stage (x=" in out
+        assert "encode-share sensitivity" in out and "same-mode" in out
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            cli.main(["weightsplit", path, "--machine", "gb10-spark", "--gpus", "2"])
+        assert "UNAVAILABLE" in buf.getvalue()      # no disk calibration
+    pv = [v for v in m2.variables if v.persistent]
+    assert pv[0].packed_bytes == 1.0 and all(v.quant == "Q6_K" for v in pv)
+    assert ws.packed_bytes_of(pv[0], None) == 1.0
+    assert ws.packed_bytes_of(pv[1], None) == pv[1].length * ws.QUANT_BYTES_PER_PARAM["Q6_K"]
+    assert ws.packed_bytes_of(pv[1], 0.7) == pv[1].length * 0.7
+    # invalid provenance fails loudly instead of sizing HBM wrong
+    from manifest import VariableRecord
+    for bad in (dict(packed_bytes=-1.0), dict(packed_bytes=float("nan")),
+                dict(quant="Q4_0")):
+        try:
+            ws.packed_bytes_of(VariableRecord(name="b", length=8, persistent=True, **bad), None)
+            raise AssertionError(f"accepted {bad}")
+        except ValueError:
+            pass
+    mp = MachineProfile.load("gb10-spark")
+    A = mp.get("prove_constants", "A_ns_per_slot")
+    B = mp.get("prove_constants", "B_ns_per_cid")
+    C = mp.get("prove_constants", "C_ns_per_product")
+    t = predict.totals(m2)
+    W_fresh = t.W - t.W_weights
+    want = (A * W_fresh + B * t.cids + C * t.Q
+            + (predict.ENROLLED_QLIN_RATIO + predict.ENROLLED_OPEN_RATIO)
+            * A * t.W_weights
+            + predict.ENROLLED_OPEN_RATIO * A * W_fresh) * 1e-9
+    st = ws.stages(m2, mp)
+    assert abs(st.floor - want) < 1e-12, (st.floor, want)      # aligned fixture
+    ev1 = ws.evaluate(m2, mp, 1, resident=True)
+    assert abs(ev1["wall"] - st.floor) < 1e-12 and ev1["kernel_floor_ratio"] == 1.0
+    assert ev1["aligned"] and ev1["same_mode_speedup"] == 1.0
+    evx = ws.evaluate(m2, mp, 2, x_fold=1.0, x_open=1.0, resident=True)
+    assert abs(evx["wall"] - st.floor) < 1e-12 and evx["plan_mode"] == "explicit"
+    # resident needs mem_GB
+    nomem = MachineProfile({"name": "nomem", "prove_constants": mp.raw["prove_constants"]})
+    assert ws.evaluate(m2, nomem, 2, resident=True)["wall"] is None
+    assert ws.evaluate(m2, MachineProfile({"name": "x"}), 2)["wall"] is None
+    assert "UNAVAILABLE" in ws.report(m2, MachineProfile({"name": "x"}), [1, 2])
+
+    # --- heterogeneous many-variable fixture ---------------------------
+    hm = _hetero_manifest()
+    hpv = [v for v in hm.variables if v.persistent]
+    ELL = 8
+    ev = ws.evaluate(hm, mp, 2, resident=True)
+    assert not ev["aligned"]
+    phys = sum(-(-v.length // ELL) * ELL for v in hpv)
+    assert ev["physical_slots"] == phys > ev["logical_slots"] == sum(v.length for v in hpv)
+    # timing and payload use physical rows
+    assert abs(sum(ev["fold_slots"]) - phys) < 1e-9
+    assert abs(sum(ev["open_payload"]) - phys / ELL * 4 * 8) < 1e-9
+    # the reviewer's two-weight example: lengths 1 and 9 at ELL=8 -> 3 rows
+    tiny = Manifest(run={"ligero": {"ELL": 8, "T_QUERIES": 4}})
+    tiny.variables = [VariableRecord(name="a", length=1, persistent=True),
+                      VariableRecord(name="b", length=9, persistent=True)]
+    e = ws.evaluate(tiny, mp, 1, resident=True)
+    assert e["physical_slots"] == 24 and abs(sum(e["open_payload"]) - 96) < 1e-9
+    # stage structure from the plans
+    assert abs(ev["wall"] - (ws.stages(hm, mp).commit + ev["fold_t"] + ev["open_t"])) < 1e-12
+    rate_f = predict.ENROLLED_QLIN_RATIO * A * 1e-9
+    assert abs(ev["fold_compute"][1] - ev["fold_slots"][1] * rate_f) < 1e-12
+    # exact cut optimum at N=2: brute force over every boundary per stage
+    stg = ws.stages(hm, mp)
+    blk = ws._Block(hm, None, ELL)
+    def brute(stage_fresh, rate):
+        best = None
+        for c in range(blk.n + 1):
+            tt = max(stage_fresh + rate * blk.phys(0, c), rate * blk.phys(c, blk.n))
+            best = tt if best is None or tt < best else best
+        return best
+    rate_o = predict.ENROLLED_OPEN_RATIO * A * 1e-9
+    assert abs(ev["fold_t"] - brute(stg.fresh_fold, rate_f)) < 1e-9
+    assert abs(ev["open_t"] - brute(stg.fresh_open, rate_o)) < 1e-9
+    assert ev["plan_mode"] == "independent"
+    # per-stage optimum never loses to tied cuts (static)
+    evs = ws.evaluate(hm, mp, 2, resident=True, static=True)
+    assert evs["plan_fold"] == evs["plan_open"] and ev["wall"] <= evs["wall"] + 1e-9
+    # N=3/4: plans contiguous/exhaustive per stage; holds = brute-force
+    # variable-set unions; the solver beats or ties the equal-slot heuristic
+    for n in (3, 4):
+        e = ws.evaluate(hm, mp, n, x_fold=0.2, x_open=0.7, resident=True)
+        for key in ("plan_fold", "plan_open"):
+            plan = e[key]
+            assert plan[0][0] == 0 and plan[-1][1] == len(hpv)
+            assert all(a[1] == b[0] for a, b in zip(plan, plan[1:]))
+        for d in range(n):
+            (flo, fhi), (olo, ohi) = e["plan_fold"][d], e["plan_open"][d]
+            union = set(range(flo, fhi)) | set(range(olo, ohi))
+            assert abs(e["hold_bytes"][d]
+                       - sum(ws.packed_bytes_of(hpv[i], None) for i in union)) < 1e-6
+        solved = ws.evaluate(hm, mp, n, resident=True)
+        assert solved["wall"] <= e["wall"] + 1e-9
+        # unequal worker runs are allowed (physical slots differ)
+        ws_ = solved["fold_slots"][1:]
+        assert len(set(ws_)) > 1 or n == 2
+    # shared volume: the stage cannot beat aggregate bandwidth whatever
+    # the split; per-device disks can; 'none' overlap adds I/O to compute
+    blk_bytes = sum(ws.packed_bytes_of(v, None) for v in hpv)
+    slow = 1e-9                                  # GB/s -> I/O dominates
+    sh = ws.evaluate(hm, mp, 2, disk_GBps=slow, disk_mode="shared", io_overlap="perfect")
+    assert sh["fold_t"] >= blk_bytes / (slow * 1e9) - 1e-6
+    pd = ws.evaluate(hm, mp, 2, disk_GBps=slow, disk_mode="per-device", io_overlap="perfect")
+    assert pd["fold_t"] < sh["fold_t"]
+    nn = ws.evaluate(hm, mp, 2, disk_GBps=slow, disk_mode="per-device", io_overlap="none",
+                     x_fold=0.5, x_open=0.5)
+    pp = ws.evaluate(hm, mp, 2, disk_GBps=slow, disk_mode="per-device", io_overlap="perfect",
+                     x_fold=0.5, x_open=0.5)
+    assert nn["fold_t"] > pp["fold_t"]
+    # two metrics: same-mode speedup uses the N=1 wall under the same
+    # storage; kernel-floor ratio uses the compute-only floor
+    s2 = ws.evaluate(hm, mp, 2, disk_GBps=1e-6)
+    s1 = ws.evaluate(hm, mp, 1, disk_GBps=1e-6)
+    assert abs(s2["n1_wall_same_mode"] - s1["wall"]) < 1e-9
+    assert abs(s2["same_mode_speedup"] - s1["wall"] / s2["wall"]) < 1e-12
+    assert s2["kernel_floor_ratio"] < s2["same_mode_speedup"]
+    nodisk = MachineProfile({"name": "nodisk", "gpu": {"mem_GB": 100},
+                             "prove_constants": mp.raw["prove_constants"]})
+    assert ws.evaluate(hm, nodisk, 2)["wall"] is None
+    assert ws.evaluate(hm, nodisk, 2, disk_GBps=1.0)["wall"] is not None
+    # HBM-constrained optimum: a cap just above the theoretical minimum
+    # (half the block at N=2, up to one variable) admits only a narrow
+    # band of cuts — far narrower than a 0.005 fraction step — and the
+    # solver finds it; a cap below any two-run split is infeasible and
+    # reported as the least-infeasible (min max-hold) plan
+    # (the hetero fixture's fresh work is negligible, so its free optimum
+    # already sits at the byte-balanced cut; the projected S=1000 tape on
+    # the B200 profile has a genuinely asymmetric optimum — worker ~2/3 of
+    # the block — and a one-shard-wide feasible band at the cap)
+    import synth
+    mproj = synth.BUILDERS["maverick-projected"](1000)
+    mpb = MachineProfile.load("b200-runpod")
+    pblk = ws._Block(mproj, None, mproj.run["ligero"]["ELL"])
+    free = ws.evaluate(mproj, mpb, 2, resident=True, workspace_GB=0.0)
+    bmin = min(max(pblk.bytes(0, c), pblk.bytes(c, pblk.n)) for c in range(pblk.n + 1))
+    assert free["feasible"] and max(free["hold_bytes"]) > 1.2 * bmin
+    cap_GB = bmin * (1 + 1e-9) / 1e9
+    assert (max(free["hold_bytes"]) - bmin) / pblk.total_bytes > 0.05     # far from the cap
+    assert pblk.bytes(0, 1) / pblk.total_bytes < 0.005                    # band < a grid step
+    tight = MachineProfile({"name": "tight", "gpu": {"mem_GB": cap_GB},
+                            "prove_constants": mpb.raw["prove_constants"]})
+    con = ws.evaluate(mproj, tight, 2, resident=True, workspace_GB=0.0)
+    assert con["feasible"] and max(con["hold_bytes"]) <= cap_GB * 1e9
+    assert con["wall"] >= free["wall"] - 1e-9 and con["plan_mode"] == "tied-exact"
+    # resident same-mode needs an executable N=1: the whole block does not
+    # fit one B200, so it is n/a (floor ratio still reported)
+    assert free["same_mode_speedup"] is None and free["n1_wall_same_mode"] is None
+    assert free["kernel_floor_ratio"] > 1.0 and "n/a" in ws.report(
+        mproj, mpb, [2], resident=True, workspace_GB=0.0)
+    # --static honours a binding cap and equals the exhaustive capped
+    # single-cut optimum of the true wall (0.7 B/param: the speed-optimal
+    # plan does not fit; the capped optimum is 142.88 s / 168.0 GB)
+    sta = ws.evaluate(mproj, mpb, 2, resident=True, static=True, bytes_per_param=0.7)
+    assert sta["feasible"] and sta["plan_mode"] == "static-exact"
+    cap7 = (mpb.get("gpu", "mem_GB") - 10.0) * 1e9
+    blk7 = ws._Block(mproj, 0.7, mproj.run["ligero"]["ELL"])
+    st7 = ws.stages(mproj, mpb, bytes_per_param=0.7)
+    Ab = mpb.get("prove_constants", "A_ns_per_slot") * 1e-9
+    best = None
+    for c in range(blk7.n + 1):
+        if max(blk7.bytes(0, c), blk7.bytes(c, blk7.n)) > cap7:
+            continue
+        f = max(st7.fresh_fold + Ab * blk7.phys(0, c), Ab * blk7.phys(c, blk7.n))
+        o = max(st7.fresh_open + 0.5 * Ab * blk7.phys(0, c), 0.5 * Ab * blk7.phys(c, blk7.n))
+        w = st7.commit + f + o
+        best = w if best is None or w < best else best
+    assert abs(sta["wall"] - best) < 1e-9 and max(sta["hold_bytes"]) <= cap7
+    # N>=3 tied/static plans are labelled heuristic
+    assert ws.evaluate(hm, mp, 3, resident=True, static=True)["plan_mode"] == "static-heuristic"
+    # nothing fits: the least-infeasible (min max-hold) plan is reported
+    hmin = min(max(blk.bytes(0, c), blk.bytes(c, blk.n)) for c in range(blk.n + 1))
+    none = MachineProfile({"name": "none", "gpu": {"mem_GB": hmin * 0.99 / 1e9},
+                           "prove_constants": mp.raw["prove_constants"]})
+    inf = ws.evaluate(hm, none, 2, resident=True, workspace_GB=0.0)
+    assert not inf["feasible"] and inf["plan_mode"].startswith("least-infeasible")
+    assert abs(max(inf["hold_bytes"]) - hmin) < 1e-6
+    assert "NO" in ws.report(hm, none, [2], resident=True, workspace_GB=0.0)
+
 def main():
     test_extractor()
     test_explicit_settlement_reused()
@@ -886,6 +1115,7 @@ def main():
     test_enrolled_weights()
     test_projected_protocol()
     test_projected_extraction()
+    test_weightsplit()
     print("profiler regression tests OK (no torch needed)")
 
 
