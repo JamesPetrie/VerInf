@@ -1176,7 +1176,7 @@ class ColumnSink:
     copied into its own slice, so there is no accumulation and no join.
     """
 
-    __slots__ = ("cols", "n_rows", "row_base", "_filled")
+    __slots__ = ("cols", "n_rows", "row_base", "_filled", "_ranges")
 
     def __init__(self, n_rows: int, columns: List[int], row_base: int = 0):
         self.n_rows = n_rows
@@ -1184,6 +1184,7 @@ class ColumnSink:
         self.cols = {j: torch.empty(n_rows, dtype=torch.uint64, device="cpu")
                      for j in columns}
         self._filled = 0
+        self._ranges: List[Tuple[int, int]] = []   # block-local [lo, hi) written
 
     def write(self, abs_row: int, chunk: torch.Tensor, columns: List[int]):
         """chunk: (rows, len(columns)) device slice of this chunk's codewords,
@@ -1196,10 +1197,39 @@ class ColumnSink:
         for k, j in enumerate(columns):
             self.cols[j][lo:lo + n] = host[:, k]
         self._filled += n
+        self._ranges.append((lo, lo + n))
+
+    def write_host(self, abs_row: int, cols: Dict[int, torch.Tensor]):
+        """Scatter a finished piece of this block produced elsewhere (a
+        weight-split worker's run): {column: (rows,) HOST tensor}, all the
+        same length, starting at ABSOLUTE row `abs_row`. Every column of the
+        sink must be supplied."""
+        lo = abs_row - self.row_base
+        n = None
+        for j in self.cols:
+            t = cols[j]
+            if n is None:
+                n = int(t.numel())
+            assert int(t.numel()) == n, "ragged column piece"
+        n = n or 0
+        assert 0 <= lo and lo + n <= self.n_rows, (
+            f"column sink overflow: [{lo}, {lo + n}) outside [0, {self.n_rows})")
+        for j in self.cols:
+            self.cols[j][lo:lo + n] = cols[j].to("cpu", torch.uint64)
+        self._filled += n
+        self._ranges.append((lo, lo + n))
 
     def finish(self) -> Dict[int, torch.Tensor]:
         assert self._filled == self.n_rows, (
             f"column sink filled {self._filled} of {self.n_rows} rows")
+        # Exact coverage, not just the count: a duplicated piece and a
+        # missing one would cancel in _filled but not here.
+        pos = 0
+        for lo, hi in sorted(self._ranges):
+            assert lo == pos, (f"column sink coverage gap/overlap at block row "
+                               f"{pos}: next piece starts at {lo}")
+            pos = hi
+        assert pos == self.n_rows, f"column sink coverage ends at {pos}, not {self.n_rows}"
         return self.cols
 
 
@@ -1374,6 +1404,13 @@ class QIrsAccumulator:
         r_slice = self.r_irs[lo:lo + n]
         contrib = gl_matmul(r_slice.unsqueeze(0), witness_polys_chunk).squeeze(0)
         self.q = gl_add(self.q, contrib)
+
+    def merge(self, q_partial: torch.Tensor) -> None:
+        """Add another accumulator's partial sum (a weight-split worker's fold
+        over its rows). Exact field addition, so the merged result equals
+        one accumulator having seen every row, in any order."""
+        assert q_partial.shape == self.q.shape
+        self.q = gl_add(self.q, q_partial.to(self.q.device))
 
     def finalize(self) -> torch.Tensor:
         return self.q
@@ -1622,6 +1659,28 @@ class QLinAccumulator:
                     abs_lo, abs_hi, inner_polys,
                     self.seed_u8, self.label_u8, self.band_index, self.cfg,
                     chal_src=self.chal_src, return_eval=False))
+
+    def partials(self) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
+        """(q_eval, q_coeff) as accumulated so far, whichever this mode keeps
+        — the un-finalised state a weight-split worker hands back."""
+        return self.q_eval, self.q_coeff
+
+    def merge(self, q_eval: Optional[torch.Tensor] = None,
+              q_coeff: Optional[torch.Tensor] = None) -> None:
+        """Add a worker's partials before finalize. Both representations are
+        plain field sums over rows (the eval-domain one is summed BEFORE its
+        single inverse NTT, which is linear), so the merged fold is
+        bit-identical to one accumulator having seen every row. The worker
+        must run in the same fuse mode: every representation this
+        accumulator keeps must be supplied."""
+        if self.q_eval is not None:
+            assert q_eval is not None, "fused q_lin merge needs the worker's q_eval"
+            assert q_eval.shape == self.q_eval.shape
+            self.q_eval = gl_add(self.q_eval, q_eval.to(self.q_eval.device))
+        if self.q_coeff is not None:
+            assert q_coeff is not None, "coeff-domain q_lin merge needs the worker's q_coeff"
+            assert q_coeff.shape == self.q_coeff.shape
+            self.q_coeff = gl_add(self.q_coeff, q_coeff.to(self.q_coeff.device))
 
     def finalize(self) -> torch.Tensor:
         if self.q_eval is not None:
@@ -2888,7 +2947,7 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
                   col_w=None, col_wnew=None, col_blind=None, p_0=None,
                   w_pad=None, wnew_pad=None,
                   stream_pk=None, r_quad=None, p_maps=None, Q_cols=None, p1_prefix=None,
-                  witness_cache=None):
+                  witness_cache=None, w_owned=None):
     """One op-order streaming pass: regenerate the witness, encode each op's rows
     into whichever accumulators are non-None, fire its quads into p_0 (if given)
     from `live`, freeing per op. want_aux=False does phase-1 only (the commit
@@ -2905,7 +2964,13 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
     pads as if its first row sat at logical_offset, under pad_seed, regardless
     of physical placement (a group starting at physical row r pads at
     logical_offset + (r - block_phys_start)). None → master seed at physical
-    rows (identical padding, the standard case)."""
+    rows (identical padding, the standard case).
+
+    w_owned (weight-split, shard_plan.py): a set of id(Variable) for the W
+    variables THIS device folds/opens in this sweep; the others are left to
+    the workers, whose partials the caller merges. None → all of them. Only
+    the W emit is filtered — the witness, aux and quads are untouched, so the
+    semantic sweep is exactly the single-device one."""
     import compute_fns as _cf
     import os as _os
     import resource as _res
@@ -3079,13 +3144,19 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
             p1g_wn = [v for v in p1g if v.persistent and v.w_new]
             if p1g_a:
                 emit(p1g_a, merkle_p1, p1g_a[0].row_start, col_p1)
-            if p1g_w:
-                # Pad translation: under w_pad this group's rows pad at the
+            if p1g_w and w_owned is not None:
+                # Weight-split: keep only this device's W variables. An
+                # ownership cut can fall inside a claim's weight group, so
+                # the kept subset is emitted as row-contiguous runs, each at
+                # its own absolute row (never compacted across a gap).
+                p1g_w = [v for v in p1g_w if id(v) in w_owned]
+            for run_w in _row_contiguous_runs(p1g_w, cfg):
+                # Pad translation: under w_pad this run's rows pad at the
                 # block-local position shifted to the commitment's logical
                 # offset, under the commitment's seed.
                 wp = None if w_pad is None else (
-                    w_pad[0], w_pad[1] + (p1g_w[0].row_start - w_pad[2]))
-                emit(p1g_w, merkle_w, p1g_w[0].row_start, col_w, pad=wp)
+                    w_pad[0], w_pad[1] + (run_w[0].row_start - w_pad[2]))
+                emit(run_w, merkle_w, run_w[0].row_start, col_w, pad=wp)
             if p1g_wn:
                 wp = None if wnew_pad is None else (
                     wnew_pad[0], wnew_pad[1] + (p1g_wn[0].row_start - wnew_pad[2]))
@@ -3152,6 +3223,24 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
                     print(f"   {sz/1e9:.3f}GB {name}", flush=True)
     tape.inputs.update(live)                        # mirror remainder (logits)
     return p_0
+
+
+def _row_contiguous_runs(vars_list, cfg):
+    """Split a row-ordered variable list into maximal runs whose rows are
+    physically adjacent (v.row_start == prev.row_start + prev.n_rows). One
+    _stream_phase call per run keeps every row at its true absolute index;
+    _iter_message_chunks packs its list as ONE contiguous sequence, so a
+    list with a gap would be compacted and every later row misplaced."""
+    runs = []
+    cur = []
+    for v in vars_list:
+        if cur and v.row_start != cur[-1].row_start + cur[-1].n_rows(cfg.ELL):
+            runs.append(cur)
+            cur = []
+        cur.append(v)
+    if cur:
+        runs.append(cur)
+    return runs
 
 
 def _stream_setup(tape, cfg, zk_seed=None):
@@ -3276,8 +3365,19 @@ def new_zk_seed() -> bytes:
 
 
 def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None,
-                    claims_bytes=None, zk_seed=None):
+                    claims_bytes=None, zk_seed=None, shard_plan=None):
     """Streaming prover — the single production path (the sound four-round protocol).
+
+    `shard_plan` (a shard_plan.ShardPlan, weight-split M1): split the ENROLLED
+    W block's two per-proof passes — the test-polynomial fold and the column
+    opening — across devices. This process is the coordinator (device 0): it
+    runs every sweep as usual but folds/opens only its own runs of weight
+    variables; the plan's workers fold/open theirs (shard_worker.py) and the
+    partials are merged here — exact field sums before the single inverse NTT,
+    and column pieces scattered by absolute row — so the proof is
+    BYTE-IDENTICAL to the unsharded one and the verifier is unchanged.
+    Requires `weight_commitment` (the split is defined on the enrolled block,
+    which does no commitment work in R1-R3).
 
     `weight_commitment` (a WeightCommitment, P3): reference a pre-committed W
     tree instead of committing it here. The R1 weight commit and R4 weight
@@ -3383,6 +3483,17 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
     # weight rebuild, take root_w and the opening paths from it. Guard that it
     # is for THIS model's W block (same row count and codeword length).
     wc = weight_commitment if has_w else None
+    # Weight-split plan (M1): validated here, before R1, so a malformed plan
+    # (gap, overlap, wrong count) fails before any sweep runs. The split is
+    # defined on the ENROLLED block, whose R1-R3 work is nil.
+    plan = None
+    if shard_plan is not None:
+        import shard_plan as _sp
+        import shard_worker as _sw
+        assert wc is not None, (
+            "shard_plan needs weight_commitment: the split is defined on the "
+            "enrolled W block")
+        plan = _sp.as_plan(shard_plan, len(s['weight_vars']))
 
     # The quad-placement guards below need the compiled quad families, which
     # exist only after s_op (the R1 coin) — so they are QUEUED here and run the
@@ -3488,9 +3599,20 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
         s_comb, s['m_total'], stream_pk.total_quads)
     q_irs_acc = QIrsAccumulator(r_irs_t, cfg)
     q_lin_acc = QLinAccumulator(r_lin_seed, stream_pk, cfg)
+    # Weight-split (M1): the coordinator folds only its own run of W
+    # variables in this sweep; the workers' partial folds are merged below.
+    w_owned = None if plan is None else plan.owned_ids(0, "fold", s['weight_vars'])
     p_0 = sweep(want_aux=True, q_irs=q_irs_acc, q_lin=q_lin_acc,          # R3: q-polys + p_0
                 p_0=_p0_zero(), stream_pk=stream_pk,
-                r_quad=r_quad_t, p_maps=s['p_maps'])
+                r_quad=r_quad_t, p_maps=s['p_maps'], w_owned=w_owned)
+    if plan is not None:
+        for dev, lo, hi in plan.worker_runs("fold"):
+            part = _sw.fold_run(s['weight_vars'], tape.inputs, cfg,
+                                s['master_seed_t'], w_pad, lo, hi,
+                                r_irs_t, r_lin_seed, stream_pk,
+                                device=plan.device_of(dev))
+            q_irs_acc.merge(part["q_irs"])
+            q_lin_acc.merge(q_eval=part["q_eval"], q_coeff=part["q_coeff"])
     # ---- coin after the test polynomials: the opened columns -------------
     # Mixed with the blinding rows FIRST: s_col must hash the polynomials the
     # verifier actually receives, not the pre-blinding accumulators.
@@ -3519,9 +3641,20 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
     # from the R1/R2/R3 commits (the trees are a few MB and are kept); this
     # sweep only re-extracts the challenged columns, whose identity is not
     # known until s_col.
+    w_owned = None if plan is None else plan.owned_ids(0, "open", s['weight_vars'])
     sweep(want_aux=True, col_blind=col_blind, col_w=col_w,
           col_wnew=col_wnew, col_p1=col_p1, col_p2=col_p2, col_p3=col_p3,
-          Q_cols=Q_cols, p1_prefix=s['p1_prefix'])
+          Q_cols=Q_cols, p1_prefix=s['p1_prefix'], w_owned=w_owned)
+    if plan is not None:
+        # Workers open their runs; the pieces are scattered into the W sink
+        # by absolute row, and finish() asserts exact, non-overlapping
+        # coverage of the block.
+        for dev, lo, hi in plan.worker_runs("open"):
+            piece = _sw.open_run(s['weight_vars'], tape.inputs, cfg,
+                                 s['master_seed_t'], w_pad, lo, hi, Q_cols,
+                                 device=plan.device_of(dev))
+            if piece is not None:
+                col_w.write_host(piece["abs_row"], piece["cols"])
 
     def _opened(colbuf):
         if isinstance(colbuf, ColumnSink):
