@@ -26,3 +26,6 @@ verifier/target/
 proof*.json
 logits*.npy
 .claude/
+
+# profiler calibration builds (binaries compiled on the target box)
+profiler/machines/calibrate-raw-*/build/
