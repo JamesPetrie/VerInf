@@ -1,0 +1,48 @@
+[1] extract.py --selftest
+selftest OK: 2 claims, 10 variables
+  MatmulClaim params={'m': 8, 'k': 16, 'n': 4, 'transpose_b': False, 'heads': 1, 'head_dim': 16, 'rescale_bits': 0, 'output_width': 24, 'rescale': False} in=['a', 'w'] out=['a@w#1', 'a@w#1_y', 'a@w#1_u', 'a@w#1_p'] W=80.0
+  MatmulClaim params={'m': 8, 'k': 4, 'n': 8, 'transpose_b': True, 'heads': 1, 'head_dim': 4, 'rescale_bits': 0, 'output_width': 24, 'rescale': False} in=['a@w#1', 'a@w#1'] out=['a@w#1@a@w#1^T#2', 'a@w#1@a@w#1^T#2_y', 'a@w#1@a@w#1^T#2_u', 'a@w#1@a@w#1^T#2_p'] W=76.0
+[2] building lazy tape (claim recording only — no witness compute, no weights load beyond metadata)
+W0819 10:03:57.483000 971 torch/utils/cpp_extension.py:2425] TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
+W0819 10:03:57.483000 971 torch/utils/cpp_extension.py:2425] If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'] to specific architectures.
+    built: 708 claims
+[3] extracting manifest
+    saved /workspace/crosscheck-out/llama7b-s100-extracted.json (724 claims, 11,308 variables)
+[4] diff vs synth
+
+type                      synth n   extr n          synth W           extr W  note
+matmul                        289      289      979,335,168      979,335,168  
+silu                           32       32      810,188,800      810,188,800  
+hadamard                       97       97      371,097,600      371,097,600  
+rmsnorm                        65       65      186,901,000      186,901,000  
+rope                           64       64      157,286,400      157,286,400  
+softmax                        32       32      154,521,600      154,521,600  
+table_settle                    -       16                -       84,561,700  extract-only: LogUp settlement — synth doesn't model tables
+embed_lookup                   65       65       26,624,000       26,624,000  
+add                            64       64       26,214,400       26,214,400  
+
+persistent (weight) slots: synth 6,607,077,376  tape 6,607,077,376  [exact match]
+claims                   synth            708   tape            724   delta +16
+rows (per-var ceil)      synth        852,624   tape      1,165,726   delta +313,102
+W (shared types)         synth  2,712,168,968   tape  2,712,168,968   delta +0.000%
+cids (shared types)      synth    929,585,285   tape    929,585,285   delta +0.000%
+Q (shared types)         synth  1,149,502,056   tape  1,149,502,056   delta +0.000%
+[5] prover layout probe (this runs the demo up to the start of prove, including any engine pass — minutes at small context)
+
+[layout probe] /usr/bin/python3 /workspace/verinf/demo/demo_llama7b.py --seq 100 --num-layers 32 --engine
+
+type                      prover rows  manifest rows     prover elems   manifest elems
+MatmulClaim                   926,957        926,957    7,586,412,544    7,586,412,544  
+SiluClaim                      99,360         99,360      810,188,800      810,188,800  
+HadamardClaim                  45,420         45,420      371,097,600      371,097,600  
+RmsNormClaim                   28,130         28,130      187,310,600      187,310,600  
+TableSettlement                20,656         20,656      169,123,400      169,123,400  
+RoPEClaim                      19,200         19,200      157,286,400      157,286,400  
+SoftmaxClaim                   19,488         19,488      154,521,600      154,521,600  
+EmbeddingLookupClaim            3,315          3,315       26,890,240       26,890,240  
+AddClaim                        3,200          3,200       26,214,400       26,214,400  
+
+prover m_total 1,165,729 vs manifest rows 1,165,726 (gap +3 = blinding/protocol rows — small and T_QUERIES-shaped is expected; negative is a FLAG)
+
+======================================================================
+RESULT: clean — no flags. Extracted manifest agrees with synth within the documented unmodeled set and with the prover's own layout.

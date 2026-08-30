@@ -22,7 +22,25 @@ from manifest import Manifest
 from machine import MachineProfile
 
 BYTES_PER_SLOT = 8            # Goldilocks element = u64
+
+# Enrolled-weight per-proof passes. Under enrollment (core.WeightCommitment,
+# the kept-trees/opening-ledger path on main) the weight block is never
+# re-encoded per proof, but its linear fold and its opening remain per-proof
+# work over the whole enrolled block. Ratios mirror the admissible rates in
+# analysis/routed_projected_4h_model.py: qlin at the full A per-slot rate,
+# opening at half — validation mode (README roadmap 2) refines both.
+ENROLLED_QLIN_RATIO = 1.0
+ENROLLED_OPEN_RATIO = 0.5
 PROOF_JSON_BYTES_PER_VALUE = 21.4   # empirical: 93.6 GB / (40 * 109.27 M) — decimal-ASCII u64 + separators
+# Production transport on current main is JSON-framed u64le/base64 (legacy
+# decimal JSON still verifies but is not the fast path): 10.67 B/value for
+# base64 of 8 canonical bytes, 11 covering the envelope — the convention of
+# analysis/routed_projected_4h_model.py, whose demonstrated run wrote
+# 35.46 GB at ~751 MB/s (47.2 s), I/O-bound rather than string-building
+# bound. Machine profiles may carry io.proof_dump_compact_MBps once
+# measured per box; until then the report quotes the A100 reference.
+PROOF_COMPACT_BYTES_PER_VALUE = 11
+PROOF_COMPACT_REF_MBPS = 751
 
 
 @dataclass
@@ -106,7 +124,8 @@ def _gb(x: float) -> str:
 
 
 def report(m: Manifest, mp: MachineProfile, gpus: int = 1,
-           bandwidth_ratio: float = None, compute_ratio: float = None) -> str:
+           bandwidth_ratio: float = None, compute_ratio: float = None,
+           enrolled_weights: bool = False) -> str:
     t = totals(m)
     lig = m.run.get("ligero", {})
     ELL = lig.get("ELL", 8192)
@@ -164,15 +183,47 @@ def report(m: Manifest, mp: MachineProfile, gpus: int = 1,
     else:
         bw_scale = (bandwidth_ratio or gpus)   # A/C ride aggregate bandwidth
         cp_scale = (compute_ratio or gpus)     # B rides compute
-        tA = A * t.W * 1e-9 / bw_scale
+        W_fresh = (t.W - t.W_weights) if enrolled_weights else t.W
+        tA = A * W_fresh * 1e-9 / bw_scale
         tB = B * t.cids * 1e-9 / cp_scale
         tC = C * t.Q * 1e-9 / bw_scale
         floor = tA + tB + tC
+        tE = tOF = 0.0
+        if enrolled_weights:
+            tE = ((ENROLLED_QLIN_RATIO + ENROLLED_OPEN_RATIO)
+                  * A * t.W_weights * 1e-9 / bw_scale)
+            # Fresh rows are opened by the same final sweep — priced at the
+            # same OPEN ratio (matches the fresh_open stage of
+            # routed_projected_4h_model.py exactly: 0.5*A*fresh slots).
+            tOF = ENROLLED_OPEN_RATIO * A * W_fresh * 1e-9 / bw_scale
+            floor += tE + tOF
         L.append(f"  floor (NTT-bound, post-reorg target):  {_fmt_s(floor)}")
-        L.append(f"    A*W    (encode+lin fold, BANDWIDTH-bound): {_fmt_s(tA)}")
+        wlab = "A*Wf   (encode+lin fold, fresh only" if enrolled_weights \
+            else "A*W    (encode+lin fold"
+        L.append(f"    {wlab}, BANDWIDTH-bound): {_fmt_s(tA)}")
         L.append(f"    B*cids (challenge hash,  COMPUTE-bound)  : {_fmt_s(tB)}")
         L.append(f"    C*Q    (quad fold,       BANDWIDTH-bound): {_fmt_s(tC)}")
-    if agg is None:
+        if enrolled_weights:
+            L.append(f"    enrolled block qlin+open ({ENROLLED_QLIN_RATIO:g}+"
+                     f"{ENROLLED_OPEN_RATIO:g})*A*Ww       : {_fmt_s(tE)}")
+            L.append(f"    open (fresh rows) {ENROLLED_OPEN_RATIO:g}*A*Wf"
+                     f"                 : {_fmt_s(tOF)}")
+            L.append("    (enrolled weights: zero per-proof RS encode; "
+                     "fold+opening passes priced per "
+                     "routed_projected_4h_model.py ratios)")
+            kd = lig.get("K_DEG", 16384)
+            budget = max(0, (kd - ELL) // 2)
+            L.append(f"    enrollment lifecycle (unpriced): one-time enroll "
+                     f"of the weight block; refresh after {budget:,} "
+                     f"distinct opened columns ((K_DEG-ELL)/2) — "
+                     f">= {budget // max(T_Q, 1)} proofs at T={T_Q}")
+        else:
+            L.append("    (legacy floor excludes column-opening passes; "
+                     "enrolled mode prices them)")
+    if enrolled_weights:
+        L.append("  aggregate: N/A under enrollment — calibrated on runs "
+                 "that commit weights per proof")
+    elif agg is None:
         L.append("  aggregate: UNAVAILABLE — aggregate_ns_per_slot not calibrated")
     else:
         taggr = agg * t.W * 1e-9 / (bandwidth_ratio or gpus)
@@ -206,12 +257,25 @@ def report(m: Manifest, mp: MachineProfile, gpus: int = 1,
     L.append("")
 
     L.append(f"-- proof & verify --")
-    proof = T_Q * m_rows * PROOF_JSON_BYTES_PER_VALUE
-    L.append(f"  proof size (JSON, T={T_Q}): {_gb(proof)}")
+    values = T_Q * m_rows
+    proof_c = values * PROOF_COMPACT_BYTES_PER_VALUE
+    proof_j = values * PROOF_JSON_BYTES_PER_VALUE
+    L.append(f"  proof size (u64le/base64, production, T={T_Q}): "
+             f"{_gb(proof_c)}")
+    L.append(f"  proof size (legacy decimal JSON): {_gb(proof_j)}")
     bpr = mp.get("verify", "bytes_per_row")
     if bpr:
         L.append(f"  verifier peak RSS (~{bpr} B/row, wide error bar): {_gb(m_rows * bpr)}")
+    dump_c = mp.get("io", "proof_dump_compact_MBps")
+    if dump_c:
+        L.append(f"  proof dump time (compact, ~{dump_c} MB/s measured): "
+                 f"{_fmt_s(proof_c / (dump_c * 1e6))}")
+    else:
+        L.append(f"  proof dump time (compact, ~{PROOF_COMPACT_REF_MBPS} "
+                 f"MB/s A100 reference — unbenchmarked on this machine): "
+                 f"{_fmt_s(proof_c / (PROOF_COMPACT_REF_MBPS * 1e6))}")
     dump = mp.get("io", "proof_dump_MBps")
     if dump:
-        L.append(f"  proof dump time (~{dump} MB/s, Python-bound): {_fmt_s(proof / (dump * 1e6))}")
+        L.append(f"  proof dump time (legacy JSON, ~{dump} MB/s, "
+                 f"Python-bound): {_fmt_s(proof_j / (dump * 1e6))}")
     return "\n".join(L)

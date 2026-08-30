@@ -22,10 +22,15 @@ Traffic model (deliberately explicit about its approximations):
   a shared table mutates a local copy of the mult vector, and settlement
   needs their sum — each participating remote shard ships one T_LEN-sized
   partial to the settlement shard per sweep (extracted manifests only;
-  synth does not model tables).
+  synth does not model tables). Settlement z inputs reduce even harder:
+  the global balance needs only Σz per shard, so each remote producing
+  shard ships ONE field element per settlement, never the z vectors
+  (which are output-sized and would dominate all other traffic ~1000x —
+  the artifact this rule replaces).
 - Witness activations regenerate every sweep, so activation+reduction
-  traffic recurs x4 (the round structure) unless the scheduler caches — the
-  per-sweep number is the honest unit; the x4 total is also shown.
+  traffic recurs x4 — x5 when the tape has a phase-3 commitment sweep
+  (routed-projected claims; see n_sweeps) — unless the scheduler caches;
+  the per-sweep number is the honest unit and the total is also shown.
 - Weight-commit work (dependency-free) is split evenly across shards;
   weight *streaming* for witness compute is charged to each shard that
   consumes the weight (per sweep), and rides disk/host lanes, not the
@@ -44,11 +49,27 @@ from typing import Callable, Dict, List, Optional
 import claimcosts
 from manifest import Manifest
 from machine import MachineProfile
-from predict import _fmt_s, _gb, BYTES_PER_SLOT
+from predict import (_fmt_s, _gb, BYTES_PER_SLOT,
+                     ENROLLED_QLIN_RATIO, ENROLLED_OPEN_RATIO)
 
 REDUCIBLE = {"freivalds_combine"}
 DEFAULT_BANDWIDTHS_GBPS = (25.0, 100.0, 450.0, 900.0)   # IB .. NVLink-domain
-SWEEPS = 4
+SWEEPS = 4        # base sweeps: R1, R2, test polynomials, openings
+
+
+def n_sweeps(m: Manifest) -> int:
+    """Streaming-sweep count for this tape. prove_streaming runs R1, R2,
+    a CONDITIONAL R3 commitment sweep (only when phase-3 late-aux
+    variables exist), the test polynomials, and the openings — so 5 for
+    routed-projected tapes (their f_y/f_u/f_p are phase 3), 4 otherwise.
+    Detected from variable phases (extracted manifests) with a claim-type
+    fallback (synth pools the routed aux instead of emitting vars)."""
+    if any(v.phase >= 3 for v in m.variables):
+        return SWEEPS + 1
+    if any(claimcosts.canonical(c.type) == "routed_projected"
+           for c in m.claims):
+        return SWEEPS + 1
+    return SWEEPS
 # Expert id from a claim label, both conventions: synth labels expert claims
 # "L3.moe.e12.gate"; extracted labels are output-variable names, which carry
 # the demo weight names L{n}_Wg{e}/Wu{e}/Wd{e} via the "a@b" derivation
@@ -115,14 +136,36 @@ def assign_layers(m: Manifest, n: int) -> List[int]:
     return out
 
 
+def _expert_of_claim(c, by_name) -> Optional[int]:
+    """Expert identity of a claim, or None (backbone). Only per-expert
+    matmuls have one, and it is derived from the claim's PERSISTENT
+    WEIGHT INPUT's name — never the output label: matmul output names
+    concatenate both operands, so an ordinary matmul whose activation
+    ancestry passed through a routed claim inherits a _Wg0 substring
+    (rp[..@L2_Wg0..]_rs@L3_W_Q), and routed claims themselves are named
+    from their first shard. Weight-variable names are unambiguous:
+    synth "L1.e3.W_gate", extracted "L1_Wg0"; attention (W_Q_L0) and
+    shared-expert (L1_Wgs) weights never match."""
+    if claimcosts.canonical(c.type) != "matmul":
+        return None
+    for name in c.inputs:
+        v = by_name.get(name)
+        if v is not None and v.persistent:
+            e = _expert_of(v.name)
+            if e is not None:
+                return e
+    return None
+
+
 def assign_experts(m: Manifest, n: int) -> List[int]:
     """Expert matmuls spread expert->shard round-robin; everything else runs
     on the layer-pipeline backbone. The combine claims sit on the backbone
     and receive per-shard partials."""
     backbone = assign_layers(m, n)
+    by_name = m.var_by_name()
     out = []
     for c, b in zip(m.claims, backbone):
-        e = _expert_of(c.label)
+        e = _expert_of_claim(c, by_name)
         out.append(e % n if e is not None else b)
     return out
 
@@ -136,7 +179,11 @@ STRATEGIES: Dict[str, Callable] = {
 
 def evaluate(m: Manifest, assignment: List[int], n: int,
              mp: MachineProfile, *, weight_bytes_per_param: float = 1.0,
-             skip_weight_commit: bool = False, sweeps: int = SWEEPS) -> dict:
+             skip_weight_commit: bool = False, sweeps: Optional[int] = None,
+             enrolled_weights: bool = False) -> dict:
+    _check_modes(enrolled_weights, skip_weight_commit)
+    if sweeps is None:
+        sweeps = n_sweeps(m)
     by_name = m.var_by_name()
     shard_W = [0.0] * n
     shard_cids = [0.0] * n
@@ -155,6 +202,7 @@ def evaluate(m: Manifest, assignment: List[int], n: int,
         elif claimcosts.canonical(c.type) == "table_settle":
             settle_claims.append((c, s))
     reducible_idx = {c.idx for c, _ in reducible_claims}
+    settle_idx = {c.idx for c, _ in settle_claims}
 
     # Weight streaming: each shard loads the weights its claims consume.
     shard_weight_slots = [0.0] * n
@@ -175,7 +223,8 @@ def evaluate(m: Manifest, assignment: List[int], n: int,
             continue
         p = assignment[v.producer]
         remote = {assignment[ci] for ci in v.consumers
-                  if ci not in reducible_idx} - {p}
+                  if ci not in reducible_idx
+                  and ci not in settle_idx} - {p}
         act_bytes += v.length * BYTES_PER_SLOT * len(remote)
     red_bytes = 0.0
     for c, s in reducible_claims:
@@ -194,18 +243,28 @@ def evaluate(m: Manifest, assignment: List[int], n: int,
                      if i in by_name and by_name[i].producer is not None
                      and by_name[i].length == out_len} - {s}
         red_bytes += len(producers) * out_len * BYTES_PER_SLOT
-    # LogUp multiplicity reduction: mult is the settlement's producer-less
-    # non-persistent input (z's arrive as ordinary activations above, w is
-    # its output); every remote shard holding lookups that increment it
-    # sends one summed partial of the full table length.
+    # LogUp settlement reduction. mult (the producer-less non-persistent
+    # input): every remote shard holding lookups that increment it sends one
+    # summed partial of the full table length. z inputs (each produced by
+    # its own lookup/rescale claim): the settlement's global balance needs
+    # only Σz per shard, so each remote producing shard sends ONE summed
+    # field element per settlement — never the z vectors themselves (they
+    # are excluded from the activation loop above; shipping them whole was
+    # the ~1000x traffic artifact found on the first extracted-manifest
+    # scorecard, 2026-08-19).
     mult_bytes = 0.0
     for c, s in settle_claims:
+        z_shards = set()
         for name in c.inputs:
             v = by_name.get(name)
-            if v is None or v.persistent or v.producer is not None:
+            if v is None or v.persistent:
                 continue
-            senders = {assignment[ci] for ci in v.consumers} - {s}
-            mult_bytes += len(senders) * v.length * BYTES_PER_SLOT
+            if v.producer is None:
+                senders = {assignment[ci] for ci in v.consumers} - {s}
+                mult_bytes += len(senders) * v.length * BYTES_PER_SLOT
+            else:
+                z_shards.add(assignment[v.producer])
+        mult_bytes += len(z_shards - {s}) * BYTES_PER_SLOT
 
     # Compute time per shard (whole-proof floor constants) + even split of
     # the dependency-free commit work: weights and producer-less run inputs
@@ -219,10 +278,26 @@ def evaluate(m: Manifest, assignment: List[int], n: int,
                             if v.producer is None and not v.persistent)
     shard_t = None
     if None not in (A, B, C):
-        wcommit = 0.0 if skip_weight_commit else A * total_weight_slots / n
+        # Enrolled weights: no per-proof encode; each shard instead pays
+        # the qlin+open passes over the enrolled slots it owns (ratios
+        # per predict.ENROLLED_*_RATIO / routed_projected_4h_model.py).
+        wcommit = 0.0 if (skip_weight_commit or enrolled_weights) \
+            else A * total_weight_slots / n
         icommit = A * total_input_slots / n
+        enr = (ENROLLED_QLIN_RATIO + ENROLLED_OPEN_RATIO) * A \
+            if enrolled_weights else 0.0
+        # Enrolled mode also prices the fresh-row opening pass (Ed's
+        # fresh_open stage: OPEN_RATIO * A over the shard's fresh slots);
+        # the legacy floor never priced openings, stated in predict.
+        fro = ENROLLED_OPEN_RATIO * A if enrolled_weights else 0.0
+        # Fresh openings cover ALL fresh rows: claim witness AND the
+        # producer-less input commitments (matching predict's
+        # W_fresh = W - W_weights, which includes inputs).
+        iopen = fro * total_input_slots / n
         shard_t = [(A * shard_W[s] + B * shard_cids[s] + C * shard_Q[s]
-                    + wcommit + icommit) * 1e-9 for s in range(n)]
+                    + wcommit + icommit + fro * shard_W[s] + iopen
+                    + enr * shard_weight_slots[s]) * 1e-9
+                   for s in range(n)]
     # Opened-column payload per shard: T_QUERIES x that shard's rows x 8B —
     # today's single-GPU 35 GB term, and how sharding shrinks it.
     lig = m.run.get("ligero", {})
@@ -266,22 +341,58 @@ def _verdict(frac: Optional[float]) -> str:
     return "BINDING"
 
 
+def _check_modes(enrolled_weights: bool, skip_weight_commit: bool) -> None:
+    """One validator for every public entry point: the two modes are
+    contradictory (enrollment PRICES the reused commitment, skip DROPS
+    all weight cost), and silently letting one win mislabels output."""
+    if enrolled_weights and skip_weight_commit:
+        raise ValueError(
+            "enrolled_weights and skip_weight_commit are mutually "
+            "exclusive: enrollment prices the reused commitment "
+            "(qlin+open passes); skip_weight_commit drops all weight "
+            "cost (diagnostic only)")
+
+
+def _mode_suffix(m: Manifest, enrolled_weights: bool,
+                 skip_weight_commit: bool) -> str:
+    """Header marker for non-default cost modes, so copied output is
+    self-describing: DIAGNOSTIC when weight cost was deliberately
+    dropped; the enrollment assumption (refresh budget, matching
+    predict's lifecycle line) when enrolled."""
+    if skip_weight_commit:
+        return " — DIAGNOSTIC: weight commitment omitted (not a protocol mode)"
+    if enrolled_weights:
+        lig = m.run.get("ligero", {})
+        ell = lig.get("ELL", 8192)
+        kd = lig.get("K_DEG", 16384)
+        tq = lig.get("T_QUERIES", 40)
+        budget = max(0, (kd - ell) // 2)
+        return (f" — ENROLLED weights (qlin+open passes; one-time enroll "
+                f"unpriced; refresh after {budget:,} distinct opened "
+                f"columns >= {budget // max(tq, 1)} proofs at T={tq})")
+    return ""
+
+
 def _no_expert_labels(m: Manifest) -> bool:
-    return all(_expert_of(c.label) is None for c in m.claims)
+    by_name = m.var_by_name()
+    return all(_expert_of_claim(c, by_name) is None for c in m.claims)
 
 
 def report(m: Manifest, strategy: str, n: int, mp: MachineProfile, *,
            bandwidths=DEFAULT_BANDWIDTHS_GBPS, weight_bytes_per_param=1.0,
-           skip_weight_commit=False) -> str:
+           skip_weight_commit=False, enrolled_weights=False) -> str:
+    _check_modes(enrolled_weights, skip_weight_commit)
     try:
         assignment = STRATEGIES[strategy](m, n)
     except ValueError as e:
         return f"== partition scorecard: {strategy} x{n} ==\nUNAVAILABLE: {e}"
     ev = evaluate(m, assignment, n, mp,
                   weight_bytes_per_param=weight_bytes_per_param,
-                  skip_weight_commit=skip_weight_commit)
+                  skip_weight_commit=skip_weight_commit,
+                  enrolled_weights=enrolled_weights)
     L = [f"== partition scorecard: {strategy} x{n} on {mp.name} "
-         f"({m.model.get('name', '?')} S={m.run.get('seq', '?')}) =="]
+         f"({m.model.get('name', '?')} S={m.run.get('seq', '?')})"
+         + _mode_suffix(m, enrolled_weights, skip_weight_commit) + " =="]
     if strategy == "experts" and _no_expert_labels(m):
         L.append("NOTE: no expert labels ('.eN.' or '_Wg|u|dN') in this "
                  "manifest — assignment is identical to the layers backbone.")
@@ -318,10 +429,13 @@ def report(m: Manifest, strategy: str, n: int, mp: MachineProfile, *,
 
 def compare(m: Manifest, n: int, mp: MachineProfile, *,
             bandwidths=DEFAULT_BANDWIDTHS_GBPS, weight_bytes_per_param=1.0,
-            skip_weight_commit=False) -> str:
+            skip_weight_commit=False, enrolled_weights=False) -> str:
+    _check_modes(enrolled_weights, skip_weight_commit)
     L = [f"== strategy comparison x{n} on {mp.name} "
          f"({m.model.get('name', '?')} S={m.run.get('seq', '?')}, "
-         f"floor model, {SWEEPS} sweeps) ==", ""]
+         f"floor model, {n_sweeps(m)} sweeps)"
+         + _mode_suffix(m, enrolled_weights, skip_weight_commit)
+         + " ==", ""]
     header = (f"{'strategy':10s} {'wall':>12s} {'speedup':>8s} {'imbal':>6s} "
               f"{'traffic/sweep':>14s} {'wstream max':>12s} {'opened max':>11s}")
     header += "".join(f"{f'@{int(bw)}GB/s':>12s}" for bw in bandwidths)
@@ -334,7 +448,8 @@ def compare(m: Manifest, n: int, mp: MachineProfile, *,
             continue
         ev = evaluate(m, assignment, n, mp,
                       weight_bytes_per_param=weight_bytes_per_param,
-                      skip_weight_commit=skip_weight_commit)
+                      skip_weight_commit=skip_weight_commit,
+                      enrolled_weights=enrolled_weights)
         if ev["shard_t"] is None:
             L.append(f"{name:10s}  (no prove_constants on this machine)")
             continue

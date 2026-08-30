@@ -136,8 +136,9 @@ in-flight weights, allocator slack) is a measurement task, done with
 
 ## Caveats
 
-- Synth builders cover the two team-standard workloads only (Maverick,
-  Llama-2-7B) and omit UI/MaxClaim and the hidden-prompt one-hot chain
+- Synth builders cover the team-standard workloads (Maverick, Llama-2-7B,
+  and `maverick-projected` — the routed-projected protocol, mirroring the
+  current demo; pair it with `--enrolled-weights`) and omit UI/MaxClaim and the hidden-prompt one-hot chain
   (~1,100 claims in the archived run — flagged in `maverick-cost-model.md`
   as structural, sub-1% of W at current scale; `embed.select` is therefore
   a zero-in-degree source here where the real tape derives it from the
@@ -161,7 +162,9 @@ in-flight weights, allocator slack) is a measurement task, done with
   every variable, so their rows are exact.
 - The DAG's ideal-speedup figure covers *witness generation* parallelism
   only; encode/hash work is per-row shardable regardless of the DAG, and the
-  four protocol rounds are hard barriers (`prover/core.py:2516`).
+  the streaming sweeps are hard barriers: four (R1, R2, test
+  polynomials, openings), five when the tape has a phase-3 late-aux
+  commitment — routed-projected tapes always do (`partition.n_sweeps`).
 - `extract.py` is written against the tape API but has not yet run on GPU
   hardware — item 1 above is the gate before trusting extracted manifests.
   Claim labels/layers on that path are parsed from output-variable names

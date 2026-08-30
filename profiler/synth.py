@@ -184,6 +184,72 @@ def _moe_ffn(b, r1, n2g, il, S, d, d_ff, E, bc_ones, prefix):
                   inputs=[a1, shd], out=f"{prefix}.r2", out_len=Ld)
 
 
+def _moe_ffn_projected(b, r1, n2g, il, S, d, d_ff, E, bc_ones, prefix):
+    """MoE FFN under the routed-projected protocol, mirroring the current
+    demo_maverick_full.build_moe_ffn: router/route/sigma/s_rep/x_r and the
+    shared expert are byte-identical to _moe_ffn; the all-E expert fan and
+    its three freivalds_combine calls are replaced by one
+    routed_projected + rescale_claim pair per expert matrix (gate/up/down),
+    with silu/hadamard on the SELECTED (S x d_ff) outputs. Per-expert
+    weight variables stay: one persistent var per expert shard, exactly
+    what the enrolled weight block holds."""
+    Ld = S * d
+    wr = b.input_var(f"{prefix}.W_router", d * E, persistent=True)
+    router = b.emit("matmul", dict(m=S, k=d, n=E), label=f"{prefix}.router",
+                    layer=il, inputs=[n2g, wr], out=f"{prefix}.router",
+                    out_len=S * E)
+    b.emit("routing", dict(T=S, E=E, n_words=3), label=f"{prefix}.route",
+           layer=il, inputs=[router], out=f"{prefix}.mask", out_len=S * E)
+    b.emit("ptlookup", dict(L=S), label=f"{prefix}.sigma", layer=il,
+           inputs=[router], out=f"{prefix}.sig", out_len=S)
+    b.emit("freivalds_combine", dict(T=S, E=1, F=d), label=f"{prefix}.s_rep",
+           layer=il, inputs=[f"{prefix}.sig", bc_ones],
+           out=f"{prefix}.srep", out_len=Ld)
+    xr = b.emit("hadamard", dict(L=Ld), label=f"{prefix}.x_r", layer=il,
+                inputs=[n2g, f"{prefix}.srep"], out=f"{prefix}.xr", out_len=Ld)
+
+    def routed(kind, x_in, K, J):
+        ws = [b.input_var(f"{prefix}.e{e}.W_{kind}", K * J, persistent=True)
+              for e in range(E)]
+        raw = b.emit("routed_projected", dict(T=S, K=K, J=J, E=E), layer=il,
+                     label=f"{prefix}.{kind}_rp",
+                     inputs=[x_in, f"{prefix}.mask"] + ws,
+                     out=f"{prefix}.{kind}_raw", out_len=S * J)
+        # s_in = S*S -> s_out = S at S = 2^12: rescale_bits 12; demo
+        # OUTPUT_WIDTH = 26
+        return b.emit("rescale_claim",
+                      dict(length=S * J, rescale_bits=12, output_width=26),
+                      layer=il, label=f"{prefix}.{kind}_rs", inputs=[raw],
+                      out=f"{prefix}.{kind}", out_len=S * J)
+
+    g_sum = routed("gate", xr, d, d_ff)
+    sg = b.emit("silu", dict(L=S * d_ff), label=f"{prefix}.silu", layer=il,
+                inputs=[g_sum], out=f"{prefix}.sg", out_len=S * d_ff)
+    up_sum = routed("up", xr, d, d_ff)
+    hidden = b.emit("hadamard", dict(L=S * d_ff), label=f"{prefix}.hidden",
+                    layer=il, inputs=[sg, up_sum],
+                    out=f"{prefix}.hiddenv", out_len=S * d_ff)
+    ffn = routed("down", hidden, d_ff, d)
+    # Shared expert (always active) — unchanged from _moe_ffn.
+    swg = b.input_var(f"{prefix}.sh.W_gate", d * d_ff, persistent=True)
+    swu = b.input_var(f"{prefix}.sh.W_up", d * d_ff, persistent=True)
+    swd = b.input_var(f"{prefix}.sh.W_down", d_ff * d, persistent=True)
+    g = b.emit("matmul", dict(m=S, k=d, n=d_ff), label=f"{prefix}.sh.gate",
+               layer=il, inputs=[n2g, swg], out=f"{prefix}.sh.g", out_len=S * d_ff)
+    u = b.emit("matmul", dict(m=S, k=d, n=d_ff), label=f"{prefix}.sh.up",
+               layer=il, inputs=[n2g, swu], out=f"{prefix}.sh.u", out_len=S * d_ff)
+    sgs = b.emit("silu", dict(L=S * d_ff), label=f"{prefix}.sh.silu", layer=il,
+                 inputs=[g], out=f"{prefix}.sh.sg", out_len=S * d_ff)
+    hs = b.emit("hadamard", dict(L=S * d_ff), label=f"{prefix}.sh.hidden",
+                inputs=[sgs, u], layer=il, out=f"{prefix}.sh.h", out_len=S * d_ff)
+    shd = b.emit("matmul", dict(m=S, k=d_ff, n=d), label=f"{prefix}.sh.down",
+                 layer=il, inputs=[hs, swd], out=f"{prefix}.sh.d", out_len=Ld)
+    a1 = b.emit("add", dict(L=Ld), label=f"{prefix}.resid2a", layer=il,
+                inputs=[r1, ffn], out=f"{prefix}.r2a", out_len=Ld)
+    return b.emit("add", dict(L=Ld), label=f"{prefix}.resid2b", layer=il,
+                  inputs=[a1, shd], out=f"{prefix}.r2", out_len=Ld)
+
+
 def maverick(seq: int, t_queries: int = 40) -> Manifest:
     """48-layer Llama-4-Maverick: 24 dense (even, RoPE) + 24 MoE (odd,
     alternating RoPE/NoPE), all E=128 experts committed, shared expert,
@@ -251,4 +317,46 @@ def llama7b(seq: int, layers: int = 32, t_queries: int = 80) -> Manifest:
         claims=b.claims, variables=list(b.vars.values()))
 
 
-BUILDERS = {"maverick": maverick, "llama7b": llama7b}
+def maverick_projected(seq: int, t_queries: int = 54) -> Manifest:
+    """Maverick under the routed-projected protocol (kept-trees main):
+    identical to maverick() except every MoE layer uses
+    _moe_ffn_projected. t_queries defaults to 54, the demonstrated 400B
+    run's setting. Pair with predict/partition --enrolled-weights —
+    per-expert weight vars are the enrolled block."""
+    d, dff_d, dff_e, E, H, dh, V = 5120, 16384, 8192, 128, 40, 128, 202048
+    b = _Builder()
+    emb = b.input_var("embed.W", V * d, persistent=True)
+    x = b.emit("matmul", dict(m=seq, k=V, n=d, rescale=False),
+               label="embed.select", inputs=[emb], out="x0", out_len=seq * d)
+    ones = b.input_var("bc_ones", seq * d)
+    for il in range(48):
+        prefix = f"L{il}"
+        if il % 2 == 0:
+            r1, n2g = _attention(b, x, il, seq, d, H, dh, True, prefix)
+            x = _dense_ffn(b, r1, n2g, il, seq, d, dff_d, prefix)
+        else:
+            use_rope = (il % 4 == 1)
+            r1, n2g = _attention(b, x, il, seq, d, H, dh, use_rope, prefix)
+            x = _moe_ffn_projected(b, r1, n2g, il, seq, d, dff_e, E, ones,
+                                   prefix)
+    gf = b.input_var("final.gain", d)
+    fn = b.emit("rmsnorm", dict(B=seq, d=d), label="final.norm", inputs=[x],
+                out="final.n", out_len=seq * d)
+    b.emit("embed_lookup", dict(L=seq * d), label="final.gain.bcast",
+           inputs=[gf], out="final.gb", out_len=seq * d)
+    fng = b.emit("hadamard", dict(L=seq * d), label="final.gain",
+                 inputs=[fn, "final.gb"], out="final.ng", out_len=seq * d)
+    head = b.input_var("head.W", d * V, persistent=True)
+    b.emit("matmul", dict(m=seq, k=d, n=V), label="lm_head",
+           inputs=[fng, head], out="logits", out_len=seq * V)
+    return Manifest(
+        source=dict(kind="synth", generator="synth.maverick_projected"),
+        model=dict(name="llama4-maverick-projected", d=d, d_ff_dense=dff_d,
+                   d_ff_expert=dff_e, experts=E, heads=H, head_dim=dh,
+                   vocab=V, layers=48),
+        run=dict(seq=seq, ligero=dict(T_QUERIES=t_queries, **LIGERO)),
+        claims=b.claims, variables=list(b.vars.values()))
+
+
+BUILDERS = {"maverick": maverick, "llama7b": llama7b,
+            "maverick-projected": maverick_projected}

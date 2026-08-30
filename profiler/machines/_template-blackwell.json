@@ -8,7 +8,13 @@
     "field_mul_Gps": null,
     "blake3_compress_Gps": null,
     "blake3_bulk_GBps": null,
-    "ntt_ns_per_elem": null
+    "blake3_reg_compress_Gps": null,
+    "ntt_ns_per_elem": null,
+    "ntt_batched_ns_per_elem": null,
+    "hbm_random_GBps": null,
+    "hbm_chase_ns": null,
+    "launch_us_sync": null,
+    "launch_us_stream": null
   },
   "prove_constants": {
     "A_ns_per_slot": null,
@@ -23,10 +29,11 @@
   "io": {
     "disk_read_GBps": null,
     "h2d_GBps": null,
-    "proof_dump_MBps": null
+    "proof_dump_MBps": null,
+    "proof_dump_compact_MBps": null
   },
   "interconnect": null,
   "provenance": {
-    "_note": "Record where every number came from (bench name + date). First-order Blackwell expectation: A/C scale with aggregate memory bandwidth, B with compute — see analysis/maverick-cost-model.md 'Scaling across machines'."
+    "_note": "Record where every number came from (bench name + date). First-order Blackwell expectation: A/C scale with aggregate memory bandwidth, B with compute \u2014 see analysis/maverick-cost-model.md 'Scaling across machines'. blake3_reg_compress_Gps is the REGISTER-RESIDENT compress rate (profiler/bench/bench_blake3_reg.cu) \u2014 B's proper scaling basis; the column-hash blake3_compress_Gps is memory-bandwidth-limited at large m and cannot carry B."
   }
 }

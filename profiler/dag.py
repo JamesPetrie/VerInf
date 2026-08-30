@@ -2,8 +2,11 @@
 
 Nodes are claims; an edge A->B exists when B consumes a variable A produced.
 Persistent (weight) variables don't create edges — they're run inputs the
-scheduler streams in, not dataflow dependencies. This graph plus the four
-Fiat-Shamir round barriers IS the schedulable structure: within one sweep,
+scheduler streams in, not dataflow dependencies. This graph plus the
+streaming-sweep barriers IS the schedulable structure: four sweeps (R1,
+R2, test polynomials, openings), five when the tape carries a phase-3
+late-aux commitment (routed-projected claims always do) — see
+partition.n_sweeps and the prove_streaming loop. Within one sweep,
 anything not on a path is dispatchable in parallel (subject to memory), and
 the width profile below is the direct evidence for how much parallelism a
 multi-GPU dispatcher can actually harvest.

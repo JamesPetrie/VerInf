@@ -203,6 +203,28 @@ class TableSettlement:
     table: Table
 
 
+@dataclass
+class RoutedProjectedMatmulClaim:
+    # real spellings per prover/routed_projected.py: W is a LIST of
+    # per-expert Variables and is NOT in the deferred input list (the
+    # claim is in core.STREAMING_INPUT_CLAIMS; shards stream one at a
+    # time); f_y/f_u/f_p are phase 3 (the conditional R3 sweep)
+    X: Variable; Y: Variable; M: Variable
+    W: List[Variable]
+    Pj: Variable; Qm: Variable; Hd: Variable; yr: Variable
+    f_y: Variable; f_u: Variable; f_p: Variable
+    T: int; K: int; J: int; E: int
+
+
+@dataclass
+class RescaleClaim:
+    x_full: Variable; x: Variable; x_low: Variable; x_shifted: Variable
+    z_low: Variable; z_shifted: Variable
+    range_rescale: Table; range_output: Table
+    length: int; rescale_bits: int
+    output_width: int = 24
+
+
 class FakeTape:
     def __init__(self, cfg, lazy=True):
         self.cfg, self.lazy = cfg, lazy
@@ -545,9 +567,19 @@ def test_consumers():
         path = os.path.join(td, "fake_man.json")
         man.save(path)
         m2 = Manifest.load(path)
+        # gzipped archives load transparently (analysis/blackwell-session-1)
+        import gzip
+        with open(path, "rb") as src, gzip.open(path + ".gz", "wb") as dst:
+            dst.write(src.read())
+        assert len(Manifest.load(path + ".gz").claims) == len(m2.claims)
     mp = MachineProfile.load("gb10-spark")
     rep = predict.report(m2, mp)
     assert "workload totals" in rep
+    # production transport is u64le/base64 (11 B/value); legacy decimal
+    # JSON (21.4 B/value) stays as the archive-validated reference
+    assert "u64le/base64, production" in rep
+    assert "legacy decimal JSON" in rep
+    assert "A100 reference" in rep     # gb10 has no compact measurement
     # extracted manifests itemize every slot: rows are exact, no approx label
     assert "(approx" not in rep
     assert predict.live_set_peak(m2) is not None
@@ -559,14 +591,20 @@ def test_consumers():
     assign[e0_idx] = 0
     ev = partition.evaluate(m2, assign, 2, mp)
     assert ev["red_bytes_per_sweep"] == 64, ev["red_bytes_per_sweep"]
-    # logup mult reduction: both lookups remote from the settlement shard
-    # send ONE summed multiplicity partial of T_LEN slots (32,768 B), not
-    # zero (mult is producer-less, so the activation loop skips it)
+    # logup settlement reduction: the remote shard sends ONE summed
+    # multiplicity partial of T_LEN slots (32,768 B) plus ONE summed z
+    # field element (8 B) — z vectors themselves must NOT ship (they are
+    # output-sized; shipping them whole was the ~1000x traffic artifact
+    # on the first extracted-manifest scorecard, 2026-08-19)
     settle_idx = next(c.idx for c in m2.claims if c.type == "TableSettlement")
     assign2 = [0] * len(m2.claims)
     assign2[settle_idx] = 1
     ev2 = partition.evaluate(m2, assign2, 2, mp)
-    assert ev2["mult_bytes_per_sweep"] == T_LEN * 8, ev2["mult_bytes_per_sweep"]
+    assert ev2["mult_bytes_per_sweep"] == T_LEN * 8 + 8, \
+        ev2["mult_bytes_per_sweep"]
+    # with only the settlement remote, every other edge is co-located and
+    # its z inputs are reduction-handled: zero activation traffic
+    assert ev2["act_bytes_per_sweep"] == 0, ev2["act_bytes_per_sweep"]
     assert ev2["traffic_per_sweep"] >= T_LEN * 8
     # slot accounting: one-shard partition covers every slot totals() counts
     tot = predict.totals(m2)
@@ -576,6 +614,226 @@ def test_consumers():
                  if v.producer is None and not v.persistent)
     weights = sum(v.length for v in m2.variables if v.persistent)
     assert abs(ev1["shard_W"][0] + inputs + weights - tot.W) < 1e-6
+
+
+def test_enrolled_weights():
+    # Enrollment (kept-trees, main): weights leave the per-proof ENCODE but
+    # pay qlin (1.0*A) + open (0.5*A) passes per proof. Net vs legacy
+    # (weights inside A*W): +0.5*A*W_weights on the floor — enrollment buys
+    # statefulness and zero re-encode, not per-proof floor time.
+    man = _build_manifest()
+    with tempfile.TemporaryDirectory() as td:
+        path = os.path.join(td, "fake_man.json")
+        man.save(path)
+        m2 = Manifest.load(path)
+    mp = MachineProfile.load("gb10-spark")
+    r = predict.report(m2, mp, enrolled_weights=True)
+    assert "enrolled block qlin+open" in r
+    assert "open (fresh rows)" in r
+    assert "enrollment lifecycle" in r
+    assert "N/A under enrollment" in r          # aggregate doesn't transfer
+    assert "fresh only" in r
+    # legacy mode states its opening omission instead
+    assert "legacy floor excludes column-opening" in \
+        predict.report(m2, mp)
+    # copied partition output is self-describing in both non-default modes
+    r_enr = partition.report(m2, "layers", 2, mp, enrolled_weights=True)
+    assert "ENROLLED" in r_enr and "refresh after" in r_enr
+    r_diag = partition.report(m2, "layers", 2, mp, skip_weight_commit=True)
+    assert "DIAGNOSTIC" in r_diag
+    c_enr = partition.compare(m2, 2, mp, enrolled_weights=True)
+    assert "ENROLLED" in c_enr and "refresh after" in c_enr
+    assert "DIAGNOSTIC" in partition.compare(m2, 2, mp,
+                                             skip_weight_commit=True)
+    # contradictory modes are rejected at the LIBRARY boundary, not just
+    # the CLI — all three public entry points, one validator
+    for fn in (lambda: partition.evaluate(m2, [0] * len(m2.claims), 1, mp,
+                                          enrolled_weights=True,
+                                          skip_weight_commit=True),
+               lambda: partition.report(m2, "layers", 2, mp,
+                                        enrolled_weights=True,
+                                        skip_weight_commit=True),
+               lambda: partition.compare(m2, 2, mp,
+                                         enrolled_weights=True,
+                                         skip_weight_commit=True)):
+        try:
+            fn()
+            raise AssertionError("contradictory modes accepted")
+        except ValueError as e:
+            assert "mutually exclusive" in str(e)
+    A = mp.get("prove_constants", "A_ns_per_slot")
+    weights = sum(v.length for v in m2.variables if v.persistent)
+    one = [0] * len(m2.claims)
+    ev_leg = partition.evaluate(m2, one, 1, mp)
+    ev_enr = partition.evaluate(m2, one, 1, mp, enrolled_weights=True)
+    inputs = sum(v.length for v in m2.variables
+                 if v.producer is None and not v.persistent)
+    want = ((predict.ENROLLED_QLIN_RATIO + predict.ENROLLED_OPEN_RATIO - 1.0)
+            * A * weights
+            + predict.ENROLLED_OPEN_RATIO * A
+            * (ev_leg["shard_W"][0] + inputs)) * 1e-9
+    got = ev_enr["shard_t"][0] - ev_leg["shard_t"][0]
+    assert abs(got - want) < 1e-12, (got, want)
+
+
+def test_projected_protocol():
+    # Formulas from the compile functions (prover/routed_projected.py,
+    # prover/rescale_claim.py), regression-locked to the exact block
+    # ledger of analysis/routed_projected_4h_model.py.
+    import synth
+    T, K, J, E = 7, 11, 13, 5
+    W, cids, Q = claimcosts.cost("RoutedProjectedMatmulClaim",
+                                 dict(T=T, K=K, J=J, E=E))
+    assert W == T * J + E * K + 2 * T * K + T + 3 * E
+    assert cids == E * K + 2 * T + 2 * E + 1
+    assert Q == T * K + E
+    assert claimcosts.cost("RescaleClaim", dict(length=100)) == \
+        (500.0, 200.0, 200.0)
+
+    m = synth.BUILDERS["maverick-projected"](1000)
+    rp = [c for c in m.claims if c.type == "routed_projected"]
+    rs = [c for c in m.claims if c.type == "rescale_claim"]
+    assert len(rp) == 72 and len(rs) == 72       # 24 MoE layers x gate/up/down
+    trip = [claimcosts.cost(c.type, c.params) for c in rp]
+    # Ed's ledger, exact: L_ROUTE = R + 2*72*S + 72*(2E+1),
+    # Q_ROUTE = N + 72*E with N = 24*S*(2d+f), R = 24*E*(2d+f)
+    N, R = 442_368_000, 56_623_104
+    assert sum(t[1] for t in trip) == 56_785_608          # L_ROUTE
+    assert sum(t[2] for t in trip) == 442_377_216         # Q_ROUTE
+    # raw W: Q+H (2N) + P (R) + yr (72*S) + f-vectors (72*3E) + Y (T*J sums)
+    y_slots = 24 * 1000 * (8192 + 8192 + 5120)
+    assert sum(t[0] for t in trip) == \
+        2 * N + R + 72 * 1000 + 72 * 3 * 128 + y_slots
+    # rescale side: 5/2/2 per selected element; the 2-cids/2-Q sums are
+    # exactly the ledger's LQ_SELECTED_OLD
+    rst = [claimcosts.cost(c.type, c.params) for c in rs]
+    assert sum(c.params["length"] for c in rs) == y_slots == 516_096_000
+    assert sum(t[1] for t in rst) == sum(t[2] for t in rst) == 1_032_192_000
+    # the projected builder drops the three per-layer expert combines but
+    # keeps s_rep: 24 freivalds_combine claims, not 96
+    assert sum(1 for c in m.claims
+               if c.type == "freivalds_combine") == 24
+    # per-expert weight vars are the enrolled block: unchanged total
+    mv = synth.BUILDERS["maverick"](1000)
+    pw = lambda man: sum(v.length for v in man.variables if v.persistent)  # noqa: E731
+    assert pw(m) == pw(mv) == 402_724_618_240
+    # routed tapes take FIVE streaming sweeps (conditional R3 commitment
+    # for phase-3 late aux); classic tapes stay at four
+    assert partition.n_sweeps(m) == 5
+    assert partition.n_sweeps(mv) == 4
+    mp = MachineProfile.load("gb10-spark")
+    assert partition.evaluate(
+        m, [0] * len(m.claims), 1, mp)["sweeps"] == 5
+    # extracted routed claims inherit the FIRST weight shard's name
+    # (rp[..@L1_Wg0..]) — expert parsing must NOT send them (or their
+    # rescale/silu descendants) to expert 0; only per-expert matmuls parse
+    from manifest import VariableRecord
+    m3 = Manifest(
+        run=dict(seq=4, ligero=dict(ELL=8192)),
+        claims=[
+            ClaimRecord(idx=0, type="RoutedProjectedMatmulClaim",
+                        label="x_r@L0_Wg0#1", layer=0,
+                        params=dict(T=4, K=8, J=8, E=4)),
+            ClaimRecord(idx=1, type="RescaleClaim",
+                        label="x_r@L0_Wg0#1_rs", layer=0,
+                        params=dict(length=32)),
+            ClaimRecord(idx=2, type="SiluClaim",
+                        label="x_r@L0_Wg0#1_rs@silu#2", layer=0,
+                        params=dict(L=32)),
+            ClaimRecord(idx=3, type="MatmulClaim",
+                        label="h@L1_Wd3#4", layer=1,
+                        inputs=["h", "L1_Wd3"],
+                        params=dict(m=4, k=8, n=8)),
+            # reviewer repro: an ATTENTION matmul whose activation
+            # ancestry passed through a routed claim — output label
+            # carries _Wg0, but its weight input is W_Q: backbone
+            ClaimRecord(idx=4, type="MatmulClaim",
+                        label="rp[x@L2_Wg0..]_rs@L3_W_Q#5", layer=3,
+                        inputs=["a", "W_Q_L3"],
+                        params=dict(m=4, k=8, n=8)),
+        ],
+        variables=[VariableRecord(name="v", length=8),
+                   VariableRecord(name="h", length=8),
+                   VariableRecord(name="a", length=8),
+                   VariableRecord(name="L1_Wd3", length=8, persistent=True),
+                   VariableRecord(name="W_Q_L3", length=8, persistent=True)])
+    a4 = partition.assign_experts(m3, 4)
+    bb = partition.assign_layers(m3, 4)
+    assert a4[:3] == bb[:3], (a4, bb)     # routed family: backbone
+    assert a4[3] == 3                      # per-expert matmul: expert 3
+    assert a4[4] == bb[4] == 3, (a4, bb)  # attention matmul: backbone (L3)
+    # type-aware note: nothing here is expert-assignable except idx 3
+    assert not partition._no_expert_labels(m3)
+
+
+def test_projected_extraction():
+    # The extraction walker has never met the projected claims on real
+    # hardware; this locks the structural contract first: list-valued W
+    # fields traverse, omitted-from-deferred persistent shards classify
+    # as run inputs, phase-3 aux records as phase 3 (driving n_sweeps on
+    # EXTRACTED manifests), and w_slots equals the compile-derived
+    # formulas exactly.
+    T_, K_, J_, E_ = 4, 6, 5, 3
+    t = FakeTape(Cfg())
+    x = Variable("xr_L1", T_ * K_)
+    mask = Variable("rt1_m", T_ * E_)
+    shards = [Variable(f"L1_Wg{e}", K_ * J_, persistent=True)
+              for e in range(E_)]
+    name = f"rp[{x.name}@{shards[0].name}..]"
+    Y = Variable(name, T_ * J_)
+    rp = RoutedProjectedMatmulClaim(
+        X=x, Y=Y, M=mask, W=shards,
+        Pj=Variable(name + ".P", E_ * K_, phase=2),
+        Qm=Variable(name + ".Q", T_ * K_, phase=2),
+        Hd=Variable(name + ".H", T_ * K_, phase=2),
+        yr=Variable(name + ".yr", T_, phase=2),
+        f_y=Variable(name + ".f_y", E_, phase=3),
+        f_u=Variable(name + ".f_u", E_, phase=3),
+        f_p=Variable(name + ".f_p", E_, phase=3),
+        T=T_, K=K_, J=J_, E=E_)
+    t.add(rp, [x, mask])          # W shards deliberately NOT deferred inputs
+    L_ = T_ * J_
+    zl = Variable(name + "_rs_zlow", L_, phase=2)
+    zs = Variable(name + "_rs_zshift", L_, phase=2)
+    tb_r = Table("rescale_w12", Variable("rescale_w12_mult", 1 << 4),
+                 Variable("rescale_w12_w", 1 << 4), [zl])
+    tb_o = Table("output_w24", Variable("output_w24_mult", 1 << 5),
+                 Variable("output_w24_w", 1 << 5), [zs])
+    rs = RescaleClaim(
+        x_full=Y, x=Variable(name + "_rs", L_),
+        x_low=Variable(name + "_rs_low", L_),
+        x_shifted=Variable(name + "_rs_shift", L_),
+        z_low=zl, z_shifted=zs,
+        range_rescale=tb_r, range_output=tb_o,
+        length=L_, rescale_bits=12, output_width=24)
+    t.add(rs, [Y])
+    with _fake_core():
+        man = extract_tape(t, model=dict(name="projected-stub"), seq=T_)
+    by = man.var_by_name()
+    c_rp, c_rs = man.claims[0], man.claims[1]
+    # params: scalars only — the W list must NOT leak into params
+    assert c_rp.type == "RoutedProjectedMatmulClaim"
+    assert c_rp.params == dict(T=T_, K=K_, J=J_, E=E_), c_rp.params
+    # shards: extra inputs via the persistent rule, producer-less,
+    # consumed by the routed claim
+    for e in range(E_):
+        nm = f"L1_Wg{e}"
+        assert nm in c_rp.inputs
+        v = by[nm]
+        assert v.persistent and v.producer is None and 0 in v.consumers
+    # outputs and exact W agree with the compile-derived formula
+    assert c_rp.w_slots ==         claimcosts.cost("RoutedProjectedMatmulClaim", c_rp.params)[0]
+    assert by[name + ".f_y"].phase == 3
+    assert partition.n_sweeps(man) == 5      # extracted-phase detection
+    # the routed claim itself rides the backbone despite its _Wg0 label
+    assert partition._expert_of_claim(c_rp, by) is None
+    # rescale: params, exact W = 5L, and the range tables settle
+    assert c_rs.params["length"] == L_ and c_rs.params["rescale_bits"] == 12
+    assert c_rs.w_slots == 5 * L_ ==         claimcosts.cost("RescaleClaim", c_rs.params)[0]
+    settles = [c for c in man.claims if c.type == "TableSettlement"]
+    assert len(settles) == 2
+    z_consumers = set(by[name + "_rs_zlow"].consumers)
+    assert any(c.idx in z_consumers for c in settles)
 
 
 def test_cli_validation():
@@ -625,6 +883,9 @@ def main():
     test_consumers()
     test_cli_validation()
     test_rows_approx_label()
+    test_enrolled_weights()
+    test_projected_protocol()
+    test_projected_extraction()
     print("profiler regression tests OK (no torch needed)")
 
 
