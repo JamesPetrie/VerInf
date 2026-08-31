@@ -81,7 +81,36 @@ def test_name_drift_is_loud():
             print("    missing tensor names raise loudly")
 
 
+def test_provenance_from_real_gguf_metadata():
+    # The metadata adapter itself, on a real (synthetic) GGUF — not a
+    # fabricated .provenance dict: full-tensor and per-expert packed bytes
+    # from the reader's authoritative n_bytes, and the quant type string.
+    # Q8_0 packs 32 weights into 34 bytes; F32 is 4 B/param. Header-only:
+    # nothing is dequantized and no CUDA is touched.
+    from loader import gguf_provenance, maverick_lazy_expert
+    with tempfile.TemporaryDirectory() as td:
+        path = f"{td}/toy.gguf"
+        _write_toy(path)
+        per_expert = (DFF * D // 32) * 34
+        full = gguf_provenance(path, f"blk.{LAYER}.ffn_gate_exps.weight")
+        assert full == {"quant": "Q8_0", "packed_bytes": E * per_expert}, full
+        sliced = gguf_provenance(path, f"blk.{LAYER}.ffn_gate_exps.weight",
+                                 per_leading_dim=True)
+        assert sliced == {"quant": "Q8_0", "packed_bytes": per_expert}, sliced
+        router = gguf_provenance(path, f"blk.{LAYER}.ffn_gate_inp.weight")
+        assert router == {"quant": "F32", "packed_bytes": E * D * 4}, router
+        # the expert-loader factory attaches exactly the per-expert share,
+        # without resolving anything
+        ld = maverick_lazy_expert(path, LAYER, "gate_exps", 2)
+        assert ld.provenance == {"quant": "Q8_0", "packed_bytes": per_expert}
+        down = maverick_lazy_expert(path, LAYER, "down_exps", 0)
+        assert down.provenance == {"quant": "Q8_0",
+                                   "packed_bytes": (D * DFF // 32) * 34}
+        print("    provenance: full/per-expert Q8_0 and F32 bytes exact from the header")
+
+
 if __name__ == "__main__":
     test_read_shapes_and_slice()
     test_name_drift_is_loud()
-    print("=== gguf_loader: 2/2 PASS ===")
+    test_provenance_from_real_gguf_metadata()
+    print("=== gguf_loader: 3/3 PASS ===")

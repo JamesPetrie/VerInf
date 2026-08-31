@@ -162,6 +162,36 @@ def test_lazy_gqa_replication_matches_reference():
                                _i64(base)[:, kv * DH:(kv + 1) * DH]), f"head {hq}"
 
 
+def test_make_loader_provenance_from_header():
+    # The safetensors metadata adapter itself, on a real (synthetic)
+    # checkpoint — not a fabricated .provenance dict. Header-only: the
+    # loader is never resolved, so this runs without CUDA. W_K records its
+    # SMALL pre-replication k_proj source (the logical variable is
+    # kv_groups x larger); W_Q records the full q_proj tensor. A dtype or
+    # safetensors-API regression here must fail the suite, not silently
+    # fall back to the profiler's Q4_K table.
+    from loader import LazyHFLoader
+    with tempfile.TemporaryDirectory() as td:
+        _gqa_ckpt(td)
+        ldr = LazyHFLoader(td, S=S)
+        spec_k = ldr.layer_specs(0)["W_K"]
+        ld_k = ldr.make_loader(spec_k.hf_name, transpose=spec_k.transpose,
+                               divide_by=spec_k.divide_by,
+                               kv_groups=spec_k.kv_groups)
+        src_bytes = GQA_KV * DH * D * 2                    # bf16 k_proj source
+        assert ld_k.provenance == {"quant": "BF16", "packed_bytes": src_bytes}, \
+            ld_k.provenance
+        logical_bytes = HEADS * DH * D * 2                 # after replication
+        assert ld_k.provenance["packed_bytes"] < logical_bytes
+        spec_q = ldr.layer_specs(0)["W_Q"]
+        ld_q = ldr.make_loader(spec_q.hf_name, transpose=spec_q.transpose,
+                               divide_by=spec_q.divide_by,
+                               kv_groups=spec_q.kv_groups)
+        assert ld_q.provenance == {"quant": "BF16",
+                                   "packed_bytes": HEADS * DH * D * 2}, ld_q.provenance
+        print("    provenance: BF16 W_K source 512 B (pre-replication), W_Q 2048 B")
+
+
 def test_eager_matches_lazy():
     from loader import LazyHFLoader, load_layer_weights
     with tempfile.TemporaryDirectory() as td:

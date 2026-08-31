@@ -154,6 +154,21 @@ def extract_tape(tape, *, model: dict, seq: int) -> Manifest:
             name=name, length=int(v.length), phase=int(v.phase),
             persistent=bool(getattr(v, "persistent", False)),
             producer=producer)
+        if rec.persistent:
+            # Source provenance for the storage models (weightsplit): lazy
+            # weight loaders may carry a `provenance` dict — the GGUF/
+            # safetensors quant type and the exact PACKED source bytes
+            # attributable to this variable (a K/V logical variable is
+            # several times its packed source; quant alone cannot size it).
+            # Optional by design: eager tensors and plain loaders record
+            # nothing and the profiler falls back to its quant table.
+            src = getattr(tape, "inputs", {}).get(v)
+            prov = getattr(src, "provenance", None) if callable(src) else None
+            if isinstance(prov, dict):
+                q = prov.get("quant")
+                pb = prov.get("packed_bytes")
+                rec.quant = str(q) if q is not None else None
+                rec.packed_bytes = float(pb) if pb is not None else None
         seen[id(v)] = rec
         return rec
 

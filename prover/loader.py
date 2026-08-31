@@ -212,7 +212,37 @@ class LazyHFLoader:
                 q = replicate_kv_cols(q, d_h=d_h, groups=kv_groups)
             return q.reshape(-1)
 
+        prov = self._provenance(param_name)
+        if prov is not None:
+            load.provenance = prov     # SOURCE bytes: replication not included
         return load
+
+    _ST_DTYPES = {"F16": ("F16", 2), "FLOAT16": ("F16", 2),
+                  "BF16": ("BF16", 2), "BFLOAT16": ("BF16", 2),
+                  "F32": ("F32", 4), "FLOAT32": ("F32", 4)}
+
+    def _provenance(self, param_name: str):
+        """{'quant', 'packed_bytes'} from the safetensors header (shape x
+        dtype size — the SOURCE tensor, so a KV-replicated logical variable
+        records its smaller packed source). Optional metadata: any header/
+        API surprise returns None rather than breaking weight loading."""
+        try:
+            from safetensors.torch import safe_open
+            with safe_open(self._shard_for(param_name), framework="pt",
+                           device="cpu") as f:
+                sl = f.get_slice(param_name)
+                shape = tuple(sl.get_shape())
+                dtype = str(sl.get_dtype()).split(".")[-1].upper()
+            hit = self._ST_DTYPES.get(dtype)
+            if hit is None:
+                return None
+            quant, bpp = hit
+            n = 1
+            for s_ in shape:
+                n *= int(s_)
+            return {"quant": quant, "packed_bytes": n * bpp}
+        except Exception:
+            return None
 
     def load_embedding(self, divide_by: float = 1.0) -> torch.Tensor:
         """Token embedding table (vocab·d,) quantized — read directly from
@@ -438,7 +468,26 @@ def maverick_lazy_expert(gguf_path: str, layer_idx: int, key: str, expert: int,
         d = dequantize(t.data[expert:expert + 1], t.tensor_type)[0]
         return quantize_to_field(torch.from_numpy(d.copy()).T.contiguous(),
                                  S).reshape(-1)
+    load.provenance = gguf_provenance(gguf_path, name, per_leading_dim=True)
     return load
+
+
+def gguf_provenance(gguf_path: str, name: str, *, per_leading_dim: bool = False):
+    """{'quant', 'packed_bytes'} for one GGUF tensor — the source metadata a
+    lazy loader carries for the profiler's storage models (extract.py copies
+    it onto the manifest's VariableRecord). packed_bytes is the RAW packed
+    size (a numpy memmap .nbytes — header metadata, nothing is read);
+    per_leading_dim divides by the stacked leading dimension, the exact
+    per-expert share of a stacked expert tensor (raw rows slice per expert).
+    ReaderTensor.n_bytes is upstream's authoritative computed payload size;
+    data.nbytes (the memmap view) is its equivalent fallback."""
+    t = _gguf_by_name(gguf_path)[name]
+    nbytes = int(getattr(t, "n_bytes", 0) or t.data.nbytes)
+    if per_leading_dim:
+        n0 = int(t.data.shape[0])
+        assert nbytes % n0 == 0, (name, nbytes, n0)
+        nbytes //= n0
+    return {"quant": t.tensor_type.name, "packed_bytes": nbytes}
 
 
 def read_maverick_moe_layer(gguf_path: str, layer_idx: int, *,

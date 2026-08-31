@@ -229,6 +229,7 @@ class FakeTape:
     def __init__(self, cfg, lazy=True):
         self.cfg, self.lazy = cfg, lazy
         self.claims, self._deferred = [], []
+        self.inputs = {}                 # Variable -> tensor | lazy loader
 
     def add(self, claim, inputs):
         self.claims.append(claim)
@@ -249,6 +250,13 @@ def _build_manifest():
     # layer-0 chain: rmsnorm -> matmul(weight) -> softmax -> silu -> rope
     x0 = Variable("x_input", S * D)
     w0 = Variable("W_Q_L0", D * D, persistent=True)
+    # a lazy loader carrying source provenance (extract copies it onto the
+    # persistent VariableRecord; see prover/loader.py gguf_provenance)
+    def _w0_loader():
+        raise AssertionError("extraction must not resolve weight loaders")
+    _w0_loader.provenance = {"quant": "Q6_K",
+                             "packed_bytes": D * D * 210 // 256}
+    t.inputs[w0] = _w0_loader
     n0 = Variable("x_input@rms_L0#1", S * D)
     t.add(RmsNormClaim(x=x0, output=n0, config=RmsNormConfig(B=S, d=D)), [x0])
     q0 = Variable("x_input@W_Q_L0#2", S * D)
@@ -349,6 +357,13 @@ def test_extractor():
     assert man.claims[0].layer == 0 and man.claims[5].layer == 0
     # weight is input, not output
     assert by_name["W_Q_L0"].producer is None and by_name["W_Q_L0"].persistent
+    # lazy-loader source provenance is copied onto the persistent record;
+    # a persistent var with no loader (token_embd: eager table) records
+    # nothing and the profiler falls back to its quant table
+    assert by_name["W_Q_L0"].quant == "Q6_K"
+    assert by_name["W_Q_L0"].packed_bytes == float(D * D * 210 // 256)
+    assert by_name["token_embd"].quant is None
+    assert by_name["token_embd"].packed_bytes is None
     # ...even when a claim's _deferred input list omits it (the embed claim
     # is added with inputs=[]): persistent => committed run input
     emb_idx = next(c.idx for c in man.claims

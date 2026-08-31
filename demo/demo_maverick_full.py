@@ -93,6 +93,8 @@ def _field_loader(gguf, name, S_=S, transpose=False):
         if transpose:
             w = w.view(torch.int64).T.contiguous().view(torch.uint64)
         return w.reshape(-1)
+    from loader import gguf_provenance
+    load.provenance = gguf_provenance(gguf, name)
     return load
 
 
@@ -144,12 +146,21 @@ def build_dense_ffn(tape, n2g, gguf, il, *, T, d):
     return tape.matmul(h, Wd, **mm)
 
 
+_MOE_PART_SRC = {           # load_maverick_moe_layer key -> GGUF tensor key
+    "W_router": "router", "W_gate_sh": "gate_sh",
+    "W_up_sh": "up_sh", "W_down_sh": "down_sh",
+}
+
+
 def _moe_part(gguf, il, key, E):
     """Lazy loader for one router/shared tensor (resident only near its use)."""
     def load():
         from loader import load_maverick_moe_layer
         real = load_maverick_moe_layer(gguf, il, S=S, n_experts=E, skip_experts=True)
         return real[key].contiguous().reshape(-1)
+    from loader import MAVERICK_MOE_TENSORS, gguf_provenance
+    pat, _stacked = MAVERICK_MOE_TENSORS[_MOE_PART_SRC[key]]
+    load.provenance = gguf_provenance(gguf, pat.format(i=il))
     return load
 
 
@@ -218,9 +229,18 @@ def build_model(tape, gguf, prompt_ids, cont_ids, *, V, d, n_layers, E, d_ff):
     ones_bc = tape.commit("bc_ones", torch.ones(T * d, dtype=torch.uint64,
                                                  device="cuda"), (T, d))
 
+    # attention-group source tensors (load_attention decodes the whole group;
+    # provenance names each key's OWN packed source — W_K/W_V record the
+    # small k/v tensor their 5x-replicated logical variables come from)
+    _attn_src = {"W_Q": "attn_q", "W_K": "attn_k", "W_V": "attn_v",
+                 "W_O": "attn_output", "g_attn": "attn_norm", "g_ffn": "ffn_norm"}
+
     def _attn_part(il, key):
         def load():
             return load_attention(gguf, il)[key].reshape(-1)
+        from loader import gguf_provenance
+        load.provenance = gguf_provenance(
+            gguf, f"blk.{il}.{_attn_src[key]}.weight")
         return load
 
     for il in range(n_layers):
