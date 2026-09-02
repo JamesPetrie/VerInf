@@ -41,7 +41,22 @@ def _pad_for(w_pad, row_start: int):
 
 
 def _ctx(device: Optional[str]):
-    return torch.cuda.device(device) if device is not None else nullcontext()
+    """M1a runs every role on the coordinator's device. A different device
+    is M1b work: the coins (r_irs, r_lin seed), master seed, w_pad seed,
+    band-template tensors and the module caches all live on the
+    coordinator's device and nothing moves them, so switching the current
+    device here would either fault or silently read across devices (P2P).
+    Refuse loudly instead of masking that."""
+    if device is None:
+        return nullcontext()
+    want = torch.device(device)
+    cur = torch.device("cuda", torch.cuda.current_device())
+    if want.type != "cuda" or (want.index is not None and want.index != cur.index):
+        raise NotImplementedError(
+            f"weight-split worker on {want} while the coordinator runs on "
+            f"{cur}: per-device coins/inputs are milestone M1b; M1a executes "
+            f"every role on the coordinator's device (pass device=None)")
+    return nullcontext()
 
 
 def fold_run(weight_vars: List, inputs: Dict, cfg, master_seed_t: torch.Tensor,

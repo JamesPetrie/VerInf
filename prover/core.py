@@ -3243,6 +3243,61 @@ def _row_contiguous_runs(vars_list, cfg):
     return runs
 
 
+def layout_breakdown(tape, cfg: LigeroConfig):
+    """Witness layout by claim type: (m_total, {claim type name: (rows,
+    elements)}) — every Variable attributed to the FIRST claim that touches
+    it in claim order, with a table's mult/w/z booked under its
+    TableSettlement (the only claim that reaches them). This is the
+    LIGERO_LAYOUT_BREAKDOWN table (`_stream_setup`), exposed as a function so
+    the profiler's crosscheck can probe a tape in-process: it is
+    challenge-independent and VALUE-FREE (Variable lengths only), so a lazy
+    tape whose weight loaders were never resolved can be laid out."""
+    claims = _with_synthesized_settlements(tape.claims)
+    (_all, _p1, _p2, _p3, _m1, _m2, m_total,
+     _wv, _mw, _wn, _mwn) = _layout(claims, cfg)
+    agg: Dict[str, List[int]] = {}
+    seen_b = set()
+
+    def _acct(v, tn):
+        if isinstance(v, Variable) and id(v) not in seen_b:
+            seen_b.add(id(v))
+            row = agg.setdefault(tn, [0, 0])
+            row[0] += v.n_rows(cfg.ELL)
+            row[1] += v.length
+
+    for _c in claims:
+        _tn = type(_c).__name__
+        _settle = isinstance(_c, TableSettlement)
+        for _f in fields(_c):
+            _v = getattr(_c, _f.name)
+            if isinstance(_v, Variable):
+                _acct(_v, _tn)
+            elif isinstance(_v, Table) and _settle:
+                _acct(_v.mult_var, _tn)
+                _acct(_v.w_var, _tn)
+                for _z in _v.z_vars:
+                    _acct(_z, _tn)
+            elif isinstance(_v, list):
+                for _it in _v:
+                    if isinstance(_it, Variable):
+                        _acct(_it, _tn)
+    return m_total, {t: (r, e) for t, (r, e) in agg.items()}
+
+
+def format_layout_breakdown(m_total: int, table: Dict[str, Tuple[int, int]],
+                            cfg: LigeroConfig) -> str:
+    """The printed form of layout_breakdown — the exact text the crosscheck
+    parser (profiler/crosscheck.parse_layout) and the archived layout
+    probes use; do not reformat."""
+    W = m_total * cfg.ELL
+    lines = [f"=== witness layout by claim type (m_total={m_total:,}, "
+             f"W={W:,} elements) ==="]
+    for _t, (_r, _e) in sorted(table.items(), key=lambda kv: -kv[1][1]):
+        lines.append(f"  {_t:22s} rows={_r:>11,}  elements={_e:>15,}  "
+                     f"{100 * _e / W:5.1f}%")
+    return "\n".join(lines)
+
+
 def _stream_setup(tape, cfg, zk_seed=None):
     """Shared setup for the streaming provers: layout, quad grouping, row-maps
     and blinding — everything that is CHALLENGE-INDEPENDENT.
@@ -3268,29 +3323,8 @@ def _stream_setup(tape, cfg, zk_seed=None):
      weight_vars, m_w_rows, wnew_vars, m_wnew_rows) = _layout(claims, cfg)
     if _os.environ.get("LIGERO_LAYOUT_BREAKDOWN"):
         import sys
-        from collections import defaultdict
-        agg = defaultdict(lambda: [0, 0])          # claim type -> [rows, elements]
-        seen_b = set()
-        def _acct(v, tn):
-            if isinstance(v, Variable) and id(v) not in seen_b:
-                seen_b.add(id(v)); agg[tn][0] += v.n_rows(cfg.ELL); agg[tn][1] += v.length
-        for _c in claims:
-            _tn = type(_c).__name__
-            _settle = isinstance(_c, TableSettlement)
-            for _f in fields(_c):
-                _v = getattr(_c, _f.name)
-                if isinstance(_v, Variable):
-                    _acct(_v, _tn)
-                elif isinstance(_v, Table) and _settle:
-                    _acct(_v.mult_var, _tn); _acct(_v.w_var, _tn)
-                    for _z in _v.z_vars: _acct(_z, _tn)
-                elif isinstance(_v, list):
-                    for _it in _v:
-                        if isinstance(_it, Variable): _acct(_it, _tn)
-        W = m_total * cfg.ELL
-        print(f"=== witness layout by claim type (m_total={m_total:,}, W={W:,} elements) ===", flush=True)
-        for _t, (_r, _e) in sorted(agg.items(), key=lambda kv: -kv[1][1]):
-            print(f"  {_t:22s} rows={_r:>11,}  elements={_e:>15,}  {100*_e/W:5.1f}%", flush=True)
+        _mt, _table = layout_breakdown(tape, cfg)
+        print(format_layout_breakdown(_mt, _table, cfg), flush=True)
         sys.exit(0)
     groups = _claim_var_groups(claims, cfg)
     n_ops = len(tape.claims)
@@ -3392,9 +3426,11 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
     (wnew_seed, logical NUM_BLINDING_ROWS) so its root reproduces the
     refreshed commitment R_W′ = commit_weights(seed=wnew_seed).
 
-    FOUR streaming sweeps, the witness regenerated each round, as the staged
-    interactive protocol requires (commit before the challenges that determine
-    what is revealed).
+    FOUR streaming sweeps — FIVE when the tape has phase-3 late aux (the
+    routed-projected claims), whose commitment is a conditional R3 sweep
+    after the R2 coin — the witness regenerated each round, as the staged
+    interactive protocol requires (commit before the challenges that
+    determine what is revealed).
 
     Each coin is SEQUENTIAL Fiat-Shamir over the transcript so far
     (analysis/routed-projected-protocol.md):
@@ -3490,6 +3526,9 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
     if shard_plan is not None:
         import shard_plan as _sp
         import shard_worker as _sw
+        assert has_w, (
+            "shard_plan on a tape with no persistent weights: there is no "
+            "enrolled W block to split")
         assert wc is not None, (
             "shard_plan needs weight_commitment: the split is defined on the "
             "enrolled W block")
@@ -3701,6 +3740,12 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
           f"match committed leaves: {repro}; W-block rows {s['n_w_total']}; "
           f"W-ref {wc is not None}; Wnew rows {s['n_wnew_total']}; "
           f"p3 rows {s['n_p3_total']}; peak {peak:.2f} GB", flush=True)
+    # Weight-split: a worker's opening piece scattered at the wrong absolute
+    # row passes the sink's tiling check (equal-length pieces swapped) but
+    # not this leaf check — so under a plan it is an assertion, not a print.
+    assert repro or plan is None, (
+        "weight-split: re-extracted opened columns do not hash to the "
+        "committed leaves — a worker piece landed at the wrong rows")
     if _PHASE_ON and _PHASE_TIMES:
         _tot = sum(_PHASE_TIMES.values())
         print("  [phase] prove-time breakdown (cuda-synced buckets; shares, not "

@@ -102,3 +102,28 @@ if __name__ == "__main__":
     test_validate_runs_tiles_exactly()
     test_plan_constructors_and_views()
     print("test_shard_plan OK")
+
+
+def test_device_map_and_plan_shape_are_validated():
+    from shard_plan import ShardPlan, as_plan
+    # a device map naming a device with no run would silently run that
+    # worker on the coordinator (devices.get -> None): refused at validation
+    p = ShardPlan.from_pairs([(0, 3), (3, 7)], devices={2: "cuda:1"})
+    try:
+        p.validated(7)
+        raise AssertionError("stray device key accepted")
+    except ValueError as e:
+        assert "own no run" in str(e) and "[2]" in str(e)
+    ok = ShardPlan.from_pairs([(0, 3), (3, 7)], devices={1: None}).validated(7)
+    assert ok.devices == {1: None}
+    # a raw two-run list is not (fold_pairs, open_pairs): a clear TypeError,
+    # not an unpacking failure deep in from_pairs
+    for bad in ([(0, 0, 3), (1, 3, 7)], [[(0, 3), (3, 7)], 5], [3, [(0, 7)]]):
+        try:
+            as_plan(bad, 7)
+            raise AssertionError(f"accepted {bad!r}")
+        except TypeError as e:
+            assert "sequence of (lo, hi) pairs" in str(e), str(e)
+    assert as_plan(([(0, 3), (3, 7)], None), 7).open == [(0, 0, 3), (1, 3, 7)]
+    print("    device map keys and plan shape validated")
+

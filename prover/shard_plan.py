@@ -110,6 +110,13 @@ class ShardPlan:
             return out
         fold = validate_runs(fill(self.fold), n_vars, "fold")
         open_ = validate_runs(fill(self.open), n_vars, "open")
+        # A device map naming a device the plan never uses would silently run
+        # that worker on the coordinator (devices.get -> None): refuse.
+        used = {d for d, _, _ in fold + open_}
+        stray = sorted(set(self.devices) - used)
+        if stray:
+            raise ValueError(f"devices map names device(s) {stray} that own no "
+                             f"run in either stage (plan devices: {sorted(used)})")
         return ShardPlan(fold=fold, open=open_, devices=dict(self.devices))
 
     def runs(self, stage: str) -> List[Run]:
@@ -150,5 +157,16 @@ def as_plan(obj, n_vars: int) -> ShardPlan:
     if isinstance(obj, ShardPlan):
         return obj.validated(n_vars)
     if isinstance(obj, (tuple, list)) and len(obj) == 2:
-        return ShardPlan.from_pairs(obj[0], obj[1]).validated(n_vars)
+        fold_pairs, open_pairs = obj
+        # both halves must be sequences of (lo, hi) pairs — a raw two-run
+        # list [(0,0,3),(1,3,7)] is a plausible mistake and used to die in
+        # from_pairs with an unpacking error instead of this message
+        for nm, pairs in (("fold_pairs", fold_pairs), ("open_pairs", open_pairs)):
+            if pairs is None and nm == "open_pairs":
+                continue
+            if not isinstance(pairs, (tuple, list)) or not all(
+                    isinstance(x, (tuple, list)) and len(x) == 2 for x in pairs):
+                raise TypeError(f"shard_plan {nm} must be a sequence of (lo, hi) "
+                                f"pairs indexed by device, got {pairs!r}")
+        return ShardPlan.from_pairs(fold_pairs, open_pairs).validated(n_vars)
     raise TypeError("shard_plan must be a ShardPlan or (fold_pairs, open_pairs)")
