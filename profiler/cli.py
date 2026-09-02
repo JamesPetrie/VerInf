@@ -47,6 +47,17 @@ def _positive(cast):
 _posint, _posfloat = _positive(int), _positive(float)
 
 
+def _nonnegfloat(s):
+    """A finite float >= 0 (a zero workspace reserve is legal)."""
+    try:
+        v = float(s)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a number, got {s}")
+    if not math.isfinite(v) or v < 0.0:
+        raise argparse.ArgumentTypeError(f"must be a finite number >= 0, got {s}")
+    return v
+
+
 def _fraction(s):
     """A share in [0, 1] — zero is a valid ownership (the N=8 optimum)."""
     try:
@@ -147,7 +158,13 @@ def main(argv=None):
     pw.add_argument("--io-overlap", choices=weightsplit.IO_OVERLAPS, default="none",
                     help="none: resolve-then-encode as the loaders do today "
                          "(default); perfect: idealised prefetch, max(compute, I/O)")
-    pw.add_argument("--workspace-GB", type=_posfloat, default=10.0)
+    pw.add_argument("--workspace-GB", type=_nonnegfloat, default=10.0,
+                    help="HBM reserved for activations/workspace under --resident "
+                         "(decimal GB; 0 allowed)")
+    pw.add_argument("--semantic-s", type=_posfloat, default=None,
+                    help="seconds of coordinator-serial semantic sweeps (unpriced "
+                         "by the kernel model) to print the whole-proof speedup "
+                         "(S + N=1 wall) / (S + wall)")
     pw.add_argument("--encode-share", type=_fraction, default=None,
                     help="share of A*W_fresh in the commit sweeps (default 4/9, "
                          "gb10-spark provenance); the report prints its sensitivity")
@@ -215,7 +232,8 @@ def main(argv=None):
         kw = dict(bytes_per_param=a.bytes_per_param, resident=a.resident,
                   disk_GBps=a.disk_GBps, disk_mode=a.disk_mode,
                   io_overlap=a.io_overlap, workspace_GB=a.workspace_GB,
-                  static=a.static, x_fold=a.x_fold, x_open=a.x_open)
+                  static=a.static, x_fold=a.x_fold, x_open=a.x_open,
+                  semantic_s=a.semantic_s)
         if a.encode_share is not None:
             kw["encode_share"] = a.encode_share
         try:

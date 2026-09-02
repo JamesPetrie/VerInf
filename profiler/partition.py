@@ -31,10 +31,18 @@ Traffic model (deliberately explicit about its approximations):
   traffic recurs x4 — x5 when the tape has a phase-3 commitment sweep
   (routed-projected claims; see n_sweeps) — unless the scheduler caches;
   the per-sweep number is the honest unit and the total is also shown.
-- Weight-commit work (dependency-free) is split evenly across shards;
-  weight *streaming* for witness compute is charged to each shard that
-  consumes the weight (per sweep), and rides disk/host lanes, not the
-  interconnect.
+- Weight-commit work (dependency-free) is split evenly across shards in
+  legacy mode; under --enrolled-weights there is no per-proof commit and
+  each shard instead pays the qlin+open passes over the enrolled slots
+  its claims consume. Weight *streaming* for witness compute is charged
+  to each shard that consumes the weight (per sweep), and rides
+  disk/host lanes, not the interconnect.
+- The linear fold is additive over rows: each shard folds its own rows
+  into q_irs/q_lin partials and ships them ONCE per proof (3*K_DEG field
+  elements per remote shard — `fold_merge_bytes`), which is what makes
+  LogUp settlement z inputs free of traffic (their balance is a linear
+  constraint on rows the owning shard folds); only the table
+  multiplicities, re-accumulated every sweep, cross as partials.
 - NOT modeled yet: dependency-chain serialization within a shard schedule
   (needs the discrete-event scheduler sim — roadmap), Merkle column-stream
   chaining across row-shard boundaries (protocol-adjacent, costed
@@ -245,26 +253,30 @@ def evaluate(m: Manifest, assignment: List[int], n: int,
         red_bytes += len(producers) * out_len * BYTES_PER_SLOT
     # LogUp settlement reduction. mult (the producer-less non-persistent
     # input): every remote shard holding lookups that increment it sends one
-    # summed partial of the full table length. z inputs (each produced by
-    # its own lookup/rescale claim): the settlement's global balance needs
-    # only Σz per shard, so each remote producing shard sends ONE summed
-    # field element per settlement — never the z vectors themselves (they
-    # are excluded from the activation loop above; shipping them whole was
-    # the ~1000x traffic artifact found on the first extracted-manifest
-    # scorecard, 2026-08-19).
+    # summed partial of the full table length per sweep (mult is re-zeroed
+    # and re-accumulated by side effects in every sweep, core._stream_sweep).
+    # z inputs (each produced by its own lookup/rescale claim) cost NOTHING
+    # per settlement: the settlement's aux reads only mult, and the balance
+    # identity is a linear constraint over the z rows, which whichever
+    # shard holds them folds into q_lin — so the z vectors are excluded from
+    # the activation loop above (shipping them whole was the ~1000x traffic
+    # artifact found on the first extracted-manifest scorecard, 2026-08-19)
+    # and the only cross-shard object they imply is the q_irs/q_lin partial
+    # merge, priced once per proof below (fold_merge_bytes).
     mult_bytes = 0.0
     for c, s in settle_claims:
-        z_shards = set()
         for name in c.inputs:
             v = by_name.get(name)
-            if v is None or v.persistent:
+            if v is None or v.persistent or v.producer is not None:
                 continue
-            if v.producer is None:
-                senders = {assignment[ci] for ci in v.consumers} - {s}
-                mult_bytes += len(senders) * v.length * BYTES_PER_SLOT
-            else:
-                z_shards.add(assignment[v.producer])
-        mult_bytes += len(z_shards - {s}) * BYTES_PER_SLOT
+            senders = {assignment[ci] for ci in v.consumers} - {s}
+            mult_bytes += len(senders) * v.length * BYTES_PER_SLOT
+    # Fold merge: each remote shard ships its q_irs (K_DEG) and q_lin
+    # (2*K_DEG-1, or the n_eval buffer when fused) partials once per proof —
+    # exact field sums (core.QIrsAccumulator.merge / QLinAccumulator.merge).
+    k_deg = m.run.get("ligero", {}).get("K_DEG", 16384)
+    remote_shards = len(set(assignment)) - 1
+    fold_merge_bytes = max(0, remote_shards) * 3 * k_deg * BYTES_PER_SLOT
 
     # Compute time per shard (whole-proof floor constants) + even split of
     # the dependency-free commit work: weights and producer-less run inputs
@@ -313,6 +325,7 @@ def evaluate(m: Manifest, assignment: List[int], n: int,
         weight_stream_bytes_max=max(shard_weight_slots) * weight_bytes_per_param * sweeps,
         act_bytes_per_sweep=act_bytes, red_bytes_per_sweep=red_bytes,
         mult_bytes_per_sweep=mult_bytes,
+        fold_merge_bytes=fold_merge_bytes,          # once per proof, not per sweep
         traffic_per_sweep=act_bytes + red_bytes + mult_bytes,
         traffic_total=(act_bytes + red_bytes + mult_bytes) * sweeps,
         shard_t=shard_t,
@@ -367,6 +380,11 @@ def _mode_suffix(m: Manifest, enrolled_weights: bool,
         kd = lig.get("K_DEG", 16384)
         tq = lig.get("T_QUERIES", 40)
         budget = max(0, (kd - ell) // 2)
+        if budget < tq:
+            return (f" — ENROLLED weights (qlin+open passes; one-time enroll "
+                    f"unpriced; NO refresh budget at this geometry: "
+                    f"(K_DEG-ELL)/2 = {budget} < T={tq}, every proof "
+                    f"needs a fresh enrollment)")
         return (f" — ENROLLED weights (qlin+open passes; one-time enroll "
                 f"unpriced; refresh after {budget:,} distinct opened "
                 f"columns >= {budget // max(tq, 1)} proofs at T={tq})")

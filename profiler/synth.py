@@ -190,7 +190,9 @@ def _moe_ffn_projected(b, r1, n2g, il, S, d, d_ff, E, bc_ones, prefix):
     shared expert are byte-identical to _moe_ffn; the all-E expert fan and
     its three freivalds_combine calls are replaced by one
     routed_projected + rescale_claim pair per expert matrix (gate/up/down),
-    with silu/hadamard on the SELECTED (S x d_ff) outputs. Per-expert
+    with silu/hadamard on the SELECTED (S x d_ff) outputs (as _moe_ffn
+    already had them — the projected builder changes the expert matmuls
+    and combines, not those). Per-expert
     weight variables stay: one persistent var per expert shard, exactly
     what the enrolled weight block holds."""
     Ld = S * d

@@ -31,36 +31,61 @@ workers' section is partitioned into N-1 contiguous runs by the standard
 min-max greedy with a bisected bound — runs are UNEQUAL where that
 balances time (and packed bytes under a cap). The two stages are
 separable and solved independently unless the resident HBM cap binds on
-their unions (or --static is given), in which case the cuts are TIED
-across stages (a device then holds exactly its run) and chosen under the
-cap for the true barrier-separated wall: EXACT at N=2 (one cut,
-enumerated — 'tied-exact'/'static-exact'), HEURISTIC at N>=3 (three
-proxy solves; 'tied-heuristic'/'static-heuristic' — an exhaustive search
-can beat them, and the worst-case gap is uncharacterized). When nothing fits, the
-reported plan is the least-infeasible one (minimum max hold), labelled
-'least-infeasible(...)'. Explicit --x-* fractions use equal-slot worker
-shares (an explicit scheduling heuristic).
+their unions (or --static is given). At N=2 the cap is a BOX on the two
+cuts — the coordinator's union hold is [0, max(c_fold, c_open)) and the
+worker's is [min(c_fold, c_open), n), so both cuts must lie in
+[c_min, c_max] — and each stage is then solved exactly inside that box
+by enumeration ('capped-exact'; the cuts stay independent, a tied plan
+is only a special case). At N>=3 the cuts are TIED across stages (a
+device holds exactly its run) and chosen by three proxy solves
+('tied-heuristic' — an exhaustive search can beat them, and the
+worst-case gap is uncharacterized). --static forces tied cuts:
+'static-exact' (N=2, enumerated) / 'static-heuristic' (N>=3). When
+nothing fits, the reported plan is the least-infeasible one (minimum
+max hold), labelled 'least-infeasible(...)'. Explicit --x-* fractions
+use equal-slot worker shares (an explicit scheduling heuristic); with
+only one of them given, the other stage is solved uncapped and the
+result keeps the 'explicit' label even when it does not fit (feasible
+says so).
 
 Metrics. `kernel_floor_ratio` = N=1 compute-only floor / wall; the
-`same_mode_speedup` = N=1 wall under the SAME storage model / wall — the
-M1b measurement ("vs the N=1 run on the same code"). They coincide when
-the N=1 wall equals the compute-only floor (resident, or streaming with
-the I/O fully hidden); resident same-mode is n/a when N=1 does not fit.
+`same_mode_speedup` = N=1 wall under the SAME storage model / wall. Both
+are KERNEL ratios over the two W passes plus the fresh floor: they
+exclude the semantic sweeps (witness regeneration), which the coordinator
+runs serially and which dominate a real proof (the 4h ledger's A100 run
+spent 2024 s of 6940 s there against a 254 s kernel floor). The
+whole-proof speedup the M1b measurement will see is therefore roughly
+(S + floor) / (S + wall) with S the semantic-sweep seconds — `report`
+prints that line when given `semantic_s`. They coincide when the N=1
+wall equals the compute-only floor (resident, or streaming with the
+I/O fully hidden); resident same-mode is n/a when N=1 does not fit.
 
 Stage split. A*W_fresh is split between the commit sweeps (encode) and
 the fold sweep (linear fold) at ENCODE_SHARE_OF_A, from the gb10-spark
 provenance (encode ~4 + linear-fold poly_mul ~5 ns/slot); the B200's A
 and C are bandwidth-derived from that same profile, so the split is a
-modelling assumption and `report` prints its sensitivity. B*cids and
-C*Q sit in the fold stage. This is the A/B/C kernel floor: it EXCLUDES
-the semantic sweeps (witness regeneration), Python orchestration, worker
-start-up, the duplicate compile and the opening hand-off, all of which
-land on or through the coordinator.
+modelling assumption and `report` prints its sensitivity. The enrolled
+block's fold is priced at ENROLLED_QLIN_RATIO*A = 1.0*A (predict's
+constant, mirroring the 4h ledger's persistent-qlin admissible rate,
+which the A100 run measured at the same per-slot rate as fresh
+commit+fold), while a fresh row's fold under the split above is only
+(1-ENCODE_SHARE_OF_A)*A — the two provenance sources disagree on what
+the fold kernel costs per slot, so `report` also prints the N=2 ratio
+with the W fold priced at the fresh fold rate (`w_fold_ratio`). B*cids
+and C*Q sit in the fold stage. This is the A/B/C kernel floor: it
+EXCLUDES the semantic sweeps (witness regeneration), Python
+orchestration, worker start-up, the duplicate compile and the opening
+hand-off, all of which land on or through the coordinator.
 
 Storage. A device either STREAMS its owned share from disk each pass or
 holds it RESIDENT in HBM (packed bytes must fit under mem_GB minus a
-workspace reserve — a path the current loaders do not provide; see the
-design note). Under the resident model the N=1 run itself must fit one
+workspace reserve — a path the current loaders do not provide: the
+packed-resident loader is the M1c work item). Note the coordinator
+still resolves EVERY weight in every semantic sweep (core._stream_sweep
+fetches each claim's inputs; the routed claims stream all their
+shards), so a resident split relieves the coordinator's HBM only for
+the two W passes, not for the witness. Under the resident model the
+N=1 run itself must fit one
 device; when it does not, the same-mode speedup is reported as
 unavailable (the M1b baseline is then the STREAMING N=1 run, a
 cross-mode comparison the report does not silently make). Streaming has
@@ -80,7 +105,18 @@ calibration, or resident without mem_GB, is UNAVAILABLE, not free.
 
 Packed bytes/param come, in order, from a flat override, the variable's
 extracted `packed_bytes` (must be finite and >= 0), its GGUF `quant`
-type (must be a known type), else Q4_K.
+type (must be a known type), else the Q4_K DEFAULT. The default is a
+guess: a manifest whose loaders carried no provenance (placeholder
+loaders, eager tensors, a safetensors path that never reached
+extraction) is priced as if it were Q4_K, which under-sizes a BF16/F16
+model 3.6x — so `evaluate` reports the share of enrolled bytes that
+came from the default and `report` prints a WARNING whenever it is
+non-zero.
+
+Units. The profile's `gpu.mem_GB` is GiB as the driver reports it
+(calibrate.detect_gpu: total_memory / 2**30; nvidia-smi MiB / 1024), so
+the HBM cap converts it with MEM_GB_BYTES; --workspace-GB is decimal GB
+like every other byte figure here.
 """
 import math
 from bisect import bisect_left
@@ -103,6 +139,8 @@ QUANT_BYTES_PER_PARAM: Dict[str, float] = {
     "Q8_0": 34 / 32, "F16": 2.0, "BF16": 2.0, "F32": 4.0,
 }
 BYTES_PER_SLOT = 8
+MEM_GB_BYTES = 2 ** 30          # profile gpu.mem_GB is GiB (see module doc)
+DEFAULT_QUANT = "Q4_K"
 DISK_MODES = ("shared", "per-device")
 IO_OVERLAPS = ("none", "perfect")
 _BISECT_ITERS = 60      # real-valued bisection on a time bound (seconds)
@@ -133,6 +171,9 @@ def packed_bytes_of(v, bytes_per_param: Optional[float]) -> float:
         return v.length * bytes_per_param
     pb = getattr(v, "packed_bytes", None)
     if pb is not None:
+        if isinstance(pb, bool):
+            raise ValueError(f"variable '{v.name}': packed_bytes must be a "
+                             f"number, got {pb!r}")
         pb = float(pb)
         if not math.isfinite(pb) or pb < 0:
             raise ValueError(f"variable '{v.name}': packed_bytes must be finite "
@@ -140,35 +181,55 @@ def packed_bytes_of(v, bytes_per_param: Optional[float]) -> float:
         return pb
     q = getattr(v, "quant", None)
     if q is None:
-        return v.length * QUANT_BYTES_PER_PARAM["Q4_K"]
+        return v.length * QUANT_BYTES_PER_PARAM[DEFAULT_QUANT]
     if q not in QUANT_BYTES_PER_PARAM:
         raise ValueError(f"variable '{v.name}': unknown quant type {q!r} "
                          f"(known: {', '.join(sorted(QUANT_BYTES_PER_PARAM))})")
     return v.length * QUANT_BYTES_PER_PARAM[q]
 
 
+def sized_by_default(v, bytes_per_param: Optional[float]) -> bool:
+    """True when packed_bytes_of would fall through to the Q4_K default —
+    no override, no extracted packed_bytes, no quant type."""
+    return (bytes_per_param is None and getattr(v, "packed_bytes", None) is None
+            and getattr(v, "quant", None) is None)
+
+
 class _Block:
     """The enrolled block: persistent variables in layout order with
-    cumulative PHYSICAL-slot and packed-byte prefixes."""
+    cumulative PHYSICAL-slot and packed-byte prefixes. Mirrors
+    core._layout's `weight_vars` (phase-1, persistent, not w_new) — a
+    linking proof's refreshed Wnew copy is per-proof work, not the
+    enrolled block, and must not shift the plan's variable indices."""
 
     def __init__(self, m: Manifest, bytes_per_param: Optional[float], ELL: int):
-        self.vars = [v for v in m.variables if v.persistent]
+        self.vars = [v for v in m.variables
+                     if v.persistent and getattr(v, "phase", 1) == 1
+                     and not getattr(v, "w_new", False)]
         if not self.vars:
             raise ValueError("manifest has no persistent (enrolled) weight variables")
         self.ELL = ELL
         self.cum_phys = [0.0]
         self.cum_logical = [0.0]
         self.cum_bytes = [0.0]
+        self.n_default = 0            # variables sized by the Q4_K default
+        self.bytes_default = 0.0      # ... and the packed bytes they contribute
         for v in self.vars:
             rows = -(-int(v.length) // ELL)               # core.Variable.n_rows
+            b = packed_bytes_of(v, bytes_per_param)
             self.cum_phys.append(self.cum_phys[-1] + rows * ELL)
             self.cum_logical.append(self.cum_logical[-1] + v.length)
-            self.cum_bytes.append(self.cum_bytes[-1] + packed_bytes_of(v, bytes_per_param))
+            self.cum_bytes.append(self.cum_bytes[-1] + b)
+            if sized_by_default(v, bytes_per_param):
+                self.n_default += 1
+                self.bytes_default += b
         self.n = len(self.vars)
         self.total_phys = self.cum_phys[-1]
         self.total_logical = self.cum_logical[-1]
         self.total_bytes = self.cum_bytes[-1]
         self.aligned = self.total_phys == self.total_logical
+        self.default_share = (self.bytes_default / self.total_bytes
+                              if self.total_bytes else 0.0)
 
     def phys(self, lo: int, hi: int) -> float:
         return self.cum_phys[hi] - self.cum_phys[lo]
@@ -284,7 +345,6 @@ def _solve_stage(blk: _Block, n: int, coord_cost, worker_cost,
         # coordinator run must fit; the worker section must be partitionable
         while c_hi > 0 and blk.bytes(0, c_hi) > cap:
             c_hi -= 1
-        lo_ok = 0
         # smallest c0 whose worker section fits into n-1 capped runs (monotone)
         a, b = 0, blk.n
         while a < b:
@@ -329,7 +389,8 @@ def _solve_stage(blk: _Block, n: int, coord_cost, worker_cost,
 
 def stages(m: Manifest, mp: MachineProfile,
            encode_share: float = ENCODE_SHARE_OF_A,
-           bytes_per_param: Optional[float] = None) -> Optional[Stages]:
+           bytes_per_param: Optional[float] = None,
+           w_fold_ratio: float = ENROLLED_QLIN_RATIO) -> Optional[Stages]:
     A = mp.get("prove_constants", "A_ns_per_slot")
     B = mp.get("prove_constants", "B_ns_per_cid")
     C = mp.get("prove_constants", "C_ns_per_product")
@@ -345,7 +406,7 @@ def stages(m: Manifest, mp: MachineProfile,
         commit=encode_share * tA,
         fresh_fold=(1.0 - encode_share) * tA + B * t.cids * 1e-9 + C * t.Q * 1e-9,
         fresh_open=ENROLLED_OPEN_RATIO * A * W_fresh * 1e-9,
-        w_fold=ENROLLED_QLIN_RATIO * A * blk.total_phys * 1e-9,
+        w_fold=w_fold_ratio * A * blk.total_phys * 1e-9,
         w_open=ENROLLED_OPEN_RATIO * A * blk.total_phys * 1e-9,
     )
 
@@ -386,12 +447,16 @@ def evaluate(m: Manifest, mp: MachineProfile, n: int, *,
              resident: bool = False, disk_GBps: Optional[float] = None,
              disk_mode: str = "shared", io_overlap: str = "none",
              workspace_GB: float = 10.0,
-             encode_share: float = ENCODE_SHARE_OF_A) -> dict:
+             encode_share: float = ENCODE_SHARE_OF_A,
+             w_fold_ratio: float = ENROLLED_QLIN_RATIO,
+             semantic_s: Optional[float] = None) -> dict:
     """Stage-aware wall for N devices from EXECUTABLE plans (see module
     doc). Returns wall=None with a reason when the machine profile lacks
-    what the selected storage model needs."""
+    what the selected storage model needs. `semantic_s` (seconds of the
+    coordinator-serial semantic sweeps, unpriced here) adds the
+    whole-proof speedup estimate (S + N=1 wall) / (S + wall)."""
     assert disk_mode in DISK_MODES and io_overlap in IO_OVERLAPS and n >= 1
-    st = stages(m, mp, encode_share, bytes_per_param)
+    st = stages(m, mp, encode_share, bytes_per_param, w_fold_ratio)
     if st is None:
         return dict(n=n, wall=None, floor=None,
                     reason="prove_constants not calibrated on this machine")
@@ -408,9 +473,10 @@ def evaluate(m: Manifest, mp: MachineProfile, n: int, *,
     ELL, T_Q = lig.get("ELL", 8192), lig.get("T_QUERIES", 40)
     blk = _Block(m, bytes_per_param, ELL)
     sto = _Storage(resident, disk, disk_mode, io_overlap)
-    cap = (mem - workspace_GB) * 1e9 if resident else None
+    # mem_GB is GiB (module doc); the workspace reserve is decimal GB
+    cap = (mem * MEM_GB_BYTES - workspace_GB * 1e9) if resident else None
     A = mp.get("prove_constants", "A_ns_per_slot")
-    rate = {"fold": ENROLLED_QLIN_RATIO * A * 1e-9, "open": ENROLLED_OPEN_RATIO * A * 1e-9}
+    rate = {"fold": w_fold_ratio * A * 1e-9, "open": ENROLLED_OPEN_RATIO * A * 1e-9}
     fresh = {"fold": st.fresh_fold, "open": st.fresh_open}
 
     def coord_cost(stage):
@@ -458,10 +524,30 @@ def evaluate(m: Manifest, mp: MachineProfile, n: int, *,
             pf, _ = _solve_stage(blk, n, coord_cost("fold"), worker_cost("fold"), None)
             po, _ = _solve_stage(blk, n, coord_cost("open"), worker_cost("open"), None)
             cands.append(assess(pf, po, "independent"))
-        if static or not cands[0]["feasible"]:
+        if not static and not cands[0]["feasible"] and n == 2:
+            # N=2 under the cap: the union holds make the constraint a BOX
+            # on (c_fold, c_open) — coordinator [0, max) and worker [min, n)
+            # must both fit — so each stage is solved EXACTLY inside
+            # [c_min, c_max] by enumeration, cuts still independent.
+            c_max = blk.n
+            while c_max > 0 and blk.bytes(0, c_max) > cap:
+                c_max -= 1
+            c_min = 0
+            while c_min < blk.n and blk.bytes(c_min, blk.n) > cap:
+                c_min += 1
+            if c_min <= c_max:
+                boxed = []
+                for stage in ("fold", "open"):
+                    cc, wc_ = coord_cost(stage), worker_cost(stage)
+                    best_c = min(range(c_min, c_max + 1),
+                                 key=lambda c: max(cc(0, c), wc_(c, blk.n)))
+                    boxed.append([(0, best_c), (best_c, blk.n)])
+                cands.append(assess(boxed[0], boxed[1], "capped-exact"))
+        if static or not any(c["feasible"] for c in cands):
             # tied cuts: ONE plan for both stages, under the cap. The true
             # objective is the barrier-separated wall max(fold)+max(open):
-            # at N=2 there is a single cut, so it is enumerated EXACTLY;
+            # at N=2 there is a single cut, so it is enumerated EXACTLY
+            # (--static; the free capped case above already subsumes it);
             # at N>=3 three proxy solves (summed per-device time, and each
             # stage alone) are used and the result is labelled heuristic.
             tag = "static" if static else "tied"
@@ -502,6 +588,11 @@ def evaluate(m: Manifest, mp: MachineProfile, n: int, *,
     # itself executable (resident: the whole block must fit one device)
     single = best if n == 1 else assess([(0, blk.n)], [(0, blk.n)], "single")
     n1 = single["wall"] if single["feasible"] else None
+    # whole-proof estimate: the N=1 reference is the same-mode N=1 wall when
+    # that run is executable, else the kernel floor (labelled in the report)
+    ref1 = n1 if n1 is not None else st.floor
+    whole = (None if (semantic_s is None or not best["wall"])
+             else (semantic_s + ref1) / (semantic_s + best["wall"]))
     best.update(
         n=n, stages=st, floor=st.floor, n1_wall_same_mode=n1,
         n1_same_mode_reason=(None if n1 is not None else
@@ -509,8 +600,14 @@ def evaluate(m: Manifest, mp: MachineProfile, n: int, *,
                              "N=1 baseline streaming (cross-mode)"),
         kernel_floor_ratio=st.floor / best["wall"] if best["wall"] else None,
         same_mode_speedup=(n1 / best["wall"]) if (n1 is not None and best["wall"]) else None,
+        semantic_s=semantic_s, whole_proof_speedup=whole,
+        whole_proof_ref=("n1-wall" if n1 is not None else "kernel-floor"),
+        w_fold_ratio=w_fold_ratio,
         static=static, storage=sto, mem_GB=mem, workspace_GB=workspace_GB,
+        cap_bytes=cap,
         packed_total=blk.total_bytes, aligned=blk.aligned,
+        default_sized_vars=blk.n_default, default_sized_bytes=blk.bytes_default,
+        default_share=blk.default_share,
         physical_slots=blk.total_phys, logical_slots=blk.total_logical,
         open_payload=[s / ELL * T_Q * BYTES_PER_SLOT for s in best["open_slots"]],
         intervals_fold=_intervals(blk, best["plan_fold"]),
@@ -525,7 +622,8 @@ def evaluate(m: Manifest, mp: MachineProfile, n: int, *,
 def report(m: Manifest, mp: MachineProfile, gpus: Sequence[int], **kw) -> str:
     L = []
     enc = kw.get("encode_share", ENCODE_SHARE_OF_A)
-    st = stages(m, mp, enc, kw.get("bytes_per_param"))
+    st = stages(m, mp, enc, kw.get("bytes_per_param"),
+                kw.get("w_fold_ratio", ENROLLED_QLIN_RATIO))
     L.append(f"== weight-split (stage-aware, enrolled block, executable plans) — {mp.name} ==")
     if st is None:
         L.append("  UNAVAILABLE — prove_constants not calibrated on this machine")
@@ -541,6 +639,14 @@ def report(m: Manifest, mp: MachineProfile, gpus: Sequence[int], **kw) -> str:
     L.append(f"  storage: {mode}")
     L.append(f"  packed bytes/param: "
              f"{bpp if bpp is not None else 'per-variable (packed_bytes, quant, else Q4_K)'}")
+    blk0 = _Block(m, bpp, m.run.get("ligero", {}).get("ELL", 8192))
+    if blk0.n_default:
+        L.append(f"  WARNING: {blk0.n_default} of {blk0.n} enrolled variables "
+                 f"({100 * blk0.default_share:.0f}% of packed bytes) carry no "
+                 f"provenance and are sized at the {DEFAULT_QUANT} default "
+                 f"({QUANT_BYTES_PER_PARAM[DEFAULT_QUANT]:.4g} B/param) — a "
+                 f"BF16/F16 checkpoint is under-sized 3.6x. Extract with "
+                 f"provenance-carrying loaders or pass --bytes-per-param.")
     L.append(f"  N=1 kernel floor {_fmt_s(st.floor)} = commit {_fmt_s(st.commit)}"
              f" + fold {_fmt_s(st.fresh_fold + st.w_fold)} (fresh {_fmt_s(st.fresh_fold)}"
              f", W {_fmt_s(st.w_fold)}) + open {_fmt_s(st.fresh_open + st.w_open)}"
@@ -549,8 +655,9 @@ def report(m: Manifest, mp: MachineProfile, gpus: Sequence[int], **kw) -> str:
     L.append("  EXCLUDES semantic sweeps, orchestration, worker start-up, "
              "duplicate compile, opening hand-off (all coordinator-side)")
     L.append("")
+    hold_hdr = "max hold" if resident else "max strm"
     L.append(f"  {'N':>2}  {'x_fold':>6} {'x_open':>6}  {'fold':>8} {'open':>8} "
-             f"{'wall':>8} {'floor/w':>7} {'same-mode':>9}  {'max hold':>9}  {'HBM':>4}  "
+             f"{'wall':>8} {'floor/w':>7} {'same-mode':>9}  {hold_hdr:>9}  {'HBM':>4}  "
              f"{'payload':>9}  {'I/O-bound':>9}  plan")
     rows = []
     for n in gpus:
@@ -577,21 +684,38 @@ def report(m: Manifest, mp: MachineProfile, gpus: Sequence[int], **kw) -> str:
                  f"{_gb(hold):>9}  {fit_s:>4}  {_gb(pay):>9}  "
                  f"{(','.join(db) or 'no'):>9}  {ev['plan_mode']}")
     L.append("")
+    sem = kw.get("semantic_s")
+    if sem is not None and rows:
+        parts = []
+        for ev in rows:
+            w = ev.get("whole_proof_speedup")
+            tag = "" if ev.get("whole_proof_ref") == "n1-wall" else "*"
+            parts.append(f"N={ev['n']}: {w:.2f}x{tag}" if w is not None else f"N={ev['n']}: n/a")
+        L.append(f"  whole-proof speedup with {sem:,.0f} s of coordinator-serial "
+                 f"semantic sweeps ((S + N=1) / (S + wall)): " + "; ".join(parts)
+                 + ("  [* N=1 reference = kernel floor, the N=1 run does not fit "
+                    "this storage model]" if any("*" in x for x in parts) else ""))
     L.append("  floor/w = N=1 compute-only kernel floor / wall; same-mode = N=1 wall under "
-             "this storage model / wall (the M1b measurement), n/a when that N=1 run is "
-             "not executable (resident: block does not fit one device — measure the N=1 "
-             "baseline streaming). payload = largest worker's opened-column bytes "
-             "(physical rows x T_QUERIES x 8).")
+             "this storage model / wall, n/a when that N=1 run is not executable "
+             "(resident: block does not fit one device — measure the N=1 baseline "
+             "streaming). BOTH are KERNEL ratios over the two W passes + the fresh "
+             "floor: the coordinator-serial semantic sweeps are excluded, so the "
+             "whole-proof speedup M1b will measure is (S + N=1 wall) / (S + wall) "
+             "— pass --semantic-s to print it. payload = largest worker's "
+             "opened-column bytes (physical rows x T_QUERIES x 8).")
     L.append("  plans: 'independent' = per-stage cuts solved exactly over variable "
              "boundaries, workers' runs unequal where that balances time"
-             + (" and packed bytes; when the HBM cap binds on the fold/open unions the "
-                "cuts are tied across stages: 'tied-exact' (N=2, enumerated) or "
-                "'tied-heuristic' (N>=3, proxy objectives); 'least-infeasible(...)' = "
-                "min max hold, nothing fits" if resident else "")
+             + (" and packed bytes; when the HBM cap binds on the fold/open unions: "
+                "'capped-exact' (N=2, each stage solved exactly inside the box of "
+                "cuts both unions allow) or 'tied-heuristic' (N>=3, one plan for "
+                "both stages, proxy objectives); 'least-infeasible(...)' = min max "
+                "hold, nothing fits" if resident else "")
              + "; '--static' gives 'static-exact' (N=2) / 'static-heuristic' (N>=3); "
                "'explicit' = --x-* with equal-slot worker shares (heuristic).")
     if resident:
-        L.append(f"  HBM cap: hold <= mem_GB {mp.get('gpu', 'mem_GB')} - workspace "
+        mem = mp.get("gpu", "mem_GB")
+        L.append(f"  HBM cap: hold <= mem_GB {mem} GiB "
+                 f"({_gb(mem * MEM_GB_BYTES) if mem else 'n/a'}) - workspace "
                  f"{kw.get('workspace_GB', 10.0)} GB.")
     if rows and not rows[0]["aligned"]:
         r = rows[0]
@@ -605,6 +729,17 @@ def report(m: Manifest, mp: MachineProfile, gpus: Sequence[int], **kw) -> str:
             sens.append(f"{e:.3f} -> {ev['kernel_floor_ratio']:.2f}x" if ev["wall"]
                         else f"{e:.3f} -> n/a")
         L.append("  encode-share sensitivity, N=2 floor/wall: " + "; ".join(sens))
+        # the W fold priced at the FRESH fold rate (1-share)*A instead of
+        # ENROLLED_QLIN_RATIO*A: the two provenance sources disagree on the
+        # fold kernel's per-slot cost, and this is the other reading
+        wf = (1.0 - enc)
+        ev = evaluate(m, mp, 2, **dict(kw, w_fold_ratio=wf))
+        L.append(f"  W-fold-rate sensitivity, N=2: enrolled fold at "
+                 f"{ENROLLED_QLIN_RATIO:g}*A (predict/4h ledger) -> "
+                 f"{rows[[r['n'] for r in rows].index(2)]['kernel_floor_ratio']:.2f}x; "
+                 f"at the fresh fold rate {wf:.3f}*A -> "
+                 + (f"{ev['kernel_floor_ratio']:.2f}x (floor {_fmt_s(ev['floor'])}, "
+                    f"wall {_fmt_s(ev['wall'])})" if ev["wall"] else "n/a"))
     return "\n".join(L)
 
 
