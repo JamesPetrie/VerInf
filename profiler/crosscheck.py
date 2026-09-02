@@ -8,9 +8,24 @@ builder three ways:
      LogUp settlements — those are known-unmodeled and labeled, not flagged);
   2. cost totals — W/cids/Q per type and overall, persistent (weight) slots
      compared EXACTLY;
-  3. with --layout: the prover's own LIGERO_LAYOUT_BREAKDOWN table, captured
-     from a subprocess run of the demo, against the same aggregation
-     recomputed from the extracted manifest — row for row.
+  3. with --layout: the prover's own LIGERO_LAYOUT_BREAKDOWN table against
+     the same aggregation recomputed from the extracted manifest — row for
+     row. For maverick the table comes from core.layout_breakdown on the
+     in-process tape (the demo's main() is fail-closed on current main: it
+     refuses to reach prove without an enrollment, an admission report and
+     the target T_QUERIES, so it can no longer serve as a subprocess probe;
+     the in-process layout is the same _layout the prover runs and needs no
+     engine pass, so --layout is cheap at ANY context, S=1000 included). For
+     llama7b the probe still runs demo_llama7b.py as a subprocess, because
+     build_llama7b is a hand mirror of that demo's main() and the subprocess
+     is what validates the mirror.
+
+The synth builder to diff against is chosen from the TAPE: a tape carrying
+RoutedProjectedMatmulClaim is the routed-projected protocol and diffs
+against `maverick-projected`; the legacy all-E fan diffs against
+`maverick`. Diffing a projected tape against the legacy builder flags by
+construction (expert matmuls 458 vs 9,674, two "unknown" types, combines
+24 vs 96) — that is a builder mismatch, not a finding.
 
 Divergence = stale formula; trust the tape (synth.py docstring). A FLAG in
 the output is a finding, not necessarily a bug here.
@@ -21,8 +36,9 @@ maverick needs a GGUF on disk (metadata is read eagerly; payloads stay lazy).
 
     python3 profiler/crosscheck.py llama7b  --seq 100 --layout
     python3 profiler/crosscheck.py maverick --from-gguf ~/maverick-gguf/UD-Q4_K_XL \
-        --prompt-n 2 --cont-n 2 --layout
-    python3 profiler/crosscheck.py maverick --from-gguf ... --seq 1000   # big-S extract only
+        --t-queries 54 --prompt-n 2 --cont-n 2 --layout
+    python3 profiler/crosscheck.py maverick --from-gguf ... --t-queries 54 \
+        --seq 1000 --layout                      # big-S extract + in-process layout
 
 Exit 0: no FLAG lines. Exit 1: at least one FLAG — eyeball before trusting
 extracted manifests (README roadmap 1 is the gate).
@@ -334,6 +350,14 @@ def build_maverick(gguf: str, prompt_n: int, cont_n: int, *, layers: int,
     return tape, model
 
 
+def synth_builder_for(tape) -> str:
+    """Which synth builder models this Maverick tape: the routed-projected
+    protocol (RoutedProjectedMatmulClaim present) or the legacy all-E fan."""
+    names = {type(c).__name__ for c in tape.claims}
+    return "maverick-projected" if "RoutedProjectedMatmulClaim" in names \
+        else "maverick"
+
+
 # ------------------------------------------------- layout breakdown probe
 
 _LAYOUT_HEAD = re.compile(
@@ -425,6 +449,20 @@ def diff_layout(probe_m_total, probe: dict, man: Manifest) -> list:
     return flags
 
 
+def layout_probe_in_process(tape) -> str:
+    """The prover's LIGERO_LAYOUT_BREAKDOWN table computed on THIS tape via
+    core.layout_breakdown (challenge-independent, value-free: no engine
+    pass, no weight resolution — placeholder loaders never fire). Returned
+    in the exact printed form parse_layout reads, so the archived probe
+    files and the in-process path share one parser."""
+    import core
+    m_total, table = core.layout_breakdown(tape, tape.cfg)
+    text = core.format_layout_breakdown(m_total, table, tape.cfg) + "\n"
+    print("\n[layout probe] in-process core.layout_breakdown "
+          f"(m_total={m_total:,})")
+    return text
+
+
 def run_layout_probe(cmd: list, timeout: int) -> str:
     env = dict(os.environ, LIGERO_LAYOUT_BREAKDOWN="1",
                PYTHONPATH=os.pathsep.join(
@@ -459,9 +497,10 @@ def main(argv=None) -> int:
     ap.add_argument("--t-queries", type=int, default=None,
                     help="sets LIGERO_T_QUERIES before the demo imports read it")
     ap.add_argument("--layout", action="store_true",
-                    help="also run the prover's LIGERO_LAYOUT_BREAKDOWN probe "
-                         "(subprocess; runs the demo's pre-prove passes, so "
-                         "keep the context small) and diff row layouts")
+                    help="also diff the prover's LIGERO_LAYOUT_BREAKDOWN row "
+                         "layout: in-process for maverick (cheap at any S); "
+                         "a demo subprocess for llama7b (validates the hand "
+                         "mirror; keep --seq small)")
     ap.add_argument("--layout-timeout", type=int, default=3600)
     ap.add_argument("--skip-selftest", action="store_true")
     ap.add_argument("-o", "--out-dir", default="crosscheck-out")
@@ -497,6 +536,9 @@ def main(argv=None) -> int:
         if not a.from_gguf:
             ap.error("maverick needs --from-gguf (metadata is read eagerly)")
         if a.seq is not None:
+            if a.prompt_n != 2 or a.cont_n != 2:
+                print(f"note: --seq {a.seq} overrides --prompt-n/--cont-n "
+                      f"(prompt 2, continuation {a.seq - 2})")
             a.prompt_n, a.cont_n = 2, a.seq - 2
         seq = a.prompt_n + a.cont_n
         layers = a.layers if a.layers is not None else 48
@@ -505,19 +547,15 @@ def main(argv=None) -> int:
                                      d=a.d, d_ff=a.d_ff, vocab=a.vocab)
         sy = None
         if layers == 48 and a.experts == 128 and a.d == 5120:
-            sy = synth.BUILDERS["maverick"](seq,
-                                            t_queries=tape.cfg.T_QUERIES)
+            builder = synth_builder_for(tape)
+            print(f"    protocol on the tape: {builder} "
+                  f"(synth builder chosen from the claim types)")
+            sy = synth.BUILDERS[builder](seq, t_queries=tape.cfg.T_QUERIES)
         else:
             print("note: non-standard shape — synth models the full 48x128 "
                   "Maverick only; skipping the synth diff (layout diff "
                   "still runs)")
-        probe_cmd = [sys.executable,
-                     str(_REPO / "demo" / "demo_maverick_full.py"),
-                     "--from-gguf", a.from_gguf,
-                     "--prompt-n", str(a.prompt_n), "--cont-n", str(a.cont_n),
-                     "--layers", str(layers), "--experts", str(a.experts),
-                     "--d", str(a.d), "--d-ff", str(a.d_ff),
-                     "--vocab", str(a.vocab)]
+        probe_cmd = None      # maverick's layout probe runs in-process
 
     print(f"    built: {len(tape.claims):,} claims")
     print("[3] extracting manifest")
@@ -534,10 +572,15 @@ def main(argv=None) -> int:
         flags += diff_report(sy, man, ui_positions=ui_positions)
 
     if a.layout:
-        print("[5] prover layout probe (this runs the demo up to the start "
-              "of prove, including any engine pass — minutes at small "
-              "context)")
-        text = run_layout_probe(probe_cmd, a.layout_timeout)
+        if probe_cmd is not None:
+            print("[5] prover layout probe (subprocess: runs the demo up to "
+                  "the start of prove, including any engine pass — minutes "
+                  "at small context)")
+            text = run_layout_probe(probe_cmd, a.layout_timeout)
+        else:
+            print("[5] prover layout probe (in-process core.layout_breakdown "
+                  "on the built tape — no engine pass)")
+            text = layout_probe_in_process(tape)
         (out / f"{a.model}-s{seq}-layout.txt").write_text(text)
         m_total, table = parse_layout(text)
         flags += diff_layout(m_total, table, man)

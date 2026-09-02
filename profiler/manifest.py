@@ -9,8 +9,10 @@ form, for boxes without torch and as a cross-check).
 
 Everything downstream — cost totals, time/memory prediction, DAG export, and
 eventually the multi-GPU scheduler's work list — consumes this format only,
-never the tape directly. Extending the schema: add fields, bump
-SCHEMA_VERSION, keep old readers working (readers ignore unknown fields).
+never the tape directly. Extending the schema: ADDITIVE optional fields
+(with defaults) keep SCHEMA_VERSION as is — a bump would make older
+readers on main refuse newer manifests for nothing; bump only for a
+change an old reader would misinterpret. Readers ignore unknown fields.
 """
 from __future__ import annotations
 
@@ -48,6 +50,11 @@ class VariableRecord:
     # times its packed GGUF source); `quant` the GGUF block type.
     quant: Optional[str] = None
     packed_bytes: Optional[float] = None
+    # linking proofs only (core P5): the REFRESHED copy of a weight — a
+    # per-proof Wnew block, not the enrolled block. core._layout excludes
+    # w_new from `weight_vars`; weightsplit mirrors that so plan indices
+    # line up with the prover's.
+    w_new: bool = False
 
 
 @dataclass
@@ -60,7 +67,11 @@ class Manifest:
     variables: List[VariableRecord] = field(default_factory=list)
 
     def save(self, path: str) -> None:
-        with open(path, "w") as f:
+        # symmetric with load: a .gz path is written gzipped, so an archive
+        # saved as x.json.gz loads back (save/load used to disagree — plain
+        # JSON under a .gz name raised BadGzipFile on load)
+        opener = gzip.open if str(path).endswith(".gz") else open
+        with opener(path, "wt") as f:
             json.dump(asdict(self), f)
 
     @staticmethod

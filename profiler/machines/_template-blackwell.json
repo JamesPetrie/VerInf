@@ -34,6 +34,8 @@
   },
   "interconnect": null,
   "provenance": {
-    "_note": "Record where every number came from (bench name + date). First-order Blackwell expectation: A/C scale with aggregate memory bandwidth, B with compute \u2014 see analysis/maverick-cost-model.md 'Scaling across machines'. blake3_reg_compress_Gps is the REGISTER-RESIDENT compress rate (profiler/bench/bench_blake3_reg.cu) \u2014 B's proper scaling basis; the column-hash blake3_compress_Gps is memory-bandwidth-limited at large m and cannot carry B."
+    "_note": "Record where every number came from (bench name + date). First-order Blackwell expectation: A/C scale with aggregate memory bandwidth, B with compute \u2014 see analysis/maverick-cost-model.md 'Scaling across machines'. blake3_reg_compress_Gps is the REGISTER-RESIDENT compress rate (profiler/bench/bench_blake3_reg.cu) \u2014 B's proper scaling basis; the column-hash blake3_compress_Gps is memory-bandwidth-limited at large m and cannot carry B.",
+    "_units": "gpu.mem_GB is GiB as the driver reports it (calibrate: total_memory / 2**30, or nvidia-smi MiB / 1024); consumers convert with 2**30. Every other byte figure is decimal (GB = 1e9, GBps = 1e9 B/s, MBps = 1e6 B/s). io.disk_read_GBps must say WHICH mount it measured (local NVMe vs network volume) \u2014 a network-volume number is not a property of the GPU class.",
+    "_hbm_chase": "gpu.hbm_chase_ns is the per-hop wall across the bench's default 65536 walkers (a throughput figure), not the single-access HBM latency."
   }
 }

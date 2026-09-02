@@ -15,7 +15,7 @@ One contract, two producers, several consumers:
                     ┌─ extract.py  (tape walker; runs where the prover runs; EXACT,
                     │              model-agnostic — anything that builds a Tape)
   manifest.json  ◄──┤
-                    └─ synth.py    (closed-form builders: maverick, llama7b;
+                    └─ synth.py    (closed-form builders: maverick, maverick-projected, llama7b;
                                    pure Python — runs anywhere, cross-checks extract)
         │
         ├─► predict.py   × machines/<name>.json  →  cost report
@@ -57,6 +57,13 @@ python3 profiler/cli.py predict man.json --machine gb10-spark --gpus 8      # id
 python3 profiler/cli.py dag     man.json -o dag.json
 python3 profiler/cli.py partition man.json --shards 8 --weight-bytes-per-param 0.7   # compare strategies
 python3 profiler/cli.py partition man.json --shards 8 --strategy experts             # one in detail
+python3 profiler/crosscheck.py maverick --from-gguf <gguf> --t-queries 54 --seq 1000 --layout
+python3 profiler/calibrate.py --name <sku> --tmpdir /local/disk
+python3 profiler/instrumented_prove.py --from-gguf <gguf> --t-queries 54 --prompt-n 500 --cont-n 500
+#   the hardware-session tools (GPU box): extraction cross-check against
+#   synth + the prover's own layout, machine-profile calibration, and the
+#   research timing prove (the demo's proof path is fail-closed on main) —
+#   RUNBOOK-blackwell.md is the session script.
 python3 profiler/cli.py weightsplit man.json --machine b200-runpod --resident --intervals 2
 #   stage-aware wall for the weight-split prover (coordinator + enrolled-block
 #   workers) from executable whole-variable plans with exact cuts: commit +
@@ -101,7 +108,7 @@ any box.
 | proof size | 93.1 GB | 93.6 GB |
 | opened-column GPU payload | 34.8 GB | ~35 GB (derived) |
 | verifier peak RSS | 76.1 GB | 75.7 GB |
-| proof dump time | 751 s | 756 s |
+| proof dump time (legacy decimal JSON) | 751 s | 756 s |
 | prove wall-clock | 3.0 h floor / 9.9 h aggregate | 14.26 h |
 
 Prove time is reported as a **bracket**, per `analysis/maverick-cost-model.md`:

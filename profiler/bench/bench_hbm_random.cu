@@ -3,9 +3,15 @@
 // Two numbers a sequential-copy bench cannot give:
 //   gather — y[i] = x[idx[i]] with random idx over a buffer far larger
 //            than L2: the achievable random 8B-granule read bandwidth.
-//   chase  — a dependent pointer walk (next = x[next]): raw HBM access
-//            LATENCY, with W independent walkers to show how much of it
-//            parallelism hides.
+//   chase  — a dependent pointer walk (next = x[next]) run by W independent
+//            walkers. The reported ns/hop is the per-hop WALL ACROSS ALL
+//            WALKERS (kernel time / hops), i.e. a throughput figure: with
+//            the default 65536 walkers in flight it is ~1-2 ns/hop, far
+//            below the ~600-800 ns single-access HBM latency, which only a
+//            run with --walkers 1 (one warp, one outstanding load) exposes.
+//            Sweep --walkers to see how much of the latency parallelism
+//            hides; the profile field gpu.hbm_chase_ns is the default-W
+//            number and is labelled as such.
 //
 // Consumers: the machine profile (gpu.hbm_random_GBps, gpu.hbm_chase_ns)
 // and the HBM-state challenge protocol's f(x, nonce) design — both the
@@ -29,7 +35,11 @@
 __global__ void k_fill_perm(uint64_t* x, uint64_t n, uint64_t seed) {
     // Pseudo-random single-cycle permutation via an affine map with an
     // odd multiplier: next = (a*i + c) mod n visits cells in a stride
-    // pattern incoherent to the cache once a is large and odd.
+    // pattern incoherent to the cache once a is large and odd. Full period
+    // (one cycle over all n cells) holds for the power-of-two n the
+    // default --gib produces (a odd, a-1 divisible by 4, c odd); a
+    // non-power-of-two --gib can give shorter cycles, which only shortens
+    // the chase's footprint, not the gather's.
     uint64_t i = blockIdx.x * (uint64_t)blockDim.x + threadIdx.x;
     uint64_t stride = gridDim.x * (uint64_t)blockDim.x;
     uint64_t a = (seed | 1uLL);
@@ -92,7 +102,11 @@ int main(int argc, char** argv) {
         fprintf(stderr, "alloc failed (%.1f GiB)\n", gib);
         return 1;
     }
-    cudaMalloc(&d_y, (size_t)walkers * 8);
+    // k_gather always runs 256x256 threads and writes y[tid] for each of
+    // them, so the sink must cover that grid whatever --walkers says (a
+    // smaller walker count used to overflow it)
+    long long sink_cells = walkers > 65536 ? walkers : 65536;
+    cudaMalloc(&d_y, (size_t)sink_cells * 8);
     k_fill_perm<<<1024, 256>>>(d_x, n, 0x2545F4914F6CDD1DuLL);
     cudaDeviceSynchronize();
     printf("buffer: %.1f GiB (%llu cells)\n", gib, (unsigned long long)n);
@@ -132,12 +146,14 @@ int main(int argc, char** argv) {
         cudaEventSynchronize(t1);
         float ms = 0;
         cudaEventElapsedTime(&ms, t0, t1);
-        double ns = ms * 1e6 / hops;     // per-hop wall across all walkers
+        double ns = ms * 1e6 / hops;     // per-hop wall across ALL walkers (throughput, not latency)
         if (ns < best_ns) best_ns = ns;
         printf("  chase run %d: %.1f ms (%lld hops x %lld walkers)\n",
                r, ms, hops, walkers);
     }
-    printf("chase best: %.2f ns/hop (%lld parallel walkers)\n",
+    printf("chase best: %.2f ns/hop (%lld parallel walkers; per-hop wall "
+           "across all walkers — a throughput figure, not the single-access "
+           "latency; rerun with --walkers 1 for latency)\n",
            best_ns, walkers);
 
     cudaFree(d_x);

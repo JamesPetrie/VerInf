@@ -161,14 +161,17 @@ def parse_blake3(out: str):
 # ------------------------------------------------------- gpu detection
 
 def detect_gpu():
-    """-> dict(name, count, mem_GB, arch) via torch, else nvidia-smi."""
+    """-> dict(name, count, mem_GB, arch, sms) via torch, else nvidia-smi
+    (sms is None there). mem_GB is GiB (total_memory / 2**30, MiB / 1024) —
+    the profile convention every consumer converts with 2**30."""
     try:
         import torch
         if torch.cuda.is_available():
             p = torch.cuda.get_device_properties(0)
             return dict(name=p.name, count=torch.cuda.device_count(),
                         mem_GB=round(p.total_memory / 2**30),
-                        arch=f"sm_{p.major}{p.minor}")
+                        arch=f"sm_{p.major}{p.minor}",
+                        sms=int(getattr(p, "multi_processor_count", 0)) or None)
     except Exception:
         pass
     smi = shutil.which("nvidia-smi")
@@ -181,8 +184,21 @@ def detect_gpu():
             name, cap, mem = [x.strip() for x in lines[0].split(",")]
             return dict(name=name, count=len(lines),
                         mem_GB=round(float(mem) / 1024),
-                        arch="sm_" + cap.replace(".", ""))
+                        arch="sm_" + cap.replace(".", ""), sms=None)
     return None
+
+
+def bench_grid(sms, threads: int = 256, max_threads_per_sm: int = 2048):
+    """Blocks for the chained-ALU benches (bench_field_mul, bench_blake3_reg)
+    so the grid FILLS the part: their built-in default of 256 blocks x 256
+    threads is 13.8 warps/SM on a 148-SM B200 (42.7 on the 48-SM GB10) —
+    under-occupied, and the session-1 archive misread the resulting low
+    per-SM rates as "launch-bound". Full occupancy is max_threads_per_sm /
+    threads blocks per SM; None when the SM count is unknown (keep the
+    bench default)."""
+    if not sms:
+        return None
+    return int(sms) * (max_threads_per_sm // threads)
 
 
 # ------------------------------------------------------- cuda benches
@@ -460,7 +476,7 @@ def main(argv=None) -> int:
     arch = a.arch or (gpu_info or {}).get("arch")
 
     gpu = dict(count=(gpu_info or {}).get("count"),
-               mem_GB=(gpu_info or {}).get("mem_GB"),
+               mem_GB=(gpu_info or {}).get("mem_GB"),          # GiB (see detect_gpu)
                mem_bandwidth_GBps=None, field_mul_Gps=None,
                blake3_compress_Gps=None, blake3_bulk_GBps=None,
                blake3_reg_compress_Gps=None, ntt_ns_per_elem=None,
@@ -470,17 +486,107 @@ def main(argv=None) -> int:
     io = dict(disk_read_GBps=None, h2d_GBps=None, proof_dump_MBps=None,
               proof_dump_compact_MBps=None)
 
+    constants = dict(A_ns_per_slot=None, B_ns_per_cid=None,
+                     C_ns_per_product=None, aggregate_ns_per_slot=None)
+
+    def write_profile(partial: bool = False):
+        """Write whatever has been measured so far. Called once at the end
+        and — so a rented session never loses an hour of CUDA numbers to a
+        late MemoryError, Ctrl-C or a disk probe crash — from the failure
+        path with partial=True, which marks the profile as incomplete."""
+        try:
+            cores = len(os.sched_getaffinity(0))      # the container's share
+        except (AttributeError, OSError):
+            cores = os.cpu_count()
+        profile = {
+            "name": a.name,
+            "description": (f"{(gpu_info or {}).get('name', 'unknown GPU')} — "
+                            f"calibrated by profiler/calibrate.py {today}"
+                            + (" — PARTIAL: the run failed before every probe "
+                               "completed; null fields were never measured"
+                               if partial else "")),
+            "gpu": gpu,
+            "prove_constants": constants,
+            "verify": {"bytes_per_row": 700, "cores": cores},
+            "io": io,
+            "interconnect": None,
+            "provenance": dict(prov, **{
+                "mem_GB": "GiB as the driver reports it (total_memory / 2**30); "
+                          "consumers convert with 2**30",
+                "verify.bytes_per_row": "700: gb10-spark estimate carried over, "
+                                        "not measured here",
+                "verify.cores": "os.sched_getaffinity(0) — the container's CPU "
+                                "share, not the host's",
+            }),
+        }
+        out_path.write_text(json.dumps(profile, indent=2) + "\n")
+        print(f"\nwrote {out_path}{' (PARTIAL)' if partial else ''}")
+
+    try:
+        _run_probes(a, arch, gpu_info, gpu, io, prov, constants, today, raw_dir)
+    except BaseException:
+        print("\ncalibrate: a probe failed — writing the PARTIAL profile "
+              "before re-raising", flush=True)
+        write_profile(partial=True)
+        raise
+    write_profile()
+
+    base = MachineProfile.load("gb10-spark")
+    print(f"\nratios vs gb10-spark (the floor scales A/C by bandwidth, "
+          f"B by compute):")
+    for label, path in [("mem bandwidth", ("gpu", "mem_bandwidth_GBps")),
+                        ("field mul", ("gpu", "field_mul_Gps")),
+                        ("blake3 compress", ("gpu", "blake3_compress_Gps")),
+                        ("blake3 reg", ("gpu", "blake3_reg_compress_Gps")),
+                        ("blake3 bulk", ("gpu", "blake3_bulk_GBps"))]:
+        new = gpu.get(path[1])
+        old = base.get(*path)
+        if new and old:
+            print(f"  {label:16s} {new:>10.1f} / {old:<8g} = {new / old:5.2f}x")
+    nt, ot = gpu.get("ntt_ns_per_elem"), base.get("gpu", "ntt_ns_per_elem")
+    if nt and ot:
+        print(f"  {'ntt ns/elem':16s} {nt:>10.3f} / {ot:<8g} = "
+              f"{ot / nt:5.2f}x faster")
+    # The A-constant sanity check the runbook asks for, done on the spot:
+    # A is bandwidth-ratioed from gb10, so if encode really scales with
+    # bandwidth the BATCHED NTT (the prover path) should land near gb10's
+    # single-transform number divided by the bandwidth ratio.
+    ntb, bw, bw0 = (gpu.get("ntt_batched_ns_per_elem"),
+                    gpu.get("mem_bandwidth_GBps"), base.get("gpu", "mem_bandwidth_GBps"))
+    if ntb and ot and bw and bw0:
+        exp = ot / (bw / bw0)
+        print(f"  {'ntt BATCHED':16s} {ntb:>10.4f} ns/elem vs {exp:.4f} expected "
+              f"if encode scaled with bandwidth ({ntb / exp:.2f}x of that): "
+              + ("A's bandwidth-ratio story holds" if ntb <= 1.5 * exp else
+                 "encode is NOT bandwidth-scaled here — A is optimistic; "
+                 "treat the floor accordingly"))
+    elif ntb is None and not a.skip_cuda:
+        print("  ntt BATCHED: not measured (bench_ntt_batched produced nothing) "
+              "— the A-constant check is open")
+    return 0
+
+
+def _run_probes(a, arch, gpu_info, gpu, io, prov, constants, today, raw_dir):
+    """Every measurement, in order; fills gpu/io/prov/constants in place so
+    main() can write a partial profile if any step raises."""
     nvcc = a.nvcc or shutil.which("nvcc") or "/usr/local/cuda/bin/nvcc"
     if not a.skip_cuda and arch and Path(nvcc).exists():
         build = raw_dir / "build"
         build.mkdir(exist_ok=True)
         print(f"[cuda benches] nvcc={nvcc}")
+        blocks = bench_grid((gpu_info or {}).get("sms"))
+        grid_args = ["--blocks", str(blocks)] if blocks else []
+        grid_note = (f"grid {blocks}x256 (full occupancy on "
+                     f"{gpu_info['sms']} SMs)" if blocks else
+                     "grid = bench default 256x256 (SM count unknown — "
+                     "under-occupied on large parts)")
+        print(f"  ALU benches: {grid_note}")
         specs = [   # each isolated: one failure skips one bench, not the rest
-            ("bench_field_mul", BENCH_DIR, ["--runs", str(a.runs)]),
+            ("bench_field_mul", BENCH_DIR, ["--runs", str(a.runs)] + grid_args),
             ("bench_ntt", BENCH_DIR, []),
             ("bench_blake3_columns", BENCH_DIR, ["--runs", str(a.runs)]),
             ("bench_goldilocks_matmul", BENCH_DIR, []),
-            ("bench_blake3_reg", PROF_BENCH_DIR, ["--runs", str(a.runs)]),
+            ("bench_blake3_reg", PROF_BENCH_DIR, ["--runs", str(a.runs)] + grid_args),
             ("bench_ntt_batched", PROF_BENCH_DIR, []),
             ("bench_hbm_random", PROF_BENCH_DIR, []),
             ("bench_launch_latency", PROF_BENCH_DIR, []),
@@ -494,7 +600,8 @@ def main(argv=None) -> int:
                 print(f"  {nm} failed, continuing: {e}")
         if "bench_field_mul" in outs:
             gpu["field_mul_Gps"] = parse_field_mul(outs["bench_field_mul"])
-            prov["field_mul_Gps"] = f"bench_field_mul best-of-{a.runs}, {today}"
+            prov["field_mul_Gps"] = (f"bench_field_mul best-of-{a.runs}, "
+                                     f"{grid_note}, {today}")
         if "bench_ntt" in outs:
             gpu["ntt_ns_per_elem"] = parse_ntt(outs["bench_ntt"])
             prov["ntt_ns_per_elem"] = ("bench_ntt best variant at n=65536 "
@@ -519,7 +626,8 @@ def main(argv=None) -> int:
                 parse_blake3_reg(outs["bench_blake3_reg"])
             prov["blake3_reg_compress_Gps"] = (
                 f"bench_blake3_reg register-resident chained compress, "
-                f"{today} — the ALU-bound rate; B's proper scaling basis")
+                f"{grid_note}, {today} — the ALU-bound rate; B's proper "
+                f"scaling basis")
         if "bench_ntt_batched" in outs:
             gpu["ntt_batched_ns_per_elem"] = \
                 parse_ntt_batched(outs["bench_ntt_batched"])
@@ -535,7 +643,9 @@ def main(argv=None) -> int:
                 f"{today} — random 8B-read throughput")
             prov["hbm_chase_ns"] = (
                 f"bench_hbm_random dependent pointer chase, {today} — "
-                f"per-hop wall with parallel walkers")
+                f"per-hop WALL across the default 65536 walkers: a "
+                f"throughput figure, NOT the single-access HBM latency "
+                f"(rerun with --walkers 1 for that)")
         if "bench_launch_latency" in outs:
             ls, lt = parse_launch(outs["bench_launch_latency"])
             gpu["launch_us_sync"], gpu["launch_us_stream"] = ls, lt
@@ -603,47 +713,12 @@ def main(argv=None) -> int:
     except (RuntimeError, OSError) as e:
         print(f"  dump proxy failed/skipped: {e}")
 
-    constants = dict(A_ns_per_slot=None, B_ns_per_cid=None,
-                     C_ns_per_product=None, aggregate_ns_per_slot=None)
     if not a.no_derive:
         base = MachineProfile.load("gb10-spark")
         derived, dprov = derive_prove_constants(
             base, gpu["mem_bandwidth_GBps"], gpu["blake3_reg_compress_Gps"])
         constants.update(derived)
         prov.update(dprov)
-
-    profile = {
-        "name": a.name,
-        "description": (f"{(gpu_info or {}).get('name', 'unknown GPU')} — "
-                        f"calibrated by profiler/calibrate.py {today}"),
-        "gpu": gpu,
-        "prove_constants": constants,
-        "verify": {"bytes_per_row": 700, "cores": os.cpu_count()},
-        "io": io,
-        "interconnect": None,
-        "provenance": prov,
-    }
-    out_path.write_text(json.dumps(profile, indent=2) + "\n")
-    print(f"\nwrote {out_path}")
-
-    base = MachineProfile.load("gb10-spark")
-    print(f"\nratios vs gb10-spark (the floor scales A/C by bandwidth, "
-          f"B by compute):")
-    for label, path in [("mem bandwidth", ("gpu", "mem_bandwidth_GBps")),
-                        ("field mul", ("gpu", "field_mul_Gps")),
-                        ("blake3 compress", ("gpu", "blake3_compress_Gps")),
-                        ("blake3 reg", ("gpu", "blake3_reg_compress_Gps")),
-                        ("blake3 bulk", ("gpu", "blake3_bulk_GBps"))]:
-        new = profile["gpu"].get(path[1])
-        old = base.get(*path)
-        if new and old:
-            print(f"  {label:16s} {new:>10.1f} / {old:<8g} = {new / old:5.2f}x")
-    nt, ot = profile["gpu"].get("ntt_ns_per_elem"), \
-        base.get("gpu", "ntt_ns_per_elem")
-    if nt and ot:
-        print(f"  {'ntt ns/elem':16s} {nt:>10.3f} / {ot:<8g} = "
-              f"{ot / nt:5.2f}x faster")
-    return 0
 
 
 if __name__ == "__main__":

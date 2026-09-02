@@ -93,10 +93,15 @@ def test_parse_session2_benches():
            "n= 65536 m= 2048  fwd+inv x 5  total=  350.000 ms  ->   17.090 us/NTT  0.2608 ns/elem\n")
     assert calibrate.parse_ntt_batched(out) == 0.2608
     assert calibrate.parse_ntt_batched("nope") is None
+    # chase ns/hop is the per-hop wall across all walkers (a throughput
+    # figure — 1.84 ns is impossible as a latency), and the bench now says
+    # so in the line the parser reads
     out = ("buffer: 8.0 GiB (1073741824 cells)\n"
            "  gather run 0: 500.0 ms -> 429.50 GB/s\n"
            "gather best: 430.11 GB/s (random 8B reads)\n"
-           "chase best: 1.84 ns/hop (65536 parallel walkers)\n")
+           "chase best: 1.84 ns/hop (65536 parallel walkers; per-hop wall "
+           "across all walkers — a throughput figure, not the single-access "
+           "latency; rerun with --walkers 1 for latency)\n")
     assert calibrate.parse_hbm_random(out) == (430.11, 1.84)
     assert calibrate.parse_hbm_random("x") == (None, None)
     out = ("device: NVIDIA B200  sm=10.0\n"
@@ -112,6 +117,32 @@ def test_dump_compact_smoke(tmp_path=None):
         rate = calibrate.bench_dump_compact_MBps(pl.Path(td), mb=8)
         assert rate > 0
         assert not list(pl.Path(td).iterdir())    # probe cleaned up
+
+
+def test_bench_grid_fills_the_part():
+    # the chained-ALU benches default to 256 blocks x 256 threads = 13.8
+    # warps/SM on a 148-SM B200; calibrate sizes the grid to full occupancy
+    # (2048 threads/SM) and keeps the bench default when the SM count is
+    # unknown (nvidia-smi fallback)
+    assert calibrate.bench_grid(148) == 148 * 8
+    assert calibrate.bench_grid(48) == 384
+    assert calibrate.bench_grid(None) is None and calibrate.bench_grid(0) is None
+
+
+def test_synth_builder_chosen_from_tape():
+    # a projected tape (RoutedProjectedMatmulClaim present) diffs against
+    # maverick-projected; the legacy all-E fan against maverick — diffing
+    # a projected tape against the legacy builder flags by construction
+    class RoutedProjectedMatmulClaim: pass
+    class MatmulClaim: pass
+    class RescaleClaim: pass
+    class T:
+        def __init__(self, claims): self.claims = claims
+    assert crosscheck.synth_builder_for(T([MatmulClaim(), MatmulClaim()])) == "maverick"
+    assert crosscheck.synth_builder_for(
+        T([MatmulClaim(), RoutedProjectedMatmulClaim(), RescaleClaim()])) == "maverick-projected"
+    assert set(crosscheck.synth_builder_for(T([])) for _ in range(1)) == {"maverick"}
+    assert "maverick-projected" in synth.BUILDERS and "maverick" in synth.BUILDERS
 
 
 def test_derive_prove_constants():
@@ -391,6 +422,8 @@ def main():
     test_parse_blake3_reg()
     test_parse_session2_benches()
     test_dump_compact_smoke()
+    test_bench_grid_fills_the_part()
+    test_synth_builder_chosen_from_tape()
     test_derive_prove_constants()
     test_parse_layout()
     test_layout_from_manifest()

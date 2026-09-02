@@ -25,22 +25,30 @@ BYTES_PER_SLOT = 8            # Goldilocks element = u64
 
 # Enrolled-weight per-proof passes. Under enrollment (core.WeightCommitment,
 # the kept-trees/opening-ledger path on main) the weight block is never
-# re-encoded per proof, but its linear fold and its opening remain per-proof
-# work over the whole enrolled block. Ratios mirror the admissible rates in
-# analysis/routed_projected_4h_model.py: qlin at the full A per-slot rate,
-# opening at half — validation mode (README roadmap 2) refines both.
+# re-COMMITTED per proof (no Merkle tree, no R1 work), but two passes over
+# every enrolled row remain per-proof work: the test-polynomial fold
+# (interpolate + linear fold, no codeword) and the column opening, which
+# re-encodes each row (the full LDE — core._stream_phase needs codewords
+# whenever a column sink is attached) and extracts the challenged columns.
+# Ratios mirror the admissible rates in analysis/routed_projected_4h_model.py:
+# qlin at the full A per-slot rate, opening at half. Neither is validated by
+# that model's bench (analysis/bench/admission_bench.py pre-encodes and times
+# only the column gather); validation mode (README roadmap 2) refines both.
 ENROLLED_QLIN_RATIO = 1.0
 ENROLLED_OPEN_RATIO = 0.5
 PROOF_JSON_BYTES_PER_VALUE = 21.4   # empirical: 93.6 GB / (40 * 109.27 M) — decimal-ASCII u64 + separators
 # Production transport on current main is JSON-framed u64le/base64 (legacy
 # decimal JSON still verifies but is not the fast path): 10.67 B/value for
 # base64 of 8 canonical bytes, 11 covering the envelope — the convention of
-# analysis/routed_projected_4h_model.py, whose demonstrated run wrote
-# 35.46 GB at ~751 MB/s (47.2 s), I/O-bound rather than string-building
-# bound. Machine profiles may carry io.proof_dump_compact_MBps once
-# measured per box; until then the report quotes the A100 reference.
+# analysis/routed_projected_4h_model.py. Reference rate when a machine has
+# no measured io.proof_dump_compact_MBps: the A100 final-run proof_egress
+# bound in analysis/routed-projected-status.md (52 GB modeled wire in
+# 212.5 s = 245 MB/s; the egress bench there sees 200-315 MB/s). NOT the
+# 751 MB/s "35.46 GB in 47.2 s" figure from the same document — that
+# write went to page cache on a 129 GB-RAM box and the document itself
+# says not to read it as a measurement.
 PROOF_COMPACT_BYTES_PER_VALUE = 11
-PROOF_COMPACT_REF_MBPS = 751
+PROOF_COMPACT_REF_MBPS = 245
 
 
 @dataclass
@@ -208,9 +216,10 @@ def report(m: Manifest, mp: MachineProfile, gpus: int = 1,
                      f"{ENROLLED_OPEN_RATIO:g})*A*Ww       : {_fmt_s(tE)}")
             L.append(f"    open (fresh rows) {ENROLLED_OPEN_RATIO:g}*A*Wf"
                      f"                 : {_fmt_s(tOF)}")
-            L.append("    (enrolled weights: zero per-proof RS encode; "
-                     "fold+opening passes priced per "
-                     "routed_projected_4h_model.py ratios)")
+            L.append("    (enrolled weights: no per-proof commitment; the "
+                     "fold pass and the opening pass — which re-encodes "
+                     "every enrolled row for its columns — are priced at "
+                     "the routed_projected_4h_model.py ratios)")
             kd = lig.get("K_DEG", 16384)
             budget = max(0, (kd - ELL) // 2)
             L.append(f"    enrollment lifecycle (unpriced): one-time enroll "
@@ -272,7 +281,8 @@ def report(m: Manifest, mp: MachineProfile, gpus: int = 1,
                  f"{_fmt_s(proof_c / (dump_c * 1e6))}")
     else:
         L.append(f"  proof dump time (compact, ~{PROOF_COMPACT_REF_MBPS} "
-                 f"MB/s A100 reference — unbenchmarked on this machine): "
+                 f"MB/s A100 reference = final-run egress bound, page-cache "
+                 f"excluded — unbenchmarked on this machine): "
                  f"{_fmt_s(proof_c / (PROOF_COMPACT_REF_MBPS * 1e6))}")
     dump = mp.get("io", "proof_dump_MBps")
     if dump:

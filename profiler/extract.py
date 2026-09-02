@@ -153,7 +153,8 @@ def extract_tape(tape, *, model: dict, seq: int) -> Manifest:
         rec = VariableRecord(
             name=name, length=int(v.length), phase=int(v.phase),
             persistent=bool(getattr(v, "persistent", False)),
-            producer=producer)
+            producer=producer,
+            w_new=bool(getattr(v, "w_new", False)))
         if rec.persistent:
             # Source provenance for the storage models (weightsplit): lazy
             # weight loaders may carry a `provenance` dict — the GGUF/
