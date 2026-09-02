@@ -200,7 +200,9 @@ class LazyHFLoader:
         """Return a closure that reads `param_name`, optionally transposes,
         quantizes to scale self.S, replicates KV columns kv_groups× (GQA;
         1 = no-op), and returns a flat CUDA uint64 tensor. No caching — each
-        call hits disk."""
+        call hits disk. The closure carries `.provenance` ({'quant',
+        'packed_bytes'} of the SOURCE tensor, from the header alone) when
+        the dtype is one the profiler's storage models know."""
         S, d_h = self.S, self.d_h
 
         def load() -> torch.Tensor:
@@ -217,15 +219,19 @@ class LazyHFLoader:
             load.provenance = prov     # SOURCE bytes: replication not included
         return load
 
-    _ST_DTYPES = {"F16": ("F16", 2), "FLOAT16": ("F16", 2),
-                  "BF16": ("BF16", 2), "BFLOAT16": ("BF16", 2),
-                  "F32": ("F32", 4), "FLOAT32": ("F32", 4)}
+    # safetensors dtype string (get_slice().get_dtype(): "F16"/"BF16"/
+    # "F32"/"F64"/"F8_E4M3"/...) -> (label the profiler's quant table knows,
+    # bytes per parameter). Widths outside this table return None below and
+    # the profiler falls back to its Q4_K default WITH a warning line.
+    _ST_DTYPES = {"F16": ("F16", 2), "BF16": ("BF16", 2), "F32": ("F32", 4)}
 
     def _provenance(self, param_name: str):
         """{'quant', 'packed_bytes'} from the safetensors header (shape x
         dtype size — the SOURCE tensor, so a KV-replicated logical variable
-        records its smaller packed source). Optional metadata: any header/
-        API surprise returns None rather than breaking weight loading."""
+        records its smaller packed source). Optional metadata: a missing
+        tensor, an unknown dtype or a header/API mismatch returns None
+        (the loader itself still fails loudly later if the tensor really
+        is missing); programming errors are not swallowed."""
         try:
             from safetensors.torch import safe_open
             with safe_open(self._shard_for(param_name), framework="pt",
@@ -233,16 +239,16 @@ class LazyHFLoader:
                 sl = f.get_slice(param_name)
                 shape = tuple(sl.get_shape())
                 dtype = str(sl.get_dtype()).split(".")[-1].upper()
-            hit = self._ST_DTYPES.get(dtype)
-            if hit is None:
-                return None
-            quant, bpp = hit
-            n = 1
-            for s_ in shape:
-                n *= int(s_)
-            return {"quant": quant, "packed_bytes": n * bpp}
-        except Exception:
+        except (KeyError, OSError, ValueError, RuntimeError, ImportError):
             return None
+        hit = self._ST_DTYPES.get(dtype)
+        if hit is None:
+            return None
+        quant, bpp = hit
+        n = 1
+        for s_ in shape:
+            n *= int(s_)
+        return {"quant": quant, "packed_bytes": n * bpp}
 
     def load_embedding(self, divide_by: float = 1.0) -> torch.Tensor:
         """Token embedding table (vocab·d,) quantized — read directly from
@@ -476,11 +482,11 @@ def gguf_provenance(gguf_path: str, name: str, *, per_leading_dim: bool = False)
     """{'quant', 'packed_bytes'} for one GGUF tensor — the source metadata a
     lazy loader carries for the profiler's storage models (extract.py copies
     it onto the manifest's VariableRecord). packed_bytes is the RAW packed
-    size (a numpy memmap .nbytes — header metadata, nothing is read);
-    per_leading_dim divides by the stacked leading dimension, the exact
-    per-expert share of a stacked expert tensor (raw rows slice per expert).
-    ReaderTensor.n_bytes is upstream's authoritative computed payload size;
-    data.nbytes (the memmap view) is its equivalent fallback."""
+    size from header metadata alone (ReaderTensor.n_bytes, upstream's
+    authoritative computed payload size; the memmap view's data.nbytes is
+    the equivalent fallback) — nothing is read or decoded. per_leading_dim
+    divides by the stacked leading dimension: the exact per-expert share of
+    a stacked expert tensor (a raw row slice per expert)."""
     t = _gguf_by_name(gguf_path)[name]
     nbytes = int(getattr(t, "n_bytes", 0) or t.data.nbytes)
     if per_leading_dim:

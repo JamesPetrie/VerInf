@@ -160,7 +160,15 @@ def _moe_part(gguf, il, key, E):
         return real[key].contiguous().reshape(-1)
     from loader import MAVERICK_MOE_TENSORS, gguf_provenance
     pat, _stacked = MAVERICK_MOE_TENSORS[_MOE_PART_SRC[key]]
-    load.provenance = gguf_provenance(gguf, pat.format(i=il))
+    if key == "W_router":
+        # the router is sliced to the first E experts (load_maverick_moe_layer:
+        # raw["router"][:n_experts]); record E rows of the source, not the
+        # full 128-row tensor — exact at E=128, and right in --experts dev runs
+        prov = gguf_provenance(gguf, pat.format(i=il), per_leading_dim=True)
+        prov["packed_bytes"] *= E
+        load.provenance = prov
+    else:
+        load.provenance = gguf_provenance(gguf, pat.format(i=il))
     return load
 
 
@@ -274,8 +282,13 @@ def build_model(tape, gguf, prompt_ids, cont_ids, *, V, d, n_layers, E, d_ff):
     n_fg = tape.hadamard_broadcast(n_f, g_out, SEQ=T, d=d, s_a=S, s_b=S,
                                     s_out=S, output_width=OUTPUT_WIDTH)
     lm_name = "output.weight" if "output.weight" in by else "token_embd.weight"
-    W_lm = tape.commit_lazy("W_lm", _field_loader(gguf, lm_name, transpose=True),
-                             (d, V), d * V)
+    lm_loader = _field_loader(gguf, lm_name, transpose=True)
+    if lm_name == "token_embd.weight":
+        # tied head: the same packed source already sits on the manifest
+        # under token_embd — attribute zero EXTRA bytes to W_lm rather than
+        # counting the embedding twice in the storage models
+        lm_loader.provenance = dict(lm_loader.provenance, packed_bytes=0)
+    W_lm = tape.commit_lazy("W_lm", lm_loader, (d, V), d * V)
     logits = tape.matmul(n_fg, W_lm, s_a=S, s_b=S, s_out=S,
                           output_width=OUTPUT_WIDTH)
     _log(f"LM head from {lm_name} ({'tied' if lm_name != 'output.weight' else 'untied'})")

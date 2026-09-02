@@ -114,3 +114,38 @@ if __name__ == "__main__":
     test_name_drift_is_loud()
     test_provenance_from_real_gguf_metadata()
     print("=== gguf_loader: 3/3 PASS ===")
+
+
+def test_provenance_k_quants_exact():
+    # The production tensors are K-quants (UD-Q4_K_XL: Q4_K/Q5_K/Q6_K), not
+    # the Q8_0 stand-in above: block sizes 144/176/210 bytes per 256
+    # weights. Header-only again — a separate toy file whose row length is
+    # a multiple of 256 (the K-quant block).
+    from gguf import GGUFWriter
+    from gguf.constants import GGMLQuantizationType as Q
+    from loader import gguf_provenance
+    E_, R_, C_ = 3, 8, 512
+    rng = np.random.default_rng(3)
+    specs = {"blk.0.ffn_gate_exps.weight": (Q.Q4_K, 144),
+             "blk.0.ffn_up_exps.weight": (Q.Q5_K, 176),
+             "blk.0.ffn_down_exps.weight": (Q.Q6_K, 210)}
+    with tempfile.TemporaryDirectory() as td:
+        path = f"{td}/kq.gguf"
+        w = GGUFWriter(path, "llama4")
+        for name, (qt, block_bytes) in specs.items():
+            # the Python gguf package cannot QUANTIZE K-quants (only
+            # dequantize), so write raw packed bytes of the exact packed
+            # shape — what the header records is all provenance reads
+            qd = rng.integers(0, 256, size=(E_, R_, C_ // 256 * block_bytes),
+                              dtype=np.uint8)
+            w.add_tensor(name, qd, raw_shape=qd.shape, raw_dtype=qt)
+        w.write_header_to_file(); w.write_kv_data_to_file(); w.write_tensors_to_file()
+        w.close()
+        for name, (qt, block_bytes) in specs.items():
+            full = gguf_provenance(path, name)
+            per = gguf_provenance(path, name, per_leading_dim=True)
+            want = E_ * R_ * C_ // 256 * block_bytes
+            assert full == {"quant": qt.name, "packed_bytes": want}, (name, full)
+            assert per == {"quant": qt.name, "packed_bytes": want // E_}, (name, per)
+    print("    provenance: Q4_K/Q5_K/Q6_K packed bytes exact (144/176/210 per 256)")
+
