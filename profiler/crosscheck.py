@@ -135,26 +135,29 @@ def _fmt(x: float) -> str:
 # `routing` claim is one bundled record where a real tape emits the pieces
 # (core + word-extract + n_words range words = 2+n_words records, cost-sum
 # identical by the claimcosts bundle identity), so each bundle contributes
-# 1+n_words extra records to the group count. diff_report derives that
-# exactly from synth's own bundles (24 x 4 = 96 for standard Maverick) —
-# second-pass review finding: with only the input-route cap, real Maverick
-# flags by construction. Cross-check vs the measured archive delta:
+# 1+n_words extra records to the group count. Normalize both manifests to
+# that expanded count BEFORE applying UI allowances, so representation
+# changes still require matching costs. Standard Maverick expands 24 x 4
+# = 96 records. Cross-check vs the measured archive delta:
 # 96 + 4 routing + UI's fixed handful matches the ~107 intercept, and the
 # slope (1149-207)/450 = 2.09/position matches embed+add = 2/position.
-def _ui_expected_extra(positions: int, synth_man: Manifest) -> dict:
-    bundle_extra = sum(
-        1 + int(c.params.get("n_words", 3)) for c in synth_man.claims
+def _routing_bundle_extra(man: Manifest) -> int:
+    return sum(
+        1 + int(c.params.get("n_words", 3)) for c in man.claims
         if claimcosts.canonical(c.type) == "routing")
+
+
+def _ui_expected_extra(positions: int) -> dict:
     return {
         "hadamard": 1,
         "ptlookup": 2,
         "embed_lookup": positions,
         "add": positions,               # (C-1) chain adds + 1 reveal pin
-        "routing[+aux]": bundle_extra + 6,
+        "routing[+aux]": 6,
     }
 
 
-_REL_TOL = 0.001          # per-type W/cids/Q at equal claim counts
+_REL_TOL = 0.001          # per-type W/cids/Q matches or lower bounds
 _UI_TOTAL_TOL = 0.02      # shared-type totals backstop when UI is present
 
 
@@ -163,15 +166,18 @@ def diff_report(sy: Manifest, ex: Manifest, ui_positions=None) -> list:
 
     ui_positions: continuation-position count when the extracted tape
     carries a UI chain (maverick build_model always does) — each modeled
-    type then tolerates at most _ui_expected_extra() additional claims,
-    with shared-type W/cids/Q totals still bounded at _UI_TOTAL_TOL as a
-    backstop (excess-count types can't be W-checked per claim). None =
-    strict: every modeled type must match synth's count exactly, and all
-    of W, cids, and Q per type within _REL_TOL."""
+    type then tolerates at most _ui_expected_extra() additional claims.
+    Extra UI work cannot reduce a type's W/cids/Q below synth; shared-type
+    totals are also bounded at _UI_TOTAL_TOL. Routing bundles are counted
+    in their expanded representation on both sides: a representation-only
+    difference still requires matching costs. None = strict: every modeled
+    type must match synth's equivalent count and all of W, cids, and Q per
+    type within _REL_TOL."""
     flags = []
     a, b = per_type(sy), per_type(ex)
-    ui_caps = _ui_expected_extra(ui_positions, sy) \
+    ui_caps = _ui_expected_extra(ui_positions) \
         if ui_positions is not None else {}
+    routing_expansion = _routing_bundle_extra(sy) - _routing_bundle_extra(ex)
     print(f"\n{'type':24s} {'synth n':>8s} {'extr n':>8s} "
           f"{'synth W':>16s} {'extr W':>16s}  note")
     for t in sorted(set(a) | set(b), key=lambda t: -(b.get(t) or a[t])[1]):
@@ -183,11 +189,13 @@ def diff_report(sy: Manifest, ex: Manifest, ui_positions=None) -> list:
             continue
         if sa and sb:
             note = ""
-            if sb[0] < sa[0]:
+            representation_extra = routing_expansion if t == "routing[+aux]" else 0
+            extra = sb[0] - sa[0] - representation_extra
+            if extra < 0:
                 note = "FLAG extracted has FEWER than synth models"
-                flags.append(f"{t}: extracted count {sb[0]} < synth {sa[0]}")
-            elif sb[0] > sa[0]:
-                extra = sb[0] - sa[0]
+                flags.append(f"{t}: extracted has {-extra} fewer claims than "
+                             "synth after routing-bundle expansion")
+            elif extra > 0:
                 cap = ui_caps.get(t, 0)
                 if 0 < extra <= cap:
                     note = f"+{extra} extracted (UI chain, expected <= {cap})"
@@ -201,15 +209,24 @@ def diff_report(sy: Manifest, ex: Manifest, ui_positions=None) -> list:
                     flags.append(
                         f"{t}: {extra} extracted claim(s) beyond synth with "
                         f"no UI chain to attribute them to")
-            else:
+            if representation_extra:
+                note += ("; " if note else "") + (
+                    f"{representation_extra:+d} routing-bundle records")
+            if extra >= 0:
+                # Equivalent representations must match; true extra claims
+                # can only add nonnegative work. Never hide a missing cost
+                # behind an allowed count increase and the global 2% cap.
                 drift = [(nm, sa[i], sb[i])
                          for i, nm in ((1, "W"), (2, "cids"), (3, "Q"))
-                         if abs(sb[i] - sa[i]) > _REL_TOL * max(abs(sa[i]), 1.0)]
+                         if (abs(sb[i] - sa[i]) if extra == 0 else sa[i] - sb[i])
+                         > _REL_TOL * max(abs(sa[i]), 1.0)]
                 if drift:
-                    note = "FLAG " + ", ".join(
+                    note += ("; " if note else "") + "FLAG " + ", ".join(
                         f"{nm} {_fmt(x)}->{_fmt(y)}" for nm, x, y in drift)
+                    reason = ("cost drift at equivalent claim count" if extra == 0
+                              else "cost below synth despite extra claims")
                     flags.append(
-                        f"{t}: cost drift at equal claim count — " + ", ".join(
+                        f"{t}: {reason} — " + ", ".join(
                             f"{nm} synth {_fmt(x)} vs tape {_fmt(y)}"
                             for nm, x, y in drift))
             print(f"{t:24s} {sa[0]:>8,d} {sb[0]:>8,d} "

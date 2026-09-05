@@ -591,68 +591,68 @@ def _run_probes(a, arch, gpu_info, gpu, io, prov, constants, today, raw_dir):
             ("bench_hbm_random", PROF_BENCH_DIR, []),
             ("bench_launch_latency", PROF_BENCH_DIR, []),
         ]
-        outs = {}
         for nm, src_dir, args_ in specs:
             try:
                 exe = compile_bench(src_dir / f"{nm}.cu", build, arch, nvcc)
-                outs[nm] = run_bench(exe, args_, raw_dir)
+                out = run_bench(exe, args_, raw_dir)
             except (RuntimeError, subprocess.TimeoutExpired) as e:
                 print(f"  {nm} failed, continuing: {e}")
-        if "bench_field_mul" in outs:
-            gpu["field_mul_Gps"] = parse_field_mul(outs["bench_field_mul"])
-            prov["field_mul_Gps"] = (f"bench_field_mul best-of-{a.runs}, "
-                                     f"{grid_note}, {today}")
-        if "bench_ntt" in outs:
-            gpu["ntt_ns_per_elem"] = parse_ntt(outs["bench_ntt"])
-            prov["ntt_ns_per_elem"] = ("bench_ntt best variant at n=65536 "
-                                       f"(us/NTT * 1000 / 65536), {today}")
-        if "bench_blake3_columns" in outs:
-            c, bulk = parse_blake3(outs["bench_blake3_columns"])
-            gpu["blake3_compress_Gps"], gpu["blake3_bulk_GBps"] = c, bulk
-            prov["blake3_compress_Gps"] = (
-                f"bench_blake3_columns best over m sweep, {today} — "
-                f"memory-bandwidth-limited at large m; NOT a basis for B")
-            prov["blake3_bulk_GBps"] = \
-                f"bench_blake3_columns best GB/s absorbed, {today}"
-        if "bench_goldilocks_matmul" in outs:
-            mm = parse_matmul(outs["bench_goldilocks_matmul"])
-            if mm:
-                prov["matmul_Gmul_s"] = (
-                    f"bench_goldilocks_matmul best {mm:g} Gmul/s across the "
-                    f"n sweep, {today} — informational (no profile field; "
-                    f"its printed 'peak floor' line is GB10's 312, ignore)")
-        if "bench_blake3_reg" in outs:
-            gpu["blake3_reg_compress_Gps"] = \
-                parse_blake3_reg(outs["bench_blake3_reg"])
-            prov["blake3_reg_compress_Gps"] = (
-                f"bench_blake3_reg register-resident chained compress, "
-                f"{grid_note}, {today} — the ALU-bound rate; B's proper "
-                f"scaling basis")
-        if "bench_ntt_batched" in outs:
-            gpu["ntt_batched_ns_per_elem"] = \
-                parse_ntt_batched(outs["bench_ntt_batched"])
-            prov["ntt_batched_ns_per_elem"] = (
-                f"bench_ntt_batched best over batch sweep at n=65536, "
-                f"{today} — the prover-path number; the single-transform "
-                f"bench is launch-bound on large-L2 parts")
-        if "bench_hbm_random" in outs:
-            g, ch = parse_hbm_random(outs["bench_hbm_random"])
-            gpu["hbm_random_GBps"], gpu["hbm_chase_ns"] = g, ch
-            prov["hbm_random_GBps"] = (
-                f"bench_hbm_random gather over an L2-exceeding buffer, "
-                f"{today} — random 8B-read throughput")
-            prov["hbm_chase_ns"] = (
-                f"bench_hbm_random dependent pointer chase, {today} — "
-                f"per-hop WALL across the default 65536 walkers: a "
-                f"throughput figure, NOT the single-access HBM latency "
-                f"(rerun with --walkers 1 for that)")
-        if "bench_launch_latency" in outs:
-            ls, lt = parse_launch(outs["bench_launch_latency"])
-            gpu["launch_us_sync"], gpu["launch_us_stream"] = ls, lt
-            prov["launch_us_sync"] = (
-                f"bench_launch_latency synced round trip, {today}")
-            prov["launch_us_stream"] = (
-                f"bench_launch_latency back-to-back enqueue, {today}")
+                continue
+            # Publish each completed measurement before starting the next
+            # benchmark. main's interruption handler serializes this state.
+            if nm == "bench_field_mul":
+                gpu["field_mul_Gps"] = parse_field_mul(out)
+                prov["field_mul_Gps"] = (f"bench_field_mul best-of-{a.runs}, "
+                                         f"{grid_note}, {today}")
+            elif nm == "bench_ntt":
+                gpu["ntt_ns_per_elem"] = parse_ntt(out)
+                prov["ntt_ns_per_elem"] = ("bench_ntt best variant at n=65536 "
+                                           f"(us/NTT * 1000 / 65536), {today}")
+            elif nm == "bench_blake3_columns":
+                c, bulk = parse_blake3(out)
+                gpu["blake3_compress_Gps"], gpu["blake3_bulk_GBps"] = c, bulk
+                prov["blake3_compress_Gps"] = (
+                    f"bench_blake3_columns best over m sweep, {today} — "
+                    f"memory-bandwidth-limited at large m; NOT a basis for B")
+                prov["blake3_bulk_GBps"] = \
+                    f"bench_blake3_columns best GB/s absorbed, {today}"
+            elif nm == "bench_goldilocks_matmul":
+                mm = parse_matmul(out)
+                if mm:
+                    prov["matmul_Gmul_s"] = (
+                        f"bench_goldilocks_matmul best {mm:g} Gmul/s across the "
+                        f"n sweep, {today} — informational (no profile field; "
+                        f"its printed 'peak floor' line is GB10's 312, ignore)")
+            elif nm == "bench_blake3_reg":
+                gpu["blake3_reg_compress_Gps"] = parse_blake3_reg(out)
+                prov["blake3_reg_compress_Gps"] = (
+                    f"bench_blake3_reg register-resident chained compress, "
+                    f"{grid_note}, {today} — the ALU-bound rate; B's proper "
+                    f"scaling basis")
+            elif nm == "bench_ntt_batched":
+                gpu["ntt_batched_ns_per_elem"] = parse_ntt_batched(out)
+                prov["ntt_batched_ns_per_elem"] = (
+                    f"bench_ntt_batched best over batch sweep at n=65536, "
+                    f"{today} — the prover-path number; the single-transform "
+                    f"bench is launch-bound on large-L2 parts")
+            elif nm == "bench_hbm_random":
+                g, ch = parse_hbm_random(out)
+                gpu["hbm_random_GBps"], gpu["hbm_chase_ns"] = g, ch
+                prov["hbm_random_GBps"] = (
+                    f"bench_hbm_random gather over an L2-exceeding buffer, "
+                    f"{today} — random 8B-read throughput")
+                prov["hbm_chase_ns"] = (
+                    f"bench_hbm_random dependent pointer chase, {today} — "
+                    f"per-hop WALL across the default 65536 walkers: a "
+                    f"throughput figure, NOT the single-access HBM latency "
+                    f"(rerun with --walkers 1 for that)")
+            elif nm == "bench_launch_latency":
+                ls, lt = parse_launch(out)
+                gpu["launch_us_sync"], gpu["launch_us_stream"] = ls, lt
+                prov["launch_us_sync"] = (
+                    f"bench_launch_latency synced round trip, {today}")
+                prov["launch_us_stream"] = (
+                    f"bench_launch_latency back-to-back enqueue, {today}")
     elif not a.skip_cuda:
         print(f"[cuda benches] skipped (nvcc at {nvcc}: "
               f"{Path(nvcc).exists()}, arch: {arch})")

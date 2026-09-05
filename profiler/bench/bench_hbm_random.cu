@@ -63,8 +63,11 @@ __global__ void k_gather(const uint64_t* x, uint64_t* y, uint64_t n,
 }
 
 __global__ void k_chase(const uint64_t* x, uint64_t* y, int hops,
-                        uint64_t n, uint64_t seed) {
+                        uint64_t n, uint64_t seed, uint64_t walkers) {
     uint64_t tid = blockIdx.x * (uint64_t)blockDim.x + threadIdx.x;
+    // The last block is rounded up; only the requested walkers may load or
+    // store. In particular, --walkers 1 must issue just one dependent chain.
+    if (tid >= walkers) return;
     uint64_t p = (seed + tid * 0xBF58476D1CE4E5B9uLL) % n;
     #pragma unroll 1
     for (int h = 0; h < hops; ++h)
@@ -89,6 +92,10 @@ int main(int argc, char** argv) {
         else if (a == "--warmup")  warmup = (int)next();
         else if (a == "--runs")    runs = (int)next();
         else { fprintf(stderr, "unknown arg: %s\n", a.c_str()); return 2; }
+    }
+    if (walkers <= 0) {
+        fprintf(stderr, "--walkers must be positive\n");
+        return 2;
     }
     cudaDeviceProp prop;
     cudaGetDeviceProperties(&prop, 0);
@@ -136,12 +143,12 @@ int main(int argc, char** argv) {
     // ---- chase latency ------------------------------------------------
     int blocks = (int)((walkers + 255) / 256);
     for (int w = 0; w < warmup; ++w)
-        k_chase<<<blocks, 256>>>(d_x, d_y, (int)hops, n, w);
+        k_chase<<<blocks, 256>>>(d_x, d_y, (int)hops, n, w, walkers);
     cudaDeviceSynchronize();
     double best_ns = 1e18;
     for (int r = 0; r < runs; ++r) {
         cudaEventRecord(t0);
-        k_chase<<<blocks, 256>>>(d_x, d_y, (int)hops, n, 0x77 + r);
+        k_chase<<<blocks, 256>>>(d_x, d_y, (int)hops, n, 0x77 + r, walkers);
         cudaEventRecord(t1);
         cudaEventSynchronize(t1);
         float ms = 0;

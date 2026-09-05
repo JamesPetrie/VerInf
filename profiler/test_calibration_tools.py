@@ -129,6 +129,66 @@ def test_bench_grid_fills_the_part():
     assert calibrate.bench_grid(None) is None and calibrate.bench_grid(0) is None
 
 
+def test_calibration_interrupt_preserves_completed_cuda_rates():
+    import json
+    import tempfile
+    from unittest.mock import patch
+
+    outputs = {
+        "bench_field_mul": "best: 123.45 Gmul/s\n",
+        "bench_ntt": ("n= 65536 log2n=16 bailey fwd+inv x 5 "
+                      "total= 1.0 ms -> 20.00 us/NTT\n"),
+        "bench_blake3_columns": ("m= 128 cols= 65536 -> 10.00 Mcols/s "
+                                  "2.00 Gcompress/s 128.00 GB/s\n"),
+        "bench_goldilocks_matmul": ("n= 8192 ops=6.87e+11 time/run= 500.00 ms "
+                                     "throughput=1374.00 Gmul/s\n"),
+        "bench_blake3_reg": "best: 13.42 Gcompress/s (register-resident)\n",
+        "bench_ntt_batched": "n= 65536 m= 512 -> 19.531 us/NTT 0.2980 ns/elem\n",
+        "bench_hbm_random": "gather best: 430.11 GB/s\nchase best: 900.00 ns/hop\n",
+    }
+    expected = dict(field_mul_Gps=123.45,
+                    ntt_ns_per_elem=20.0 * 1000 / 65536,
+                    blake3_compress_Gps=2.0, blake3_bulk_GBps=128.0,
+                    blake3_reg_compress_Gps=13.42,
+                    ntt_batched_ns_per_elem=0.2980,
+                    hbm_random_GBps=430.11, hbm_chase_ns=900.0)
+    # Interrupt early and after all but the last CUDA probe; completed
+    # rates AND their provenance must already be in the partial profile.
+    for interrupted in ("bench_ntt", "bench_launch_latency"):
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td) / "partial.json"
+
+            def run(exe, args, raw_dir, timeout=1800):
+                if exe.name == interrupted:
+                    raise KeyboardInterrupt("simulated interruption")
+                text = outputs[exe.name]
+                (raw_dir / f"{exe.name}.txt").write_text(text)
+                return text
+
+            with (patch.object(calibrate, "detect_gpu", return_value=dict(
+                      name="test GPU", count=1, mem_GB=80, arch="sm_80", sms=108)),
+                  patch.object(calibrate, "compile_bench", side_effect=(
+                      lambda src, build, arch, nvcc: build / src.stem)),
+                  patch.object(calibrate, "run_bench", side_effect=run)):
+                try:
+                    _quiet(calibrate.main, ["--name", "interrupted", "--out", str(out),
+                                            "--nvcc", sys.executable, "--tmpdir", td])
+                except KeyboardInterrupt:
+                    pass
+                else:
+                    raise AssertionError("expected the interruption to propagate")
+            saved = json.loads(out.read_text())
+            assert "PARTIAL" in saved["description"]
+            completed = ({"field_mul_Gps": expected["field_mul_Gps"]}
+                         if interrupted == "bench_ntt" else expected)
+            for key, value in completed.items():
+                assert saved["gpu"][key] == value, (key, saved["gpu"])
+                assert key in saved["provenance"], key
+            assert saved["gpu"]["launch_us_sync"] is None
+            if interrupted == "bench_ntt":
+                assert saved["gpu"]["ntt_ns_per_elem"] is None
+
+
 def test_synth_builder_chosen_from_tape():
     # a projected tape (RoutedProjectedMatmulClaim present) diffs against
     # maverick-projected; the legacy all-E fan against maverick — diffing
@@ -358,21 +418,14 @@ def test_diff_report_ui_expected_per_type():
     assert any("silu" in f and "no UI chain" in f for f in flags)
 
 
-def test_diff_report_routing_bundle_representation():
-    # Third-pass P1 repro: a real tape emits every synth `routing` bundle
-    # as core + word-extract + n_words range words (cost-sum identical by
-    # the claimcosts bundle identity) — standard Maverick: 24 bundles ->
-    # 120 records, +4 for the input route = routing[+aux] 24 -> 124. Must
-    # NOT flag; the cap derives from synth's own bundles.
-    T = 4
-    sy = synth.BUILDERS["maverick"](T)
-    ex = copy.deepcopy(sy)
+def _expand_routing_bundles(man):
+    ex = copy.deepcopy(man)
     expanded = []
     for c in ex.claims:
         if crosscheck._canon_group(c.type) != "routing[+aux]":
             expanded.append(c)
             continue
-        E, nw = c.params["E"], c.params["n_words"]
+        T, E, nw = c.params["T"], c.params["E"], c.params["n_words"]
         expanded.append(ClaimRecord(idx=0, type="RoutingClaim",
                                     params=dict(T=T, E=E), label=c.label,
                                     layer=c.layer, inputs=c.inputs,
@@ -382,6 +435,20 @@ def test_diff_report_routing_bundle_representation():
         expanded.extend(ClaimRecord(idx=0, type="RangeWordClaim",
                                     params=dict(length=T * E))
                         for _ in range(nw))
+    for i, c in enumerate(expanded):
+        c.idx = i
+    ex.claims = expanded
+    return ex
+
+
+def test_diff_report_routing_bundle_representation():
+    # A bundle expands to core + word-extract + n_words range words,
+    # preserving cost: standard Maverick 24 -> 120 records, plus the four
+    # input-route claims. Representation and UI deltas are checked apart.
+    T = 4
+    sy = synth.BUILDERS["maverick"](T)
+    ex = _expand_routing_bundles(sy)
+    expanded = ex.claims
     # the input-route pieces (route_top1 over the token indicator, E=V)
     V = sy.model["vocab"]
     expanded.append(ClaimRecord(idx=0, type="RoutingClaim",
@@ -405,6 +472,55 @@ def test_diff_report_routing_bundle_representation():
     assert any("routing[+aux]" in f and "at most" in f for f in flags)
 
 
+def test_diff_report_routing_expansion_requires_matching_costs():
+    sy = synth.BUILDERS["maverick"](4)
+    ex = _expand_routing_bundles(sy)
+    # Representation-only expansion is valid even without a UI allowance.
+    flags, _ = _quiet(crosscheck.diff_report, sy, ex)
+    assert flags == []
+    # A changed word-extraction shape is too small for the overall-cost
+    # backstop, but must fail the grouped routing comparison in both modes.
+    word = next(c for c in ex.claims if c.type == "WordExtractionClaim")
+    word.params["length"] *= 2
+    for positions in (None, 2):
+        flags, _ = _quiet(crosscheck.diff_report, sy, ex, positions)
+        assert any("routing[+aux]" in f and "cost drift" in f for f in flags)
+
+
+def test_diff_report_ui_extras_cannot_reduce_modeled_costs():
+    sy = synth.BUILDERS["maverick"](4)
+    ex = copy.deepcopy(sy)
+    _dup_claim(ex, lambda c: crosscheck._canon_group(c.type) == "hadamard")
+    for c in ex.claims:
+        if crosscheck._canon_group(c.type) == "hadamard":
+            c.w_slots = 0.0
+    flags, _ = _quiet(crosscheck.diff_report, sy, ex, 2)
+    assert any("hadamard" in f and "cost below synth" in f for f in flags)
+
+
+def test_archived_crosschecks_reject_routing_cost_loss():
+    archive = Path(__file__).resolve().parents[1] / "analysis/blackwell-session-1/crosscheck-out"
+    for name, seq, continuation in [("llama7b", 100, None),
+                                    ("maverick", 4, 2), ("maverick", 1000, 998)]:
+        ex = Manifest.load(str(archive / f"{name}-s{seq}-extracted.json.gz"))
+        sy = synth.BUILDERS[name](seq, t_queries=ex.run["ligero"]["T_QUERIES"])
+        flags, _ = _quiet(crosscheck.diff_report, sy, ex, continuation)
+        assert flags == [], (name, seq, flags)
+        if name == "llama7b":
+            continue
+        # Audit repro: all 124 routing records still exist, but their W,
+        # cids and Q are zero. UI count allowances cannot excuse this loss.
+        for c in ex.claims:
+            if crosscheck._canon_group(c.type) == "routing[+aux]":
+                c.w_slots = 0.0
+                c.params = {k: 0 if isinstance(v, (int, float)) else v
+                            for k, v in c.params.items()}
+        flags, _ = _quiet(crosscheck.diff_report, sy, ex, continuation)
+        assert any("routing[+aux]" in f and "cost below synth" in f
+                   and "W synth" in f and "cids synth" in f and "Q synth" in f
+                   for f in flags), (seq, flags)
+
+
 def test_routing_grouped_across_conventions():
     # synth bundles `routing`; a tape emits the pieces — same group either way
     assert crosscheck._canon_group("routing") == "routing[+aux]"
@@ -423,6 +539,7 @@ def main():
     test_parse_session2_benches()
     test_dump_compact_smoke()
     test_bench_grid_fills_the_part()
+    test_calibration_interrupt_preserves_completed_cuda_rates()
     test_synth_builder_chosen_from_tape()
     test_derive_prove_constants()
     test_parse_layout()
@@ -436,6 +553,9 @@ def main():
     test_diff_report_ui_expected_matmul_never_excused()
     test_diff_report_ui_expected_per_type()
     test_diff_report_routing_bundle_representation()
+    test_diff_report_routing_expansion_requires_matching_costs()
+    test_diff_report_ui_extras_cannot_reduce_modeled_costs()
+    test_archived_crosschecks_reject_routing_cost_loss()
     test_routing_grouped_across_conventions()
     print("calibration-tools tests OK (no torch needed)")
 

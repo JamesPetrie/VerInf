@@ -100,6 +100,56 @@ extractor semantics (including property-backed mode flags), cost identities
 and mode rejection, partition traffic, and CLI/manifest validation — on
 any box.
 
+## Regression commands
+
+Run all three profiler suites from the repository root:
+
+```sh
+python3 profiler/test_profiler.py
+python3 profiler/test_calibration_tools.py
+python3 -m unittest -v profiler/test_hbm_bench.py
+```
+
+The kernel-indexing test compiles the actual `k_chase` body with CPU index
+globals and checks walker counts around CUDA block boundaries. It requires
+`c++` on `PATH`; without it, unittest reports a **skip**, which does not
+validate the kernel bounds. It requires neither torch nor CUDA and does not
+measure GPU timing.
+
+CPU prover regressions (with torch, NumPy, GGUF and safetensors installed):
+
+```sh
+python3 prover/tests/run_tests.py test_shard_plan
+python3 prover/tests/run_tests.py test_shard_worker
+python3 prover/tests/run_tests.py test_weight_provenance
+python3 prover/tests/run_tests.py test_layout_breakdown
+python3 prover/tests/run_tests.py test_gguf_loader
+```
+
+After changes to worker execution, rerun the weight-split gate on a CUDA
+machine before committing. From the repository root:
+
+```sh
+cargo build --release --manifest-path verifier/Cargo.toml --bin verify_proof
+python3 prover/tests/run_tests.py test_weight_split
+```
+
+All six test functions must pass, including proof-byte identity across cuts,
+fold modes and chunk boundaries, plus Rust acceptance of the sharded proofs.
+Run against the complete updated tree, including the new test files; earlier
+A40 results do not validate later prover changes.
+
+The complete review-fix tree passed the gate on an A100 SXM; the
+[gate record](../analysis/weight-split-review-gate.md) lists the environment,
+suite results, and run details.
+
+Linking manifests keep refreshed `w_new` slots in fresh commitment, fold and
+opening work. `predict.totals` retains `W_weights` as the full persistent
+share and exposes `W_enrolled` and `W_new` separately. `partition` distributes
+fresh Wnew with run-input rows; `weightsplit` keeps that work on its
+coordinator. Their single-device floors agree for aligned enrolled rows;
+`weightsplit` additionally prices enrolled row padding.
+
 ## Validation (synthetic Maverick S=1000 T=40 vs the archived hidden run)
 
 | quantity | predicted | measured (`analysis/full-model-hidden-run-archive.md`) |
