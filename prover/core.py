@@ -3457,6 +3457,27 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
     # Fresh secret padding/blinding entropy per proof unless a caller pins it
     # (diff-tests that compare two proofs byte-for-byte do pin it).
     s = _stream_setup(tape, cfg, zk_seed=(zk_seed or new_zk_seed()))
+    has_w = bool(s['n_w_total'])
+    # P3: reference a persisted W commitment. The row-count/codeword guard
+    # below checks that it is for this model's W block.
+    wc = weight_commitment if has_w else None
+    # Validate the enrolled split and every active worker's device before
+    # any sweep or witness-cache allocation. An open-only worker must also
+    # fail here, rather than after the preceding commitment and fold work.
+    plan = None
+    if shard_plan is not None:
+        import shard_plan as _sp
+        import shard_worker as _sw
+        assert has_w, (
+            "shard_plan on a tape with no persistent weights: there is no "
+            "enrolled W block to split")
+        assert wc is not None, (
+            "shard_plan needs weight_commitment: the split is defined on the "
+            "enrolled W block")
+        plan = _sp.as_plan(shard_plan, len(s['weight_vars']))
+        for stage in ("fold", "open"):
+            for dev, _, _ in plan.worker_runs(stage):
+                _sw.validate_device(plan.device_of(dev))
     if claims_bytes is None:
         claims_bytes = pr.claims_canonical_bytes(tape.claims, cfg)
     # The row-block layout is part of the statement, not something the proof
@@ -3514,26 +3535,6 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
     # identity is not known until the round-3 column challenge. R_W is
     # context-independent (W at the fixed offset), so it matches
     # commit_weights.
-    has_w = bool(s['n_w_total'])
-    # P3: reference a persisted W commitment — skip the R1 weight commit + R4
-    # weight rebuild, take root_w and the opening paths from it. Guard that it
-    # is for THIS model's W block (same row count and codeword length).
-    wc = weight_commitment if has_w else None
-    # Weight-split plan (M1): validated here, before R1, so a malformed plan
-    # (gap, overlap, wrong count) fails before any sweep runs. The split is
-    # defined on the ENROLLED block, whose R1-R3 work is nil.
-    plan = None
-    if shard_plan is not None:
-        import shard_plan as _sp
-        import shard_worker as _sw
-        assert has_w, (
-            "shard_plan on a tape with no persistent weights: there is no "
-            "enrolled W block to split")
-        assert wc is not None, (
-            "shard_plan needs weight_commitment: the split is defined on the "
-            "enrolled W block")
-        plan = _sp.as_plan(shard_plan, len(s['weight_vars']))
-
     # The quad-placement guards below need the compiled quad families, which
     # exist only after s_op (the R1 coin) — so they are QUEUED here and run the
     # moment the compile lands, still before any work that depends on them.
@@ -3685,15 +3686,13 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
           col_wnew=col_wnew, col_p1=col_p1, col_p2=col_p2, col_p3=col_p3,
           Q_cols=Q_cols, p1_prefix=s['p1_prefix'], w_owned=w_owned)
     if plan is not None:
-        # Workers open their runs; the pieces are scattered into the W sink
-        # by absolute row, and finish() asserts exact, non-overlapping
-        # coverage of the block.
+        # In-process workers write each encode chunk directly into the W
+        # sink at its absolute row, with no second full-run host buffer.
+        # finish() asserts exact, non-overlapping coverage of the block.
         for dev, lo, hi in plan.worker_runs("open"):
-            piece = _sw.open_run(s['weight_vars'], tape.inputs, cfg,
-                                 s['master_seed_t'], w_pad, lo, hi, Q_cols,
-                                 device=plan.device_of(dev))
-            if piece is not None:
-                col_w.write_host(piece["abs_row"], piece["cols"])
+            _sw.open_run(s['weight_vars'], tape.inputs, cfg,
+                         s['master_seed_t'], w_pad, lo, hi, Q_cols,
+                         column_sink=col_w, device=plan.device_of(dev))
 
     def _opened(colbuf):
         if isinstance(colbuf, ColumnSink):
