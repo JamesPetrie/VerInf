@@ -747,6 +747,134 @@ def test_enrolled_weights():
             assert e.code == 2
 
 
+def _shared_weight_partition_manifest():
+    from manifest import VariableRecord as V
+    return Manifest(
+        run=dict(ligero=dict(ELL=8, K_DEG=16384, T_QUERIES=4)),
+        claims=[ClaimRecord(i, "matmul", layer=i,
+                            params=dict(m=1, k=8, n=100, rescale=False),
+                            inputs=[f"x{i}", "w"], outputs=[f"y{i}"])
+                for i in range(2)],
+        variables=[V("w", 800, persistent=True, consumers=[0, 1])]
+        + [v for i in range(2) for v in
+           (V(f"x{i}", 8, consumers=[i]), V(f"y{i}", 100, producer=i))])
+
+
+def test_partition_serial_baseline():
+    import math
+    m = _shared_weight_partition_manifest()
+    mp = MachineProfile(dict(prove_constants=dict(
+        A_ns_per_slot=1, B_ns_per_cid=0, C_ns_per_product=0)))
+    # Each matmul has 124 fresh witness slots. The one-device proof pays
+    # for both (plus 16 input slots) and folds/opens the 800-slot W once.
+    ev = partition.evaluate(m, [0, 1], 2, mp, enrolled_weights=True)
+    assert math.isclose(ev["serial"], 1596e-9)
+    assert math.isclose(ev["wall"], 1398e-9)
+    assert math.isclose(ev["serial"] / ev["wall"], 1596 / 1398)
+    assert ev["imbalance"] == 1.0  # balanced work still repeats W
+    # Baseline depends on the workload/mode, never on its parallel mapping.
+    for mode in ({}, dict(enrolled_weights=True), dict(skip_weight_commit=True)):
+        one = partition.evaluate(m, [0, 0], 1, mp, **mode)
+        for n, assignment in ((2, [0, 1]), (2, [1, 1]), (3, [0, 2])):
+            many = partition.evaluate(m, assignment, n, mp, **mode)
+            assert math.isclose(many["serial"], one["wall"]), (mode, many)
+    # Include nonzero cid/product terms in the comparison as well.
+    mp.raw["prove_constants"].update(B_ns_per_cid=3, C_ns_per_product=7)
+    one = partition.evaluate(m, [0, 0], 1, mp, enrolled_weights=True)
+    many = partition.evaluate(m, [0, 1], 2, mp, enrolled_weights=True)
+    assert math.isclose(many["serial"], one["wall"])
+    mp.raw["prove_constants"].update(B_ns_per_cid=0, C_ns_per_product=0)
+    assert "speedup 1.14x" in partition.report(m, "rows", 2, mp,
+                                               enrolled_weights=True)
+    comp = partition.compare(m, 2, mp, enrolled_weights=True)
+    assert comp.count("1.14x") == 3, comp
+    assert partition.evaluate(m, [0, 1], 2, MachineProfile({}))["serial"] is None
+
+
+def test_partition_opened_ownership():
+    from manifest import VariableRecord as V
+    m = _shared_weight_partition_manifest()
+    mp = MachineProfile({})  # memory must work even without calibration
+    # Both owners open the entire shared W, plus 124 witness + 8 input
+    # slots, at four queries and eight bytes per row/query.
+    ev = partition.evaluate(m, [0, 1], 2, mp, enrolled_weights=True)
+    assert ev["opened_bytes_max"] == (800 + 124 + 8) / 8 * 4 * 8
+    # Uneven ownership: only shard 0 consumes W. Inputs remain evenly split
+    # by the existing model (24 / 2), giving 3744 B rather than 2144 B.
+    m.claims[1] = ClaimRecord(1, "add", layer=1, params=dict(L=8),
+                              inputs=["a", "b"], outputs=["c"])
+    m.variables = [V("w", 800, persistent=True, consumers=[0]),
+                   V("x0", 8, consumers=[0]), V("y0", 100, producer=0),
+                   V("a", 8, consumers=[1]), V("b", 8, consumers=[1]),
+                   V("c", 8, producer=1)]
+    enr = partition.evaluate(m, [0, 1], 2, mp, enrolled_weights=True)
+    legacy = partition.evaluate(m, [0, 1], 2, mp)
+    assert enr["opened_bytes_max"] == 3744
+    assert legacy["opened_bytes_max"] == 2144
+    # Single-device ownership is identical in the two modes.
+    assert partition.evaluate(m, [0, 0], 1, mp, enrolled_weights=True)[
+        "opened_bytes_max"] == partition.evaluate(m, [0, 0], 1, mp)[
+            "opened_bytes_max"]
+
+
+def test_partition_fold_merge_traffic():
+    import math
+    from manifest import VariableRecord as V
+    m = _shared_weight_partition_manifest()
+    mp = MachineProfile(dict(prove_constants=dict(
+        A_ns_per_slot=1, B_ns_per_cid=0, C_ns_per_product=0)))
+    # No activation edges: the sole cross-shard message is the remote
+    # shard's three K_DEG field-element fold buffers, once per proof.
+    merge = 3 * 16384 * 8
+    for sweeps in (4, 5):
+        ev = partition.evaluate(m, [0, 1], 2, mp, sweeps=sweeps)
+        assert ev["traffic_per_sweep"] == 0
+        assert ev["traffic_total"] == merge
+        bw, seconds, fraction = partition._comms_row(ev, [25])[0]
+        assert bw == 25 and math.isclose(seconds, merge / 25e9)
+        assert math.isclose(fraction, seconds / ev["wall"])
+        assert partition._verdict(fraction) == "BINDING"
+    report = partition.report(m, "rows", 2, mp, bandwidths=[25])
+    assert "fold merge once/proof: 393,216 B" in report
+    assert "BINDING" in report
+    comparison = partition.compare(m, 2, mp, bandwidths=[25])
+    assert "fold/proof(B)" in comparison
+    assert comparison.count("393,216") == 3
+    assert comparison.count("BINDING") == 3
+    # A claim-free shard still contributes if it owns the even-split input
+    # rows, or (outside enrolled mode) dependency-free weight rows.
+    for mode in ({}, dict(enrolled_weights=True), dict(skip_weight_commit=True)):
+        for n, assignment in ((2, [0, 0]), (3, [0, 2])):
+            ev = partition.evaluate(m, assignment, n, mp, **mode)
+            assert ev["traffic_total"] == merge * (n - 1)
+    for v in m.variables:
+        if v.producer is None:
+            v.persistent = True
+    for mode in ({}, dict(skip_weight_commit=True)):
+        ev = partition.evaluate(m, [0, 0], 2, mp, **mode)
+        assert ev["traffic_total"] == merge
+    # With all inputs enrolled on the only claim owner, the second device
+    # really is idle and has no partial to send.
+    ev = partition.evaluate(m, [0, 0], 2, mp, enrolled_weights=True)
+    assert ev["shard_t"][1] == ev["traffic_total"] == 0
+    # An additional activation edge repeats every sweep, unlike the fold.
+    m = Manifest(
+        claims=[ClaimRecord(0, "add", params=dict(L=100),
+                            inputs=["a", "b"], outputs=["x"]),
+                ClaimRecord(1, "add", params=dict(L=100),
+                            inputs=["x", "c"], outputs=["y"])],
+        variables=[V("a", 100, consumers=[0]), V("b", 100, consumers=[0]),
+                   V("c", 100, consumers=[1]),
+                   V("x", 100, producer=0, consumers=[1]),
+                   V("y", 100, producer=1)])
+    for sweeps in (4, 5):
+        ev = partition.evaluate(m, [0, 1], 2, mp, sweeps=sweeps)
+        assert ev["traffic_per_sweep"] == 100 * 8
+        assert ev["traffic_total"] == 100 * 8 * sweeps + merge
+    one = partition.evaluate(m, [0, 0], 1, mp)
+    assert one["fold_merge_bytes"] == one["traffic_total"] == 0
+
+
 def test_projected_protocol():
     # Formulas from the compile functions (prover/routed_projected.py,
     # prover/rescale_claim.py), regression-locked to the exact block
@@ -1367,6 +1495,101 @@ def test_weightsplit_prices_refreshed_rows():
         assert ev["wall"] >= 1200
 
 
+def test_linking_cost_tools_agree():
+    import math
+    import re
+    from manifest import VariableRecord as V
+    import weightsplit as ws
+    mp = MachineProfile(dict(name="linking", gpu=dict(mem_GB=1),
+                             prove_constants=dict(A_ns_per_slot=1e9,
+                                                  B_ns_per_cid=0, C_ns_per_product=0)))
+    # A linear link has no new witness variables: the old and refreshed
+    # commitments supply its rows. Both are consumed only on shard 0.
+    man = Manifest(run=dict(ligero=dict(ELL=8, T_QUERIES=4)),
+                   claims=[ClaimRecord(0, "lincomb", params=dict(L=800),
+                                       inputs=["Wold", "Wnew"])],
+                   variables=[V("Wold", 800, persistent=True, consumers=[0]),
+                              V("Wnew", 800, persistent=True, w_new=True,
+                                consumers=[0])])
+
+    def seconds(report, label):
+        line = next(line for line in report.splitlines() if label in line)
+        return float(re.search(r":\s*([\d,.]+) s", line).group(1).replace(",", ""))
+
+    with tempfile.TemporaryDirectory() as td:
+        for suffix in ("json", "json.gz"):
+            path = os.path.join(td, f"link.{suffix}")
+            man.save(path)
+            m = Manifest.load(path)
+            t = predict.totals(m)
+            assert t.W == t.W_weights == 1600
+            assert t.W_enrolled == t.W_new == 800
+            assert t.W_inputs == 0
+            st = ws.stages(m, mp)
+            rep = predict.report(m, mp, enrolled_weights=True)
+            assert "refreshed Wnew (fresh) 8.000e+02" in rep
+            # Default fresh and enrolled costs both total 1.5*A. Check the
+            # breakdown, since the old misclassification had the same floor.
+            assert seconds(rep, "A*Wf") == 800
+            assert seconds(rep, "enrolled block qlin+open") == 1200
+            assert seconds(rep, "open (fresh rows)") == 400
+            assert math.isclose(st.commit + st.fresh_fold, 800)
+            assert st.fresh_open == 400
+            assert st.w_fold + st.w_open == 1200
+            one = partition.evaluate(m, [0], 1, mp, enrolled_weights=True)
+            assert seconds(rep, "floor (") == one["wall"] == st.floor == 2400
+            assert ws.evaluate(m, mp, 1, resident=True)["wall"] == 2400
+            ev = partition.evaluate(m, [0], 2, mp, enrolled_weights=True)
+            assert ev["shard_t"] == [1800, 600]
+            assert ev["shard_enrolled_slots"] == [800, 0]
+            assert ev["shard_weight_slots"] == [1600, 0]  # both sources load
+            assert ev["weight_stream_bytes_max"] == 1600 * ev["sweeps"]
+            assert ev["opened_bytes_max"] == 4800
+            assert ev["fold_merge_bytes"] == ev["traffic_total"] == 393216
+            for mode, times, serial in (({}, [800, 800], 1600),
+                                        (dict(skip_weight_commit=True), [400, 400], 800)):
+                ev = partition.evaluate(m, [0], 2, mp, **mode)
+                assert ev["shard_t"] == times and ev["serial"] == serial
+                assert ev["opened_bytes_max"] == 3200
+            assert seconds(predict.report(m, mp), "floor (") == 1600
+            for mode in ({}, dict(enrolled_weights=True), dict(skip_weight_commit=True)):
+                baseline = partition.evaluate(m, [0], 1, mp, **mode)["wall"]
+                for n, assignment in ((2, [1]), (3, [2])):
+                    ev = partition.evaluate(m, assignment, n, mp, **mode)
+                    assert math.isclose(ev["serial"], baseline)
+    # A shared Wnew is still fresh work once across the row split, whereas
+    # each owner pays its own passes over the shared OLD enrolled weight.
+    man.claims.append(ClaimRecord(1, "lincomb", params=dict(L=800),
+                                   inputs=["Wold", "Wnew"]))
+    for v in man.variables:
+        v.consumers.append(1)
+    ev = partition.evaluate(man, [0, 1], 2, mp, enrolled_weights=True)
+    assert ev["shard_t"] == [1800, 1800]
+    assert ev["serial"] == partition.evaluate(man, [0, 0], 1, mp,
+                                              enrolled_weights=True)["wall"] == 2400
+    assert ev["opened_bytes_max"] == 4800
+
+
+def test_refreshed_only_rows_are_fresh():
+    from manifest import VariableRecord as V
+    mp = MachineProfile(dict(prove_constants=dict(A_ns_per_slot=1e9,
+                                                  B_ns_per_cid=0, C_ns_per_product=0)))
+    m = Manifest(run=dict(ligero=dict(ELL=8, T_QUERIES=4)),
+                 claims=[ClaimRecord(0, "lincomb", params=dict(L=800), inputs=["Wnew"])],
+                 variables=[V("Wnew", 800, persistent=True, w_new=True, consumers=[0])])
+    t = predict.totals(m)
+    assert t.W_enrolled == t.W_inputs == 0
+    assert t.W == t.W_weights == t.W_new == 800
+    ev = partition.evaluate(m, [0], 2, mp, enrolled_weights=True)
+    assert ev["shard_enrolled_slots"] == [0, 0]
+    assert ev["shard_t"] == [600, 600]
+    assert ev["serial"] == 1200
+    assert ev["opened_bytes_max"] == 1600
+    assert ev["fold_merge_bytes"] == 393216
+    assert partition.evaluate(m, [0], 2, mp, skip_weight_commit=True)[
+        "shard_t"] == [400, 400]
+
+
 def test_weightsplit_shared_sources():
     from manifest import VariableRecord as V
     import weightsplit as ws
@@ -1461,11 +1684,16 @@ def main():
     test_cli_validation()
     test_rows_approx_label()
     test_enrolled_weights()
+    test_partition_serial_baseline()
+    test_partition_opened_ownership()
+    test_partition_fold_merge_traffic()
     test_projected_protocol()
     test_projected_extraction()
     test_weightsplit()
     test_linking_manifest_roundtrip_and_plan()
     test_weightsplit_prices_refreshed_rows()
+    test_linking_cost_tools_agree()
+    test_refreshed_only_rows_are_fresh()
     test_weightsplit_shared_sources()
     test_shared_source_extraction_roundtrip()
     print("profiler regression tests OK (no torch needed)")

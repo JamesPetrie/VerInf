@@ -105,8 +105,8 @@ def main(argv=None):
                     help="aggregate memory-bandwidth ratio vs the profile "
                          "(overrides --gpus for the A/C terms)")
     pp.add_argument("--enrolled-weights", action="store_true",
-                    help="price weights as ENROLLED (no per-proof encode; "
-                         "qlin+open passes instead — the kept-trees path)")
+                    help="price old weights as ENROLLED (qlin+open passes "
+                         "without per-proof encode); refreshed Wnew stays fresh")
     pp.add_argument("--compute-ratio", type=_posfloat, default=None,
                     help="compute ratio vs the profile (for the B term)")
 
@@ -128,11 +128,11 @@ def main(argv=None):
                     help="on-disk bytes/param for weight streaming "
                          "(~0.7 GGUF Q4_K, 2.0 bf16 safetensors)")
     pt.add_argument("--enrolled-weights", action="store_true",
-                    help="price weights as ENROLLED (per-shard qlin+open "
-                         "over owned slots; no per-proof encode split)")
+                    help="price old weights as ENROLLED (per-shard qlin+open "
+                         "over owned slots); refreshed Wnew stays fresh")
     pt.add_argument("--skip-weight-commit", action="store_true",
-                    help="DIAGNOSTIC: drop all weight-commit cost from "
-                         "shard time (not a protocol mode — use "
+                    help="DIAGNOSTIC: drop old weight-commit cost from "
+                         "shard time; retain fresh Wnew (not a protocol mode — use "
                          "--enrolled-weights for the kept-trees/enrollment "
                          "model)")
 
