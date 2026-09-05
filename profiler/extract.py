@@ -170,6 +170,7 @@ def extract_tape(tape, *, model: dict, seq: int) -> Manifest:
                 pb = prov.get("packed_bytes")
                 rec.quant = str(q) if q is not None else None
                 rec.packed_bytes = float(pb) if pb is not None else None
+                rec.packed_source = prov.get("packed_source")
         seen[id(v)] = rec
         return rec
 

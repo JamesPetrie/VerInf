@@ -54,12 +54,14 @@ PROOF_COMPACT_REF_MBPS = 245
 @dataclass
 class CostTotals:
     W: float = 0.0            # witness slots (weights + activations + aux)
-    W_weights: float = 0.0    # persistent (streamed) share of W
+    W_weights: float = 0.0    # all persistent slots, including refreshed Wnew
     W_inputs: float = 0.0     # committed run inputs (producer-less, non-persistent)
     cids: float = 0.0
     Q: float = 0.0
     by_type: Dict[str, list] = field(default_factory=dict)  # type -> [W, cids, Q]
     n_claims: int = 0
+    W_enrolled: float = 0.0   # old phase-1 weights eligible for commitment reuse
+    W_new: float = 0.0        # refreshed Wnew: committed/folded/opened as fresh
 
 
 def totals(m: Manifest) -> CostTotals:
@@ -80,6 +82,10 @@ def totals(m: Manifest) -> CostTotals:
         t.W += v.length             # committed rows, not claim-counted
         if v.persistent:
             t.W_weights += v.length # weights (streamed, own Merkle block)
+            if v.w_new:
+                t.W_new += v.length
+            elif v.phase == 1:
+                t.W_enrolled += v.length
         else:
             t.W_inputs += v.length  # run inputs: embeddings, one-hots, tables
     return t
@@ -168,6 +174,9 @@ def report(m: Manifest, mp: MachineProfile, gpus: int = 1,
     L.append("")
     L.append(f"-- workload totals --")
     share = f"weights {t.W_weights:.3e} = {100 * t.W_weights / t.W:.0f}%"
+    if t.W_new:
+        share += (f", old enrolled {t.W_enrolled:.3e}, "
+                  f"refreshed Wnew (fresh) {t.W_new:.3e}")
     if t.W_inputs:
         share += f", run inputs {t.W_inputs:.3e}"
     L.append(f"W     (witness slots)     : {t.W:.3e}   ({share})")
@@ -191,7 +200,7 @@ def report(m: Manifest, mp: MachineProfile, gpus: int = 1,
     else:
         bw_scale = (bandwidth_ratio or gpus)   # A/C ride aggregate bandwidth
         cp_scale = (compute_ratio or gpus)     # B rides compute
-        W_fresh = (t.W - t.W_weights) if enrolled_weights else t.W
+        W_fresh = (t.W - t.W_enrolled) if enrolled_weights else t.W
         tA = A * W_fresh * 1e-9 / bw_scale
         tB = B * t.cids * 1e-9 / cp_scale
         tC = C * t.Q * 1e-9 / bw_scale
@@ -199,7 +208,7 @@ def report(m: Manifest, mp: MachineProfile, gpus: int = 1,
         tE = tOF = 0.0
         if enrolled_weights:
             tE = ((ENROLLED_QLIN_RATIO + ENROLLED_OPEN_RATIO)
-                  * A * t.W_weights * 1e-9 / bw_scale)
+                  * A * t.W_enrolled * 1e-9 / bw_scale)
             # Fresh rows are opened by the same final sweep — priced at the
             # same OPEN ratio (matches the fresh_open stage of
             # routed_projected_4h_model.py exactly: 0.5*A*fresh slots).
@@ -216,10 +225,13 @@ def report(m: Manifest, mp: MachineProfile, gpus: int = 1,
                      f"{ENROLLED_OPEN_RATIO:g})*A*Ww       : {_fmt_s(tE)}")
             L.append(f"    open (fresh rows) {ENROLLED_OPEN_RATIO:g}*A*Wf"
                      f"                 : {_fmt_s(tOF)}")
-            L.append("    (enrolled weights: no per-proof commitment; the "
+            L.append("    (old enrolled weights: no per-proof commitment; the "
                      "fold pass and the opening pass — which re-encodes "
                      "every enrolled row for its columns — are priced at "
                      "the routed_projected_4h_model.py ratios)")
+            if t.W_new:
+                L.append("    refreshed Wnew stays in fresh encode, fold and "
+                         "opening work; its commitment is rebuilt per proof")
             kd = lig.get("K_DEG", 16384)
             budget = max(0, (kd - ELL) // 2)
             L.append(f"    enrollment lifecycle (unpriced): one-time enroll "

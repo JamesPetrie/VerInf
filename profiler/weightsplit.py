@@ -97,7 +97,7 @@ two axes:
              'perfect'    an idealised prefetch: max(compute, I/O)
 Defaults are the one-node deployment: shared + none. Streaming figures
 are a PACKED-BYTE SCHEDULING LOWER BOUND: each planned variable's packed
-source is counted once; decode/transform cost and the group amplification
+source is read once per pass; decode/transform cost and the group amplification
 of today's attention and MoE closures (which decode a whole tensor group
 per requested matrix) are unpriced — exact current-loader pricing needs
 the source descriptor planned for M1c. Streaming without a disk
@@ -112,6 +112,15 @@ extraction) is priced as if it were Q4_K, which under-sizes a BF16/F16
 model 3.6x — so `evaluate` reports the share of enrolled bytes that
 came from the default and `report` prints a WARNING whenever it is
 non-zero.
+
+Shared packed sources carry `packed_source` plus the full `packed_bytes`
+on every reference. A device counts a source once in its fold/open union;
+different devices each need their own copy. Streaming still counts each
+variable's read: today's loaders have no cache for reuse between aliases,
+and the aggregate I/O therefore stays independent of cuts. Without an ID
+each variable is independent. A flat bytes-per-param override sizes logical
+variables independently and disables
+source deduplication (transforms can give aliases different logical sizes).
 
 Units. The profile's `gpu.mem_GB` is GiB as the driver reports it
 (calibrate.detect_gpu: total_memory / 2**30; nvidia-smi MiB / 1024), so
@@ -214,9 +223,22 @@ class _Block:
         self.cum_bytes = [0.0]
         self.n_default = 0            # variables sized by the Q4_K default
         self.bytes_default = 0.0      # ... and the packed bytes they contribute
-        for v in self.vars:
+        sources = {}
+        for i, v in enumerate(self.vars):
             rows = -(-int(v.length) // ELL)               # core.Variable.n_rows
             b = packed_bytes_of(v, bytes_per_param)
+            source = getattr(v, "packed_source", None)
+            if source is not None and bytes_per_param is None:
+                if not isinstance(source, str) or not source or v.packed_bytes is None:
+                    raise ValueError(f"variable '{v.name}': packed_source needs a "
+                                     "nonempty string and explicit packed_bytes")
+                if source not in sources:
+                    sources[source] = (b, [])
+                size, indices = sources[source]
+                if b != size:
+                    raise ValueError(f"packed source {source!r}: inconsistent "
+                                     f"packed_bytes {size} and {b}")
+                indices.append(i)
             self.cum_phys.append(self.cum_phys[-1] + rows * ELL)
             self.cum_logical.append(self.cum_logical[-1] + v.length)
             self.cum_bytes.append(self.cum_bytes[-1] + b)
@@ -224,9 +246,14 @@ class _Block:
                 self.n_default += 1
                 self.bytes_default += b
         self.n = len(self.vars)
+        # Prefixes count each variable. Range queries subtract repeated
+        # occurrences only for shared sources; the usual unaliased model
+        # retains O(1) queries and tied embeddings add one small index list.
+        self.shared_sources = [(size, indices) for size, indices in sources.values()
+                               if len(indices) > 1]
         self.total_phys = self.cum_phys[-1]
         self.total_logical = self.cum_logical[-1]
-        self.total_bytes = self.cum_bytes[-1]
+        self.total_bytes = self.bytes(0, self.n)
         self.aligned = self.total_phys == self.total_logical
         self.default_share = (self.bytes_default / self.total_bytes
                               if self.total_bytes else 0.0)
@@ -235,6 +262,15 @@ class _Block:
         return self.cum_phys[hi] - self.cum_phys[lo]
 
     def bytes(self, lo: int, hi: int) -> float:
+        """Resident source footprint of one run, deduplicated within it."""
+        total = self.stream_bytes(lo, hi)
+        for size, indices in self.shared_sources:
+            count = bisect_left(indices, hi) - bisect_left(indices, lo)
+            total -= max(0, count - 1) * size
+        return total
+
+    def stream_bytes(self, lo: int, hi: int) -> float:
+        """Each variable's loader reads its source, including repeated uses."""
         return self.cum_bytes[hi] - self.cum_bytes[lo]
 
     def cut_at_fraction(self, frac: float, lo: int = 0) -> int:
@@ -253,7 +289,13 @@ class _Block:
         if bhi <= blo:
             return self.bytes(alo, ahi)
         if ahi < blo or bhi < alo:                     # disjoint
-            return self.bytes(alo, ahi) + self.bytes(blo, bhi)
+            total = self.bytes(alo, ahi) + self.bytes(blo, bhi)
+            for size, indices in self.shared_sources:
+                in_a = bisect_left(indices, ahi) > bisect_left(indices, alo)
+                in_b = bisect_left(indices, bhi) > bisect_left(indices, blo)
+                if in_a and in_b:
+                    total -= size
+            return total
         return self.bytes(min(alo, blo), max(ahi, bhi))
 
 
@@ -400,7 +442,9 @@ def stages(m: Manifest, mp: MachineProfile,
     t = totals(m)
     ELL = m.run.get("ligero", {}).get("ELL", 8192)
     blk = _Block(m, bytes_per_param, ELL)
-    W_fresh = t.W - t.W_weights
+    # Only the old enrolled block avoids per-proof commitment. Refreshed
+    # Wnew copies are persistent too, but remain coordinator fresh work.
+    W_fresh = t.W - t.W_enrolled
     tA = A * W_fresh * 1e-9
     return Stages(
         commit=encode_share * tA,
@@ -419,7 +463,7 @@ class Interval:
     first: str
     last: str
     slots: float           # physical
-    packed_bytes: float
+    packed_bytes: float    # unique source footprint of the interval
 
 
 def _intervals(blk: _Block, runs: Sequence[Run]) -> List[Interval]:
@@ -473,6 +517,7 @@ def evaluate(m: Manifest, mp: MachineProfile, n: int, *,
     ELL, T_Q = lig.get("ELL", 8192), lig.get("T_QUERIES", 40)
     blk = _Block(m, bytes_per_param, ELL)
     sto = _Storage(resident, disk, disk_mode, io_overlap)
+    pass_bytes = blk.bytes if resident else blk.stream_bytes
     # mem_GB is GiB (module doc); the workspace reserve is decimal GB
     cap = (mem * MEM_GB_BYTES - workspace_GB * 1e9) if resident else None
     A = mp.get("prove_constants", "A_ns_per_slot")
@@ -481,16 +526,16 @@ def evaluate(m: Manifest, mp: MachineProfile, n: int, *,
 
     def coord_cost(stage):
         return lambda lo, hi: sto.dev_time(fresh[stage] + rate[stage] * blk.phys(lo, hi),
-                                           blk.bytes(lo, hi))
+                                           pass_bytes(lo, hi))
 
     def worker_cost(stage):
-        return lambda lo, hi: sto.dev_time(rate[stage] * blk.phys(lo, hi), blk.bytes(lo, hi))
+        return lambda lo, hi: sto.dev_time(rate[stage] * blk.phys(lo, hi), pass_bytes(lo, hi))
 
     def assess(pf: List[Run], po: List[Run], mode: str) -> dict:
         out = dict(plan_fold=pf, plan_open=po, plan_mode=mode)
         for stage, plan in (("fold", pf), ("open", po)):
             slots = [blk.phys(lo, hi) for lo, hi in plan]
-            byt = [blk.bytes(lo, hi) for lo, hi in plan]
+            byt = [pass_bytes(lo, hi) for lo, hi in plan]
             comp = [fresh[stage] + slots[0] * rate[stage]] + [s * rate[stage] for s in slots[1:]]
             dev = [sto.dev_time(c, b) for c, b in zip(comp, byt)]
             out[stage + "_slots"] = slots
@@ -655,7 +700,7 @@ def report(m: Manifest, mp: MachineProfile, gpus: Sequence[int], **kw) -> str:
     L.append("  EXCLUDES semantic sweeps, orchestration, worker start-up, "
              "duplicate compile, opening hand-off (all coordinator-side)")
     L.append("")
-    hold_hdr = "max hold" if resident else "max strm"
+    hold_hdr = "max hold" if resident else "max read"
     L.append(f"  {'N':>2}  {'x_fold':>6} {'x_open':>6}  {'fold':>8} {'open':>8} "
              f"{'wall':>8} {'floor/w':>7} {'same-mode':>9}  {hold_hdr:>9}  {'HBM':>4}  "
              f"{'payload':>9}  {'I/O-bound':>9}  plan")
@@ -666,7 +711,8 @@ def report(m: Manifest, mp: MachineProfile, gpus: Sequence[int], **kw) -> str:
             L.append(f"  {n:>2}  UNAVAILABLE — {ev['reason']}")
             continue
         rows.append(ev)
-        hold = max(ev["hold_bytes"])
+        hold = (max(ev["hold_bytes"]) if resident else
+                max(ev["fold_bytes"] + ev["open_bytes"]))
         fit_s = ("ok" if ev["feasible"] else "NO") if resident else "-"
         db = []
         if not resident:
@@ -702,7 +748,10 @@ def report(m: Manifest, mp: MachineProfile, gpus: Sequence[int], **kw) -> str:
              "floor: the coordinator-serial semantic sweeps are excluded, so the "
              "whole-proof speedup M1b will measure is (S + N=1 wall) / (S + wall) "
              "— pass --semantic-s to print it. payload = largest worker's "
-             "opened-column bytes (physical rows x T_QUERIES x 8).")
+             "opened-column bytes (physical rows x T_QUERIES x 8). "
+             "max read = largest device's packed-source reads in either pass "
+             "(streaming loaders reread aliases); max hold deduplicates sources "
+             "within each device's two-stage union.")
     L.append("  plans: 'independent' = per-stage cuts solved exactly over variable "
              "boundaries, workers' runs unequal where that balances time"
              + (" and packed bytes; when the HBM cap binds on the fold/open unions: "
@@ -751,7 +800,7 @@ def intervals_text(ev: dict) -> str:
         for iv in ev["intervals_" + stage]:
             role = "coordinator" if iv.device == 0 else f"worker {iv.device}"
             L.append(f"    {role:>12}: vars [{iv.var_lo}, {iv.var_hi})  "
-                     f"{iv.slots:.3e} slots  {_gb(iv.packed_bytes)} packed  "
+                     f"{iv.slots:.3e} slots  {_gb(iv.packed_bytes)} packed sources  "
                      f"{iv.first} .. {iv.last}")
     L.append("   HBM hold (union of the two runs per device): " +
              ", ".join(f"dev{d} {_gb(h)}" for d, h in enumerate(ev["hold_bytes"])))

@@ -55,6 +55,11 @@ class VariableRecord:
     # w_new from `weight_vars`; weightsplit mirrors that so plan indices
     # line up with the prover's.
     w_new: bool = False
+    # Same nonempty ID means the same complete packed source (including any
+    # slice). Keep its full packed_bytes on EVERY reference; consumers may
+    # deduplicate within one device, never across independent device holds.
+    # None keeps legacy per-variable accounting. IDs are scoped to a manifest.
+    packed_source: Optional[str] = None
 
 
 @dataclass
@@ -109,7 +114,8 @@ class Manifest:
                     name=v["name"], length=v["length"], phase=v.get("phase", 1),
                     persistent=v.get("persistent", False),
                     producer=v.get("producer"), consumers=v.get("consumers", []),
-                    quant=v.get("quant"), packed_bytes=v.get("packed_bytes")))
+                    quant=v.get("quant"), packed_bytes=v.get("packed_bytes"),
+                    w_new=v.get("w_new", False), packed_source=v.get("packed_source")))
         except (KeyError, TypeError, AttributeError) as e:
             # structural failures (non-dict records, missing required keys)
             # normalize to ValueError: the CLI boundary catches that

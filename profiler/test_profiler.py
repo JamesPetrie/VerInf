@@ -30,6 +30,7 @@ class Variable:
     length: int
     phase: int = 1
     persistent: bool = False
+    w_new: bool = False
 
 
 @dataclass(eq=False)
@@ -1304,6 +1305,149 @@ def test_weightsplit():
     assert "WARNING" not in ws.report(m2, mp, [1, 2], resident=True)  # quant on every var
     assert ws.evaluate(m2, mp, 2, resident=True)["default_share"] == 0.0
 
+def test_linking_manifest_roundtrip_and_plan():
+    from shard_plan import ShardPlan
+    import weightsplit as ws
+    old = Variable("Wold", 800, persistent=True)
+    new = Variable("Wnew", 800, persistent=True, w_new=True)
+    result = Variable("link_sum", 800)
+    tape = FakeTape(Cfg())
+    tape.add(AddClaim(a=old, b=new, c=result, length=800), [old, new])
+    with _fake_core():
+        man = extract_tape(tape, model=dict(name="link"), seq=1)
+    assert man.var_by_name()["Wnew"].w_new
+    with tempfile.TemporaryDirectory() as td:
+        for suffix in ("json", "json.gz"):
+            path = os.path.join(td, f"link.{suffix}")
+            man.save(path)
+            loaded = Manifest.load(path)
+            assert loaded == man
+            blk = ws._Block(loaded, None, Cfg.ELL)
+            assert [v.name for v in blk.vars] == ["Wold"]
+            ev = ws.evaluate(loaded, MachineProfile.load("gb10-spark"), 2,
+                             resident=True)
+            ShardPlan.from_pairs(ev["plan_fold"], ev["plan_open"]).validated(1)
+        # Old manifests have neither optional field; they must still load.
+        path = os.path.join(td, "legacy.json")
+        man.save(path)
+        with open(path) as f:
+            raw = json.load(f)
+        for var in raw["variables"]:
+            var.pop("w_new")
+            var.pop("packed_source")
+        with open(path, "w") as f:
+            json.dump(raw, f)
+        assert all(not v.w_new and v.packed_source is None
+                   for v in Manifest.load(path).variables)
+
+
+def test_weightsplit_prices_refreshed_rows():
+    from manifest import VariableRecord
+    import weightsplit as ws
+    mp = MachineProfile({"name": "refresh", "gpu": {"mem_GB": 1},
+                         "prove_constants": {"A_ns_per_slot": 1e9,
+                                             "B_ns_per_cid": 0, "C_ns_per_product": 0}})
+    man = Manifest(run={"ligero": {"ELL": 8}}, variables=[
+        VariableRecord("Wold", 8, persistent=True)])
+    baseline = ws.stages(man, mp)
+    man.variables.append(VariableRecord("Wnew", 800, persistent=True, w_new=True))
+    for share in (0.0, ws.ENCODE_SHARE_OF_A, 1.0):
+        st = ws.stages(man, mp, encode_share=share)
+        assert abs(st.commit - share * 800) < 1e-10
+        assert abs(st.fresh_fold - (1 - share) * 800) < 1e-10
+        assert st.fresh_open == 400
+        assert (st.w_fold, st.w_open) == (baseline.w_fold, baseline.w_open)
+        assert abs(st.floor - baseline.floor - 1200) < 1e-10
+        ev = ws.evaluate(man, mp, 2, resident=True, encode_share=share)
+        # Refreshed work stays on the coordinator, including when it owns
+        # no old weights; it never enters the workers' ownership intervals.
+        assert sum(ev["fold_slots"]) == sum(ev["open_slots"]) == 8
+        assert ev["fold_compute"][0] >= st.fresh_fold
+        assert ev["open_compute"][0] >= st.fresh_open
+        assert ev["wall"] >= 1200
+
+
+def test_weightsplit_shared_sources():
+    from manifest import VariableRecord as V
+    import weightsplit as ws
+    # This is the demo's embedding -> middle weights -> transposed tied head
+    # ordering. A worker needs the head's source even when another device
+    # holds the embedding; keeping the whole block on one device dedups it.
+    man = Manifest(run={"ligero": {"ELL": 8, "T_QUERIES": 4}}, variables=[
+        V("token_embd", 64, persistent=True, packed_bytes=128, packed_source="embedding"),
+        V("middle", 64, persistent=True, packed_bytes=128),
+        V("W_lm", 64, persistent=True, packed_bytes=128, packed_source="embedding")])
+    mp = MachineProfile({"name": "small", "gpu": {"mem_GB": 150 / ws.MEM_GB_BYTES},
+                         "prove_constants": {"A_ns_per_slot": 1,
+                                             "B_ns_per_cid": 0, "C_ns_per_product": 0}})
+    kw = dict(workspace_GB=0, x_fold=1/3, x_open=1/3)
+    ev = ws.evaluate(man, mp, 2, resident=True, **kw)
+    assert ev["plan_fold"] == [(0, 1), (1, 3)]
+    assert ev["hold_bytes"] == [128, 256]
+    assert ev["fits_hbm"] == [True, False] and not ev["feasible"]
+    assert not ws.evaluate(man, mp, 2, resident=True, workspace_GB=0)["feasible"]
+    assert ev["packed_total"] == 256
+    for mode in ("shared", "per-device"):
+        stream = ws.evaluate(man, mp, 2, disk_GBps=1, disk_mode=mode, **kw)
+        assert stream["fold_bytes"] == stream["open_bytes"] == [128, 256]
+        assert abs(stream["fold_io_total"] - 384e-9) < 1e-15
+    whole = ws.evaluate(man, mp, 1, disk_GBps=1, workspace_GB=0)
+    # Streaming loaders read each logical use again (no source cache).
+    assert whole["fold_bytes"] == whole["open_bytes"] == [384]
+    # Explicit flat estimates apply per logical variable, even for aliases.
+    assert ws._Block(man, 2.0, 8).total_bytes == 384
+    # Independent set-based oracle for every interval and every two-stage
+    # union, including empty, overlapping, disjoint, and repeated aliases.
+    ids = ["a", "b", "a", "c", "b", "a"]
+    sizes = {"a": 32, "b": 64, "c": 96}
+    mixed = Manifest(variables=[V(str(i), 8, persistent=True,
+                                 packed_source=key, packed_bytes=sizes[key])
+                                for i, key in enumerate(ids)])
+    blk = ws._Block(mixed, None, 8)
+    runs = [(lo, hi) for lo in range(7) for hi in range(lo, 7)]
+    for a in runs:
+        sources_a = set(ids[a[0]:a[1]])
+        assert blk.bytes(*a) == sum(sizes[k] for k in sources_a)
+        for b in runs:
+            want = sum(sizes[k] for k in sources_a | set(ids[b[0]:b[1]]))
+            assert blk.union_bytes(a, b) == want, (a, b)
+    # An ambiguous source must not silently under-size a device's hold.
+    for bad in (V("bad", 64, persistent=True, packed_source="embedding", packed_bytes=0),
+                V("bad", 64, persistent=True, packed_source="embedding"),
+                V("bad", 64, persistent=True, packed_source="", packed_bytes=128)):
+        broken = Manifest(variables=[man.variables[0], bad])
+        try:
+            ws._Block(broken, None, 8)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"accepted inconsistent source metadata: {bad}")
+
+
+def test_shared_source_extraction_roundtrip():
+    import weightsplit as ws
+    a, b = (Variable(name, 64, persistent=True) for name in ("embedding", "head"))
+    tape = FakeTape(Cfg())
+    def raising():
+        raise AssertionError("metadata extraction resolved a loader")
+    raising.provenance = {"quant": "F16", "packed_bytes": 128,
+                          "packed_source": "gguf:token_embd.weight"}
+    tape.inputs[a] = tape.inputs[b] = raising
+    tape.add(AddClaim(a=a, b=b, c=Variable("sum", 64), length=64), [a, b])
+    with _fake_core():
+        man = extract_tape(tape, model=dict(name="tied"), seq=1)
+    with tempfile.TemporaryDirectory() as td:
+        for suffix in ("json", "json.gz"):
+            path = os.path.join(td, f"sources.{suffix}")
+            man.save(path)
+            loaded = Manifest.load(path)
+            assert loaded == man
+            blk = ws._Block(loaded, None, Cfg.ELL)
+            assert all(v.packed_source == raising.provenance["packed_source"]
+                       and v.packed_bytes == 128 for v in blk.vars)
+            assert blk.bytes(0, 2) == blk.bytes(0, 1) == blk.bytes(1, 2) == 128
+
+
 def main():
     test_extractor()
     test_explicit_settlement_reused()
@@ -1320,6 +1464,10 @@ def main():
     test_projected_protocol()
     test_projected_extraction()
     test_weightsplit()
+    test_linking_manifest_roundtrip_and_plan()
+    test_weightsplit_prices_refreshed_rows()
+    test_weightsplit_shared_sources()
+    test_shared_source_extraction_roundtrip()
     print("profiler regression tests OK (no torch needed)")
 
 

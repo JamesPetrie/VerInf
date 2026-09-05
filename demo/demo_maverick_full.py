@@ -95,6 +95,10 @@ def _field_loader(gguf, name, S_=S, transpose=False):
         return w.reshape(-1)
     from loader import gguf_provenance
     load.provenance = gguf_provenance(gguf, name)
+    # Transposed and untransposed uses (the tied head and embedding) share
+    # source bytes only when owned by the same device. Preserve the full
+    # size on both and let the storage model deduplicate by source identity.
+    load.provenance["packed_source"] = json.dumps([str(pathlib.Path(gguf).resolve()), name])
     return load
 
 
@@ -283,11 +287,6 @@ def build_model(tape, gguf, prompt_ids, cont_ids, *, V, d, n_layers, E, d_ff):
                                     s_out=S, output_width=OUTPUT_WIDTH)
     lm_name = "output.weight" if "output.weight" in by else "token_embd.weight"
     lm_loader = _field_loader(gguf, lm_name, transpose=True)
-    if lm_name == "token_embd.weight":
-        # tied head: the same packed source already sits on the manifest
-        # under token_embd — attribute zero EXTRA bytes to W_lm rather than
-        # counting the embedding twice in the storage models
-        lm_loader.provenance = dict(lm_loader.provenance, packed_bytes=0)
     W_lm = tape.commit_lazy("W_lm", lm_loader, (d, V), d * V)
     logits = tape.matmul(n_fg, W_lm, s_a=S, s_b=S, s_out=S,
                           output_width=OUTPUT_WIDTH)
