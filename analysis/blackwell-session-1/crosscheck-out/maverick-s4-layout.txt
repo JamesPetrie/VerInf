@@ -1,0 +1,73 @@
+[maverick-full] layers=48 E=128 T=4 V=202048 T_QUERIES=80 witness_only=False
+[maverick-full] input bound: all 4 tokens hidden (2 prompt + 2 continuation)
+[maverick-full] layer 0 built (dense, rope=True) — 28 claims so far
+[maverick-full] layer 1 built (moe E=128, rope=True) — 449 claims so far
+[maverick-full] layer 2 built (dense, rope=True) — 471 claims so far
+[maverick-full] layer 3 built (moe E=128, rope=False) — 890 claims so far
+[maverick-full] layer 4 built (dense, rope=True) — 912 claims so far
+[maverick-full] layer 5 built (moe E=128, rope=True) — 1333 claims so far
+[maverick-full] layer 6 built (dense, rope=True) — 1355 claims so far
+[maverick-full] layer 7 built (moe E=128, rope=False) — 1774 claims so far
+[maverick-full] layer 8 built (dense, rope=True) — 1796 claims so far
+[maverick-full] layer 9 built (moe E=128, rope=True) — 2217 claims so far
+[maverick-full] layer 10 built (dense, rope=True) — 2239 claims so far
+[maverick-full] layer 11 built (moe E=128, rope=False) — 2658 claims so far
+[maverick-full] layer 12 built (dense, rope=True) — 2680 claims so far
+[maverick-full] layer 13 built (moe E=128, rope=True) — 3101 claims so far
+[maverick-full] layer 14 built (dense, rope=True) — 3123 claims so far
+[maverick-full] layer 15 built (moe E=128, rope=False) — 3542 claims so far
+[maverick-full] layer 16 built (dense, rope=True) — 3564 claims so far
+[maverick-full] layer 17 built (moe E=128, rope=True) — 3985 claims so far
+[maverick-full] layer 18 built (dense, rope=True) — 4007 claims so far
+[maverick-full] layer 19 built (moe E=128, rope=False) — 4426 claims so far
+[maverick-full] layer 20 built (dense, rope=True) — 4448 claims so far
+[maverick-full] layer 21 built (moe E=128, rope=True) — 4869 claims so far
+[maverick-full] layer 22 built (dense, rope=True) — 4891 claims so far
+[maverick-full] layer 23 built (moe E=128, rope=False) — 5310 claims so far
+[maverick-full] layer 24 built (dense, rope=True) — 5332 claims so far
+[maverick-full] layer 25 built (moe E=128, rope=True) — 5753 claims so far
+[maverick-full] layer 26 built (dense, rope=True) — 5775 claims so far
+[maverick-full] layer 27 built (moe E=128, rope=False) — 6194 claims so far
+[maverick-full] layer 28 built (dense, rope=True) — 6216 claims so far
+[maverick-full] layer 29 built (moe E=128, rope=True) — 6637 claims so far
+[maverick-full] layer 30 built (dense, rope=True) — 6659 claims so far
+[maverick-full] layer 31 built (moe E=128, rope=False) — 7078 claims so far
+[maverick-full] layer 32 built (dense, rope=True) — 7100 claims so far
+[maverick-full] layer 33 built (moe E=128, rope=True) — 7521 claims so far
+[maverick-full] layer 34 built (dense, rope=True) — 7543 claims so far
+[maverick-full] layer 35 built (moe E=128, rope=False) — 7962 claims so far
+[maverick-full] layer 36 built (dense, rope=True) — 7984 claims so far
+[maverick-full] layer 37 built (moe E=128, rope=True) — 8405 claims so far
+[maverick-full] layer 38 built (dense, rope=True) — 8427 claims so far
+[maverick-full] layer 39 built (moe E=128, rope=False) — 8846 claims so far
+[maverick-full] layer 40 built (dense, rope=True) — 8868 claims so far
+[maverick-full] layer 41 built (moe E=128, rope=True) — 9289 claims so far
+[maverick-full] layer 42 built (dense, rope=True) — 9311 claims so far
+[maverick-full] layer 43 built (moe E=128, rope=False) — 9730 claims so far
+[maverick-full] layer 44 built (dense, rope=True) — 9752 claims so far
+[maverick-full] layer 45 built (moe E=128, rope=True) — 10173 claims so far
+[maverick-full] layer 46 built (dense, rope=True) — 10195 claims so far
+[maverick-full] layer 47 built (moe E=128, rope=False) — 10614 claims so far
+[maverick-full] LM head from output.weight (untied)
+[maverick-full] UI claim over 2 continuation positions; 10628 claims total
+[maverick-full] build 67.8s, 10628 claims
+[maverick-full] reveal engine pass 416.9s: Sz=117386 -> 41.3 bits total (20.6729 bits/token over 2 positions)
+[maverick-full] reveal: Sz=117386 pinned as PUBLIC bound; verifier reads 20.6729 bits/token from the claim
+=== witness layout by claim type (m_total=49,453,400, W=405,122,252,800 elements) ===
+  MatmulClaim            rows= 49,402,307  elements=404,556,706,752   99.9%
+  TableSettlement        rows=     21,378  elements=    174,708,028    0.0%
+  SiluClaim              rows=      8,832  elements=     72,351,744    0.0%
+  HadamardClaim          rows=      4,483  elements=     33,742,852    0.0%
+  RmsNormClaim           rows=      9,991  elements=     13,937,736    0.0%
+  RoPEClaim              rows=      1,296  elements=      8,847,360    0.0%
+  MaxClaim               rows=        597  elements=      4,849,164    0.0%
+  RoutingClaim           rows=        542  elements=      3,282,120    0.0%
+  FreivaldsCombineClaim  rows=        819  elements=      2,724,608    0.0%
+  ConcatClaim            rows=        322  elements=      2,626,624    0.0%
+  EmbeddingLookupClaim   rows=        390  elements=      2,483,202    0.0%
+  AddClaim               rows=        361  elements=      2,457,601    0.0%
+  PairedTlookupClaim     rows=        371  elements=      2,424,872    0.0%
+  WordExtractionClaim    rows=        270  elements=      1,653,248    0.0%
+  RangeWordClaim         rows=        270  elements=      1,653,248    0.0%
+  SoftmaxClaim           rows=      1,152  elements=        529,920    0.0%
+  InfoFinalizeClaim      rows=         16  elements=             64    0.0%

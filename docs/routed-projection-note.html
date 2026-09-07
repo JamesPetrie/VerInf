@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Random Projection in Routed Ligero</title>
+</head>
+<body>
+<style>
+  :root{
+    --ground:#FCFDFE; --panel:#FFFFFF; --ink:#1A2430; --muted:#5C6B7A;
+    --navy:#102E50; --blue:#2F75B5; --hair:#CBD5DF;
+    --bluefill:#EAF3FB; --slatefill:#F3F6F9;
+    --red:#9E2525; --redfill:#FDEDED;
+    --green:#246B42; --greenfill:#EAF7EF; --greenline:#9CCDB0;
+    --orange:#9B5B00; --orangefill:#FFF4E3;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI","Helvetica Neue",Arial,sans-serif;
+    --math:Georgia,"Times New Roman",serif;
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --ground:#0F1520; --panel:#151D2A; --ink:#E7EDF5; --muted:#93A1B3;
+      --navy:#C4DBF2; --blue:#6FAEE0; --hair:#2B3646;
+      --bluefill:#182A3E; --slatefill:#1A2330;
+      --red:#E08A8A; --redfill:#3A1E1E;
+      --green:#5FC08B; --greenfill:#14301F; --greenline:#2C5C40;
+      --orange:#DFA75A; --orangefill:#3A2C12;
+    }
+  }
+  :root[data-theme="dark"]{
+    --ground:#0F1520; --panel:#151D2A; --ink:#E7EDF5; --muted:#93A1B3;
+    --navy:#C4DBF2; --blue:#6FAEE0; --hair:#2B3646;
+    --bluefill:#182A3E; --slatefill:#1A2330;
+    --red:#E08A8A; --redfill:#3A1E1E;
+    --green:#5FC08B; --greenfill:#14301F; --greenline:#2C5C40;
+    --orange:#DFA75A; --orangefill:#3A2C12;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--sans);
+    line-height:1.55;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:780px;margin:0 auto;padding:44px 22px 80px}
+  .eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.16em;color:var(--muted);
+    text-transform:uppercase;margin:0 0 12px}
+  h1{color:var(--navy);font-size:clamp(27px,4.5vw,38px);line-height:1.12;margin:0 0 8px;
+    letter-spacing:-.015em;font-weight:700;text-wrap:balance}
+  .sub{color:var(--muted);font-style:italic;margin:0 0 22px;font-size:15.5px}
+  h2{color:var(--blue);font-size:20px;font-weight:700;margin:40px 0 10px;letter-spacing:-.01em}
+  h3{color:var(--navy);font-size:14.5px;font-weight:700;margin:22px 0 8px}
+  p{margin:0 0 12px;font-size:15px}
+  .cap{font-size:12.5px;color:var(--muted);margin:6px 0 0;line-height:1.5}
+  .idea,.result{border:1px solid var(--hair);border-radius:2px;padding:12px 16px;margin:16px 0;font-size:14.5px}
+  .idea{background:var(--bluefill)}
+  .result{background:var(--greenfill);border-color:var(--greenline)}
+  .idea b,.result b{color:var(--navy)}
+  .result b{color:var(--green)}
+  i,var{font-family:var(--math);font-style:italic;font-weight:400}
+  sub,sup{font-size:.72em}
+  .eq{font-family:var(--math);text-align:center;margin:14px 0;font-size:16.5px;line-height:1.4;overflow-x:auto;padding:2px 0}
+  .eq .where{font-family:var(--sans);font-size:12.5px;color:var(--muted)}
+  .boxedeq{display:inline-block;border:1.5px solid var(--navy);padding:8px 18px;color:var(--navy);
+    font-weight:700;font-size:18px}
+  .mat{position:relative;display:inline-grid;gap:1px 16px;padding:3px 9px;vertical-align:middle;
+    font-family:var(--math);text-align:center}
+  .mat::before,.mat::after{content:"";position:absolute;top:0;bottom:0;width:5px;
+    border:1.6px solid var(--ink)}
+  .mat::before{left:0;border-right:none}
+  .mat::after{right:0;border-left:none}
+  .m2{grid-template-columns:auto auto}.m3{grid-template-columns:auto auto auto}
+  .underb{display:inline-block;text-align:center;vertical-align:top}
+  .underb .u{display:block;border-top:1px solid var(--muted);color:var(--muted);
+    font-family:var(--sans);font-size:11.5px;margin-top:3px;padding-top:2px}
+  figure{margin:16px 0;background:var(--panel);border:1px solid var(--hair);border-radius:6px;
+    padding:14px 10px 10px;overflow-x:auto}
+  figure svg{display:block;margin:0 auto}
+  .svgtxt{font-family:var(--sans);font-size:11.5px;fill:var(--ink)}
+  .svgb{font-weight:700}
+  .svgs{font-size:9.5px;fill:var(--muted)}
+  .svgm{font-family:var(--math);font-style:italic;font-size:12px;fill:var(--ink)}
+  .nb{fill:var(--bluefill);stroke:var(--blue);stroke-width:1.2;rx:6}
+  .nn{fill:var(--slatefill);stroke:var(--muted);stroke-width:1;rx:6}
+  .na{fill:var(--redfill);stroke:var(--red);stroke-width:1.2;rx:6}
+  .ng{fill:var(--greenfill);stroke:var(--green);stroke-width:1.2;rx:6}
+  .nr{fill:var(--orangefill);stroke:var(--orange);stroke-width:1.2;rx:6}
+  .fl{stroke:var(--muted);stroke-width:1.3;fill:none;marker-end:url(#arr)}
+  .fld{stroke:var(--muted);stroke-width:1.1;fill:none;stroke-dasharray:4 3;marker-end:url(#arr)}
+  ol{margin:8px 0 14px;padding-left:24px}
+  ol li{margin-bottom:8px;font-size:15px}
+  ol li b{color:var(--navy)}
+  .bar{display:flex;gap:0;height:34px;margin:12px 0 4px;font-family:var(--sans);font-size:12px;min-width:560px}
+  .bar span{display:flex;align-items:center;justify-content:center;border:1px solid var(--hair);
+    white-space:nowrap;padding:0 8px}
+  .barwrap{overflow-x:auto}
+  .bb{background:var(--bluefill);color:var(--ink)}
+  .br{background:var(--redfill);color:var(--red)}
+  .bo{background:var(--orangefill);color:var(--orange)}
+  .bg{background:var(--greenfill);color:var(--green)}
+  table{border-collapse:collapse;margin:14px auto;font-size:14px;min-width:480px}
+  .tblwrap{overflow-x:auto}
+  th{color:var(--navy);text-align:left;font-size:12.5px;letter-spacing:.04em;padding:6px 14px;
+    border-bottom:2px solid var(--navy)}
+  td{padding:7px 14px;border-bottom:1px solid var(--hair);font-variant-numeric:tabular-nums}
+  td.num{text-align:right;font-family:var(--mono);font-size:13px}
+  td.rat{color:var(--green);font-weight:600}
+  code{font-family:var(--mono);font-size:.86em;background:var(--slatefill);padding:1px 5px;border-radius:4px}
+  .foot{margin-top:48px;padding-top:14px;border-top:1px solid var(--hair);
+    font-size:12px;color:var(--muted);font-family:var(--mono);line-height:1.7}
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">Ligero technical note · VerInf</p>
+  <h1>Random Projection in Routed Ligero</h1>
+  <p class="sub">Why it is needed, how it compresses the witness, and a complete numerical example.</p>
+
+  <div class="idea"><b>Core idea.</b> Projection speeds up the proof by replacing a huge witness of
+    individual scalar multiplications with one randomized fingerprint check.</div>
+
+  <h2>1. Why the witness becomes too large</h2>
+
+  <h3>A. Three experts: only the selected route gets an activation trace</h3>
+  <figure>
+    <svg width="660" height="196" viewBox="0 0 660 196">
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5"
+        orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--muted)"></path></marker></defs>
+      <rect class="nb" x="8" y="78" width="88" height="40" rx="6"></rect>
+      <text class="svgtxt svgb" x="52" y="94" text-anchor="middle">input <tspan class="svgm">x<tspan baseline-shift="sub" font-size="9">t</tspan></tspan></text>
+      <text class="svgs" x="52" y="108" text-anchor="middle">committed base input</text>
+      <rect class="nr" x="124" y="78" width="84" height="40" rx="6"></rect>
+      <text class="svgtxt svgb" x="166" y="94" text-anchor="middle">router</text>
+      <text class="svgs" x="166" y="108" text-anchor="middle">selects e = 2</text>
+      <rect class="nn" x="252" y="12" width="96" height="40" rx="6"></rect>
+      <text class="svgm" x="300" y="28" text-anchor="middle">W<tspan baseline-shift="sub" font-size="9">1</tspan></text>
+      <text class="svgs" x="300" y="42" text-anchor="middle">committed weights</text>
+      <rect class="nb" x="252" y="78" width="96" height="40" rx="6"></rect>
+      <text class="svgm" x="300" y="94" text-anchor="middle">W<tspan baseline-shift="sub" font-size="9">2</tspan></text>
+      <text class="svgs" x="300" y="108" text-anchor="middle">committed weights</text>
+      <rect class="nn" x="252" y="144" width="96" height="40" rx="6"></rect>
+      <text class="svgm" x="300" y="160" text-anchor="middle">W<tspan baseline-shift="sub" font-size="9">3</tspan></text>
+      <text class="svgs" x="300" y="174" text-anchor="middle">committed weights</text>
+      <rect class="na" x="384" y="78" width="118" height="40" rx="6"></rect>
+      <text class="svgtxt svgb" x="443" y="94" text-anchor="middle">product trace</text>
+      <text class="svgs" x="443" y="108" text-anchor="middle">only for <tspan class="svgm">x<tspan baseline-shift="sub" font-size="8">t</tspan>W<tspan baseline-shift="sub" font-size="8">2</tspan></tspan></text>
+      <rect class="ng" x="538" y="78" width="70" height="40" rx="6"></rect>
+      <text class="svgm svgb" x="573" y="94" text-anchor="middle">y<tspan baseline-shift="sub" font-size="9">t</tspan></text>
+      <text class="svgs" x="573" y="108" text-anchor="middle">output</text>
+      <line class="fl" x1="96" y1="98" x2="121" y2="98"></line>
+      <line class="fl" x1="208" y1="98" x2="249" y2="98"></line>
+      <line class="fl" x1="348" y1="98" x2="381" y2="98"></line>
+      <line class="fl" x1="502" y1="98" x2="535" y2="98"></line>
+      <path class="fld" d="M212,88 C230,60 236,42 249,34"></path>
+      <path class="fld" d="M212,108 C230,136 236,154 249,162"></path>
+      <line class="fld" x1="348" y1="32" x2="380" y2="32"></line>
+      <text class="svgs" x="386" y="35">no product trace</text>
+      <line class="fld" x1="348" y1="164" x2="380" y2="164"></line>
+      <text class="svgs" x="386" y="167">no product trace</text>
+    </svg>
+    <figcaption class="cap">All three weight matrices remain authenticated; inactive branches stop at the weights.</figcaption>
+  </figure>
+
+  <h3>B. Why the committed witness matrix becomes large</h3>
+  <div class="barwrap">
+    <div class="bar" aria-label="naive witness composition">
+      <span class="bb" style="flex:2.2"><i>x<sub>t</sub></i>&nbsp;|&nbsp;base values</span>
+      <span class="br" style="flex:5.4">every product <i>x<sub>t,i</sub></i><i>W<sub>e,i,j</sub></i></span>
+      <span class="bo" style="flex:2.2">partial sums</span>
+      <span class="bg" style="flex:1.4">outputs</span>
+    </div>
+  </div>
+  <p class="cap">The commitment itself is not the expansion. The expansion occurs when each operation
+    result is appended to the witness that is committed.</p>
+
+  <h3>C. Projection compresses the active route</h3>
+  <figure>
+    <svg width="700" height="170" viewBox="0 0 700 170">
+      <text class="svgtxt svgb" x="8" y="42" fill="var(--navy)">Direct</text>
+      <rect class="nn" x="76" y="16" width="98" height="42" rx="6"></rect>
+      <text class="svgtxt svgb" x="125" y="33" text-anchor="middle">input</text>
+      <text class="svgs" x="125" y="48" text-anchor="middle"><tspan class="svgm">x<tspan baseline-shift="sub" font-size="8">t</tspan></tspan> ∈ F<tspan baseline-shift="super" font-size="8">1×K</tspan></text>
+      <rect class="nn" x="206" y="16" width="112" height="42" rx="6"></rect>
+      <text class="svgtxt svgb" x="262" y="33" text-anchor="middle">weights</text>
+      <text class="svgs" x="262" y="48" text-anchor="middle"><tspan class="svgm">W<tspan baseline-shift="sub" font-size="8">e</tspan></tspan> ∈ F<tspan baseline-shift="super" font-size="8">K×J</tspan></text>
+      <rect class="na" x="350" y="16" width="140" height="42" rx="6"></rect>
+      <text class="svgtxt svgb" x="420" y="33" text-anchor="middle">product trace</text>
+      <text class="svgs" x="420" y="48" text-anchor="middle">K·J scalar products</text>
+      <rect class="nn" x="522" y="16" width="100" height="42" rx="6"></rect>
+      <text class="svgtxt svgb" x="572" y="33" text-anchor="middle">output</text>
+      <text class="svgs" x="572" y="48" text-anchor="middle"><tspan class="svgm">y<tspan baseline-shift="sub" font-size="8">t</tspan></tspan> ∈ F<tspan baseline-shift="super" font-size="8">1×J</tspan></text>
+      <line class="fl" x1="174" y1="37" x2="203" y2="37"></line>
+      <line class="fl" x1="318" y1="37" x2="347" y2="37"></line>
+      <line class="fl" x1="490" y1="37" x2="519" y2="37"></line>
+      <text class="svgtxt svgb" x="8" y="128" fill="var(--navy)">Projected</text>
+      <rect class="nn" x="76" y="102" width="98" height="42" rx="6"></rect>
+      <text class="svgtxt svgb" x="125" y="119" text-anchor="middle">input</text>
+      <text class="svgs" x="125" y="134" text-anchor="middle"><tspan class="svgm">x<tspan baseline-shift="sub" font-size="8">t</tspan></tspan> ∈ F<tspan baseline-shift="super" font-size="8">1×K</tspan></text>
+      <rect class="nb" x="206" y="102" width="130" height="42" rx="6"></rect>
+      <text class="svgtxt svgb" x="271" y="119" text-anchor="middle">projected weights</text>
+      <text class="svgs" x="271" y="134" text-anchor="middle"><tspan class="svgm">P<tspan baseline-shift="sub" font-size="8">e</tspan> = W<tspan baseline-shift="sub" font-size="8">e</tspan>ρ</tspan> ∈ F<tspan baseline-shift="super" font-size="8">K×1</tspan></text>
+      <rect class="ng" x="368" y="102" width="108" height="42" rx="6"></rect>
+      <text class="svgtxt svgb" x="422" y="119" text-anchor="middle">left fingerprint</text>
+      <text class="svgs" x="422" y="134" text-anchor="middle"><tspan class="svgm">x<tspan baseline-shift="sub" font-size="8">t</tspan>P<tspan baseline-shift="sub" font-size="8">e</tspan></tspan> ∈ F</text>
+      <text class="svgtxt svgb" x="492" y="128" fill="var(--green)" font-size="16">=</text>
+      <rect class="ng" x="508" y="102" width="108" height="42" rx="6"></rect>
+      <text class="svgtxt svgb" x="562" y="119" text-anchor="middle">right fingerprint</text>
+      <text class="svgs" x="562" y="134" text-anchor="middle"><tspan class="svgm">y<tspan baseline-shift="sub" font-size="8">t</tspan>ρ</tspan> ∈ F</text>
+      <line class="fl" x1="174" y1="123" x2="203" y2="123"></line>
+      <line class="fl" x1="336" y1="123" x2="365" y2="123"></line>
+      <path class="fl" d="M572,58 L562,99"></path>
+    </svg>
+    <figcaption class="cap">The verifier samples <i>ρ</i> ∈ F<sup><i>J</i>×1</sup> after commitments.
+      Public-scalar work in <i>W<sub>e</sub>ρ</i> is linear; the nonlinear trace falls from
+      <i>K·J</i> to <i>K</i> products per route.</figcaption>
+  </figure>
+
+  <div class="idea"><b>Two distinct savings.</b> Routing removes computation traces of inactive experts.
+    Projection then compresses the matrix-multiplication trace of the active expert. Base weights remain
+    committed, but per-operation products are not appended for inactive routes.</div>
+
+  <h2>2. Protocol sequence</h2>
+  <ol>
+    <li><b>Commit first.</b> The prover fixes the weight matrix <i>W<sub>e</sub></i> and claimed output
+      <i>y<sub>t</sub></i> before seeing the verifier's randomness.</li>
+    <li><b>Sample the challenge.</b> The verifier samples <i>ρ</i> ∈ F<sup><i>J</i>×1</sup> only after
+      those commitments.</li>
+    <li><b>Project the weights.</b> The prover computes <i>P<sub>e</sub></i> = <i>W<sub>e</sub>ρ</i> ∈
+      F<sup><i>K</i>×1</sup> and proves that <i>P<sub>e</sub></i> was derived from the committed
+      <i>W<sub>e</sub></i>.</li>
+    <li><b>Check one fingerprint.</b> The verifier checks <i>y<sub>t</sub>ρ</i> = <i>x<sub>t</sub>P<sub>e</sub></i>.
+      If <i>y<sub>t</sub></i> = <i>x<sub>t</sub>W<sub>e</sub></i>, then
+      <i>y<sub>t</sub>ρ</i> = (<i>x<sub>t</sub>W<sub>e</sub></i>)<i>ρ</i> =
+      <i>x<sub>t</sub></i>(<i>W<sub>e</sub>ρ</i>) = <i>x<sub>t</sub>P<sub>e</sub></i>.</li>
+  </ol>
+  <p class="eq"><span class="boxedeq"><i>y<sub>t</sub>ρ</i> = <i>x<sub>t</sub>P<sub>e</sub></i> = <i>x<sub>t</sub></i>(<i>W<sub>e</sub>ρ</i>)</span></p>
+
+  <h2>3. Numerical example</h2>
+  <p>Let</p>
+  <p class="eq">
+    <i>X</i> = <span class="mat m2"><span>2</span><span>3</span></span> ∈ F<sup>1×2</sup>,&emsp;
+    <i>W</i> = <span class="mat m3"><span>1</span><span>4</span><span>2</span><span>5</span><span>0</span><span>6</span></span> ∈ F<sup>2×3</sup>.
+  </p>
+  <p>Ordinary matrix multiplication gives</p>
+  <p class="eq">
+    <i>Y</i> = <i>XW</i> =
+    <span class="mat m2"><span>2</span><span>3</span></span>
+    <span class="mat m3"><span>1</span><span>4</span><span>2</span><span>5</span><span>0</span><span>6</span></span> =
+    <span class="mat m3"><span>17</span><span>8</span><span>22</span></span> ∈ F<sup>1×3</sup>.
+  </p>
+  <p>After <i>W</i> and <i>Y</i> are fixed, the verifier samples</p>
+  <p class="eq"><i>ρ</i> = <span class="mat" style="grid-template-columns:auto"><span>7</span><span>11</span><span>19</span></span> ∈ F<sup>3×1</sup>.</p>
+  <p>The prover projects the weights:</p>
+  <p class="eq">
+    <i>P</i> = <i>Wρ</i> =
+    <span class="mat m3"><span>1</span><span>4</span><span>2</span><span>5</span><span>0</span><span>6</span></span>
+    <span class="mat" style="grid-template-columns:auto"><span>7</span><span>11</span><span>19</span></span> =
+    <span class="mat" style="grid-template-columns:auto"><span>89</span><span>149</span></span> ∈ F<sup>2×1</sup>.
+  </p>
+  <p>The verifier compares the two scalar fingerprints:</p>
+  <p class="eq">
+    <span class="underb"><i>Yρ</i><span class="u">output fingerprint</span></span> =
+    <span class="mat m3"><span>17</span><span>8</span><span>22</span></span>
+    <span class="mat" style="grid-template-columns:auto"><span>7</span><span>11</span><span>19</span></span> = 625,&emsp;
+    <span class="underb"><i>XP</i><span class="u">input/weight fingerprint</span></span> =
+    <span class="mat m2"><span>2</span><span>3</span></span>
+    <span class="mat" style="grid-template-columns:auto"><span>89</span><span>149</span></span> = 625.
+  </p>
+
+  <div class="result"><b>Result.</b> Both fingerprints equal 625. A false output <i>Y′</i> would pass only
+    if its nonzero error <i>Δ</i> = <i>Y′</i> − <i>XW</i> happened to satisfy <i>Δρ</i> = 0. Because
+    <i>ρ</i> is sampled after <i>Y′</i> is fixed, this occurs with probability at most about 1/|F| for a
+    uniform field challenge.</div>
+
+  <h2>4. What is actually saved</h2>
+  <p>The original inference still computes the complete output, and projection adds linear arithmetic.
+    The saving is inside the proof: a direct active-route trace uses Θ(<i>K·J</i>) nonlinear
+    multiplication cells, while the projected check uses Θ(<i>K</i>) such cells plus linear work for
+    <i>W<sub>e</sub>ρ</i> and <i>y<sub>t</sub>ρ</i>. The advantage is substantial for large matrices;
+    for a tiny one-off multiplication, projection may add work rather than save it.</p>
+
+  <h2>5. Before / after: the cost model in formulas</h2>
+  <p><b style="color:var(--navy)">Baseline.</b> "Before" is the full-witness pipeline this work started
+    from: expert weights sit in the committed witness and every proved multiplication contributes its own
+    witness cells. "After" is the routed-projected protocol
+    (<code>analysis/routed-projected-protocol.md</code>). Both sides are priced with the same Ligero cost
+    structure and the same code base; no unrelated optimization enters either side of the comparison.</p>
+
+  <h3>A. One routed matmul, per token</h3>
+  <p>For <i>X<sub>t</sub></i> ∈ F<sup>1×<i>K</i></sup>, <i>W<sub>e</sub></i> ∈ F<sup><i>K</i>×<i>J</i></sup>:</p>
+  <p class="eq">
+    <span class="underb"><i>w</i><sub>dir</sub> = <i>KJ</i> + <i>J</i><span class="u">products + outputs</span></span>,&emsp;
+    <i>q</i><sub>dir</sub> = <i>KJ</i>
+    &emsp;⟹&emsp;
+    <span class="underb"><i>w</i><sub>proj</sub> = 2<i>K</i> + 1<span class="u">H, Q, y<sup>ρ</sup></span></span>,&emsp;
+    <i>q</i><sub>proj</sub> = <i>K</i>,
+  </p>
+  <p>plus, once per expert and amortized over all tokens routed anywhere, <i>K</i> cells for the projected
+    column <i>P<sub>e</sub></i> = <i>W<sub>e</sub>ρ</i>, bound by a <em>public-coefficient linear</em>
+    relation (no quadratic cells). The compression factors are</p>
+  <p class="eq">
+    <i>w</i><sub>dir</sub>/<i>w</i><sub>proj</sub> = (<i>KJ</i>+<i>J</i>)/(2<i>K</i>+1) ≈ <i>J</i>/2,&emsp;
+    <i>q</i><sub>dir</sub>/<i>q</i><sub>proj</sub> = <i>J</i>.
+  </p>
+  <p>Route hiding changes the two sides asymmetrically: before, hiding <i>e<sub>t</sub></i> forces
+    materializing all <i>E</i> expert traces (×<i>E</i> on the dominant term); after, the single matrix
+    <i>P</i> already covers all <i>E</i> experts at <i>EK</i> cells per layer, so hiding costs
+    ×<i>E</i> only on the projected weights, never on the traces.</p>
+
+  <h3>B. Full model (Maverick), S = 1000 tokens</h3>
+  <p>With <i>L</i> = 24 MoE layers, <i>E</i> = 128 experts, <i>d</i> = 5120, <i>f</i> = 8192, and three
+    expert matrices per layer whose contraction dimensions sum to Σ<i>K<sub>m</sub></i> = 2<i>d</i>+<i>f</i>
+    (<i>m</i> ranges over the 3<i>L</i> = 72 routed matmuls):</p>
+  <p class="eq">
+    <i>N</i> = <i>L·S·</i>(2<i>d</i>+<i>f</i>) = 442,368,000,&emsp;
+    <i>R</i> = <i>L·E·</i>(2<i>d</i>+<i>f</i>) = 56,623,104.
+  </p>
+  <p>The routed-projected MoE block then costs, row-exactly (ELL = 8192; the 72 <i>y<sup>ρ</sup></i>
+    variables and late Freivalds auxiliaries carry their own padding):</p>
+  <p class="eq">
+    <i>W</i><sub>route</sub> = 2<i>N</i> + <i>R</i> + 4·72·ELL = 943,718,400,<br>
+    <i>L</i><sub>route</sub> = <i>R</i> + 2·72·<i>S</i> + 72(2<i>E</i>+1) = 56,785,608,&emsp;
+    <i>Q</i><sub>route</sub> = <i>N</i> + 72<i>E</i> = 442,377,216.
+  </p>
+  <p>Substituting this block for the ordinary weight-witness block and the <i>E</i> per-expert output
+    streams gives the whole-proof ledgers (exact values printed by
+    <code>analysis/routed_projected_4h_model.py</code>):</p>
+  <div class="tblwrap">
+    <table>
+      <thead><tr><th>Ledger</th><th style="text-align:right">Before</th><th style="text-align:right">After</th>
+        <th style="text-align:right">Ratio</th><th style="text-align:right">Speedup</th></tr></thead>
+      <tbody>
+        <tr><td>Witness cells <i>W</i></td><td class="num">888,249,981,888</td><td class="num">95,205,646,976</td>
+          <td class="num">10.72%</td><td class="num rat">×9.33</td></tr>
+        <tr><td>Linear cells <i>L</i></td><td class="num">162,237,276,010</td><td class="num">31,064,630,194</td>
+          <td class="num">19.15%</td><td class="num rat">×5.22</td></tr>
+        <tr><td>Quadratic cells <i>Q</i></td><td class="num">173,106,423,296</td><td class="num">42,394,577,408</td>
+          <td class="num">24.49%</td><td class="num rat">×4.08</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>C. From cells to time</h3>
+  <p>Every prover stage — witness regeneration, encoding, Merkle hashing, the linear/quadratic folds,
+    column opening — is linear in the cells it touches, so the prove time decomposes as</p>
+  <p class="eq">
+    <i>t</i><sub>prove</sub> = Σ<sub>stage <i>i</i></sub> <i>c<sub>i</sub></i> · <i>n<sub>i</sub></i>(<i>W</i>,<i>L</i>,<i>Q</i>),&emsp;
+    <i>t<sup>before</sup><sub>i</sub></i> / <i>t<sup>after</sup><sub>i</sub></i> =
+    <i>n<sub>i</sub><sup>before</sup></i> / <i>n<sub>i</sub><sup>after</sup></i>,
+  </p>
+  <p>with per-kernel constants <i>c<sub>i</sub></i> measured, never fitted globally. Witness-bound stages
+    therefore speed up by ×9.33, linear folds by ×5.22, quadratic folds by ×4.08. Under the per-kernel
+    admission model the after-pipeline sums to</p>
+  <p class="eq"><i>t</i><sub>prove</sub> ≤ 13,046.264 s = 3.6240 h</p>
+  <p>at <i>S</i> = 1000, inside the four-hour envelope; the before-pipeline is dominated by committing,
+    encoding and folding the 888G-cell witness and admits no such envelope on the same hardware. The
+    soundness price of the entire transformation is</p>
+  <p class="eq"><i>ε</i><sub>new</sub> ≤ <i>ε</i><sub>Ligero</sub> + 3/|F| + <i>ε</i><sub>hash</sub>.</p>
+
+  <div class="result"><b>Before/after in one line.</b> The projection shrinks the witness ×9.33, the
+    linear ledger ×5.22 and the quadratic ledger ×4.08 at a soundness cost of 3/|F| — an
+    order-of-magnitude smaller proof workload bought with a negligible field-soundness term.</div>
+
+  <div class="foot">
+    Source of record: <code>analysis/routed-projection-note.tex</code> (this page mirrors it) ·
+    ledger &amp; envelope: <code>python3 analysis/routed_projected_4h_model.py</code> ·
+    protocol: <code>analysis/routed-projected-protocol.md</code>
+  </div>
+</div>
+
+</body>
+</html>

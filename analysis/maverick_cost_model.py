@@ -79,9 +79,11 @@ def matmul(m, k, n, heads=1, rescale=True):
 
 
 def rmsnorm(B, dd):                         # output-rescale ON, K=4 slack chunks
+    # wrap-free bracket per-row constants (paper A.1/B.4); the per-cell
+    # 7Bd/2Bd/3Bd terms are unchanged from the pre-fix 26B/7B/13B row
     B, dd = Poly.lift(B), Poly.lift(dd)
     Bd = B * dd
-    return (7 * Bd + 26 * B, 7 * B + 2 * Bd, 3 * Bd + 13 * B)
+    return (7 * Bd + 82 * B, 17 * B + 2 * Bd, 3 * Bd + 42 * B)
 
 
 def softmax(B, M):                          # saturate + causal ON

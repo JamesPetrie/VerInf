@@ -1,0 +1,42 @@
+{
+  "name": "gb10-spark",
+  "description": "NVIDIA DGX Spark (GB10, sm_121, 121 GiB unified LPDDR5x, CUDA 13.0) — the current dev/measurement box.",
+  "gpu": {
+    "count": 1,
+    "mem_GB": 121,
+    "mem_bandwidth_GBps": 223,
+    "field_mul_Gps": 312,
+    "blake3_compress_Gps": 2.0,
+    "blake3_bulk_GBps": 128,
+    "ntt_ns_per_elem": 0.42
+  },
+  "prove_constants": {
+    "A_ns_per_slot": 9.0,
+    "B_ns_per_cid": 0.6,
+    "C_ns_per_product": 15.0,
+    "aggregate_ns_per_slot": 39.8
+  },
+  "verify": {
+    "bytes_per_row": 700,
+    "cores": 20
+  },
+  "io": {
+    "disk_read_GBps": null,
+    "h2d_GBps": null,
+    "proof_dump_MBps": 124
+  },
+  "interconnect": null,
+  "provenance": {
+    "mem_bandwidth_GBps": "analysis/prover-optimization-investigation.md — measured copy bandwidth 223 GB/s",
+    "field_mul_Gps": "prover/deprecated/spark-microbench-results.md — bench_field_mul 312 Gmul/s",
+    "blake3_compress_Gps": "spark-microbench-results.md — 2.0 Gcompress/s (compute-bound)",
+    "blake3_bulk_GBps": "spark-microbench-results.md — bulk column hashing 128 GB/s",
+    "ntt_ns_per_elem": "prover-optimization-investigation.md — 0.33-0.42 ns/elem, flat across batch, bandwidth-bound",
+    "A_ns_per_slot": "analysis/maverick-cost-model.md — encode ~4 + linear-fold poly_mul ~5 ns/slot (NTT-bound floor, un-fused count = upper bound)",
+    "B_ns_per_cid": "maverick-cost-model.md — 1 BLAKE3 compress per cid, compute-bound",
+    "C_ns_per_product": "maverick-cost-model.md — ~2 poly_muls of 2*K_DEG + operand re-encode per ELL-packed quad descriptor",
+    "aggregate_ns_per_slot": "analysis/witness-scaling-measurement.md — 39.8 ns/slot marginal all-in prove rate (current code, incl. expand+sort and Python orchestration)",
+    "verify.bytes_per_row": "calibrated: hidden run 75.7 GB RSS / 109.27 M rows = 693 B; v1 run measured 1002 B/row — use ~700 with a wide error bar",
+    "proof_dump_MBps": "analysis/full-model-hidden-run-archive.md — 93.6 GB in 756.3 s, Python string-building bound"
+  }
+}

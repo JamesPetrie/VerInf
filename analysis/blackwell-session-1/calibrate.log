@@ -1,0 +1,21 @@
+gpu: NVIDIA B200 x1 178 GB [sm_100]
+[cuda benches] nvcc=/usr/local/cuda/bin/nvcc
+  nvcc bench_field_mul.cu [sm_100]
+  nvcc bench_ntt.cu [sm_100]
+  nvcc bench_blake3_columns.cu [sm_100]
+  nvcc bench_goldilocks_matmul.cu [sm_100]
+  nvcc bench_blake3_reg.cu [sm_100]
+[torch benches]
+  mem_bandwidth_GBps = 6522.7 GB/s
+  h2d_GBps = 55.1 GB/s
+[disk] write + cache-evict + read over 8 GB
+[dump proxy]
+
+wrote /workspace/verinf/profiler/machines/b200-runpod.json
+
+ratios vs gb10-spark (the floor scales A/C by bandwidth, B by compute):
+  mem bandwidth        6522.7 / 223      = 29.25x
+  field mul             559.9 / 312      =  1.79x
+  blake3 compress        11.4 / 2        =  5.68x
+  blake3 bulk           727.3 / 128      =  5.68x
+  ntt ns/elem           0.271 / 0.42     =  1.55x faster

@@ -1,0 +1,17 @@
+=== Llama 2 7B transformer block, production scale ===
+  cfg: ELL=8192, K_DEG=16384, N_LIG=65536, T_QUERIES=80
+  shapes: d=4096, d_ff=11008, SEQ=100, d_h=128; scale s=2^12 (EPS_INT=168, Z_MAX=40000, output_width=26, silu r=12)
+  weights: random signed (Glorot-ish in [-32, 32); W_Q/√d_h), 32 layers
+
+--- single-tape proof: 32 layer(s) + tail ---
+  claims: 708  ({'AddClaim': 64, 'EmbeddingLookupClaim': 65, 'HadamardClaim': 97, 'MatmulClaim': 289, 'RmsNormClaim': 65, 'RoPEClaim': 64, 'SiluClaim': 32, 'SoftmaxClaim': 32})
+=== witness layout by claim type (m_total=1,165,729, W=9,549,651,968 elements) ===
+  MatmulClaim            rows=    926,957  elements=  7,586,412,544   79.4%
+  SiluClaim              rows=     99,360  elements=    810,188,800    8.5%
+  HadamardClaim          rows=     45,420  elements=    371,097,600    3.9%
+  RmsNormClaim           rows=     28,130  elements=    187,310,600    2.0%
+  TableSettlement        rows=     20,656  elements=    169,123,400    1.8%
+  RoPEClaim              rows=     19,200  elements=    157,286,400    1.6%
+  SoftmaxClaim           rows=     19,488  elements=    154,521,600    1.6%
+  EmbeddingLookupClaim   rows=      3,315  elements=     26,890,240    0.3%
+  AddClaim               rows=      3,200  elements=     26,214,400    0.3%
