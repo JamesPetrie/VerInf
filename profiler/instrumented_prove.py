@@ -65,11 +65,23 @@ def main(argv=None) -> int:
     ap.add_argument("--skip-reveal", action="store_true",
                     help="do not run the reveal engine pass; the UI bound "
                          "stays unpinned (only if the tape has no reveal pin)")
+    ap.add_argument("--sweep-timing", action="store_true",
+                    help="LIGERO_SWEEP_TIMING=1: one table per proof with a "
+                         "row per sweep (buckets, loader calls and bytes, "
+                         "cache reads/writes, projections)")
+    ap.add_argument("--routed-cache", action="store_true",
+                    help="LIGERO_ROUTED_Y_CACHE=1: reuse the routed claims' "
+                         "first-sweep outputs (the A/B arm; proof bytes are "
+                         "unchanged, gated in tests/test_shard_streaming.py)")
     a = ap.parse_args(argv)
 
     # must precede any demo import: the demo configs read it at import time
     os.environ["LIGERO_T_QUERIES"] = str(a.t_queries)
     os.environ.setdefault("LIGERO_PHASE_TIMING", "1")
+    if a.sweep_timing:
+        os.environ["LIGERO_SWEEP_TIMING"] = "1"
+    if a.routed_cache:
+        os.environ["LIGERO_ROUTED_Y_CACHE"] = "1"
     for p in (_REPO / "prover", _REPO / "demo"):
         if str(p) not in sys.path:
             sys.path.insert(0, str(p))
@@ -82,6 +94,8 @@ def main(argv=None) -> int:
 
     log("RESEARCH TIMING RUN — not a production proof: no admission gate, "
         "in-process throwaway enrollment, Sz discovered by a reveal pass")
+    log(f"routed-output cache {'ON' if core._ROUTED_Y_CACHE_ON else 'off'}; "
+        f"per-sweep table {'ON' if core._SWEEP_ON else 'off'}")
     torch.manual_seed(7)
     g = torch.Generator().manual_seed(11)
     prompt_ids = torch.randint(0, a.vocab, (a.prompt_n,), generator=g).tolist()

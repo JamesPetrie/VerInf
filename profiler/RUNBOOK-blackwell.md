@@ -294,6 +294,43 @@ D (~30-90 min): instrumented projected prove, the strategy-grade run —
    # a real compact-dump rate (cross-check io.proof_dump_compact_MBps
    # from phase A; predict's fallback is the A100 egress bound, 245 MB/s).
 
+D2 (~2x an S=100 prove): routed-output cache A/B, per sweep —
+   # The question (witness cache handoff, 2026-09-09) is what each of the
+   # five sweeps costs and how much of it the routed claims' recompute and
+   # decode are; LIGERO_PHASE_TIMING cannot answer it (one aggregate over
+   # all sweeps). Run the S=100 prove twice with the per-sweep table, the
+   # routed-output cache off and then on, same tape both arms (the driver's
+   # seeds are fixed). spark_run.sh DETACHES and returns at once: launch the
+   # second arm only after the first has written its EXIT line, or the two
+   # proves share the GPU, the storage lane and host memory and the timings
+   # mean nothing (and the pair can OOM). The off arm names its flag so the
+   # shell's environment cannot decide it.
+   LIGERO_ROUTED_Y_CACHE=0 tools/spark_run.sh mavp-s100-off \
+       python3 profiler/instrumented_prove.py --from-gguf <local> \
+       --t-queries 54 --prompt-n 50 --cont-n 50 --sweep-timing
+   until grep -q '^EXIT=' ~/mavp-s100-off.log; do sleep 60; done
+   grep -qx 'EXIT=0' ~/mavp-s100-off.log && tools/spark_run.sh mavp-s100-on \
+       python3 profiler/instrumented_prove.py --from-gguf <local> \
+       --t-queries 54 --prompt-n 50 --cont-n 50 --sweep-timing --routed-cache
+   # (the guard launches the on arm only after an EXIT=0; a failed off arm
+   # leaves nothing running)
+   # Read, per row (R1, R2, R3, fold, open): fetch = seconds inside loader
+   # resolutions (the decode), witness = compute with the fetches taken
+   # out, loads / load_GB = loader calls and bytes, cache_rd / cache_wr,
+   # proj = projections computed, one per routed claim, all in R2: on the
+   # default model that is 0,72,0,0,0 on both arms (24 MoE layers, three
+   # routed matrices each); the toy fixture's single claim gives 0,1,0,0,0.
+   # Expect the ON
+   # arm's R3, fold and open rows to lose the routed shard reads and R2 to
+   # keep them for the projection; the fold and open rows also carry the
+   # enrolled block's encode-path reads on both arms. The dense claims'
+   # weights are resolved more than once per sweep (compute fetch, then the
+   # aux's lazy dict); the loads column shows it. Proof bytes are identical
+   # by the toy gate (prover/tests/test_shard_streaming.py); do not dump both
+   # proofs to re-check that here. Decide the S=1000 A/B after the S=100
+   # shares, not by default. Copy the two per-sweep tables home with the
+   # phase-timing log.
+
 Copy home: profile + raw logs, crosscheck-out/ (manifests gzipped, layout
 probes, diff verdicts), phase-timing log, the proof file size (not the
 proof), pip freeze. Then run `python3 profiler/cli.py weightsplit
