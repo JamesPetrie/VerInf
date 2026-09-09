@@ -153,6 +153,138 @@ def test_projection_adds_no_second_read_of_the_weights():
           f"{watch_fused.loads} (one full weight pass saved)")
 
 
+def _proof_bytes(tape, proof):
+    """The production wire, for byte comparison (test_weight_split's pattern)."""
+    import os
+    import tempfile
+    import protocol as pr
+    from proof_dump import dump_proof
+    fd, path = tempfile.mkstemp(suffix=".json")
+    os.close(fd)
+    try:
+        dump_proof(path, pr.claims_to_json(tape.claims, CFG), None, proof, None, None)
+        with open(path, "rb") as f:
+            return f.read()
+    finally:
+        for p in (path, path + ".part"):
+            if os.path.exists(p):
+                os.unlink(p)
+
+
+ZK_SEED = b"\x33" * 32
+
+
+def test_routed_output_cache_is_byte_identical_and_accepts():
+    """LIGERO_ROUTED_Y_CACHE reuses the routed claims' first-sweep Y. Y is a
+    deterministic function of committed inputs, so the proof may not change by
+    a byte, and the Rust verifier must accept the cached-Y proof."""
+    tape_off, _ = _build(ShardWatch(), persistent=True, tokens=E)
+    wc = core.WeightCommitment.from_tape(tape_off, CFG)
+    prev = core._ROUTED_Y_CACHE_ON
+    try:
+        core._ROUTED_Y_CACHE_ON = False
+        base = _proof_bytes(tape_off, tape_off.prove(zk_seed=ZK_SEED, weight_commitment=wc))
+        core._ROUTED_Y_CACHE_ON = True
+        tape_on, _ = _build(ShardWatch(), persistent=True, tokens=E)
+        proof_on = tape_on.prove(zk_seed=ZK_SEED, weight_commitment=wc)
+    finally:
+        core._ROUTED_Y_CACHE_ON = prev
+    got = _proof_bytes(tape_on, proof_on)
+    assert got == base, "routed-output cache: proof bytes differ from the uncached proof"
+    assert len(got) > 1000
+    acc, msg = rust_verify_tape(tape_on, proof_on, seed=None)
+    assert acc, f"cached-Y routed proof: expected ACCEPT ({msg})"
+    print(f"    cache off/on: {len(base)} proof bytes identical; Rust ACCEPT")
+
+
+def test_routed_output_cache_skips_three_of_five_shard_passes():
+    """Every expert routed, block enrolled: without the cache the shards are
+    read for Y in all five sweeps and for P once, fused into R2. With it, Y
+    is computed in R1 and stored, R2 still walks the shards for P, and R3,
+    the fold and the opening read no shard — three full passes fewer. The
+    encode-path reads of the fold and opening sweeps are the same on both
+    sides, so the difference is exactly the three passes."""
+    def loads_in_prove(cache_on):
+        watch = ShardWatch()
+        tape, _ = _build(watch, persistent=True, tokens=E)
+        wc = core.WeightCommitment.from_tape(tape, CFG)
+        before = watch.loads
+        prev = core._ROUTED_Y_CACHE_ON
+        try:
+            core._ROUTED_Y_CACHE_ON = cache_on
+            tape.prove(weight_commitment=wc)
+        finally:
+            core._ROUTED_Y_CACHE_ON = prev
+        return watch.loads - before, dict(routed_projected.P_CACHE_STATS)
+
+    off, st_off = loads_in_prove(False)
+    on, st_on = loads_in_prove(True)
+    assert off - on == 3 * E, (
+        f"routed-output cache saved {off - on} shard loads, want {3 * E} "
+        f"(uncached {off}, cached {on})")
+    assert st_off["misses"] == 1 and st_on["misses"] == 1, (st_off, st_on)
+    print(f"    shard loads per proof: uncached {off} -> cached {on} "
+          f"(three passes of {E} saved; projection still computed once)")
+
+
+def test_routed_output_cache_frees_y_after_its_consumer():
+    """The copy of Y the cache hands the sweep must die when the sweep frees
+    Y after its last consumer, not linger in the loop's temporaries until the
+    next streaming claim: at production that is a 65 MB tensor per MoE layer
+    held across the whole attention block that follows. Y feeds a plain
+    hadamard by integer ones, which feeds a second; when the second one
+    computes, every copy of Y the cache loaded in this sweep must already
+    be gone. Plain products, no scales: Y reaches 173,214 on this fixture,
+    past any 16-bit output window, and a rescaled hadamard would range-fail."""
+    import compute_fns as cf
+    from claims import HadamardClaim
+    watch = ShardWatch()
+    tape, y = _build(watch, persistent=True, tokens=E)
+    u64 = lambda xs: torch.tensor(xs, dtype=torch.int64,
+                                  device="cuda").to(torch.uint64)
+    ones = tape.commit("ones", u64([1] * (E * J)), (E, J))
+    h1 = tape.hadamard(y, ones)
+    tape.hadamard(h1, ones)
+    h2 = tape.claims[-1]
+    assert isinstance(h2, HadamardClaim)
+    wc = core.WeightCommitment.from_tape(tape, CFG)
+
+    flags = []                                   # one per copy the cache loaded
+    real_load = core._routed_load
+
+    def tracked_load(entry):
+        t = real_load(entry)
+        flag = {"alive": True}
+        weakref.finalize(t, flag.__setitem__, "alive", False)
+        flags.append(flag)
+        return t
+
+    seen = []                                    # alive? at the second hadamard
+    real_h = cf.COMPUTE_FNS[HadamardClaim]
+
+    def observing(claim, inputs):
+        if claim is h2 and flags:
+            seen.append(flags[-1]["alive"])
+        return real_h(claim, inputs)
+
+    prev = core._ROUTED_Y_CACHE_ON
+    core._routed_load, cf.COMPUTE_FNS[HadamardClaim] = tracked_load, observing
+    try:
+        core._ROUTED_Y_CACHE_ON = True
+        proof = tape.prove(weight_commitment=wc)
+    finally:
+        core._ROUTED_Y_CACHE_ON = prev
+        core._routed_load, cf.COMPUTE_FNS[HadamardClaim] = real_load, real_h
+    assert len(flags) == 4, f"expected a cache load in each of R2, R3, fold, open; got {len(flags)}"
+    assert len(seen) == 4, f"the second hadamard was observed in {len(seen)} sweeps, want 4"
+    assert not any(seen), (
+        f"a cached Y was still alive at the claim after its consumer in "
+        f"{sum(seen)} of {len(seen)} sweeps")
+    acc, msg = rust_verify_tape(tape, proof, seed=None)
+    assert acc, f"retention fixture: expected ACCEPT ({msg})"
+    print(f"    cached Y freed after its consumer in all {len(seen)} sweeps that loaded it; Rust ACCEPT")
+
+
 def _rows_encoded(prove_kwargs):
     """Total RS-encoded rows in one proof, counted at the encoder itself."""
     watch = ShardWatch()

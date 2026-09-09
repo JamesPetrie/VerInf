@@ -278,7 +278,8 @@ def routed_compile(c: RoutedProjectedMatmulClaim, rho, cfg: LigeroConfig,
 
 
 # ------------------------------------------------------------------ witness
-def routed_compute(c: RoutedProjectedMatmulClaim, live, rho=None) -> dict:
+def routed_compute(c: RoutedProjectedMatmulClaim, live, rho=None,
+                   cached=None) -> dict:
     """The raw routed output, executed ACTIVE-ONLY: one expert at a time, and
     for each expert only the tokens routed to it. No all-expert output tensor
     is ever allocated — that is the structural requirement in
@@ -290,7 +291,18 @@ def routed_compute(c: RoutedProjectedMatmulClaim, live, rho=None) -> dict:
 
     When `rho` is given (every sweep from R2 on), the SAME resident shard also
     contributes its slice of P = W*rho, so the projection costs no extra read
-    or decode of the enrolled weights."""
+    or decode of the enrolled weights.
+
+    `cached` (core's routed-output cache, LIGERO_ROUTED_Y_CACHE=1): this
+    claim's outputs from the first sweep. They are the outputs, and the shard
+    pass is skipped — except that the projection for `rho` must exist first:
+    while it is not in _P_CACHE (the R2 sweep) the shards are still walked,
+    for P alone, by _project_weights. Y is a deterministic function of
+    committed inputs, so the reuse leaves the proof byte-identical."""
+    if cached is not None:
+        if rho is not None:
+            _project_weights(c, live, rho)   # a hit from R3 on: no shard read
+        return {c.Y: cached[c.Y]}
     T, K, J, E = c.T, c.K, c.J, c.E
     X = _resolve(live, c.X).reshape(T, K)
     M = _resolve(live, c.M).reshape(T, E).view(torch.int64)

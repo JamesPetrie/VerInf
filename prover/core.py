@@ -2970,16 +2970,19 @@ _WITNESS_SPILL_DIR = os.environ.get("LIGERO_WITNESS_SPILL_DIR", "/tmp")
 _SPILL_FADVISE = os.environ.get("LIGERO_SPILL_FADVISE", "0") != "0"
 
 
-def _host_spill_budget_bytes():
+def _host_spill_budget_bytes(fraction=None):
     """Bytes the host spill may use: a fraction of available host RAM (from
-    /proc/meminfo MemAvailable). Returns 0 if unqueryable -> spill degrades to
-    recompute (safe)."""
+    /proc/meminfo MemAvailable), the witness spill's fraction unless a caller
+    passes its own. Returns 0 if unqueryable -> spill degrades to recompute
+    (safe)."""
+    if fraction is None:
+        fraction = _WITNESS_SPILL_MEM_FRACTION
     try:
         with open("/proc/meminfo") as f:
             for line in f:
                 if line.startswith("MemAvailable:"):
                     avail = int(line.split()[1]) * 1024
-                    return int(avail * _WITNESS_SPILL_MEM_FRACTION)
+                    return int(avail * fraction)
     except Exception:
         pass
     return 0
@@ -3002,6 +3005,59 @@ def _spill_load(entry):
     host, dt = entry
     dev = host.to("cuda", non_blocking=True)
     return dev.view(dt) if dt == torch.uint64 else dev
+
+
+# --- Routed-output cache (LIGERO_ROUTED_Y_CACHE=1, opt-in). The routed claims
+# bypass the witness cache — _stream_sweep hands them the raw live map so they
+# can stream one expert shard at a time — and so recompute their output Y on
+# every sweep, re-reading and decoding every active expert shard each time. Y
+# is a deterministic function of committed inputs, so the witness cache's
+# soundness argument carries over unchanged: only the challenge-independent
+# output is reused, never P (keyed by rho in routed_projected._P_CACHE) and
+# never an aux. What a cached Y does NOT skip is the projection pass: P = W*rho
+# is fused into the first post-R1 pass over each shard (the R2 sweep), so that
+# sweep still walks the shards for P and only the Y matmul is dropped; from R3
+# on no shard is touched. It has its own budget because the witness cache's is
+# filled by softmax/silu outputs within the first layers at S=1000 and would
+# refuse the few GB of Y: GPU first, pinned host beyond it, recompute beyond
+# that. The host tier takes a tenth of available RAM, not the half the
+# witness spill takes, so the two ceilings cannot together reach the whole
+# of memory when both are on. Timing only — the proof is byte-identical
+# either way (gated in tests/test_shard_streaming.py).
+_ROUTED_Y_CACHE_ON = os.environ.get("LIGERO_ROUTED_Y_CACHE", "0") != "0"
+_ROUTED_Y_MEM_FRACTION = float(os.environ.get("LIGERO_ROUTED_Y_MEM_FRACTION", "0.25"))
+_ROUTED_Y_HOST_FRACTION = float(os.environ.get("LIGERO_ROUTED_Y_HOST_FRACTION", "0.1"))
+
+
+def _routed_cache_new():
+    """Per-proof routed-output cache: {claim index: {var: entry}} plus its two
+    budgets. An entry is ('gpu', tensor) or ('host', pinned spill)."""
+    try:
+        free, _total = torch.cuda.mem_get_info()
+    except Exception:
+        free = 0
+    return {'_gpu_budget': int(free * _ROUTED_Y_MEM_FRACTION), '_gpu_bytes': 0,
+            '_host_budget': _host_spill_budget_bytes(_ROUTED_Y_HOST_FRACTION),
+            '_host_bytes': 0}
+
+
+def _routed_store(outs, rc):
+    """Store a claim's outputs once: GPU within budget, else pinned host, else
+    None (the claim stays uncached and recomputes; timing, never the proof)."""
+    nb = sum(t.numel() * t.element_size() for t in outs.values())
+    if rc['_gpu_bytes'] + nb <= rc['_gpu_budget']:
+        rc['_gpu_bytes'] += nb
+        return {v: ('gpu', t.clone()) for v, t in outs.items()}
+    if rc['_host_bytes'] + nb <= rc['_host_budget']:
+        rc['_host_bytes'] += nb
+        return {v: ('host', _spill_store(t)) for v, t in outs.items()}
+    return None
+
+
+def _routed_load(entry):
+    """A fresh device tensor either way, so a consumer cannot touch the copy."""
+    kind, payload = entry
+    return payload.clone() if kind == 'gpu' else _spill_load(payload)
 
 
 def _disk_spill_open(wc):
@@ -3071,7 +3127,7 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
                   col_w=None, col_wnew=None, col_blind=None, p_0=None,
                   w_pad=None, wnew_pad=None,
                   stream_pk=None, r_quad=None, p_maps=None, Q_cols=None, p1_prefix=None,
-                  witness_cache=None, w_owned=None):
+                  witness_cache=None, w_owned=None, routed_cache=None):
     """One op-order streaming pass: regenerate the witness, encode each op's rows
     into whichever accumulators are non-None, fire its quads into p_0 (if given)
     from `live`, freeing per op. want_aux=False does phase-1 only (the commit
@@ -3190,10 +3246,32 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
                 # Shard-streaming claim: hand it the raw live map (loaders
                 # unresolved) and the round's op challenge, so one pass over a
                 # shard can serve both the semantic output and the projection.
+                # Under the routed-output cache its first-sweep outputs ride
+                # along as `cached`: the compute function returns them and
+                # decides for itself whether they let it skip the pass (not
+                # while the projection still needs the shards).
                 input_data = {}
+                cached = None
+                if routed_cache is not None and i in routed_cache:
+                    with _sphase('cache_r'):
+                        cached = {v: _routed_load(e) for v, e in routed_cache[i].items()}
+                    _sweep_count('cache_rd')
+                _kw = {'cached': cached} if routed_cache is not None else {}
                 with _phase('witness'):
                     outs = _cf.COMPUTE_FNS[type(claim)](
-                        claim, live, ch0[i] if (want_aux and ch0) else None)
+                        claim, live, ch0[i] if (want_aux and ch0) else None, **_kw)
+                # The loaded copy now lives in `outs` (and so in `live`) and must
+                # have exactly that lifetime: these two loop-scope temporaries
+                # would otherwise keep a Y alive past its last consumer until the
+                # next streaming claim, across the whole attention block between
+                # two MoE layers at production.
+                cached = _kw = None
+                if routed_cache is not None and i not in routed_cache:
+                    with _sphase('cache_w'):
+                        _entries = _routed_store(outs, routed_cache)
+                    if _entries is not None:
+                        routed_cache[i] = _entries
+                        _sweep_count('cache_wr')
             else:
                 input_data = {v: fetch(v) for v in input_vars}
                 _spill = witness_cache.get('_spill') if witness_cache else False
@@ -3648,6 +3726,13 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
         witness_cache = {'_budget_bytes': _witness_cache_budget_bytes()}
     else:
         witness_cache = None
+    # Routed-output cache (opt-in, LIGERO_ROUTED_Y_CACHE=1): the streaming
+    # claims' first-sweep outputs, under their own budget. None when off or
+    # when nothing on the tape streams.
+    routed_cache = (_routed_cache_new()
+                    if _ROUTED_Y_CACHE_ON and any(type(c) in STREAMING_INPUT_CLAIMS
+                                                  for c in s['claims'])
+                    else None)
 
     def sweep(label, **kw):
         # `label` names the sweep in the per-sweep table (LIGERO_SWEEP_TIMING).
@@ -3657,7 +3742,8 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
                                  s['p1_vars'], s['p2_vars'], s['m_p1_rows'], s['tables'],
                                  ch0, ch1=ch1, p3_vars=s['p3_vars'],
                                  m_p2_rows=s['m_p2_rows'], w_pad=w_pad, wnew_pad=wnew_pad,
-                                 witness_cache=witness_cache, **kw)
+                                 witness_cache=witness_cache,
+                                 routed_cache=routed_cache, **kw)
         finally:
             _sweep_end()
 
