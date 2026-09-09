@@ -34,6 +34,7 @@ from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple, Type,
 
 import numpy as np
 import os
+import sys
 import torch
 import blake3 as _blake3
 
@@ -359,7 +360,7 @@ def _fetch(inputs: Dict[Variable, InputVal], v: Variable):
     accept either eagerly-committed tensors or LazyHFLoader callables
     without per-call dispatch logic."""
     val = inputs[v]
-    return val() if callable(val) else val
+    return _resolve_loader(val) if callable(val) else val
 
 
 class _LazyResolvingDict:
@@ -378,7 +379,7 @@ class _LazyResolvingDict:
             return self._cache[k]
         v = self._base[k]
         if callable(v):
-            v = v()
+            v = _resolve_loader(v)
         self._cache[k] = v
         return v
 
@@ -1113,23 +1114,146 @@ def _opened_columns_match_leaves(opened: Dict[int, torch.Tensor],
 # diagnostic: a no-op when off (zero overhead, no behavior change). The syncs
 # serialize the GPU pipeline, so the bucket SUM slightly overstates wall-clock —
 # read the SHARES, not the absolute total.
-from contextlib import contextmanager as _contextmanager
+#
+# LIGERO_SWEEP_TIMING=1 answers what the aggregate cannot: what each of the
+# semantic sweeps costs on its own. Per sweep it records the top-level buckets
+# (witness, aux, encode, ...), a `fetch` bucket around every lazy-loader
+# resolution — the sweep's input fetch, the routed claims' shard reads, the
+# aux's lazy reads and the encode path's weight reads — taken OUT of whichever
+# bucket it ran inside, the loader calls and bytes, the witness-cache reads and
+# writes, and the routed projections computed. One table per proof
+# (_sweep_report). Same syncs as the phase timer, same caveat; the plain
+# phase report is unchanged (its buckets stay inclusive).
+from contextlib import contextmanager as _contextmanager, nullcontext as _nullcontext
 _PHASE_ON = bool(os.environ.get("LIGERO_PHASE_TIMING"))
+_SWEEP_ON = bool(os.environ.get("LIGERO_SWEEP_TIMING"))
 _PHASE_TIMES: Dict[str, float] = {}
+_PHASE_STACK: list = []            # [name, t0, fetch_seconds_inside] per open bucket
+_SWEEP_RECS: list = []             # one record per sweep of the current proof
+_SWEEP_CUR: Optional[dict] = None  # the sweep being recorded, or None
+_SWEEP_OUTSIDE: dict = {}          # loader counts outside any sweep (setup, enrollment)
 
 
 @_contextmanager
 def _phase(name):
-    if not _PHASE_ON:
+    if not (_PHASE_ON or _SWEEP_ON):
         yield
         return
     torch.cuda.synchronize()
-    _t0 = time.time()
+    _PHASE_STACK.append([name, time.time(), 0.0])
     try:
         yield
     finally:
         torch.cuda.synchronize()
-        _PHASE_TIMES[name] = _PHASE_TIMES.get(name, 0.0) + (time.time() - _t0)
+        _n, _t0, _fetch_in = _PHASE_STACK.pop()
+        _tot = time.time() - _t0
+        if _PHASE_ON:                    # aggregate report: inclusive, as before
+            _PHASE_TIMES[name] = _PHASE_TIMES.get(name, 0.0) + _tot
+        if name == 'fetch':
+            if _PHASE_STACK:
+                _PHASE_STACK[-1][2] += _tot
+            if _SWEEP_CUR is not None:
+                _SWEEP_CUR['t']['fetch'] = _SWEEP_CUR['t'].get('fetch', 0.0) + _tot
+        elif _PHASE_STACK:               # nested bucket: folds into its parent
+            _PHASE_STACK[-1][2] += _fetch_in
+        elif _SWEEP_CUR is not None:     # top level: exclusive of the fetches inside
+            _SWEEP_CUR['t'][name] = _SWEEP_CUR['t'].get(name, 0.0) + (_tot - _fetch_in)
+
+
+def _sphase(name):
+    """A bucket that exists only for the per-sweep table (fetch, cache reads
+    and writes). It adds a sync at every loader resolution, so it stays out
+    of the plain LIGERO_PHASE_TIMING report."""
+    return _phase(name) if _SWEEP_ON else _nullcontext()
+
+
+def _sweep_count(key, n=1):
+    """Per-sweep counter; a no-op unless LIGERO_SWEEP_TIMING=1."""
+    if _SWEEP_CUR is not None:
+        _SWEEP_CUR['n'][key] = _SWEEP_CUR['n'].get(key, 0) + n
+    elif _SWEEP_ON:
+        _SWEEP_OUTSIDE[key] = _SWEEP_OUTSIDE.get(key, 0) + n
+
+
+def _resolve_loader(val):
+    """Call a lazy loader. The one choke point for loader instrumentation:
+    every resolution — the sweep's input fetch, the routed claims' shard
+    reads, the aux's lazy dict, the fold runner, the encode path — comes
+    through here, so the per-sweep loader count is complete."""
+    if not _SWEEP_ON:
+        return val()
+    with _phase('fetch'):
+        t = val()
+    _sweep_count('loads')
+    if isinstance(t, torch.Tensor):
+        _sweep_count('load_bytes', t.numel() * t.element_size())
+    return t
+
+
+def _sweep_begin(label):
+    global _SWEEP_CUR
+    if not _SWEEP_ON:
+        return
+    _SWEEP_CUR = {'label': label, 't0': time.time(), 't': {}, 'n': {}}
+    _rp = sys.modules.get('routed_projected')
+    if _rp is not None:
+        _SWEEP_CUR['_p_misses0'] = _rp.P_CACHE_STATS['misses']
+
+
+def _sweep_end():
+    global _SWEEP_CUR
+    if _SWEEP_CUR is None:
+        return
+    rec = _SWEEP_CUR
+    rec['wall'] = time.time() - rec['t0']
+    _rp = sys.modules.get('routed_projected')
+    if _rp is not None and '_p_misses0' in rec:
+        rec['n']['proj'] = _rp.P_CACHE_STATS['misses'] - rec.pop('_p_misses0')
+    _SWEEP_RECS.append(rec)
+    _SWEEP_CUR = None
+
+
+_SWEEP_BUCKETS = ('witness', 'fetch', 'aux', 'compile', 'encode', 'merkle',
+                  'fold_qirs', 'fold_qlin', 'cols', 'quad', 'cache_r', 'cache_w')
+
+
+def _sweep_report(proof_wall):
+    """One table per proof: a row per sweep, seconds per top-level bucket,
+    then the counts (loader calls and GB, cache reads and writes, routed
+    projections computed), a total row, and the time outside the sweeps."""
+    if not (_SWEEP_ON and _SWEEP_RECS):
+        return
+    W = 9
+    seen = [b for b in _SWEEP_BUCKETS if any(b in r['t'] for r in _SWEEP_RECS)]
+    seen += sorted({b for r in _SWEEP_RECS for b in r['t']} - set(seen))
+    head = ["sweep", "wall"] + seen + ["loads", "load_GB", "cache_rd", "cache_wr", "proj"]
+
+    def _row(label, t, n, wall):
+        cells = [f"{label:{W}s}", f"{wall:{W}.1f}"]
+        cells += [f"{t.get(b, 0.0):{W}.1f}" for b in seen]
+        cells += [f"{n.get('loads', 0):{W}d}", f"{n.get('load_bytes', 0) / 1e9:{W}.2f}",
+                  f"{n.get('cache_rd', 0):{W}d}", f"{n.get('cache_wr', 0):{W}d}",
+                  f"{n.get('proj', 0):{W}d}"]
+        return "    " + " ".join(cells)
+
+    print("  [sweep] per-sweep breakdown (LIGERO_SWEEP_TIMING; cuda-synced seconds; "
+          "fetch = loader resolutions, taken out of the bucket they ran in):", flush=True)
+    print("    " + " ".join(f"{h:{W}s}" if i == 0 else f"{h:>{W}s}"
+                            for i, h in enumerate(head)), flush=True)
+    tot_t, tot_n, tot_w = {}, {}, 0.0
+    for r in _SWEEP_RECS:
+        print(_row(r['label'], r['t'], r['n'], r['wall']), flush=True)
+        tot_w += r['wall']
+        for k, v in r['t'].items():
+            tot_t[k] = tot_t.get(k, 0.0) + v
+        for k, v in r['n'].items():
+            tot_n[k] = tot_n.get(k, 0) + v
+    print(_row('ALL', tot_t, tot_n, tot_w), flush=True)
+    first = _SWEEP_RECS[0]
+    print(f"    proof wall {proof_wall:.1f}s; sweeps {tot_w:.1f}s; outside the sweeps "
+          f"{proof_wall - tot_w:.1f}s with {_SWEEP_OUTSIDE.get('loads', 0)} loader calls "
+          f"({_SWEEP_OUTSIDE.get('load_bytes', 0) / 1e9:.2f} GB); first fill "
+          f"(cache_w in {first['label']}) {first['t'].get('cache_w', 0.0):.1f}s", flush=True)
 
 
 # Precise GPU-kernel timing (env LIGERO_EPHASE=1): async CUDA events summed with a
@@ -3028,7 +3152,7 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
         stream_pk.reset()
     def fetch(v):
         val = live[v]
-        return val() if callable(val) else val
+        return _resolve_loader(val) if callable(val) else val
     def emit(vg, merkle, abs0, colbuf, pad=None):
         if not vg:
             return
@@ -3083,12 +3207,14 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
                     # GPU cache: clone so consumers can't mutate the cached copy.
                     # Spill: _spill_load returns a fresh device tensor (from the
                     # host copy) each time -> already independent, no clone.
-                    if _disk:
-                        outs = {v: _disk_spill_load(e, witness_cache) for v, e in witness_cache[i].items()}
-                    elif _spill:
-                        outs = {v: _spill_load(e) for v, e in witness_cache[i].items()}
-                    else:
-                        outs = {v: t.clone() for v, t in witness_cache[i].items()}
+                    with _sphase('cache_r'):
+                        if _disk:
+                            outs = {v: _disk_spill_load(e, witness_cache) for v, e in witness_cache[i].items()}
+                        elif _spill:
+                            outs = {v: _spill_load(e) for v, e in witness_cache[i].items()}
+                        else:
+                            outs = {v: t.clone() for v, t in witness_cache[i].items()}
+                    _sweep_count('cache_rd')
                 else:
                     with _phase('witness'):
                         outs = _cf.COMPUTE_FNS[type(claim)](claim, input_data)
@@ -3101,12 +3227,14 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
                                         or witness_cache.get('_elems', 0) + _ne
                                         <= _WITNESS_CACHE_MAX_ELEMS)
                         if _under_bytes and _under_elems:
-                            if _disk:
-                                witness_cache[i] = {v: _disk_spill_store(t, witness_cache) for v, t in outs.items()}
-                            elif _spill:
-                                witness_cache[i] = {v: _spill_store(t) for v, t in outs.items()}
-                            else:
-                                witness_cache[i] = {v: t.clone() for v, t in outs.items()}
+                            with _sphase('cache_w'):
+                                if _disk:
+                                    witness_cache[i] = {v: _disk_spill_store(t, witness_cache) for v, t in outs.items()}
+                                elif _spill:
+                                    witness_cache[i] = {v: _spill_store(t) for v, t in outs.items()}
+                                else:
+                                    witness_cache[i] = {v: t.clone() for v, t in outs.items()}
+                            _sweep_count('cache_wr')
                             witness_cache['_bytes'] = witness_cache.get('_bytes', 0) + _nb
                             witness_cache['_elems'] = witness_cache.get('_elems', 0) + _ne
             for v, t in outs.items():
@@ -3452,6 +3580,10 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
     torch.cuda.reset_peak_memory_stats()
     if _PHASE_ON:
         _PHASE_TIMES.clear()
+    del _PHASE_STACK[:]
+    _SWEEP_RECS.clear()
+    _SWEEP_OUTSIDE.clear()
+    _t_prove0 = time.time()
     for _hook in PROVE_START_HOOKS:
         _hook()
     # Fresh secret padding/blinding entropy per proof unless a caller pins it
@@ -3517,12 +3649,17 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
     else:
         witness_cache = None
 
-    def sweep(**kw):
-        return _stream_sweep(tape, cfg, s['master_seed_t'], s['groups'], s['n_ops'],
-                             s['p1_vars'], s['p2_vars'], s['m_p1_rows'], s['tables'],
-                             ch0, ch1=ch1, p3_vars=s['p3_vars'],
-                             m_p2_rows=s['m_p2_rows'], w_pad=w_pad, wnew_pad=wnew_pad,
-                             witness_cache=witness_cache, **kw)
+    def sweep(label, **kw):
+        # `label` names the sweep in the per-sweep table (LIGERO_SWEEP_TIMING).
+        _sweep_begin(label)
+        try:
+            return _stream_sweep(tape, cfg, s['master_seed_t'], s['groups'], s['n_ops'],
+                                 s['p1_vars'], s['p2_vars'], s['m_p1_rows'], s['tables'],
+                                 ch0, ch1=ch1, p3_vars=s['p3_vars'],
+                                 m_p2_rows=s['m_p2_rows'], w_pad=w_pad, wnew_pad=wnew_pad,
+                                 witness_cache=witness_cache, **kw)
+        finally:
+            _sweep_end()
 
     def _p0_zero():
         return torch.zeros(2 * cfg.K_DEG - 1, dtype=torch.uint64, device="cuda")
@@ -3596,7 +3733,7 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
     merkle_w = None if wc is not None else _acc(s['n_w_total'])          #   (W referenced → skip)
     merkle_wnew = _acc(s['n_wnew_total'])                                #   (linking proofs)
     merkle_p1 = _acc(s['n_p1_total'])
-    sweep(want_aux=False, merkle_blind=merkle_blind, merkle_w=merkle_w,
+    sweep("R1", want_aux=False, merkle_blind=merkle_blind, merkle_w=merkle_w,
           merkle_wnew=merkle_wnew, merkle_p1=merkle_p1,
           p1_prefix=s['p1_prefix'])
     art_blind = _finalize_merkle_artifact(merkle_blind)
@@ -3615,7 +3752,7 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
     s_op = pr.fs_s_op(stmt_digest, blocks_r1, roots_r1)
     ch0 = _sample_chs(s['claims'], s_op)
     merkle_p2 = _make_merkle_acc(cfg.N_LIG, s['n_p2_total'])              # R2: commit phase-2
-    sweep(want_aux=True, merkle_p2=merkle_p2)
+    sweep("R2", want_aux=True, merkle_p2=merkle_p2)
     art_p2 = _finalize_merkle_artifact(merkle_p2)
     # ---- coin after R2: the late (phase-3) challenges --------------------
     s_bind = pr.fs_s_bind(s_op, art_p2.root)
@@ -3623,7 +3760,7 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
     ch1 = _sample_late_chs(s['claims'], s_bind)
     if has_p3:                                                            # R3: commit phase-3
         merkle_p3 = _acc(s['n_p3_total'])
-        sweep(want_aux=True, merkle_p3=merkle_p3)
+        sweep("R3", want_aux=True, merkle_p3=merkle_p3)
         art_p3 = _finalize_merkle_artifact(merkle_p3)
         root_p3 = art_p3.root
     else:
@@ -3642,7 +3779,7 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
     # Weight-split (M1): the coordinator folds only its own run of W
     # variables in this sweep; the workers' partial folds are merged below.
     w_owned = None if plan is None else plan.owned_ids(0, "fold", s['weight_vars'])
-    p_0 = sweep(want_aux=True, q_irs=q_irs_acc, q_lin=q_lin_acc,          # R3: q-polys + p_0
+    p_0 = sweep("fold", want_aux=True, q_irs=q_irs_acc, q_lin=q_lin_acc,  # test polys + p_0
                 p_0=_p0_zero(), stream_pk=stream_pk,
                 r_quad=r_quad_t, p_maps=s['p_maps'], w_owned=w_owned)
     if plan is not None:
@@ -3682,7 +3819,7 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
     # sweep only re-extracts the challenged columns, whose identity is not
     # known until s_col.
     w_owned = None if plan is None else plan.owned_ids(0, "open", s['weight_vars'])
-    sweep(want_aux=True, col_blind=col_blind, col_w=col_w,
+    sweep("open", want_aux=True, col_blind=col_blind, col_w=col_w,
           col_wnew=col_wnew, col_p1=col_p1, col_p2=col_p2, col_p3=col_p3,
           Q_cols=Q_cols, p1_prefix=s['p1_prefix'], w_owned=w_owned)
     if plan is not None:
@@ -3754,6 +3891,7 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
         print(f"    {'BUCKETED':10s} {_tot:8.1f}s  (vs total prove wall-clock; "
               f"remainder = setup + un-bucketed)", flush=True)
     _ephase_report()
+    _sweep_report(time.time() - _t_prove0)
     # Reset the sweep's b_chunk skip so a subsequent in-process verify() (which
     # DOES need the public RHS — e.g. the reveal pin) recompiles it. Leaking
     # True here silently zeroed every nonzero-RHS constraint in verify.

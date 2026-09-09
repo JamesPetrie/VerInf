@@ -29,7 +29,7 @@ from claims import (
     SiluClaim, RmsNormClaim, _chunk_widths, RMS_LIMB_W, RMS_N_LIMBS,
     SoftmaxClaim, _softmax_exp_tables,
 )
-from core import Variable
+from core import Variable, _resolve_loader
 
 # Lifted from tape.py: vectorized signed-floor decomposition + numpy field
 # helpers. Imported here (rather than re-imported from tape) so tape can
@@ -827,7 +827,7 @@ class FoldRunner:
         registry — when v is shared, the registry points elsewhere)."""
         f = FOLD_FNS[type(claim)]
         t = live[v]
-        t = t() if callable(t) else t
+        t = _resolve_loader(t) if callable(t) else t
         f["absorb"](claim, st, v, t)
         if self.want_aux and "aux_absorb" in f:
             i = self.index_of[id(claim)]
