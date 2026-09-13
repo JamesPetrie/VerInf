@@ -44,6 +44,8 @@ Steps 1–2 need no downloads — run them while the GGUF transfers.
 ```sh
 python3 -m venv venv && . venv/bin/activate
 pip install -r requirements.txt        # torch wheel must match the CUDA toolkit
+# (session 1's recipe; on the Runpod cu128/torch-2.8 image use the image's
+#  torch and the Session 2 bootstrap below — a venv does not see it)
 python3 -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
 nvcc --version
 ```
@@ -172,7 +174,8 @@ ask (per ROADMAP.local: the residual's S-dependent term) — decide on it
 after seeing the S=100 shares, don't default into it.
 
 Use `tools/spark_run.sh` for anything long — detached, logged, survives
-SSH drops. Kill via the pidfile, never `pkill -f`.
+SSH drops. Kill with `kill -- -$(cat ~/<name>.pid)` (the process group;
+the pid alone is the supervisor), never `pkill -f`.
 
 ## Copy home before releasing the box
 
@@ -209,131 +212,265 @@ pip freeze > blackwell-pins.txt   (requirements.txt asks for this)
 
 ---
 
-# Session 2 — hardware crosscheck of the projected protocol + bench extensions
+# Session 2 — hardware crosscheck of the projected protocol + the routed-cache A/B
 
-Goals: close the last validation gap of the sync milestone (extraction
-of the new claim types on real hardware), fill the five new calibration
-fields, and run the first instrumented PROJECTED prove on Blackwell.
-Prepped 2026-08-23; the extraction contract is already regression-locked
-against fake-core stubs (test_projected_extraction), so phase C is
-expected-clean, not exploratory.
+Goals: close the last validation gap of the sync milestone (extraction of
+the new claim types on real hardware), fill the five new calibration
+fields, run the first instrumented PROJECTED prove on Blackwell, and answer
+the witness-cache question per sweep (the routed-output cache A/B; witness
+cache handoff, 2026-09-09). Prepped 2026-08-23; revised 2026-09-13 after
+the author's readiness audits: every phase below has a gate, long steps run
+through the checked launcher and are waited on, short steps run through a
+helper that returns the command's own status, the download is a checked
+tool, and the timed proves pin their geometry and flags so the arms cannot
+differ by an environment variable.
 
-Rent: one B200 as before, but request ~400 GB CONTAINER disk and skip
-the network volume — session 1 measured the network FS starving the
-weight lane (0.3 GB/s); everything lives on local NVMe this time.
-Budget: phases A-D ~2.5-4.5 h ≈ $17-31.
+Rent: one B200, secure (US-NE-1 had stock on 2026-09-13, on CUDA 13.0
+hosts — the cu128 image runs under a newer driver and its nvcc already
+targets sm_100), image runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404,
+400 GB CONTAINER disk, no network volume (session 1's network FS starved
+the weight lane at 0.3 GB/s), minRamPerGpu 256 (the retained openings
+alone need ~26-29 GB of host RAM at S=1000, on top of loader buffers and
+the routed cache's host tier), ports 22/tcp, PUBLIC_KEY in env. Budget:
+roughly 4-5 h ≈ $27-34 at $6.79/h plus $6.79 per extra hour — an estimate
+until an arm is measured. Shards: 232.13 GB; proof dump: ~36 GB.
 
-A (~45 min, no downloads):
-   python3 profiler/calibrate.py --name b200-runpod-s2 --tmpdir /workspace
-   # Compiles the four session-2 benches too (first-ever compiles of
-   # ntt_batched / hbm_random / launch_latency on sm_100 — graceful null
-   # on failure), runs the u64le/base64 compact-dump bench, sizes the
-   # ALU-bench grids to the SM count, and writes a PARTIAL profile if
-   # any later probe dies. --tmpdir must be the CONTAINER disk: the
-   # profile's disk/dump numbers describe whatever mount this is, and
-   # session 1's network-volume numbers (0.3 GB/s) are what made every
-   # streaming model I/O-bound.
-   # SANITY: the run prints "ntt BATCHED ... vs expected if encode scaled
-   # with bandwidth" — that IS the A-constant check (A is bandwidth-
-   # ratioed from gb10). Holds → the floor story stands; "NOT bandwidth-
-   # scaled" → A is optimistic, read the floor with that caveat (the
-   # A100 data in routed-projected-status.md already hint this way:
-   # encode 5.12 ns/slot on A100 vs 4.28 on A6000 despite 2x bandwidth).
-   python3 profiler/crosscheck.py llama7b --seq 100 --layout \
-       -o /workspace/crosscheck-out   # validates the ModelConfig mirror
-   # (llama7b's layout probe is still the demo subprocess — that demo has
-   # no admission gate — and it is what validates build_llama7b's hand
-   # mirror; note its weight-free build commits placeholders as
-   # persistent, so the persistent-slot line checks the mirror against
-   # synth, not the demo's own --lazy-weights persistence choice.)
+## 0. Bootstrap — gate: the record, the verifier build and the primitives test all exit 0
 
-B (~10 min): GGUF to LOCAL disk (same hf snapshot command, local_dir
-   under the container disk).
+Look at the storage first, because it decides where everything goes.
+`/workspace` is where Runpod mounts a VOLUME when one exists; with none it
+sits on the container overlay, and only findmnt says which. The model,
+the probe dir and the proof must be on the 400 GB container disk:
 
-C (~30-60 min): the projected crosscheck —
-   python3 profiler/crosscheck.py maverick --from-gguf <local> --t-queries 54 \
-       --prompt-n 2 --cont-n 2 --layout -o /workspace/crosscheck-out
-   python3 profiler/crosscheck.py maverick --from-gguf <local> --t-queries 54 \
-       --seq 1000 --skip-selftest --layout -o /workspace/crosscheck-out
-   # The tape contains RoutedProjectedMatmulClaim / RescaleClaim; the
-   # script detects that and diffs against synth maverick-projected
-   # (it prints "protocol on the tape: maverick-projected" — if it says
-   # "maverick", the GGUF build fell back to the legacy fan; stop and
-   # look). The layout probe is in-process (core.layout_breakdown), so
-   # it runs at S=1000 as well — the first extracted routed manifest
-   # WITH a layout check; the session-1 S=1000 manifest is the legacy
-   # protocol and never had one. Expect the UI caps and the routing-
-   # bundle expansion to hold as at session 1; any FLAG on the routed
-   # types is the finding this session exists to catch. Save the
-   # S=1000 manifest gzipped (Manifest.save gzips on a .gz name now):
-   #   python3 -c "import sys; sys.path.insert(0,'profiler'); from manifest import Manifest; \
-   #     Manifest.load('/workspace/crosscheck-out/maverick-s1000-extracted.json').save('/workspace/crosscheck-out/maverick-s1000-extracted.json.gz')"
+```sh
+findmnt -T /workspace -o SOURCE,FSTYPE,TARGET,SIZE,AVAIL; findmnt -T / -o SOURCE,FSTYPE,TARGET,SIZE,AVAIL; df -h / /workspace
+```
 
-D (~30-90 min): instrumented projected prove, the strategy-grade run —
-   LIGERO_PHASE_TIMING=1 tools/spark_run.sh mavp-s1000 \
-       python3 profiler/instrumented_prove.py --from-gguf <local> \
-       --t-queries 54 --prompt-n 500 --cont-n 500 --dump-proof /workspace/mavp.bin
-   # NOT demo_maverick_full.py: its proof path is fail-closed on current
-   # main (enrollment + trusted root + public Sz + 714-run admission
-   # report with measured five-sweep semantics; the admission bench
-   # emits those semantic stages as null by design, so no report can
-   # pass on a rented box). instrumented_prove.py is the research
-   # harness: same tape, same prover, throwaway in-process enrollment,
-   # reveal pass for Sz, LIGERO_PHASE_TIMING on — a timing run, never a
-   # production proof; it says so in its banner. It has NOT run on a GPU
-   # before this session (the box it was written on has no CUDA): if it
-   # dies, the traceback is the deliverable and the fallback is the
-   # demo's --enroll-weights run (enrollment timing only, which the
-   # policy path does allow) plus admission_bench.py --runs 30 for the
-   # kernel stages at production geometry.
-   # Deliverables: measured wall vs our 254 s kernel floor (the floor
-   # EXCLUDES the five semantic sweeps — the 4h model's A100 run spent
-   # 2024 s there; expect the wall to be dominated by them, not by the
-   # floor) / 30-45 min pipeline projection; per-stage timings for the
-   # admission-model unification with Ed; enrollment time on Blackwell;
-   # a real compact-dump rate (cross-check io.proof_dump_compact_MBps
-   # from phase A; predict's fallback is the A100 egress bound, 245 MB/s).
+Then set the environment ONCE, in the interactive shell — never inside a
+piped or braced block, whose exports die with its subshell. Every later
+phase inherits these, and the two helpers are used by every phase:
+`waitfor <name>` returns when a launcher job has written its EXIT line and
+returns the job's success; `logrun <name> <cmd...>` logs a foreground
+command to $VERINF_LOGS/<name>.log and returns the COMMAND's status, not
+tee's.
 
-D2 (~2x an S=100 prove): routed-output cache A/B, per sweep —
-   # The question (witness cache handoff, 2026-09-09) is what each of the
-   # five sweeps costs and how much of it the routed claims' recompute and
-   # decode are; LIGERO_PHASE_TIMING cannot answer it (one aggregate over
-   # all sweeps). Run the S=100 prove twice with the per-sweep table, the
-   # routed-output cache off and then on, same tape both arms (the driver's
-   # seeds are fixed). spark_run.sh DETACHES and returns at once: launch the
-   # second arm only after the first has written its EXIT line, or the two
-   # proves share the GPU, the storage lane and host memory and the timings
-   # mean nothing (and the pair can OOM). The off arm names its flag so the
-   # shell's environment cannot decide it.
-   LIGERO_ROUTED_Y_CACHE=0 tools/spark_run.sh mavp-s100-off \
-       python3 profiler/instrumented_prove.py --from-gguf <local> \
-       --t-queries 54 --prompt-n 50 --cont-n 50 --sweep-timing
-   until grep -q '^EXIT=' ~/mavp-s100-off.log; do sleep 60; done
-   grep -qx 'EXIT=0' ~/mavp-s100-off.log && tools/spark_run.sh mavp-s100-on \
-       python3 profiler/instrumented_prove.py --from-gguf <local> \
-       --t-queries 54 --prompt-n 50 --cont-n 50 --sweep-timing --routed-cache
-   # (the guard launches the on arm only after an EXIT=0; a failed off arm
-   # leaves nothing running)
-   # Read, per row (R1, R2, R3, fold, open): fetch = seconds inside loader
-   # resolutions (the decode), witness = compute with the fetches taken
-   # out, loads / load_GB = loader calls and bytes, cache_rd / cache_wr,
-   # proj = projections computed, one per routed claim, all in R2: on the
-   # default model that is 0,72,0,0,0 on both arms (24 MoE layers, three
-   # routed matrices each); the toy fixture's single claim gives 0,1,0,0,0.
-   # Expect the ON
-   # arm's R3, fold and open rows to lose the routed shard reads and R2 to
-   # keep them for the projection; the fold and open rows also carry the
-   # enrolled block's encode-path reads on both arms. The dense claims'
-   # weights are resolved more than once per sweep (compute fetch, then the
-   # aux's lazy dict); the loads column shows it. Proof bytes are identical
-   # by the toy gate (prover/tests/test_shard_streaming.py); do not dump both
-   # proofs to re-check that here. Decide the S=1000 A/B after the S=100
-   # shares, not by default. Copy the two per-sweep tables home with the
-   # phase-timing log.
+```sh
+export VERINF_ROOT=/workspace                 # or a dir under / if /workspace is a separate volume
+export VERINF_GGUF_DIR=$VERINF_ROOT/gguf
+export VERINF_GGUF=$VERINF_GGUF_DIR/UD-Q4_K_XL/Llama-4-Maverick-17B-128E-Instruct-UD-Q4_K_XL-00001-of-00005.gguf
+export VERINF_OUT=$VERINF_ROOT/crosscheck-out; export VERINF_PROOF=$VERINF_ROOT/proofs/mavp-s1000.bin
+export VERINF_LOGS=$VERINF_ROOT/logs
+export PATH=/usr/local/cuda/bin:$PATH         # nvcc is not on the login PATH
+mkdir -p "$VERINF_OUT" "$(dirname "$VERINF_PROOF")" "$VERINF_ROOT/probe" "$VERINF_LOGS"
+waitfor() { until grep -q '^EXIT=' ~/"$1".log 2>/dev/null; do sleep 60; done
+            grep -qx 'EXIT=0' ~/"$1".log && return 0
+            echo "$1 FAILED: $(grep '^EXIT=' ~/"$1".log)"; return 1; }
+logrun()  { local name=$1; shift; "$@" 2>&1 | tee "$VERINF_LOGS/$name.log"
+            local rc=${PIPESTATUS[0]}; [ "$rc" -eq 0 ] || echo "$name FAILED rc=$rc"; return "$rc"; }
+pip install --break-system-packages blake3 gguf safetensors ninja transformers hf_transfer
+command -v cargo >/dev/null || curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal; . ~/.cargo/env
+```
+The image's torch is 2.8.0+cu128 and that is the environment. NEVER
+`python3 -m venv` (it does not see the image's torch; requirements.txt is
+unpinned) and never `uv sync` (the lock resolves torch 2.13+cu126 for the
+V100 dev box). Now the record and the two builds, each required to succeed:
 
-Copy home: profile + raw logs, crosscheck-out/ (manifests gzipped, layout
-probes, diff verdicts), phase-timing log, the proof file size (not the
-proof), pip freeze. Then run `python3 profiler/cli.py weightsplit
-<S=1000 manifest> --machine b200-runpod-s2 --resident` at home: the first
-weight-split numbers on an EXTRACTED projected manifest (the branch's
-133.4 s / 1.90x headline is from the synth builder).
+```sh
+logrun env-record tools/session2_env.sh && cp $VERINF_LOGS/env-record.log $VERINF_ROOT/session2-env.txt \
+  && logrun cargo cargo build --release --manifest-path verifier/Cargo.toml --bin verify_proof \
+  && logrun cuda-primitives python3 prover/tests/run_tests.py test_cuda_primitives \
+  && git diff > $VERINF_ROOT/session2-dirty.diff && pip freeze > $VERINF_ROOT/session2-pins.txt \
+  && echo "BOOTSTRAP OK"
+```
+(the record covers torch/CUDA/nvcc versions, device and capability, host
+RAM and the cgroup limit, the filesystems under the chosen paths, the
+revision and dirty state; the primitives test JITs the CUDA extension)
+
+## A1 + B. Compute calibration and the shards, overlapped — then a barrier
+
+A1's compute benches and B's download overlap; nothing else does. The
+llama crosscheck uses the GPU (its layout subprocess runs the model
+engine), so it waits for A1's completion — the barrier is in the commands,
+not only in the prose.
+
+```sh
+tools/spark_run.sh calib-a1 python3 profiler/calibrate.py --name b200-runpod-s2 \
+    --tmpdir $VERINF_ROOT/probe --skip-io
+tools/spark_run.sh gguf-pull tools/gguf_pull.sh $VERINF_GGUF_DIR
+waitfor calib-a1                                       # no other GPU work before this returns
+logrun xchk-llama7b python3 profiler/crosscheck.py llama7b --seq 100 --layout -o $VERINF_OUT
+waitfor gguf-pull
+```
+A1 compiles the four session-2 benches (first compiles of ntt_batched /
+hbm_random / launch_latency on sm_100 — graceful null on failure), sizes
+the ALU-bench grids to the SM count, writes a PARTIAL profile if any later
+probe dies. SANITY: "ntt BATCHED ... vs expected if encode scaled with
+bandwidth" IS the A-constant check; it now uses the LARGEST batch of the
+sweep and the provenance lists every batch — read the m=512/2048 values,
+never m=1, which is cache-resident. Gate: every gpu.* field in the printed
+profile is non-null (a null is a skipped bench; exit 0 is not
+completeness). The llama crosscheck validates the ModelConfig mirror.
+
+B's probe validates eight parallel range requests (exit code, 206, exact
+bytes, timeout) and rates the bytes that arrived; below 100 MB/s, or on
+any bad range, it fails and nothing is pulled. The pull is the pinned
+revision 41032e5 from profiler/data/maverick-ud-q4_k_xl-shards.json;
+every size and every sha256 is checked against the pins. Gate: "every
+shard hashes to its pin" in ~/gguf-pull.log. Storage probes never overlap
+the pull; compute benches may.
+
+## A2. Storage calibration — after B, storage idle (~10 min)
+
+```sh
+logrun calib-a2 python3 profiler/calibrate.py --name b200-runpod-s2 --tmpdir $VERINF_ROOT/probe --io-only
+```
+Merges the sequential-read, compact-dump and dump-proxy rates into the A1
+profile and records the probed directory with its filesystem (provenance
+`io_tmpdir`). The three fields are cleared before probing: a probe that
+fails leaves null with "FAILED" in its provenance and the command returns
+1, so an earlier mount's rate cannot survive under this mount's
+description. Gate: logrun's status 0, io.* non-null, io_tmpdir names the
+container disk, not a volume.
+
+## G. Gates before any timed prove (~20 min)
+
+```sh
+logrun gates tools/session2_gates.sh
+```
+The script runs the gates in order and stops at the first failure with its
+status (a pipeline cannot hide it; each gate also logs to
+$VERINF_LOGS/gate-<name>.log): the K-quant kernel against the real shards
+(the file runs directly, since its check is main() and run_tests.py would
+find nothing; it must print `=== kquant_kernel: 4/4 PASS ===`), the
+shard-streaming suite at 7/7 with the three routed-cache gates, the routed
+suite at 6/6, the toy A/B's counts, and a two-layer REAL-GGUF proof through
+the research driver with `--verify`, which must print "rust verify_proof:
+ACCEPT" and "opened columns match committed leaves: True" — the prover now
+asserts the latter on every path, so a False can no longer produce EXIT=0
+and a timing. The driver had never run on a GPU before this session: if
+it dies here, the traceback is the deliverable and the fallback is the
+demo's --enroll-weights run (enrollment timing only) plus
+admission_bench.py --runs 30 for the kernel stages; neither answers the
+A/B question. Gate: "== all gates passed" and logrun's status 0.
+
+## C. The projected crosscheck (~45-60 min)
+
+```sh
+logrun xchk-mav-small python3 profiler/crosscheck.py maverick --from-gguf $VERINF_GGUF --t-queries 54 \
+    --prompt-n 2 --cont-n 2 --layout -o $VERINF_OUT
+tools/spark_run.sh xchk-mav-s1000 python3 profiler/crosscheck.py maverick --from-gguf $VERINF_GGUF \
+    --t-queries 54 --prompt-n 500 --cont-n 500 --skip-selftest --layout -o $VERINF_OUT
+waitfor xchk-mav-s1000
+```
+The keeper is 500+500, the timed prove's own split — NOT `--seq 1000`,
+which means 2+998 and a different UI chain (996 extra selection and
+addition claims); crosscheck refuses `--seq` with any explicit split. The
+tape carries RoutedProjectedMatmulClaim / RescaleClaim and the script
+diffs against synth maverick-projected ("protocol on the tape:
+maverick-projected"; "maverick" means the GGUF build fell back to the
+legacy fan — stop). The layout probe is in-process and value-free, so it
+runs at S=1000; `--layout` also writes maverick-s1000-composition.txt, the
+witness by phase and origin (produced / committed / weights / p2 / p3),
+the measurement behind the witness-regeneration note's 517 GB and 243 GB
+estimates. The diff verdict is console output: it lives in
+~/xchk-mav-s1000.log. Gate: RESULT: clean, the composition file present,
+and the manifest gzipped and reloadable:
+```sh
+python3 -c "import sys; sys.path.insert(0,'profiler'); from manifest import Manifest; \
+  Manifest.load('$VERINF_OUT/maverick-s1000-extracted.json').save('$VERINF_OUT/maverick-s1000-extracted.json.gz'); \
+  print(len(Manifest.load('$VERINF_OUT/maverick-s1000-extracted.json.gz').claims), 'claims reload')"
+```
+
+## D2. The routed-cache A/B at S=100, per sweep — BEFORE D
+
+Two arms, one after the other, same tape (the driver's token seeds are
+fixed; enrollment and ZK entropy are fresh per arm, so the two proofs are
+not byte-identical — that property is the toy gate's, with a shared
+enrollment). The driver pins ELL=8192, K_DEG=16384, N_LIG=65536 and
+T_QUERIES itself and sets LIGERO_ROUTED_Y_CACHE 0 or 1 from --routed-cache,
+so no inherited environment can decide either; the ordinary witness-cache
+and spill flags are named so both arms hold them fixed. An S=100 arm is
+NOT ten times cheaper than S=1000: the enrolled-weight fold and open are
+S-independent (about 190 s of floor at S=100 against 254 s at S=1000) and
+each arm pays a fresh enrollment and reveal pass outside PROVE WALL —
+budget the whole arm from LAUNCH to EXIT.
+
+```sh
+ARM="python3 -u profiler/instrumented_prove.py --from-gguf $VERINF_GGUF --t-queries 54 --prompt-n 50 --cont-n 50 --sweep-timing"
+if LIGERO_WITNESS_CACHE=1 LIGERO_WITNESS_SPILL=0 LIGERO_WITNESS_SPILL_DISK=0 \
+       tools/spark_run.sh mavp-s100-off $ARM && waitfor mavp-s100-off; then
+    LIGERO_WITNESS_CACHE=1 LIGERO_WITNESS_SPILL=0 LIGERO_WITNESS_SPILL_DISK=0 \
+        tools/spark_run.sh mavp-s100-on $ARM --routed-cache && waitfor mavp-s100-on
+else
+    echo "D2: the off arm did not succeed; the on arm was not launched"; false
+fi
+```
+spark_run.sh detaches into its own session and ALWAYS writes an EXIT line,
+"EXIT=killed ..." included, so `waitfor` terminates on a started job and
+never waits for one that was not launched; the block's status is the last
+arm's, or failure when the off arm failed. To cancel a run:
+`kill -- -$(cat ~/<name>.pid)` (the whole process group — the plain pid is
+the supervisor). Gate per arm: EXIT=0; "opened columns match committed
+leaves: True"; five sweep rows (R1, R2, R3, fold, open); proj = 0,72,0,0,0
+(one projection per routed claim, all in R2: 24 MoE layers × three routed
+matrices); on the ON arm the R3, fold and open rows lose the routed shard
+reads while R2 keeps them for the projection, and fold and open keep the
+enrolled block's encode-path reads on both arms; the routed cache has its
+OWN columns — routed_wr = 72 in R1 and routed_rd = 72 in each of R2, R3,
+fold and open on the ON arm, all zero on the OFF arm — while cache_rd and
+cache_wr belong to the ordinary witness cache (48 softmax and 72 silu
+claims on this model) and are the same on both arms. Reading the columns:
+fetch is the WHOLE loader call (storage read, host preparation, decode,
+transfer) taken out of the bucket it ran in; witness is compute with the
+fetches removed; loads and load_GB are loader calls and the DECODED field
+bytes they returned, not packed or disk bytes (a group loader resolves a
+whole attention group to return one member); the walls are instrumented
+(cuda-synced) — an uninstrumented speedup is not established by these
+tables. The dense claims' weights resolve more than once per sweep
+(compute fetch, then the aux's lazy dict); the loads column shows it.
+
+## D. The S=1000 instrumented prove, cache OFF, proof dumped (~30-60 min, unmeasured)
+
+```sh
+LIGERO_WITNESS_CACHE=1 LIGERO_WITNESS_SPILL=0 LIGERO_WITNESS_SPILL_DISK=0 \
+    tools/spark_run.sh mavp-s1000-off \
+    python3 -u profiler/instrumented_prove.py --from-gguf $VERINF_GGUF --t-queries 54 \
+    --prompt-n 500 --cont-n 500 --sweep-timing --dump-proof $VERINF_PROOF \
+    && waitfor mavp-s1000-off
+```
+NOT demo_maverick_full.py: its proof path is fail-closed on current main
+(enrollment + trusted root + public Sz + a 714-run admission report with
+measured five-sweep semantics). instrumented_prove.py is the research
+harness: same tape, same prover, throwaway in-process enrollment, reveal
+pass for Sz, both timing modes — a timing run, never a production proof.
+It refuses to start unless the dump directory has 60 GB free (the
+projected proof is ~36 GB), creates and fsyncs the proof's temporary file
+by exclusive creation — an existing .part is refused, never truncated —
+refuses to overwrite an existing proof, and refuses early-exit diagnostics
+(LIGERO_LAYOUT_BREAKDOWN, LIGERO_COMPILE_PROFILE_EXIT). Deliverables:
+measured wall against the 254 s kernel floor (the floor EXCLUDES the five
+semantic sweeps — the A100 admission bound put 2,024 s there; expect the
+wall to be dominated by them); the per-sweep table at S=1000; separate
+build / enrollment / reveal / prove / dump times; enrollment time on
+Blackwell; a real compact-dump rate and fsynced file size (cross-check
+io.proof_dump_compact_MBps from A2). Gate: EXIT=0, leaf check True,
+five sweep rows, the SUMMARY line.
+
+Optional D-on: the same command with `--routed-cache`, WITHOUT
+--dump-proof, name mavp-s1000-on, only after D's EXIT=0 and only if D2's
+measured savings and D's full elapsed cost justify another hour.
+
+## Copy home — gate: each item present before the pod is terminated
+
+The revision and dirty diff (session2-dirty.diff), session2-env.txt and
+session2-pins.txt, $VERINF_LOGS/ (the logrun logs and the per-gate logs)
+and every ~/<name>.log the launcher wrote with its .memwatch (calib-a1,
+gguf-pull, xchk-mav-s1000, the arms: the per-sweep tables, phase reports,
+EXIT lines and the job group's memory trace), the effective commands as
+run, profiler/machines/b200-runpod-s2.json plus
+calibrate-raw-b200-runpod-s2/, $VERINF_OUT/ (manifests gzipped, layout
+probes, composition, diff verdicts), the proof's size and dump rate (not
+the proof), and any traceback. Then terminate the pod. At home:
+`python3 profiler/cli.py weightsplit <S=1000 manifest> --machine
+b200-runpod-s2 --resident`, the first weight-split numbers on an EXTRACTED
+projected manifest.

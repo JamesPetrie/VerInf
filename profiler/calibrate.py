@@ -113,13 +113,21 @@ def parse_blake3_reg(out: str):
     return float(m.group(1)) if m else None
 
 
-def parse_ntt_batched(out: str, n: int = 65536):
-    """Best (min) ns/elem across the batch sweep at transform size n —
-    the prover-path number; single-transform bench_ntt stays as the
-    launch-overhead probe."""
-    rows = [float(ns) for nn, m, ns in _NTTB_RE.findall(out)
+def parse_ntt_batched_rows(out: str, n: int = 65536):
+    """[(batch m, ns/elem)] at transform size n, in bench order."""
+    return [(int(m), float(ns)) for nn, m, ns in _NTTB_RE.findall(out)
             if int(nn) == n]
-    return min(rows) if rows else None
+
+
+def parse_ntt_batched(out: str, n: int = 65536):
+    """ns/elem of the LARGEST batch in the sweep at transform size n — the
+    prover's working set (it encodes thousands of rows per chunk), which is
+    what the A-constant's bandwidth-scaling verdict is about. The minimum
+    across the sweep would let a cache-resident m=1 transform stand in for
+    it (review finding, 2026-09-13); the single-transform bench_ntt stays
+    as the launch-overhead probe."""
+    rows = parse_ntt_batched_rows(out, n)
+    return max(rows)[1] if rows else None
 
 
 def parse_hbm_random(out: str):
@@ -453,12 +461,41 @@ def main(argv=None) -> int:
                     help="where probe files land — must be a REAL disk, not "
                          "tmpfs, or the disk/dump numbers measure RAM")
     ap.add_argument("--skip-cuda", action="store_true")
-    ap.add_argument("--skip-disk", action="store_true")
+    ap.add_argument("--skip-disk", action="store_true",
+                    help="skip the sequential-read probe only")
+    ap.add_argument("--skip-io", action="store_true",
+                    help="skip all three storage probes (read, compact dump, "
+                         "dump proxy); pair with a later --io-only run on "
+                         "idle storage")
+    ap.add_argument("--io-only", action="store_true",
+                    help="run only the storage probes and merge them into "
+                         "the EXISTING profile at --out / machines/<name>.json")
     ap.add_argument("--no-derive", action="store_true")
     ap.add_argument("--force", action="store_true")
     a = ap.parse_args(argv)
 
     out_path = Path(a.out) if a.out else Path(MACHINES_DIR) / f"{a.name}.json"
+    if a.io_only:
+        if not out_path.exists():
+            ap.error(f"--io-only updates an existing profile; {out_path} "
+                     "does not exist")
+        today = datetime.date.today().isoformat()
+        profile = json.loads(out_path.read_text())
+        io = profile.setdefault("io", {})
+        prov = profile.setdefault("provenance", {})
+        failed = _run_io_probes(a, io, prov, today)
+        profile["description"] = (profile.get("description", "")
+                                  + f" — storage probes re-measured {today} "
+                                  f"(--io-only{', ' + ', '.join(failed) + ' FAILED' if failed else ''})")
+        out_path.write_text(json.dumps(profile, indent=2) + "\n")
+        print(f"\nupdated io fields in {out_path}: "
+              + ", ".join(f"{k}={v}" for k, v in io.items()))
+        if failed:
+            print(f"calibrate --io-only: {len(failed)} probe(s) FAILED "
+                  f"({', '.join(failed)}); their fields are null with the failure "
+                  "in the provenance", file=sys.stderr)
+            return 1
+        return 0
     if out_path.exists() and not a.force:
         ap.error(f"{out_path} exists — pass --force to overwrite")
     raw_dir = out_path.parent / f"calibrate-raw-{a.name}"
@@ -631,10 +668,13 @@ def _run_probes(a, arch, gpu_info, gpu, io, prov, constants, today, raw_dir):
                     f"scaling basis")
             elif nm == "bench_ntt_batched":
                 gpu["ntt_batched_ns_per_elem"] = parse_ntt_batched(out)
+                _rows = parse_ntt_batched_rows(out)
+                _per = ", ".join(f"m={m} {ns:.4f}" for m, ns in _rows)
                 prov["ntt_batched_ns_per_elem"] = (
-                    f"bench_ntt_batched best over batch sweep at n=65536, "
-                    f"{today} — the prover-path number; the single-transform "
-                    f"bench is launch-bound on large-L2 parts")
+                    f"bench_ntt_batched at n=65536, the LARGEST batch of the "
+                    f"sweep (m={max(_rows)[0] if _rows else '?'}), {today} — "
+                    f"the prover's working set; per batch: {_per}; the "
+                    f"single-transform bench is launch-bound on large-L2 parts")
             elif nm == "bench_hbm_random":
                 g, ch = parse_hbm_random(out)
                 gpu["hbm_random_GBps"], gpu["hbm_chase_ns"] = g, ch
@@ -681,8 +721,68 @@ def _run_probes(a, arch, gpu_info, gpu, io, prov, constants, today, raw_dir):
             except Exception as e:            # isolate per measurement
                 print(f"  {key} failed, continuing: {e}")
 
+    if a.skip_io:
+        print("[io probes] skipped (--skip-io): rerun with --io-only once the "
+              "storage is idle")
+    else:
+        _run_io_probes(a, io, prov, today)
+
+    if not a.no_derive:
+        base = MachineProfile.load("gb10-spark")
+        derived, dprov = derive_prove_constants(
+            base, gpu["mem_bandwidth_GBps"], gpu["blake3_reg_compress_Gps"])
+        constants.update(derived)
+        prov.update(dprov)
+
+
+def _mount_of(path: Path):
+    """(source, fstype, mountpoint) of the filesystem holding `path`, from
+    /proc/mounts — the longest mountpoint that is a prefix of the resolved
+    path. None when it cannot be read."""
+    try:
+        target = str(Path(path).resolve())
+        best = None
+        for line in Path("/proc/mounts").read_text().splitlines():
+            parts = line.split()
+            if len(parts) < 3:
+                continue
+            src, mnt, fstype = parts[0], parts[1], parts[2]
+            mnt = mnt.replace("\\040", " ")
+            if target == mnt or target.startswith(mnt.rstrip("/") + "/"):
+                if best is None or len(mnt) > len(best[2]):
+                    best = (src, fstype, mnt)
+        return best
+    except OSError:
+        return None
+
+
+def _run_io_probes(a, io, prov, today):
+    """The three storage probes (sequential read, compact proof dump, dump
+    proxy) on --tmpdir, with the resolved directory and its filesystem
+    recorded in the provenance: the numbers describe THAT mount, and a
+    network volume, an overlay root and a local NVMe are different objects.
+    Run these on idle storage — never while a download is writing to it."""
     tmp = Path(a.tmpdir)
-    if not a.skip_disk:
+    tmp.mkdir(parents=True, exist_ok=True)
+    mount = _mount_of(tmp)
+    try:
+        free_gb = shutil.disk_usage(tmp).free / 1e9
+    except OSError:
+        free_gb = float("nan")
+    where = (f"{tmp.resolve()} on {mount[0]} ({mount[1]}) mounted at {mount[2]}"
+             if mount else f"{tmp.resolve()} (mount unknown)")
+    prov["io_tmpdir"] = f"{where}; {free_gb:.0f} GB free at probe time, {today}"
+    print(f"[io probes] {where}; {free_gb:.0f} GB free")
+    # Every field this run attempts is cleared FIRST, so a probe that fails
+    # leaves null with a FAILED provenance rather than a rate measured on
+    # some earlier filesystem under this run's mount description (review
+    # finding, 2026-09-13). A skipped probe keeps its value and says so.
+    failed = []
+    if a.skip_disk:
+        prov["disk_read_GBps"] = (f"{prov.get('disk_read_GBps', 'unmeasured')} "
+                                  f"[read probe SKIPPED {today}: value not from this mount]")
+    else:
+        io["disk_read_GBps"] = None
         print(f"[disk] write + cache-evict + read over {a.disk_gb} GB")
         try:
             io["disk_read_GBps"] = round(
@@ -692,7 +792,10 @@ def _run_probes(a, arch, gpu_info, gpu, io, prov, constants, today, raw_dir):
                 f"fsync + posix_fadvise(DONTNEED) eviction, {today} — "
                 f"device-served but not O_DIRECT-cold")
         except (RuntimeError, OSError) as e:
-            print(f"  disk probe failed/skipped: {e}")
+            print(f"  disk probe FAILED: {e}")
+            prov["disk_read_GBps"] = f"FAILED {today}: {e}"
+            failed.append("disk_read_GBps")
+    io["proof_dump_compact_MBps"] = None
     print("[compact dump] u64le/base64 production transport")
     try:
         io["proof_dump_compact_MBps"] = round(
@@ -702,7 +805,10 @@ def _run_probes(a, arch, gpu_info, gpu, io, prov, constants, today, raw_dir):
             f"--tmpdir, {today} — the production transport; supersedes "
             f"the A100 reference in predict when present")
     except (RuntimeError, OSError) as e:
-        print(f"  compact dump failed/skipped: {e}")
+        print(f"  compact dump FAILED: {e}")
+        prov["proof_dump_compact_MBps"] = f"FAILED {today}: {e}"
+        failed.append("proof_dump_compact_MBps")
+    io["proof_dump_MBps"] = None
     print("[dump proxy]")
     try:
         io["proof_dump_MBps"] = round(
@@ -711,14 +817,11 @@ def _run_probes(a, arch, gpu_info, gpu, io, prov, constants, today, raw_dir):
                                    f"arrays, {today} — replace with a real "
                                    "proof_dump measurement")
     except (RuntimeError, OSError) as e:
-        print(f"  dump proxy failed/skipped: {e}")
+        print(f"  dump proxy FAILED: {e}")
+        prov["proof_dump_MBps"] = f"FAILED {today}: {e}"
+        failed.append("proof_dump_MBps")
+    return failed
 
-    if not a.no_derive:
-        base = MachineProfile.load("gb10-spark")
-        derived, dprov = derive_prove_constants(
-            base, gpu["mem_bandwidth_GBps"], gpu["blake3_reg_compress_Gps"])
-        constants.update(derived)
-        prov.update(dprov)
 
 
 if __name__ == "__main__":

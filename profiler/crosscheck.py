@@ -505,8 +505,11 @@ def main(argv=None) -> int:
                     help="llama7b context length (default 100)")
     ap.add_argument("--layers", type=int, default=None)
     ap.add_argument("--from-gguf", default=None, help="maverick GGUF path")
-    ap.add_argument("--prompt-n", type=int, default=2)
-    ap.add_argument("--cont-n", type=int, default=2)
+    ap.add_argument("--prompt-n", type=int, default=None,
+                    help="prompt tokens (default 2); with --cont-n it is THE "
+                         "split, and --seq may not accompany it")
+    ap.add_argument("--cont-n", type=int, default=None,
+                    help="continuation tokens (default 2)")
     ap.add_argument("--experts", type=int, default=128)
     ap.add_argument("--d", type=int, default=5120)
     ap.add_argument("--d-ff", type=int, default=8192)
@@ -553,10 +556,17 @@ def main(argv=None) -> int:
         if not a.from_gguf:
             ap.error("maverick needs --from-gguf (metadata is read eagerly)")
         if a.seq is not None:
-            if a.prompt_n != 2 or a.cont_n != 2:
-                print(f"note: --seq {a.seq} overrides --prompt-n/--cont-n "
-                      f"(prompt 2, continuation {a.seq - 2})")
+            if a.prompt_n is not None or a.cont_n is not None:
+                # The split changes the tape (one embedding selection and an
+                # addition per continuation position), so a keeper meant to
+                # match a timed prove must name the same split, not a total.
+                ap.error(f"--seq {a.seq} conflicts with --prompt-n/--cont-n; "
+                         "give the split the timed run uses, without --seq")
             a.prompt_n, a.cont_n = 2, a.seq - 2
+        if a.prompt_n is None:
+            a.prompt_n = 2
+        if a.cont_n is None:
+            a.cont_n = 2
         seq = a.prompt_n + a.cont_n
         layers = a.layers if a.layers is not None else 48
         tape, model = build_maverick(a.from_gguf, a.prompt_n, a.cont_n,
@@ -601,6 +611,15 @@ def main(argv=None) -> int:
         (out / f"{a.model}-s{seq}-layout.txt").write_text(text)
         m_total, table = parse_layout(text)
         flags += diff_layout(m_total, table, man)
+        # The witness by phase and origin on the same built tape: the
+        # measurement behind the witness-regeneration note's estimate of
+        # what a cache could hold (value-free, so cheap at any context).
+        import core
+        ctext = core.format_witness_composition(
+            core.witness_composition(tape, tape.cfg)) + "\n"
+        (out / f"{a.model}-s{seq}-composition.txt").write_text(ctext)
+        print("[6] witness composition (in-process, value-free)")
+        print(ctext)
 
     print("\n" + "=" * 70)
     if flags:

@@ -259,7 +259,8 @@ def report(m: Manifest, mp: MachineProfile, gpus: int = 1,
 
     L.append(f"-- memory ({mp.name}) --")
     opened = T_Q * m_rows * BYTES_PER_SLOT
-    L.append(f"  opened-column payload (T={T_Q} x rows x 8B, GPU-resident): {_gb(opened)}")
+    L.append(f"  opened-column payload (T={T_Q} x rows x 8B, HOST-resident: "
+             f"core.ColumnSink pre-sizes ordinary host buffers): {_gb(opened)}")
     chunk_rows = 1024
     n_lig = lig.get("N_LIG", 65536)
     work = chunk_rows * (ELL + n_lig) * BYTES_PER_SLOT

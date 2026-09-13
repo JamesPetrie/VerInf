@@ -27,7 +27,7 @@ BASE="Llama-4-Maverick-17B-128E-Instruct-${QUANT}"
 SHARDS=5
 PROMPT_N="${PROMPT_N:-442}"
 CONT_N="${CONT_N:-558}"
-MIN_MBPS="${MIN_MBPS:-40}"          # abort the rental if the pull is slower
+MIN_MBPS="${MIN_MBPS:-100}"         # abort the rental if the pull is slower (40 meant a 100-minute pull)
 mkdir -p "$OUT" "$MODEL_DIR"
 export LIGERO_T_QUERIES=54
 export HF_HUB_ENABLE_HF_TRANSFER=1
@@ -40,22 +40,13 @@ step "0. network probe"
 # measures HF's per-connection limit and not this box — it rejected an
 # 6715 Mbit/s A100 on the first attempt. hf_transfer opens many connections;
 # the probe mirrors it with 8 ranges of 256 MB and reports the aggregate.
-URL="https://huggingface.co/$REPO/resolve/main/$QUANT/${BASE}-00001-of-0000${SHARDS}.gguf"
-AUTH=(); [ -n "${HF_TOKEN:-}" ] && AUTH=(-H "Authorization: Bearer $HF_TOKEN")
-PAR=8
-CHUNK=$((256 * 1024 * 1024))
-T0=$(date +%s)
-for i in $(seq 0 $((PAR - 1))); do
-  LO=$((i * CHUNK)); HI=$((LO + CHUNK - 1))
-  curl -sL "${AUTH[@]}" -r "${LO}-${HI}" -o /dev/null "$URL" &
-done
-wait
-T1=$(date +%s)
-DT=$(( (T1 - T0) > 0 ? (T1 - T0) : 1 ))
-MBPS=$(( PAR * 256 / DT ))
-echo "probe: $((PAR * 256)) MB over $PAR streams in ${DT}s = ${MBPS} MB/s aggregate"
-[ "$MBPS" -lt "$MIN_MBPS" ] && fail "network ${MBPS} MB/s below the ${MIN_MBPS} MB/s floor"
-echo "projected pull of ~243 GB: $(( 243000 / MBPS / 60 )) min"
+# The probe is tools/gguf_pull.sh --probe-only: it validates every range
+# request (exit code, 206, byte count), times out, and rates the bytes that
+# actually arrived. The old inline probe assumed 2 GiB had arrived whatever
+# curl returned, and once rated eight failed requests at 2048 MB/s.
+tools/gguf_pull.sh --probe-only --floor "$MIN_MBPS" \
+    "https://huggingface.co/$REPO/resolve/main/$QUANT/${BASE}-00001-of-0000${SHARDS}.gguf" \
+    || fail "network below the ${MIN_MBPS} MB/s floor (or the probe failed)"
 
 step "1. download $SHARDS shards"
 $PY - "$MODEL_DIR" "$REPO" "$QUANT" "$BASE" "$SHARDS" <<'PY' || fail "download failed"

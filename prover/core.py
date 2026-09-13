@@ -1125,8 +1125,14 @@ def _opened_columns_match_leaves(opened: Dict[int, torch.Tensor],
 # (_sweep_report). Same syncs as the phase timer, same caveat; the plain
 # phase report is unchanged (its buckets stay inclusive).
 from contextlib import contextmanager as _contextmanager, nullcontext as _nullcontext
-_PHASE_ON = bool(os.environ.get("LIGERO_PHASE_TIMING"))
-_SWEEP_ON = bool(os.environ.get("LIGERO_SWEEP_TIMING"))
+def _env_on(name: str) -> bool:
+    """An environment switch: unset, empty, 0, false, no and off are OFF.
+    bool(os.environ.get(...)) took "0" for on (review finding, 2026-09-13)."""
+    return os.environ.get(name, "").strip().lower() not in ("", "0", "false", "no", "off")
+
+
+_PHASE_ON = _env_on("LIGERO_PHASE_TIMING")
+_SWEEP_ON = _env_on("LIGERO_SWEEP_TIMING")
 _PHASE_TIMES: Dict[str, float] = {}
 _PHASE_STACK: list = []            # [name, t0, fetch_seconds_inside] per open bucket
 _SWEEP_RECS: list = []             # one record per sweep of the current proof
@@ -1147,8 +1153,14 @@ def _phase(name):
         torch.cuda.synchronize()
         _n, _t0, _fetch_in = _PHASE_STACK.pop()
         _tot = time.time() - _t0
-        if _PHASE_ON:                    # aggregate report: inclusive, as before
-            _PHASE_TIMES[name] = _PHASE_TIMES.get(name, 0.0) + _tot
+        if _PHASE_ON:
+            # Aggregate report: as before, except that loader time nested in a
+            # bucket is booked to `fetch` alone whenever that bucket exists
+            # (LIGERO_SWEEP_TIMING), so the two flags together do not count
+            # it twice. Other nested buckets (the qlin_* family inside
+            # fold_qlin) stay inclusive, as they always were.
+            _PHASE_TIMES[name] = _PHASE_TIMES.get(name, 0.0) + (
+                _tot if name == 'fetch' else _tot - _fetch_in)
         if name == 'fetch':
             if _PHASE_STACK:
                 _PHASE_STACK[-1][2] += _tot
@@ -1219,25 +1231,31 @@ _SWEEP_BUCKETS = ('witness', 'fetch', 'aux', 'compile', 'encode', 'merkle',
 
 def _sweep_report(proof_wall):
     """One table per proof: a row per sweep, seconds per top-level bucket,
-    then the counts (loader calls and GB, cache reads and writes, routed
-    projections computed), a total row, and the time outside the sweeps."""
+    then the counts (loader calls and GB, witness-cache reads and writes,
+    routed-output-cache reads and writes, routed projections computed), a
+    total row, and the time outside the sweeps."""
     if not (_SWEEP_ON and _SWEEP_RECS):
         return
     W = 9
     seen = [b for b in _SWEEP_BUCKETS if any(b in r['t'] for r in _SWEEP_RECS)]
     seen += sorted({b for r in _SWEEP_RECS for b in r['t']} - set(seen))
-    head = ["sweep", "wall"] + seen + ["loads", "load_GB", "cache_rd", "cache_wr", "proj"]
+    head = ["sweep", "wall"] + seen + ["loads", "load_GB", "cache_rd", "cache_wr",
+                                       "routed_rd", "routed_wr", "proj"]
 
     def _row(label, t, n, wall):
         cells = [f"{label:{W}s}", f"{wall:{W}.1f}"]
         cells += [f"{t.get(b, 0.0):{W}.1f}" for b in seen]
         cells += [f"{n.get('loads', 0):{W}d}", f"{n.get('load_bytes', 0) / 1e9:{W}.2f}",
                   f"{n.get('cache_rd', 0):{W}d}", f"{n.get('cache_wr', 0):{W}d}",
+                  f"{n.get('routed_rd', 0):{W}d}", f"{n.get('routed_wr', 0):{W}d}",
                   f"{n.get('proj', 0):{W}d}"]
         return "    " + " ".join(cells)
 
-    print("  [sweep] per-sweep breakdown (LIGERO_SWEEP_TIMING; cuda-synced seconds; "
-          "fetch = loader resolutions, taken out of the bucket they ran in):", flush=True)
+    print("  [sweep] per-sweep breakdown (LIGERO_SWEEP_TIMING; cuda-synced seconds, "
+          "so an instrumented wall; fetch = whole loader calls — storage read, "
+          "decode and transfer together — taken out of the bucket they ran in; "
+          "load_GB = decoded field bytes the loaders returned, not packed or "
+          "disk bytes):", flush=True)
     print("    " + " ".join(f"{h:{W}s}" if i == 0 else f"{h:>{W}s}"
                             for i, h in enumerate(head)), flush=True)
     tot_t, tot_n, tot_w = {}, {}, 0.0
@@ -3255,7 +3273,7 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
                 if routed_cache is not None and i in routed_cache:
                     with _sphase('cache_r'):
                         cached = {v: _routed_load(e) for v, e in routed_cache[i].items()}
-                    _sweep_count('cache_rd')
+                    _sweep_count('routed_rd')      # its own counter: cache_rd is the witness cache's
                 _kw = {'cached': cached} if routed_cache is not None else {}
                 with _phase('witness'):
                     outs = _cf.COMPUTE_FNS[type(claim)](
@@ -3271,7 +3289,7 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
                         _entries = _routed_store(outs, routed_cache)
                     if _entries is not None:
                         routed_cache[i] = _entries
-                        _sweep_count('cache_wr')
+                        _sweep_count('routed_wr')
             else:
                 input_data = {v: fetch(v) for v in input_vars}
                 _spill = witness_cache.get('_spill') if witness_cache else False
@@ -3462,32 +3480,86 @@ def layout_breakdown(tape, cfg: LigeroConfig):
     (_all, _p1, _p2, _p3, _m1, _m2, m_total,
      _wv, _mw, _wn, _mwn) = _layout(claims, cfg)
     agg: Dict[str, List[int]] = {}
-    seen_b = set()
+    for _tn, _v in _walk_claim_vars(claims):
+        row = agg.setdefault(_tn, [0, 0])
+        row[0] += _v.n_rows(cfg.ELL)
+        row[1] += _v.length
+    return m_total, {t: (r, e) for t, (r, e) in agg.items()}
 
-    def _acct(v, tn):
-        if isinstance(v, Variable) and id(v) not in seen_b:
-            seen_b.add(id(v))
-            row = agg.setdefault(tn, [0, 0])
-            row[0] += v.n_rows(cfg.ELL)
-            row[1] += v.length
 
+def _walk_claim_vars(claims):
+    """Every Variable a claim touches, once, attributed to the FIRST claim
+    that touches it in claim order: the fields, a settlement's table
+    mult/w/z, and Variables inside list fields (the routed claims' shards).
+    The single walk behind layout_breakdown and witness_composition."""
+    seen = set()
     for _c in claims:
         _tn = type(_c).__name__
         _settle = isinstance(_c, TableSettlement)
         for _f in fields(_c):
             _v = getattr(_c, _f.name)
             if isinstance(_v, Variable):
-                _acct(_v, _tn)
+                cands = (_v,)
             elif isinstance(_v, Table) and _settle:
-                _acct(_v.mult_var, _tn)
-                _acct(_v.w_var, _tn)
-                for _z in _v.z_vars:
-                    _acct(_z, _tn)
+                cands = (_v.mult_var, _v.w_var, *_v.z_vars)
             elif isinstance(_v, list):
-                for _it in _v:
-                    if isinstance(_it, Variable):
-                        _acct(_it, _tn)
-    return m_total, {t: (r, e) for t, (r, e) in agg.items()}
+                cands = tuple(_it for _it in _v if isinstance(_it, Variable))
+            else:
+                continue
+            for _cv in cands:
+                if isinstance(_cv, Variable) and id(_cv) not in seen:
+                    seen.add(id(_cv))
+                    yield _tn, _cv
+
+
+_COMPOSITION_KEYS = ('p1_out', 'p1_in', 'w', 'p2', 'p3')
+
+
+def witness_composition(tape, cfg) -> Dict[str, Dict[str, int]]:
+    """What the witness is made of, by claim type, in elements: phase-1
+    variables the sweep PRODUCES (compute-function outputs, regenerated in
+    every sweep and the part a witness cache could hold), phase-1 variables
+    that were COMMITTED (keys of tape.inputs: activations fed in, table
+    data), the persistent weight block, and the phase-2 and phase-3 aux.
+    Same walk and attribution as layout_breakdown, value-free, so it runs
+    on a lazy tape with no weight resolved. Turns the estimate in the
+    witness-regeneration note (517 GB of outputs, 243 GB of aux at S=1000,
+    from the synth's per-claim counts) into a measurement of a real tape."""
+    claims = _with_synthesized_settlements(tape.claims)
+    comp: Dict[str, Dict[str, int]] = {}
+    for tn, v in _walk_claim_vars(claims):
+        if v.persistent:
+            key = 'w'
+        elif v.phase == 1:
+            key = 'p1_in' if v in tape.inputs else 'p1_out'
+        elif v.phase == 2:
+            key = 'p2'
+        else:
+            key = 'p3'
+        row = comp.setdefault(tn, {k: 0 for k in _COMPOSITION_KEYS})
+        row[key] += v.length
+    return comp
+
+
+def format_witness_composition(comp: Dict[str, Dict[str, int]],
+                               bytes_per_slot: int = 8) -> str:
+    """One row per claim type, elements per column, sorted by produced
+    phase-1 elements; a total row; and the same totals in GB at 8 bytes a
+    slot, the figure the regeneration note is stated in."""
+    W = 15
+    head = f"{'claim type':28s}" + "".join(f"{k:>{W}s}" for k in _COMPOSITION_KEYS)
+    lines = ["[composition] witness elements by claim type and origin "
+             "(p1_out = produced each sweep, p1_in = committed, w = persistent "
+             "weights, p2/p3 = aux):", head]
+    tot = {k: 0 for k in _COMPOSITION_KEYS}
+    for tn, row in sorted(comp.items(), key=lambda kv: -kv[1]['p1_out']):
+        lines.append(f"{tn:28s}" + "".join(f"{row[k]:>{W},d}" for k in _COMPOSITION_KEYS))
+        for k in _COMPOSITION_KEYS:
+            tot[k] += row[k]
+    lines.append(f"{'TOTAL elements':28s}" + "".join(f"{tot[k]:>{W},d}" for k in _COMPOSITION_KEYS))
+    lines.append(f"{'TOTAL GB':28s}"
+                 + "".join(f"{tot[k] * bytes_per_slot / 1e9:>{W}.1f}" for k in _COMPOSITION_KEYS))
+    return "\n".join(lines)
 
 
 def format_layout_breakdown(m_total: int, table: Dict[str, Tuple[int, int]],
@@ -3962,12 +4034,20 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
           f"match committed leaves: {repro}; W-block rows {s['n_w_total']}; "
           f"W-ref {wc is not None}; Wnew rows {s['n_wnew_total']}; "
           f"p3 rows {s['n_p3_total']}; peak {peak:.2f} GB", flush=True)
-    # Weight-split: a worker's opening piece scattered at the wrong absolute
-    # row passes the sink's tiling check (equal-length pieces swapped) but
-    # not this leaf check — so under a plan it is an assertion, not a print.
-    assert repro or plan is None, (
-        "weight-split: re-extracted opened columns do not hash to the "
-        "committed leaves — a worker piece landed at the wrong rows")
+    # Fail closed on every path: a proof whose re-extracted columns do not
+    # hash to the leaves it committed is one the verifier will reject, and a
+    # timing taken from it would be a number about nothing. Under a
+    # weight-split plan the usual cause is a worker's opening piece landing
+    # at the wrong absolute rows; single-device, it is witness drift between
+    # sweeps (a cache handing back the wrong bytes, a non-deterministic
+    # compute function).
+    assert repro, (
+        ("weight-split: re-extracted opened columns do not hash to the "
+         "committed leaves — a worker piece landed at the wrong rows")
+        if plan is not None else
+        ("re-extracted opened columns do not hash to the committed leaves — "
+         "the witness differed between sweeps (cache or compute drift); the "
+         "proof would be rejected, so no result is reported"))
     if _PHASE_ON and _PHASE_TIMES:
         _tot = sum(_PHASE_TIMES.values())
         print("  [phase] prove-time breakdown (cuda-synced buckets; shares, not "

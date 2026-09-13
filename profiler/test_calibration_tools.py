@@ -9,6 +9,7 @@ fold in on the next suite revision if preferred.
 import contextlib
 import copy
 import io
+import json
 import sys
 from pathlib import Path
 
@@ -93,6 +94,13 @@ def test_parse_session2_benches():
            "n= 65536 m= 2048  fwd+inv x 5  total=  350.000 ms  ->   17.090 us/NTT  0.2608 ns/elem\n")
     assert calibrate.parse_ntt_batched(out) == 0.2608
     assert calibrate.parse_ntt_batched("nope") is None
+    # The value is the LARGEST batch's, not the sweep's minimum: a cache-
+    # resident m=1 that happens to be fastest must not stand in for the
+    # prover's working set (review finding, 2026-09-13).
+    misleading = ("n= 65536 m=    1  fwd+inv x 5  total=    0.100 ms  ->   10.000 us/NTT  0.1526 ns/elem\n"
+                  "n= 65536 m= 2048  fwd+inv x 5  total=  350.000 ms  ->   17.090 us/NTT  0.2608 ns/elem\n")
+    assert calibrate.parse_ntt_batched(misleading) == 0.2608
+    assert calibrate.parse_ntt_batched_rows(misleading) == [(1, 0.1526), (2048, 0.2608)]
     # chase ns/hop is the per-hop wall across all walkers (a throughput
     # figure — 1.84 ns is impossible as a latency), and the bench now says
     # so in the line the parser reads
@@ -187,6 +195,77 @@ def test_calibration_interrupt_preserves_completed_cuda_rates():
             assert saved["gpu"]["launch_us_sync"] is None
             if interrupted == "bench_ntt":
                 assert saved["gpu"]["ntt_ns_per_elem"] is None
+
+
+def test_io_only_merges_into_an_existing_profile():
+    """--io-only re-measures the three storage probes on idle storage and
+    merges them into the profile the CUDA run wrote, touching nothing else
+    and recording which filesystem was probed."""
+    import tempfile
+    from unittest.mock import patch
+    with tempfile.TemporaryDirectory() as td:
+        out = Path(td) / "p.json"
+        out.write_text(json.dumps({
+            "name": "p", "description": "calibrated earlier",
+            "gpu": {"mem_bandwidth_GBps": 6522.7, "ntt_batched_ns_per_elem": 0.26},
+            "io": {"disk_read_GBps": None, "h2d_GBps": 55.1,
+                   "proof_dump_MBps": None, "proof_dump_compact_MBps": None},
+            "provenance": {"h2d_GBps": "kept"}}))
+        with (patch.object(calibrate, "bench_disk_read_GBps", return_value=3.5),
+              patch.object(calibrate, "bench_dump_compact_MBps", return_value=800.0),
+              patch.object(calibrate, "bench_dump_proxy_MBps", return_value=120.0)):
+            _quiet(calibrate.main, ["--name", "p", "--out", str(out), "--io-only",
+                                    "--tmpdir", td])
+        saved = json.loads(out.read_text())
+        assert saved["gpu"] == {"mem_bandwidth_GBps": 6522.7, "ntt_batched_ns_per_elem": 0.26}
+        assert saved["io"] == {"disk_read_GBps": 3.5, "h2d_GBps": 55.1,
+                               "proof_dump_MBps": 120.0, "proof_dump_compact_MBps": 800.0}
+        assert saved["provenance"]["h2d_GBps"] == "kept"
+        assert "mounted at" in saved["provenance"]["io_tmpdir"], saved["provenance"]
+        assert "--io-only" in saved["description"]
+    # a mount lookup for a real path names a mountpoint that prefixes it
+    m = calibrate._mount_of(Path.cwd())
+    assert m is not None and str(Path.cwd().resolve()).startswith(m[2].rstrip("/"))
+
+
+def test_io_only_failure_nulls_the_field_and_fails_the_run():
+    """A failed remeasurement must not leave a rate from an earlier mount
+    under the new mount's provenance: the field goes null, the provenance
+    names the failure, and the run returns nonzero."""
+    import tempfile
+    from unittest.mock import patch
+    with tempfile.TemporaryDirectory() as td:
+        out = Path(td) / "p.json"
+        out.write_text(json.dumps({
+            "name": "p", "description": "network volume run",
+            "gpu": {}, "io": {"disk_read_GBps": 0.3, "h2d_GBps": 55.1,
+                              "proof_dump_MBps": 33.8, "proof_dump_compact_MBps": None},
+            "provenance": {"disk_read_GBps": "MooseFS network volume"}}))
+        with (patch.object(calibrate, "bench_disk_read_GBps", side_effect=OSError("probe file: read-only")),
+              patch.object(calibrate, "bench_dump_compact_MBps", return_value=800.0),
+              patch.object(calibrate, "bench_dump_proxy_MBps", return_value=120.0)):
+            rc, _out = _quiet(calibrate.main, ["--name", "p", "--out", str(out), "--io-only",
+                                               "--tmpdir", td])
+        assert rc == 1, (rc, _out)
+        saved = json.loads(out.read_text())
+        assert saved["io"]["disk_read_GBps"] is None, saved["io"]
+        assert saved["provenance"]["disk_read_GBps"].startswith("FAILED"), saved["provenance"]
+        assert saved["io"]["proof_dump_compact_MBps"] == 800.0
+        assert saved["io"]["proof_dump_MBps"] == 120.0
+        assert "disk_read_GBps FAILED" in saved["description"]
+
+
+def test_skip_io_leaves_the_storage_fields_null():
+    import tempfile
+    from unittest.mock import patch
+    with tempfile.TemporaryDirectory() as td:
+        out = Path(td) / "p.json"
+        with patch.object(calibrate, "detect_gpu", return_value=None):
+            _quiet(calibrate.main, ["--name", "p", "--out", str(out), "--skip-cuda",
+                                    "--skip-io", "--no-derive", "--tmpdir", td])
+        saved = json.loads(out.read_text())
+        assert all(v is None for k, v in saved["io"].items()), saved["io"]
+        assert "io_tmpdir" not in saved["provenance"]
 
 
 def test_synth_builder_chosen_from_tape():
@@ -537,6 +616,9 @@ def main():
     test_parse_matmul()
     test_parse_blake3_reg()
     test_parse_session2_benches()
+    test_io_only_merges_into_an_existing_profile()
+    test_io_only_failure_nulls_the_field_and_fails_the_run()
+    test_skip_io_leaves_the_storage_fields_null()
     test_dump_compact_smoke()
     test_bench_grid_fills_the_part()
     test_calibration_interrupt_preserves_completed_cuda_rates()

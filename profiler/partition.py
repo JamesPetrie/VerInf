@@ -469,7 +469,7 @@ def report(m: Manifest, strategy: str, n: int, mp: MachineProfile, *,
     L.append(f"max shard weight stream (x{ev['sweeps']} sweeps, "
              f"{weight_bytes_per_param} B/param, disk/host lanes): "
              f"{_gb(ev['weight_stream_bytes_max'])}")
-    L.append(f"max shard opened-column payload (GPU-resident): "
+    L.append(f"max shard opened-column payload (HOST-resident, ColumnSink): "
              f"{_gb(ev['opened_bytes_max'])}")
     L.append("interconnect sweep (topology unknown):")
     for bw, t_comms, frac in _comms_row(ev, bandwidths):

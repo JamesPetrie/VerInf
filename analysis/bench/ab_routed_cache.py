@@ -41,8 +41,8 @@ def arm(cache_on: bool):
         tape.prove(weight_commitment=wc)
     finally:
         core._ROUTED_Y_CACHE_ON = prev
-    recs = [(r['label'], r['n'].get('loads', 0), r['n'].get('cache_rd', 0),
-             r['n'].get('cache_wr', 0), r['n'].get('proj', 0)) for r in core._SWEEP_RECS]
+    recs = [(r['label'], r['n'].get('loads', 0), r['n'].get('routed_rd', 0),
+             r['n'].get('routed_wr', 0), r['n'].get('proj', 0)) for r in core._SWEEP_RECS]
     print(f"    shard loads in prove: {watch.loads - loads0}; "
           f"projections: {routed_projected.P_CACHE_STATS['misses']}; "
           f"peak resident shards: {watch.peak_live}", flush=True)
@@ -54,7 +54,7 @@ on, recs_on = arm(True)
 E = tss.E
 print(f"\nshard loads per proof: uncached {off} -> cached {on} "
       f"(saved {off - on}; three passes of {E} = {3 * E})")
-print("per sweep (label, loads, cache_rd, cache_wr, proj):")
+print("per sweep (label, loads, routed_rd, routed_wr, proj):")
 for a, b in zip(recs_off, recs_on):
     print(f"    {a[0]:5s} off {a[1:]}  on {b[1:]}")
 assert off - on == 3 * E, f"expected exactly three passes saved, got {off - on}"
