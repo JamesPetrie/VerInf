@@ -147,7 +147,7 @@ def _resolve(live, var):
     """Read ONE shard, resolving its loader. Deliberately not cached: the
     caller drops the tensor before touching the next expert."""
     val = live[var]
-    return _resolve_loader(val) if callable(val) else val
+    return _resolve_loader(val, var) if callable(val) else val
 
 
 def _project_weights(c: RoutedProjectedMatmulClaim, live, rho) -> torch.Tensor:

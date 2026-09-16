@@ -235,6 +235,12 @@ the routed cache's host tier), ports 22/tcp, PUBLIC_KEY in env. Budget:
 roughly 4-5 h ≈ $27-34 at $6.79/h plus $6.79 per extra hour — an estimate
 until an arm is measured. Shards: 232.13 GB; proof dump: ~36 GB.
 
+Session 3 (the B200, after the H200 session 2 of 2026-09-15/16): 0, A1+B,
+A2, G, D3, then D with both caches on; C and D2 were done on the H200 and
+are rerun only if the tape or the prover's witness changed. Rent with 256
+GB of host RAM at least and set the weight cache's fraction as D3 says;
+512 GB lets the default stand.
+
 ## 0. Bootstrap — gate: the record, the verifier build and the primitives test all exit 0
 
 Look at the storage first, because it decides where everything goes.
@@ -429,6 +435,75 @@ whole attention group to return one member); the walls are instrumented
 tables. The dense claims' weights resolve more than once per sweep
 (compute fetch, then the aux's lazy dict); the loads column shows it.
 
+## D3. The loader A/B at S=100 — the decoded-weight cache (session 3, BEFORE D)
+
+Session 2 (analysis/h200-session-2-archive.md) put the loader column,
+1,967 s of the 3,833 s S=100 prove on the H200, on the dense weights: 362
+persistent non-shard variables (16.2 G slots, 130 GB as field elements,
+against 9,216 routed shards of 386.5 G slots) resolved 4,344 times per
+proof through group loaders that decode a whole layer's attention group
+(six tensors, the query projection on the CPU) or MoE group (router and
+three shared tensors, all on the CPU) to return one member. Two changes,
+both gated for byte identity and Rust ACCEPT (prover/tests/test_weight_cache.py
+and the G gates, which also run the two-layer real-GGUF proof with them
+on): the demos' group loaders keep the LAST decoded group
+(LIGERO_GROUP_MEMO, default on: a layer's keys share one decode), and
+the prover keeps every decoded dense weight in pinned host memory for the
+proof (LIGERO_WEIGHT_CACHE, the driver's --weight-cache; the shards are
+excluded, the routed cache is theirs). A weight is stored as centered
+int32 when every element is w or P-w with |w| < 2^31 — every quantized
+weight is — so the whole dense set is about 65 GB packed, and about 90 GB
+PINNED, because the caching host allocator rounds every pinned block up
+to a power of two (a 105 MB attention matrix locks 128 MB, a 168 MB
+shared-expert matrix 256 MB); the budget is charged the rounded size. It
+is LIGERO_WEIGHT_CACHE_HOST_FRACTION of MemAvailable, default 0.25, which
+on a 256 GB host is about 58 GB — SET IT TO 0.5 on such a host (or rent
+512 GB) so that nothing is refused: a refused weight is served by its
+loader as before, which is safe but makes the arm a partial measurement.
+MemAvailable is the HOST's figure, which inside a container is usually
+the physical machine's and can exceed a terabyte on a shared box while
+the real ceiling is the cgroup's: compare the closing line's pinned GB
+against the `memory.max` the env script prints, remembering that the
+routed cache books another tenth of the same MemAvailable at the same
+moment and the retained openings about 26-29 GB at S=1000. The
+table now times loader calls BY KIND under each row ("loader calls by
+kind: weight X s / N; shard Y s / N; input ...; weight-cache hits N,
+stores N"), so the split session 2 inferred from two arms becomes a
+measurement on the OFF arm, and the saving is read from the ON arm.
+
+Two arms, same geometry and flags as D2, the routed cache ON on both (its
+effect is measured; hold it fixed) and the group memo on on both (it is a
+loader fix, not a cache; an arm with LIGERO_GROUP_MEMO=0 would reproduce
+session 2's loader and is not budgeted):
+
+```sh
+ARM="python3 -u profiler/instrumented_prove.py --from-gguf $VERINF_GGUF --t-queries 54 --prompt-n 50 --cont-n 50 --sweep-timing --routed-cache"
+if LIGERO_WITNESS_CACHE=1 LIGERO_WITNESS_SPILL=0 LIGERO_WITNESS_SPILL_DISK=0 \
+       tools/spark_run.sh mavp-s100-wc-off $ARM && waitfor mavp-s100-wc-off; then
+    LIGERO_WITNESS_CACHE=1 LIGERO_WITNESS_SPILL=0 LIGERO_WITNESS_SPILL_DISK=0 \
+    LIGERO_WEIGHT_CACHE_HOST_FRACTION=0.5 \
+        tools/spark_run.sh mavp-s100-wc-on $ARM --weight-cache && waitfor mavp-s100-wc-on
+else
+    echo "D3: the off arm did not succeed; the on arm was not launched"; false
+fi
+```
+Gate per arm: EXIT=0; "opened columns match committed leaves: True"; five
+sweep rows, each with its kind line. OFF arm: weight calls 724 in each of
+R1, R2, R3 (two resolutions of 362 weights: the compute fetch and the
+aux's dict) and 1,086 in fold and open (plus the encode pass), 4,344 in
+ALL, their seconds the measured loader column. ON arm: 362 weight calls
+and 362 stores in R1, none after (every later resolution a hit), and the
+prove's closing line "[weight-cache] 362 weights decoded once (about 65
+GB packed, about 90 GB pinned after the allocator's power-of-two
+rounding; host allocator reserved N GB), 3,982 resolutions served from
+the cache, 0 resolutions refused by the budget" — refused MUST be 0,
+else raise the fraction and rerun the arm; the reserved figure is the
+allocator's own count and is what to hold against memory.max. Shard
+calls identical on both arms. The comparison to read: the OFF arm's
+weight seconds against session 2's inferred 1,967 s (the memo alone
+should already cut them), the ON arm's weight seconds (a few hundred
+decodes in R1 and nothing after), and the prove walls.
+
 ## D. The S=1000 instrumented prove, cache OFF, proof dumped (~30-60 min, unmeasured)
 
 ```sh
@@ -456,9 +531,12 @@ Blackwell; a real compact-dump rate and fsynced file size (cross-check
 io.proof_dump_compact_MBps from A2). Gate: EXIT=0, leaf check True,
 five sweep rows, the SUMMARY line.
 
-Optional D-on: the same command with `--routed-cache`, WITHOUT
---dump-proof, name mavp-s1000-on, only after D's EXIT=0 and only if D2's
-measured savings and D's full elapsed cost justify another hour.
+D-on (session 3, the run to bring home): the same command with
+`--routed-cache --weight-cache` and LIGERO_WEIGHT_CACHE_HOST_FRACTION=0.5,
+WITHOUT --dump-proof, name mavp-s1000-on, after D3's on arm reported 0
+refused; the S=1000 prove with both caches against session 2's 5,333.5 s
+off arm on the H200 (different card: compare shares, and the walls only
+through the calibration).
 
 ## Copy home — gate: each item present before the pod is terminated
 

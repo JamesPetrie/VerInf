@@ -28,6 +28,10 @@ gate shard-streaming python3 prover/tests/run_tests.py test_shard_streaming
 need shard-streaming '=== 7 passed, 0 failed'
 gate routed-projected python3 prover/tests/run_tests.py test_routed_projected
 need routed-projected '=== 6 passed, 0 failed'
+# The decoded-weight cache: byte identity, Rust ACCEPT, one decode per
+# dense weight per proof, shards untouched, zero budget falls back.
+gate weight-cache python3 prover/tests/run_tests.py test_weight_cache
+need weight-cache '=== 5 passed, 0 failed'
 gate toy-ab env LIGERO_SWEEP_TIMING=1 python3 analysis/bench/ab_routed_cache.py
 need toy-ab 'ab_routed_cache: counts as expected'
 # A small REAL-GGUF proof through the research driver, independently
@@ -37,4 +41,11 @@ gate driver-small python3 profiler/instrumented_prove.py --from-gguf "$VERINF_GG
     --t-queries 54 --prompt-n 2 --cont-n 2 --layers 2 --sweep-timing --verify
 need driver-small 'rust verify_proof: ACCEPT'
 need driver-small 'opened columns match committed leaves: True'
+# The same two-layer proof with the decoded-weight cache and the group memo
+# on, independently verified: the real loaders through the cache.
+gate driver-small-wc python3 profiler/instrumented_prove.py --from-gguf "$VERINF_GGUF" \
+    --t-queries 54 --prompt-n 2 --cont-n 2 --layers 2 --sweep-timing --weight-cache --verify
+need driver-small-wc 'rust verify_proof: ACCEPT'
+need driver-small-wc 'opened columns match committed leaves: True'
+need driver-small-wc 'weights decoded once'
 echo "== all gates passed"

@@ -57,7 +57,8 @@ from unexplained_info import prove_unexplained_info, bound_bits
 from demo_maverick_moe import (_to_field, _rand_int, _sigmoid_table, CFG, S,
                                 SCALE_BITS, OUTPUT_WIDTH, SILU_CFG, SIG_SHIFT,
                                 WORD_BITS, HALF_X)
-from demo_maverick_block import (load_attention, build_attn_chain, EPS_INT,
+from demo_maverick_block import (load_attention, memo_group,
+                                 build_attn_chain, EPS_INT,
                                   H, HKV, DH)
 
 SEED = b"maverick-full-demo"
@@ -160,7 +161,12 @@ def _moe_part(gguf, il, key, E):
     """Lazy loader for one router/shared tensor (resident only near its use)."""
     def load():
         from loader import load_maverick_moe_layer
-        real = load_maverick_moe_layer(gguf, il, S=S, n_experts=E, skip_experts=True)
+        # the layer's router and three shared tensors are decoded together
+        # (CPU dequantize + field quantize); memoized as one group so the
+        # four keys share a decode (demo_maverick_block.memo_group)
+        real = memo_group(("moe", gguf, il, S, E),
+                          lambda: load_maverick_moe_layer(
+                              gguf, il, S=S, n_experts=E, skip_experts=True))
         return real[key].contiguous().reshape(-1)
     from loader import MAVERICK_MOE_TENSORS, gguf_provenance
     pat, _stacked = MAVERICK_MOE_TENSORS[_MOE_PART_SRC[key]]

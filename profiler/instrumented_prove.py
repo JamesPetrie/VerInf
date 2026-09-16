@@ -73,6 +73,11 @@ def main(argv=None) -> int:
                     help="LIGERO_ROUTED_Y_CACHE=1: reuse the routed claims' "
                          "first-sweep outputs (the A/B arm; proof bytes are "
                          "unchanged, gated in tests/test_shard_streaming.py)")
+    ap.add_argument("--weight-cache", action="store_true",
+                    help="LIGERO_WEIGHT_CACHE=1: decode each dense weight once "
+                         "per proof and serve later resolutions from pinned "
+                         "host memory (the A/B arm for the session-2 loader "
+                         "finding; proof bytes unchanged)")
     ap.add_argument("--verify", action="store_true",
                     help="after proving, dump the proof and check it with the "
                          "Rust verifier (small runs only: the dump is the "
@@ -103,6 +108,7 @@ def main(argv=None) -> int:
     else:
         os.environ.pop("LIGERO_SWEEP_TIMING", None)
     os.environ["LIGERO_ROUTED_Y_CACHE"] = "1" if a.routed_cache else "0"
+    os.environ["LIGERO_WEIGHT_CACHE"] = "1" if a.weight_cache else "0"
     for k in ("LIGERO_LAYOUT_BREAKDOWN", "LIGERO_COMPILE_PROFILE_EXIT"):
         if os.environ.get(k):
             raise SystemExit(f"{k} is set: that diagnostic exits the prover "
@@ -144,6 +150,7 @@ def main(argv=None) -> int:
             sys.path.insert(0, str(p))
     import torch
     import core
+    import demo_maverick_block as _dmb
     import demo_maverick_full as dm
 
     def log(msg):
@@ -158,6 +165,8 @@ def main(argv=None) -> int:
         f"host spill {'on' if core._WITNESS_SPILL_ON else 'off'}, "
         f"disk spill {'on' if core._WITNESS_SPILL_DISK else 'off'}, "
         f"routed-output cache {'ON' if core._ROUTED_Y_CACHE_ON else 'off'}, "
+        f"decoded-weight cache {'ON' if core._WEIGHT_CACHE_ON else 'off'}, "
+        f"group memo {'on' if _dmb._group_memo_on() else 'OFF'}, "
         f"per-sweep table {'ON' if core._SWEEP_ON else 'off'}, "
         f"phase timing {'on' if core._PHASE_ON else 'off'}")
     torch.manual_seed(7)

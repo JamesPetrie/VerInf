@@ -827,7 +827,7 @@ class FoldRunner:
         registry — when v is shared, the registry points elsewhere)."""
         f = FOLD_FNS[type(claim)]
         t = live[v]
-        t = _resolve_loader(t) if callable(t) else t
+        t = _resolve_loader(t, v) if callable(t) else t
         f["absorb"](claim, st, v, t)
         if self.want_aux and "aux_absorb" in f:
             i = self.index_of[id(claim)]

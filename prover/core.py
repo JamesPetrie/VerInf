@@ -360,7 +360,7 @@ def _fetch(inputs: Dict[Variable, InputVal], v: Variable):
     accept either eagerly-committed tensors or LazyHFLoader callables
     without per-call dispatch logic."""
     val = inputs[v]
-    return _resolve_loader(val) if callable(val) else val
+    return _resolve_loader(val, v) if callable(val) else val
 
 
 class _LazyResolvingDict:
@@ -379,7 +379,7 @@ class _LazyResolvingDict:
             return self._cache[k]
         v = self._base[k]
         if callable(v):
-            v = _resolve_loader(v)
+            v = _resolve_loader(v, k)
         self._cache[k] = v
         return v
 
@@ -1187,26 +1187,177 @@ def _sweep_count(key, n=1):
         _SWEEP_OUTSIDE[key] = _SWEEP_OUTSIDE.get(key, 0) + n
 
 
-def _resolve_loader(val):
-    """Call a lazy loader. The one choke point for loader instrumentation:
-    every resolution — the sweep's input fetch, the routed claims' shard
-    reads, the aux's lazy dict, the fold runner, the encode path — comes
-    through here, so the per-sweep loader count is complete."""
+# --- Decoded-weight cache (LIGERO_WEIGHT_CACHE=1, opt-in). Session 2 (H200,
+# 2026-09-15/16) measured the loader column at half the prove and traced it
+# to the DENSE weights, not the expert shards: each dense weight is resolved
+# twice per aux sweep (the compute fetch, then the aux's lazy dict) and once
+# more in each encode pass, 4,344 resolutions per proof, and the demo's
+# attention-group loader decodes a layer's whole six-tensor group per call
+# with the query projection on the CPU — about 0.45 s each, 1,970 s of the
+# 5,333 s prove. This cache decodes each dense weight ONCE per proof and
+# hands back a fresh device copy of the pinned host copy on every later
+# resolution (a few ms for a 210 MB matrix over PCIe; stored as centered
+# int32, see _weight_pack, so Maverick's dense set is about 65 GB). Routed expert
+# shards are excluded: 9,216 of them at 336 MB decoded, and each resolves in
+# about 2 ms from a 23 MB packed slice on the GPU. The values are the
+# loader's own, so the proof is byte-identical (gated in
+# tests/test_weight_cache.py). Its budget is a fraction of available host
+# RAM, separate from the witness spill's and the routed cache's; over
+# budget it degrades to the loader, never to a wrong value.
+_WEIGHT_CACHE_ON = _env_on("LIGERO_WEIGHT_CACHE")
+_WEIGHT_CACHE_HOST_FRACTION = float(os.environ.get("LIGERO_WEIGHT_CACHE_HOST_FRACTION", "0.25"))
+_WEIGHT_CACHE: Optional[dict] = None      # the proof's cache while a prove runs
+_WEIGHT_KIND: Dict[int, str] = {}         # id(Variable) -> 'shard' | 'weight' | 'input'
+
+
+def _weight_cache_new():
+    return {'_budget': _host_spill_budget_bytes(_WEIGHT_CACHE_HOST_FRACTION),
+            '_bytes': 0, '_packed': 0, '_hits': 0, '_misses': 0, '_refused': 0}
+
+
+_C32 = (1 << 32) - 1     # 2^64 - P: the bits of P - w, read as int64, are -w - _C32
+
+
+def _pinned_empty(shape, dtype):
+    return torch.empty(shape, dtype=dtype, pin_memory=True)
+
+
+def _pinned_bytes(nb):
+    """What the caching host allocator LOCKS for a pinned block of nb bytes:
+    it rounds every allocation up to a power of two (PowerOf2Ceil in ATen's
+    CachingHostAllocator), so a 105 MB matrix pins 128 MB and a 168 MB one
+    256 MB. The budget is charged the rounded size."""
+    return 1 << (nb - 1).bit_length() if nb > 0 else 0
+
+
+def _weight_pack(t, budget_left):
+    """A pinned host copy of a decoded weight as (tag, entry, pinned bytes,
+    device), or None when it would not fit `budget_left`. A field tensor whose
+    every element is w or P - w with 0 <= w < 2^31 — every quantized weight —
+    is stored CENTERED as int32, half the bytes of the int64 spill entry
+    (Maverick's 16.2 G dense slots: 65 GB packed instead of 130, about 90 GB
+    pinned after the allocator's rounding); anything else (a non-canonical
+    value, P itself, a large one, a non-field tensor) takes the int64 spill
+    entry. Both are exact: _weight_unpack returns the same bits. The size
+    check comes first, so a refused weight pays no transform; the transform
+    touches only its own temporaries (`t` is the live weight) and holds at
+    most two full-size int64 ones at once."""
+    n = t.numel()
+    if n and t.dtype == torch.uint64:
+        nb = _pinned_bytes(n * 4)
+        if nb > budget_left:              # the int32 form is the smaller one
+            return None
+        x = t.contiguous().view(torch.int64)
+        m = x >> 63                       # -1 where the value is P - w, else 0
+        m.bitwise_and_(_C32)
+        c = x + m                         # bits of P - w (= -w - 2^32 + 1) -> -w ; w -> w
+        del m
+        lim = 1 << 31
+        # every element inside (-lim, lim), and c negative exactly where x is
+        # (v in [2^63, P) -> c < 0; v >= P, P itself included, fails the sign test)
+        if (int(c.max()) < lim and int(c.min()) > -lim
+                and int((x ^ c).min()) >= 0):
+            host = _pinned_empty(x.shape, torch.int32)
+            host.copy_(c.to(torch.int32))
+            return ('i32', host, nb, t.device)
+    nb = _pinned_bytes(n * t.element_size())
+    if nb > budget_left:
+        return None
+    return ('i64', _spill_store(t), nb, t.device)
+
+
+def _weight_unpack(entry):
+    """A fresh device tensor with the packed weight's bits (see _weight_pack),
+    built in place: the int32 copy, the int64 widening and one mask, no
+    torch.where temporaries (the 1 G-slot embedding would otherwise carry
+    about 25 GB of transients on every resolution)."""
+    tag, e, _, dev = entry
+    if tag == 'i64':
+        return _spill_load(e)
+    g = e.to(dev, non_blocking=True).to(torch.int64)
+    m = g >> 63                           # -1 where the stored value is -w
+    m.bitwise_and_(_C32)
+    g.sub_(m)                             # -w -> bits of P - w
+    return g.view(torch.uint64)
+
+
+def _host_pinned_reserved_gb():
+    """Bytes the caching host allocator holds (its own count, rounding
+    included), or None where the allocator has no stats."""
+    try:
+        return torch.cuda.host_memory_stats()["reserved_bytes.all.current"] / 1e9
+    except Exception:
+        return None
+
+
+def _loader_kind(var) -> str:
+    """'shard' for a streaming claim's expert shard, 'weight' for any other
+    persistent variable, 'input' for a lazily supplied activation."""
+    if var is None:
+        return 'input'
+    k = _WEIGHT_KIND.get(id(var))
+    if k is None:
+        k = 'weight' if getattr(var, 'persistent', False) else 'input'
+        _WEIGHT_KIND[id(var)] = k
+    return k
+
+
+def _resolve_loader(val, var=None):
+    """Call a lazy loader. The one choke point for loader instrumentation and
+    for the decoded-weight cache: every resolution — the sweep's input
+    fetch, the routed claims' shard reads, the aux's lazy dict, the fold
+    runner, the encode path — comes through here. `var` is the Variable
+    being resolved when the caller has it; without it the call is timed as
+    an input and never cached."""
+    kind = _loader_kind(var)
+    wc = _WEIGHT_CACHE if kind == 'weight' else None
+    if wc is not None:
+        entry = wc.get(id(var))
+        if entry is not None:
+            wc['_hits'] += 1
+            if _SWEEP_ON:
+                with _phase('fetch'):
+                    t = _weight_unpack(entry)
+                _sweep_count('loads'); _sweep_count('weight_hits')
+                _sweep_count('load_bytes', t.numel() * t.element_size())
+            else:
+                t = _weight_unpack(entry)
+            return t
     if not _SWEEP_ON:
-        return val()
-    with _phase('fetch'):
         t = val()
-    _sweep_count('loads')
-    if isinstance(t, torch.Tensor):
-        _sweep_count('load_bytes', t.numel() * t.element_size())
+    else:
+        _t0 = time.time()
+        with _phase('fetch'):
+            t = val()
+        _sweep_count('loads'); _sweep_count(f'loads_{kind}')
+        _sweep_time(f'fetch_{kind}', time.time() - _t0)
+        if isinstance(t, torch.Tensor):
+            _sweep_count('load_bytes', t.numel() * t.element_size())
+    if wc is not None and isinstance(t, torch.Tensor):
+        entry = _weight_pack(t, wc['_budget'] - wc['_bytes'])
+        if entry is not None:
+            wc[id(var)] = entry
+            wc['_bytes'] += entry[2]; wc['_misses'] += 1
+            wc['_packed'] += entry[1].numel() * entry[1].element_size() if entry[0] == 'i32' \
+                else entry[1][0].numel() * entry[1][0].element_size()
+            if _SWEEP_ON:
+                _sweep_count('weight_stores')
+        else:
+            wc['_refused'] += 1
     return t
+
+
+def _sweep_time(key, seconds):
+    """Per-sweep seconds by loader kind; a no-op unless LIGERO_SWEEP_TIMING=1."""
+    if _SWEEP_CUR is not None:
+        _SWEEP_CUR['k'][key] = _SWEEP_CUR['k'].get(key, 0.0) + seconds
 
 
 def _sweep_begin(label):
     global _SWEEP_CUR
     if not _SWEEP_ON:
         return
-    _SWEEP_CUR = {'label': label, 't0': time.time(), 't': {}, 'n': {}}
+    _SWEEP_CUR = {'label': label, 't0': time.time(), 't': {}, 'n': {}, 'k': {}}
     _rp = sys.modules.get('routed_projected')
     if _rp is not None:
         _SWEEP_CUR['_p_misses0'] = _rp.P_CACHE_STATS['misses']
@@ -1258,15 +1409,32 @@ def _sweep_report(proof_wall):
           "disk bytes):", flush=True)
     print("    " + " ".join(f"{h:{W}s}" if i == 0 else f"{h:>{W}s}"
                             for i, h in enumerate(head)), flush=True)
-    tot_t, tot_n, tot_w = {}, {}, 0.0
+    def _kinds(n, k):
+        parts = []
+        for kind in ('weight', 'shard', 'input'):
+            c = n.get(f'loads_{kind}', 0)
+            if c:
+                parts.append(f"{kind} {k.get(f'fetch_{kind}', 0.0):.1f} s / {c:,d}")
+        if n.get('weight_hits'):
+            parts.append(f"weight-cache hits {n['weight_hits']:,d}"
+                         + (f", stores {n['weight_stores']:,d}" if n.get('weight_stores') else ""))
+        return "; ".join(parts)
+
+    tot_t, tot_n, tot_w, tot_k = {}, {}, 0.0, {}
     for r in _SWEEP_RECS:
         print(_row(r['label'], r['t'], r['n'], r['wall']), flush=True)
+        if r.get('k') or r['n'].get('weight_hits'):
+            print(f"    {'':{W}s} loader calls by kind: {_kinds(r['n'], r.get('k', {}))}", flush=True)
+        for kk, v in r.get('k', {}).items():
+            tot_k[kk] = tot_k.get(kk, 0.0) + v
         tot_w += r['wall']
         for k, v in r['t'].items():
             tot_t[k] = tot_t.get(k, 0.0) + v
         for k, v in r['n'].items():
             tot_n[k] = tot_n.get(k, 0) + v
     print(_row('ALL', tot_t, tot_n, tot_w), flush=True)
+    if tot_k or tot_n.get('weight_hits'):
+        print(f"    {'':{W}s} loader calls by kind: {_kinds(tot_n, tot_k)}", flush=True)
     first = _SWEEP_RECS[0]
     print(f"    proof wall {proof_wall:.1f}s; sweeps {tot_w:.1f}s; outside the sweeps "
           f"{proof_wall - tot_w:.1f}s with {_SWEEP_OUTSIDE.get('loads', 0)} loader calls "
@@ -3226,7 +3394,7 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
         stream_pk.reset()
     def fetch(v):
         val = live[v]
-        return _resolve_loader(val) if callable(val) else val
+        return _resolve_loader(val, v) if callable(val) else val
     def emit(vg, merkle, abs0, colbuf, pad=None):
         if not vg:
             return
@@ -3678,6 +3846,19 @@ def new_zk_seed() -> bytes:
 
 def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None,
                     claims_bytes=None, zk_seed=None, shard_plan=None):
+    """The streaming prover (_prove_streaming_body holds it). This wrapper
+    only guarantees that the proof's decoded-weight cache — pinned host
+    memory — is released however the prove ends, a raise included."""
+    global _WEIGHT_CACHE
+    try:
+        return _prove_streaming_body(tape, cfg, seed, weight_commitment, wnew_seed,
+                                     claims_bytes, zk_seed, shard_plan)
+    finally:
+        _WEIGHT_CACHE = None
+
+
+def _prove_streaming_body(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None,
+                          claims_bytes=None, zk_seed=None, shard_plan=None):
     """Streaming prover — the single production path (the sound four-round protocol).
 
     `shard_plan` (a shard_plan.ShardPlan, weight-split M1): split the ENROLLED
@@ -3801,6 +3982,17 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
     # Routed-output cache (opt-in, LIGERO_ROUTED_Y_CACHE=1): the streaming
     # claims' first-sweep outputs, under their own budget. None when off or
     # when nothing on the tape streams.
+    # Decoded-weight cache (opt-in, LIGERO_WEIGHT_CACHE=1): every persistent
+    # variable except the streaming claims' expert shards, decoded once per
+    # proof. The shard set is fixed here so the choke point can tell the
+    # kinds apart without a name convention.
+    global _WEIGHT_CACHE
+    _WEIGHT_KIND.clear()
+    for _c in s['claims']:
+        if type(_c) in STREAMING_INPUT_CLAIMS:
+            for _w in getattr(_c, 'W', ()):
+                _WEIGHT_KIND[id(_w)] = 'shard'
+    _WEIGHT_CACHE = _weight_cache_new() if _WEIGHT_CACHE_ON else None
     routed_cache = (_routed_cache_new()
                     if _ROUTED_Y_CACHE_ON and any(type(c) in STREAMING_INPUT_CLAIMS
                                                   for c in s['claims'])
@@ -4058,6 +4250,16 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
               f"remainder = setup + un-bucketed)", flush=True)
     _ephase_report()
     _sweep_report(time.time() - _t_prove0)
+    if _WEIGHT_CACHE is not None:
+        _res = _host_pinned_reserved_gb()
+        print(f"  [weight-cache] {_WEIGHT_CACHE['_misses']} weights decoded once "
+              f"({_WEIGHT_CACHE['_packed'] / 1e9:.1f} GB packed, "
+              f"{_WEIGHT_CACHE['_bytes'] / 1e9:.1f} GB pinned after the allocator's "
+              f"power-of-two rounding; host allocator reserved "
+              f"{'n/a' if _res is None else f'{_res:.1f}'} GB), "
+              f"{_WEIGHT_CACHE['_hits']} resolutions served from the cache, "
+              f"{_WEIGHT_CACHE['_refused']} resolutions refused by the budget", flush=True)
+        _WEIGHT_CACHE = None
     # Reset the sweep's b_chunk skip so a subsequent in-process verify() (which
     # DOES need the public RHS — e.g. the reveal pin) recompiles it. Leaking
     # True here silently zeroed every nonzero-RHS constraint in verify.

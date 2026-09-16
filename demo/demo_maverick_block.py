@@ -73,7 +73,43 @@ def _replicate_kv_cols(w_t, groups=H // HKV):
             .view(d, H * DH).view(torch.uint64))
 
 
+def _group_memo_on() -> bool:
+    """LIGERO_GROUP_MEMO (default on): keep the LAST decoded weight group —
+    one layer's six attention tensors, or one layer's router and shared
+    experts — so that a layer's keys, resolved one after another, share one
+    decode instead of decoding the whole group once per key (the prover
+    resolves each key separately: the attention group was decoded six
+    times per layer per pass, the MoE group four times). 0/off/false/no
+    turns the memo off and every call decodes, as before."""
+    return (os.environ.get("LIGERO_GROUP_MEMO", "1").strip().lower()
+            not in ("0", "off", "false", "no"))
+
+
+_LAST_GROUP: dict = {}      # at most one entry: the last decoded group
+
+
+def memo_group(key, decode):
+    """The group under `key` from the one-entry memo; on a miss the previous
+    group is dropped BEFORE `decode()` runs, so at most one group is held."""
+    if not _group_memo_on():
+        return decode()
+    grp = _LAST_GROUP.get(key)
+    if grp is None:
+        _LAST_GROUP.clear()
+        grp = decode()
+        _LAST_GROUP[key] = grp
+    return grp
+
+
 def load_attention(gguf_path, layer, S_=S):
+    """One layer's attention group (W_Q, W_K, W_V, W_O, g_attn, g_ffn) in
+    the field at scale S_, decoded once per (gguf, layer, S_) while it is
+    the last group asked for (memo_group); see _decode_attention."""
+    return memo_group(("attn", gguf_path, layer, S_),
+                      lambda: _decode_attention(gguf_path, layer, S_))
+
+
+def _decode_attention(gguf_path, layer, S_=S):
     from loader import _gguf_by_name, quantize_to_field
     from kquant_cuda import kquant_to_field
     from gguf.quants import dequantize
