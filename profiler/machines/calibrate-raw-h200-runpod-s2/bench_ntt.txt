@@ -1,0 +1,10 @@
+device: NVIDIA H200  sm=9.0  SMs=132
+n=  1024 log2n=10  baseline  fwd+inv x 100  total=  6.469 ms  -> 32.34 us/NTT  0.16 Gbutterfly/s
+n=  1024 log2n=10  fused     fwd+inv x 100  total=  2.370 ms  -> 11.85 us/NTT  0.43 Gbutterfly/s
+n=  4096 log2n=12  baseline  fwd+inv x 100  total=  6.810 ms  -> 34.05 us/NTT  0.72 Gbutterfly/s
+n=  4096 log2n=12  fused     fwd+inv x 100  total=  4.820 ms  -> 24.10 us/NTT  1.02 Gbutterfly/s
+n= 16384 log2n=14  baseline  fwd+inv x 100  total=  8.046 ms  -> 40.23 us/NTT  2.85 Gbutterfly/s
+n= 16384 log2n=14  fused     fwd+inv x 100  total=  6.166 ms  -> 30.83 us/NTT  3.72 Gbutterfly/s
+n= 65536 log2n=16  baseline  fwd+inv x 100  total=  9.920 ms  -> 49.60 us/NTT  10.57 Gbutterfly/s
+n= 65536 log2n=16  fused     fwd+inv x 100  total=  7.504 ms  -> 37.52 us/NTT  13.97 Gbutterfly/s
+n= 65536 log2n=16  bailey    fwd+inv x 100  total=  2.787 ms  -> 13.94 us/NTT  37.62 Gbutterfly/s

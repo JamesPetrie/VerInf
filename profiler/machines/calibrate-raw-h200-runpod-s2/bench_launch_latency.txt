@@ -1,0 +1,3 @@
+device: NVIDIA H200  sm=9.0
+sync: 8.24 us/launch (launch + device sync round trip)
+stream: 2.633 us/launch (back-to-back enqueue, one sync)
