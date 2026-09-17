@@ -64,4 +64,12 @@ gate driver-small-wc python3 profiler/instrumented_prove.py --from-gguf "$VERINF
 need driver-small-wc 'rust verify_proof: ACCEPT'
 need driver-small-wc 'opened columns match committed leaves: True'
 need driver-small-wc 'weights decoded once'
+# The same two-layer proof under the collaborator's bridge: the expert
+# shards leave the witness, the streaming enrollment authenticates them,
+# the Rust verifier binds both anchors (weight root and enrollment root).
+gate driver-small-bridge python3 profiler/instrumented_prove.py --from-gguf "$VERINF_GGUF" \
+    --t-queries 54 --prompt-n 2 --cont-n 2 --layers 2 --sweep-timing --wc-bridge --verify
+need driver-small-bridge 'rust verify_proof: ACCEPT'
+need driver-small-bridge 'opened columns match committed leaves: True'
+need driver-small-bridge 'wc enrollment (streaming coefficient-RS'
 echo "== all gates passed"

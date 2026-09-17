@@ -235,7 +235,10 @@ the routed cache's host tier), ports 22/tcp, PUBLIC_KEY in env. Budget:
 roughly 4-5 h ≈ $27-34 at $6.79/h plus $6.79 per extra hour — an estimate
 until an arm is measured. Shards: 232.13 GB; proof dump: ~36 GB.
 
-Session 3 (the B200, after the H200 session 2 of 2026-09-15/16): 0, A1+B,
+Session 4 (the B200, after session 3 of 2026-09-16): 0 with the sampler,
+A1+B, A2, G (now with the collaborator's bridge suites, our Rust negatives
+and a two-layer bridged proof), the D3 rerun's one arm, D4 if the budget
+allows, then D with both caches on. Session 3 was: 0, A1+B,
 A2, G, D3, then D with both caches on; C and D2 were done on the H200 and
 are rerun only if the tape or the prover's witness changed. Rent with 256
 GB of host RAM at least and set the weight cache's fraction as D3 says;
@@ -543,6 +546,33 @@ rising nr_throttled is CPU throttling; file falling while anon rises is
 reclaim). Copy home ~/*.memwatch and the sampler log with the arm logs.
 The off arm is not rerun: the driver's seeds fix the tape and session 3's
 off arm is the baseline (analysis/b200-session-3, once archived).
+
+## D4. The bridge arm at S=100 (session 4, after the D3 rerun, budget permitting)
+
+The collaborator's WC-LCRL-STC bridge is merged (2026-09-17): under
+`--wc-bridge` the expert shards leave the witness and a streaming
+coefficient-RS enrollment, built in-process and thrown away like the
+weight commitment, authenticates P = W rho at 40 points; the dense
+weights stay in the enrolled block. His only measurement is a standalone
+L40S bench (enrollment 649 s once, 471 s fold + 580 s column re-derivation
+per proof) and a projection from it; this arm measures the integrated
+path on the same card and tape as the D3 off arm. Same geometry and flags
+as D3, the routed cache on, the weight cache as the D3 rerun decided:
+
+```sh
+LIGERO_WITNESS_CACHE=1 LIGERO_WITNESS_SPILL=0 LIGERO_WITNESS_SPILL_DISK=0 \
+    tools/spark_run.sh mavp-s100-bridge $ARM --wc-bridge [--weight-cache] && waitfor mavp-s100-bridge
+```
+Gate: EXIT=0; leaf check True; the "wc enrollment (streaming
+coefficient-RS ...)" line with its seconds (per proof today: the
+enrollment is not persisted); five sweep rows. What to read against the
+D3 off arm: the fold and open rows' encode (the enrolled block is now the
+16.2 G dense slots, not 402.7 G), the `[weight-cache]` line unchanged,
+the shard loader (R1 for Y, R2 for the fused P, and the bridge's own
+column re-derivation outside the sweeps), and the prove wall. The
+verifier binds both anchors; the proof's wc section is plain JSON today
+(about a billion decimals at Maverick scale) — expect the dump to be
+large if `--dump-proof` is added, and do not add it on this arm.
 
 ## D. The S=1000 instrumented prove, cache OFF, proof dumped (~30-60 min, unmeasured)
 

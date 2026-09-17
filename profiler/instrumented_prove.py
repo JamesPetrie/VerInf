@@ -78,6 +78,13 @@ def main(argv=None) -> int:
                          "per proof and serve later resolutions from pinned "
                          "host memory (the A/B arm for the session-2 loader "
                          "finding; proof bytes unchanged)")
+    ap.add_argument("--wc-bridge", action="store_true",
+                    help="the collaborator's WC-LCRL-STC bridge: the expert "
+                         "shards leave the witness (tape.external, use_bridge) "
+                         "and a streaming coefficient-RS enrollment, built "
+                         "in-process and thrown away like the weight "
+                         "commitment, authenticates P = W rho at 40 points; "
+                         "the dense weights stay in the enrolled block")
     ap.add_argument("--verify", action="store_true",
                     help="after proving, dump the proof and check it with the "
                          "Rust verifier (small runs only: the dump is the "
@@ -169,6 +176,7 @@ def main(argv=None) -> int:
         f"routed-output cache {'ON' if core._ROUTED_Y_CACHE_ON else 'off'}, "
         f"decoded-weight cache {'ON' if core._WEIGHT_CACHE_ON else 'off'}, "
         f"group memo {'on' if _dmb._group_memo_on() else 'OFF'}, "
+        f"wc bridge {'ON' if a.wc_bridge else 'off'}, "
         f"per-sweep table {'ON' if core._SWEEP_ON else 'off'}, "
         f"phase timing {'on' if core._PHASE_ON else 'off'}")
     torch.manual_seed(7)
@@ -181,6 +189,7 @@ def main(argv=None) -> int:
         f"N_LIG={dm.CFG.N_LIG})")
 
     tape = dm.Tape(dm.CFG, silu_config=dm.SILU_CFG, lazy=True)
+    dm.WC_BRIDGE = bool(a.wc_bridge)      # the demo's builder reads it per expert shard
     t0 = time.time()
     logits, Sz, handles, sum_pos = dm.build_model(
         tape, a.from_gguf, prompt_ids, cont_ids, V=a.vocab, d=a.d,
@@ -197,6 +206,21 @@ def main(argv=None) -> int:
     t_enroll = time.time() - t0
     log(f"enrolled {wc.m_w} weight rows in {t_enroll:.1f}s "
         f"(root {wc.root.hex()[:16]}…, throwaway)")
+    # Under the bridge the expert shards are external inputs, so the block
+    # above holds only the dense weights; the shards are enrolled by the
+    # streaming coefficient-RS pass (throwaway too), timed on its own.
+    wc_enr, t_wc_enroll = None, 0.0
+    if a.wc_bridge:
+        import gc
+        import wc_bridge as _wcb
+        gc.collect(); torch.cuda.empty_cache()
+        t0 = time.time()
+        wc_enr = _wcb.lazy_enroll_tape(
+            tape, b"wc-instrumented-mask",
+            f"maverick|{a.from_gguf}|S={1 << 12}".encode(), _wcb.WcParams())
+        t_wc_enroll = time.time() - t0
+        log(f"wc enrollment (streaming coefficient-RS, throwaway) {t_wc_enroll:.1f}s "
+            f"root {wc_enr.root.hex()[:16]}…")
 
     # Reveal pass: discover Sz and pin it as the public bound, then re-zero
     # the LogUp multiplicities so the prove sweeps re-accumulate cleanly —
@@ -223,7 +247,7 @@ def main(argv=None) -> int:
 
     torch.cuda.reset_peak_memory_stats()
     t0 = time.time()
-    proof = tape.prove(weight_commitment=wc)
+    proof = tape.prove(weight_commitment=wc, weight_enrollment=wc_enr)
     t_prove = time.time() - t0
     peak = torch.cuda.max_memory_allocated() / 2**30
     log(f"PROVE WALL {t_prove:.1f}s ({t_prove / 60:.1f} min) peakGPU={peak:.2f}GiB "
@@ -256,7 +280,8 @@ def main(argv=None) -> int:
             return 1
 
     log(f"SUMMARY build={t_build:.1f}s enroll={t_enroll:.1f}s "
-        f"reveal={t_reveal:.1f}s prove={t_prove:.1f}s T={T} "
+        + (f"wc_enroll={t_wc_enroll:.1f}s " if a.wc_bridge else "")
+        + f"reveal={t_reveal:.1f}s prove={t_prove:.1f}s T={T} "
         f"T_QUERIES={dm.CFG.T_QUERIES} claims={len(tape.claims)}"
         + (" verify=ACCEPT" if a.verify else ""))
     return 0
