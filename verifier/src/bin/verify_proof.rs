@@ -197,11 +197,32 @@ fn wc_path_ok(leaf: [u8; 32], path: &[(String, u8)], root: [u8; 32]) -> bool {
 /// recomputed from the claim set (never from the wire): (claim_index,
 /// width, row_off, E*K).  Returns the per-claim P_trace pins on ACCEPT.
 fn wc_verify(wc: &WcSection, s_op: &[u8], s_bind: &[u8],
-             cmap: &[(usize, usize, usize, usize)])
+             cmap: &[(usize, usize, usize, usize)], t_cols: usize)
              -> Result<Vec<(usize, Vec<u64>)>, String> {
     use ligero_verifier::field::{add, mul, pow, P};
     let g = &wc.params;
     let k_w = g.B + g.lam;
+    // The geometry is the prover's to declare (it is pinned into every coin,
+    // so a proof cannot be replayed under other parameters) but it is ALSO
+    // validated here: q_w is the whole soundness of the bridge, and a proof
+    // declaring q_w = 1 would otherwise pass every check below at a forgery
+    // probability near one half. The floor is the review §7 rule the prover
+    // carries as WcParams.min_qw_for_tau: the bridge must be at least as
+    // strong as the fresh Ligero part, q_w >= ceil(0.416 * t) for t opened
+    // columns (t = 54 -> q_w >= 23; the production 40 clears it).
+    if k_w == 0 || k_w & (k_w - 1) != 0 {
+        return Err(format!("K_w = B + lam = {k_w} is not a power of two"));
+    }
+    if g.N_w & (g.N_w - 1) != 0 || g.N_w <= k_w {
+        return Err(format!("N_w = {} must be a power of two above K_w = {k_w}", g.N_w));
+    }
+    if g.q_w == 0 || g.q_w > g.N_w {
+        return Err(format!("q_w = {} out of range", g.q_w));
+    }
+    if g.q_w * 1000 < 416 * t_cols {
+        return Err(format!("q_w = {} below the floor ceil(0.416 * {t_cols}) for \
+{t_cols} opened Ligero columns", g.q_w));
+    }
     if wc.c.len() != k_w { return Err("c length != K_w".into()); }
     let mut widths: Vec<usize> =
         wc.group_meta.keys().map(|w| w.parse().unwrap()).collect();
@@ -352,6 +373,7 @@ fn conv_paths(m: HashMap<String, Vec<(String, u8)>>) -> HashMap<u64, Vec<([u8; 3
 
 fn main() {
     // argv: proof.json [EXPECTED_R_W_HEX] [EXPECTED_STATEMENT_DIGEST_HEX]
+    //       [EXPECTED_WC_ENROLLMENT_ROOT_HEX]
     // The policy arguments come from OUTSIDE the proof (the runbook's trusted
     // enrolled weight root and trusted statement digest). They are optional
     // today so the existing test corpus still runs; the driver work (S4) makes
@@ -363,6 +385,7 @@ fn main() {
     let opt_hex = |i: usize| args.get(i).filter(|s| s.as_str() != "-").map(|s| hex32(s));
     let policy_root_w = opt_hex(2);
     let policy_stmt = opt_hex(3);
+    let policy_wc_root = opt_hex(4);
     let f = std::fs::File::open(&path).expect("open proof.json");
     let top: RawTop = serde_json::from_reader(std::io::BufReader::new(f))
         .expect("parse proof.json");
@@ -403,6 +426,9 @@ fn main() {
         q_lin: p.q_lin.into_vec().expect("decode q_lin"),
         p_0: p.p_0.into_vec().expect("decode p_0"),
     };
+    // t, the number of opened Ligero columns, is what the bridge's q_w floor
+    // is measured against (the largest block's opening set).
+    let t_cols = opened.iter().map(|m| m.len()).max().unwrap_or(0);
     let r4 = Round4 { opened, paths };
 
     // ---- transcript + policy -------------------------------------------
@@ -453,7 +479,13 @@ fn main() {
             if policy_stmt.is_some() {
                 policy.push(("statement digest required but proof has none".into(), false));
             }
-            s_bind_out = top.seeds.s_bind.as_ref().map(|h| hexbytes(h));
+            // The bridge's late coins (alpha, eta) derive from s_bind; a
+            // file-supplied s_bind would let the prover know the 40 points
+            // before committing, and the 1024 free mask coefficients then
+            // solve the 40 constraints exactly. Legacy-seed proofs carry no
+            // recomputed transcript, so they carry no s_bind for the bridge
+            // and a wc section on this path is refused below.
+            s_bind_out = None;
             (hexbytes(&top.seeds.s_op), hexbytes(&top.seeds.s_comb),
              hexbytes(&top.seeds.s_col))
         }
@@ -467,23 +499,29 @@ fn main() {
         (Some(_), None) => policy.push((
             "trusted weight root supplied for a persistent-model proof".into(),
             false)),
-        // In WC-bridge mode the externally-trusted model reference is the
-        // ENROLLMENT root — same trust anchor, different tree.
-        (None, Some(exp_w)) => match &top.wc {
-            Some(wcs) => policy.push((
-                "wc enrollment root = trusted enrolled root".into(),
-                hex32(&wcs.root) == exp_w)),
-            None => policy.push((
-                "policy names a model root but the proof has neither a weight \
-block nor a wc section".into(), false)),
-        },
-        (None, None) => {
-            if top.wc.is_some() {
-                policy.push((
-                    "trusted enrollment root supplied for a wc-bridge proof".into(),
-                    false));
-            }
-        }
+        (None, Some(_)) => policy.push((
+            "policy names a weight root but the proof has no weight block".into(),
+            false)),
+        (None, None) => {}
+    }
+    // The WC-bridge enrollment is a SECOND trust anchor with its own policy
+    // slot (argv[4]). A production proof carries a weight block (the dense
+    // weights stay committed rows) AND a wc section (the expert weights), and
+    // each must be bound to a value from outside the proof: the enrollment
+    // root is never accepted in the weight-root slot, and never left
+    // unchecked beside a checked weight block — the bridge would otherwise
+    // authenticate the expert weights against a root of the prover's choosing.
+    match (&top.wc, policy_wc_root) {
+        (Some(wcs), Some(exp)) => policy.push((
+            "wc enrollment root = trusted enrollment root".into(),
+            hex32(&wcs.root) == exp)),
+        (Some(_), None) => policy.push((
+            "trusted enrollment root supplied for a wc-bridge proof".into(),
+            false)),
+        (None, Some(_)) => policy.push((
+            "policy names an enrollment root but the proof has no wc section".into(),
+            false)),
+        (None, None) => {}
     }
 
     // ---- WC-LCRL-STC bridge (spec 0.4/0.5) -------------------------------
@@ -509,7 +547,7 @@ block nor a wc section".into(), false)),
     let mut wc_pins: Vec<(usize, Vec<u64>)> = Vec::new();
     match (&top.wc, cmap.len(), s_bind_out.as_deref()) {
         (Some(wcs), n, Some(sb)) if n > 0 => {
-            match wc_verify(wcs, &s_op, sb, &cmap) {
+            match wc_verify(wcs, &s_op, sb, &cmap, t_cols) {
                 Ok(pins) => {
                     policy.push(("wc bridge: P_trace authenticated against \
 enrollment root".into(), true));

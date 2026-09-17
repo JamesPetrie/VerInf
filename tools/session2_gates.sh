@@ -34,6 +34,20 @@ gate weight-cache python3 prover/tests/run_tests.py test_weight_cache
 need weight-cache '=== 5 passed, 0 failed'
 gate instrument-bookkeeping python3 prover/tests/run_tests.py test_instrument_bookkeeping
 need instrument-bookkeeping '=== 3 passed, 0 failed'
+# The collaborator's weight bridge, merged 2026-09-17: his suites (the
+# standalone bridge, the flag inside the 5-round transcript, the tape link)
+# and OUR negatives through the Rust binary (a tampered fold, the enrollment
+# root wrong, missing or in the weight-root slot, q_w below the floor, the
+# legacy seed path, a stripped wc section, and the production shape with a
+# weight block beside the wc section).
+gate wc-bridge python3 prover/tests/run_tests.py test_wc_bridge
+need wc-bridge '=== 15 passed, 0 failed'
+gate wc-streaming-flag python3 prover/tests/run_tests.py test_wc_streaming_flag
+need wc-streaming-flag '=== 9 passed, 0 failed'
+gate wc-tape-link python3 prover/tests/run_tests.py test_wc_tape_link
+need wc-tape-link '=== 1 passed, 0 failed'
+gate wc-bridge-rust python3 prover/tests/run_tests.py test_wc_bridge_rust_negatives
+need wc-bridge-rust '=== 6 passed, 0 failed'
 gate toy-ab env LIGERO_SWEEP_TIMING=1 python3 analysis/bench/ab_routed_cache.py
 need toy-ab 'ab_routed_cache: counts as expected'
 # A small REAL-GGUF proof through the research driver, independently
