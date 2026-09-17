@@ -1206,12 +1206,28 @@ def _sweep_count(key, n=1):
 # budget it degrades to the loader, never to a wrong value.
 _WEIGHT_CACHE_ON = _env_on("LIGERO_WEIGHT_CACHE")
 _WEIGHT_CACHE_HOST_FRACTION = float(os.environ.get("LIGERO_WEIGHT_CACHE_HOST_FRACTION", "0.25"))
+_WEIGHT_CACHE_GPU_FRACTION = float(os.environ.get("LIGERO_WEIGHT_CACHE_GPU_FRACTION", "0.4"))
 _WEIGHT_CACHE: Optional[dict] = None      # the proof's cache while a prove runs
 _WEIGHT_KIND: Dict[int, str] = {}         # id(Variable) -> 'shard' | 'weight' | 'input'
 
 
 def _weight_cache_new():
+    """Two tiers: the GPU first (LIGERO_WEIGHT_CACHE_GPU_FRACTION of the free
+    HBM at prove start — session 3 on a B200: the 65 GB packed dense set
+    beside a 48 GiB peak), then pinned host (LIGERO_WEIGHT_CACHE_HOST_FRACTION
+    of MemAvailable). Session 3 measured the host tier as a LOSS on a
+    container whose cgroup was full of GGUF page cache: each pinned block
+    forced reclaim, R1's stores cost 1.9 s each and the evicted shards came
+    back from disk in every later sweep. A GPU store costs 0.2 ms and never
+    touches the cgroup."""
+    gpu = 0
+    try:
+        free, _ = torch.cuda.mem_get_info()
+        gpu = int(free * _WEIGHT_CACHE_GPU_FRACTION)
+    except Exception:
+        pass
     return {'_budget': _host_spill_budget_bytes(_WEIGHT_CACHE_HOST_FRACTION),
+            '_gpu_budget': gpu, '_gpu_bytes': 0,
             '_bytes': 0, '_packed': 0, '_hits': 0, '_misses': 0, '_refused': 0}
 
 
@@ -1230,9 +1246,10 @@ def _pinned_bytes(nb):
     return 1 << (nb - 1).bit_length() if nb > 0 else 0
 
 
-def _weight_pack(t, budget_left):
-    """A pinned host copy of a decoded weight as (tag, entry, pinned bytes,
-    device), or None when it would not fit `budget_left`. A field tensor whose
+def _weight_pack(t, budget_left, gpu_left=0):
+    """A copy of a decoded weight as (tag, entry, charged bytes, device) —
+    packed int32 ON THE GPU when it fits `gpu_left`, else a pinned host copy
+    when it fits `budget_left` — or None when neither fits. A field tensor whose
     every element is w or P - w with 0 <= w < 2^31 — every quantized weight —
     is stored CENTERED as int32, half the bytes of the int64 spill entry
     (Maverick's 16.2 G dense slots: 65 GB packed instead of 130, about 90 GB
@@ -1245,7 +1262,7 @@ def _weight_pack(t, budget_left):
     n = t.numel()
     if n and t.dtype == torch.uint64:
         nb = _pinned_bytes(n * 4)
-        if nb > budget_left:              # the int32 form is the smaller one
+        if nb > budget_left and n * 4 > gpu_left:   # the int32 form is the smaller one: neither tier fits
             return None
         x = t.contiguous().view(torch.int64)
         m = x >> 63                       # -1 where the value is P - w, else 0
@@ -1257,6 +1274,8 @@ def _weight_pack(t, budget_left):
         # (v in [2^63, P) -> c < 0; v >= P, P itself included, fails the sign test)
         if (int(c.max()) < lim and int(c.min()) > -lim
                 and int((x ^ c).min()) >= 0):
+            if t.is_cuda and n * 4 <= gpu_left:          # GPU tier: no transfer at all
+                return ('g32', c.to(torch.int32), n * 4, t.device)
             host = _pinned_empty(x.shape, torch.int32)
             host.copy_(c.to(torch.int32))
             return ('i32', host, nb, t.device)
@@ -1274,7 +1293,7 @@ def _weight_unpack(entry):
     tag, e, _, dev = entry
     if tag == 'i64':
         return _spill_load(e)
-    g = e.to(dev, non_blocking=True).to(torch.int64)
+    g = e.to(torch.int64) if tag == 'g32' else e.to(dev, non_blocking=True).to(torch.int64)
     m = g >> 63                           # -1 where the stored value is -w
     m.bitwise_and_(_C32)
     g.sub_(m)                             # -w -> bits of P - w
@@ -1285,9 +1304,13 @@ def _host_pinned_reserved_gb():
     """Bytes the caching host allocator holds (its own count, rounding
     included), or None where the allocator has no stats."""
     try:
-        return torch.cuda.host_memory_stats()["reserved_bytes.all.current"] / 1e9
+        st = torch.cuda.host_memory_stats()      # keys differ across torch versions
+        for k in ("reserved_bytes.current", "reserved_bytes.all.current"):
+            if k in st:
+                return st[k] / 1e9
     except Exception:
-        return None
+        pass
+    return None
 
 
 def _loader_kind(var) -> str:
@@ -1334,11 +1357,13 @@ def _resolve_loader(val, var=None):
         if isinstance(t, torch.Tensor):
             _sweep_count('load_bytes', t.numel() * t.element_size())
     if wc is not None and isinstance(t, torch.Tensor):
-        entry = _weight_pack(t, wc['_budget'] - wc['_bytes'])
+        entry = _weight_pack(t, wc['_budget'] - wc['_bytes'],
+                             wc['_gpu_budget'] - wc['_gpu_bytes'])
         if entry is not None:
             wc[id(var)] = entry
-            wc['_bytes'] += entry[2]; wc['_misses'] += 1
-            wc['_packed'] += entry[1].numel() * entry[1].element_size() if entry[0] == 'i32' \
+            wc['_gpu_bytes' if entry[0] == 'g32' else '_bytes'] += entry[2]
+            wc['_misses'] += 1
+            wc['_packed'] += entry[1].numel() * entry[1].element_size() if entry[0] != 'i64' \
                 else entry[1][0].numel() * entry[1][0].element_size()
             if _SWEEP_ON:
                 _sweep_count('weight_stores')
@@ -4253,8 +4278,9 @@ def _prove_streaming_body(tape, cfg, seed=None, weight_commitment=None, wnew_see
     if _WEIGHT_CACHE is not None:
         _res = _host_pinned_reserved_gb()
         print(f"  [weight-cache] {_WEIGHT_CACHE['_misses']} weights decoded once "
-              f"({_WEIGHT_CACHE['_packed'] / 1e9:.1f} GB packed, "
-              f"{_WEIGHT_CACHE['_bytes'] / 1e9:.1f} GB pinned after the allocator's "
+              f"({_WEIGHT_CACHE['_packed'] / 1e9:.1f} GB packed: "
+              f"{_WEIGHT_CACHE['_gpu_bytes'] / 1e9:.1f} GB on the GPU, "
+              f"{_WEIGHT_CACHE['_bytes'] / 1e9:.1f} GB pinned host after the allocator's "
               f"power-of-two rounding; host allocator reserved "
               f"{'n/a' if _res is None else f'{_res:.1f}'} GB), "
               f"{_WEIGHT_CACHE['_hits']} resolutions served from the cache, "

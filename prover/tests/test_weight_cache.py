@@ -74,14 +74,14 @@ def _prove(cache_on, wc=None, *, host_fraction=None):
     if wc is None:
         wc = core.WeightCommitment.from_tape(tape, CFG)
     d0, s0 = dense.loads, shards.loads
-    prev = (core._WEIGHT_CACHE_ON, core._WEIGHT_CACHE_HOST_FRACTION)
+    prev = (core._WEIGHT_CACHE_ON, core._WEIGHT_CACHE_HOST_FRACTION, core._WEIGHT_CACHE_GPU_FRACTION)
     try:
         core._WEIGHT_CACHE_ON = cache_on
-        if host_fraction is not None:
-            core._WEIGHT_CACHE_HOST_FRACTION = host_fraction
+        if host_fraction is not None:            # both tiers' budgets
+            core._WEIGHT_CACHE_HOST_FRACTION = core._WEIGHT_CACHE_GPU_FRACTION = host_fraction
         proof = tape.prove(zk_seed=ZK_SEED, weight_commitment=wc)
     finally:
-        core._WEIGHT_CACHE_ON, core._WEIGHT_CACHE_HOST_FRACTION = prev
+        core._WEIGHT_CACHE_ON, core._WEIGHT_CACHE_HOST_FRACTION, core._WEIGHT_CACHE_GPU_FRACTION = prev
     assert core._WEIGHT_CACHE is None, "the proof's weight cache must be released after the prove"
     return tape, proof, wc, dense.loads - d0, shards.loads - s0
 
@@ -115,8 +115,8 @@ def test_dense_weight_decoded_once_and_shards_never_cached():
 
 
 def test_zero_budget_falls_back_to_the_loader():
-    """A host budget of zero refuses every store: the loader is called as
-    often as with the cache off, and the proof is unchanged."""
+    """Budgets of zero on both tiers refuse every store: the loader is called
+    as often as with the cache off, and the proof is unchanged."""
     tape_off, proof_off, wc, d_off, _ = _prove(False)
     tape_z, proof_z, _, d_z, _ = _prove(True, wc, host_fraction=0.0)
     assert d_z == d_off, f"zero budget: dense decodes {d_z}, want the uncached {d_off}"
@@ -152,9 +152,15 @@ def test_pack_roundtrip_at_the_boundaries_and_the_charged_size():
     e = core._weight_pack(torch.zeros(3, dtype=torch.int64, device="cuda"), 10 ** 9)
     assert e[0] == 'i64' and torch.equal(core._weight_unpack(e), torch.zeros(3, dtype=torch.int64, device="cuda"))
     assert core._weight_pack(_u64([1] * 9), 10 ** 9)[2] == 64      # 36 B pinned as 64
-    assert core._weight_pack(small, 31) is None and core._weight_pack(_u64([1 << 40]), 15) is None
+    assert core._weight_pack(small, 31) is None and core._weight_pack(_u64([1 << 40]), 7) is None
     assert core._pinned_bytes(105 * 2 ** 20) == 128 * 2 ** 20 and core._pinned_bytes(0) == 0
-    print("    packing: exact at the boundaries; int64 fallbacks exact; pinned sizes charged")
+    # the GPU tier: the same packing kept on the device, charged its packed size
+    e = core._weight_pack(small, 0, 10 ** 9)
+    assert e[0] == 'g32' and e[1].is_cuda and e[1].dtype == torch.int32 and e[2] == 20, e[:3]
+    assert torch.equal(core._weight_unpack(e).view(torch.int64), small.view(torch.int64))
+    assert core._weight_pack(small, 10 ** 9, 19)[0] == 'i32'          # over the GPU budget -> host tier
+    assert core._weight_pack(_u64([1 << 40]), 10 ** 9, 10 ** 9)[0] == 'i64'   # int64 fallback stays on the host
+    print("    packing: exact at the boundaries on both tiers; int64 fallbacks exact; sizes charged")
 
 
 def test_weight_cache_released_when_the_prove_raises():

@@ -153,8 +153,10 @@ def main(argv=None) -> int:
     import demo_maverick_block as _dmb
     import demo_maverick_full as dm
 
-    def log(msg):
-        print(f"[instrumented_prove] {msg}", flush=True)
+    _t_start = time.time()
+
+    def log(msg):        # elapsed seconds since the driver started, so phases can be placed in the sampler's timeline
+        print(f"[instrumented_prove +{time.time() - _t_start:.1f}s] {msg}", flush=True)
 
     log("RESEARCH TIMING RUN — not a production proof: no admission gate, "
         "in-process throwaway enrollment, Sz discovered by a reveal pass")

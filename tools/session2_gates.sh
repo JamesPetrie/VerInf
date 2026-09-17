@@ -32,6 +32,8 @@ need routed-projected '=== 6 passed, 0 failed'
 # dense weight per proof, shards untouched, zero budget falls back.
 gate weight-cache python3 prover/tests/run_tests.py test_weight_cache
 need weight-cache '=== 5 passed, 0 failed'
+gate instrument-bookkeeping python3 prover/tests/run_tests.py test_instrument_bookkeeping
+need instrument-bookkeeping '=== 3 passed, 0 failed'
 gate toy-ab env LIGERO_SWEEP_TIMING=1 python3 analysis/bench/ab_routed_cache.py
 need toy-ab 'ab_routed_cache: counts as expected'
 # A small REAL-GGUF proof through the research driver, independently

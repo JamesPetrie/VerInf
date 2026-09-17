@@ -488,12 +488,12 @@ else
 fi
 ```
 Gate per arm: EXIT=0; "opened columns match committed leaves: True"; five
-sweep rows, each with its kind line. OFF arm: weight calls 724 in each of
-R1, R2, R3 (two resolutions of 362 weights: the compute fetch and the
-aux's dict) and 1,086 in fold and open (plus the encode pass), 4,344 in
-ALL, their seconds the measured loader column. ON arm: 362 weight calls
+sweep rows, each with its kind line. OFF arm: weight calls 362 in R1,
+724 in R2 and R3 (the compute fetch and the aux's dict) and 1,086 in fold
+and open (plus the encode pass), 3,982 in ALL — measured in session 3 —
+their seconds the measured loader column. ON arm: 362 weight calls
 and 362 stores in R1, none after (every later resolution a hit), and the
-prove's closing line "[weight-cache] 362 weights decoded once (about 65
+prove's closing line (now naming both tiers: on the GPU, pinned host) "[weight-cache] 362 weights decoded once (about 65
 GB packed, about 90 GB pinned after the allocator's power-of-two
 rounding; host allocator reserved N GB), 3,982 resolutions served from
 the cache, 0 resolutions refused by the budget" — refused MUST be 0,
@@ -503,6 +503,46 @@ calls identical on both arms. The comparison to read: the OFF arm's
 weight seconds against session 2's inferred 1,967 s (the memo alone
 should already cut them), the ON arm's weight seconds (a few hundred
 decodes in R1 and nothing after), and the prove walls.
+
+### D3 as measured in session 3 (B200, 2026-09-16), and the rerun
+
+Off arm: prove 2,492.8 s; the dense loader 631 s over 3,982 resolutions
+(362 in R1, 724 in R2 and R3, 1,086 in the fold and the opening), 0.16 s
+each WITH the group memo against the 0.45 s session 2 inferred without it;
+the shard loader 114 s; the enrolled block's encode 1,194 s, now the
+largest term. On arm with the pinned HOST tier: prove 2,966.6 s, a loss:
+362 weights decoded once, 64.7 GB packed, 92.4 GB pinned, 0 refused,
+3,620 hits at 4 ms, and R1's first resolutions 1.9 s each against 0.22 s,
+the shard loader 278 s, the build 303 s against 41.8 s. A pinned store of
+one weight measures 100 ms in isolation on that box, so the cost was the
+container: its 377 GB cgroup held the GGUF's page cache and every pinned
+block forced reclaim, after which the evicted shards came back from the
+1.2 GB/s disk in every sweep (memory.stat showed the 92 GB as shmem). The
+build slowdown precedes any pinning and is NOT explained; the container
+sees 288 CPUs against a 36-vCPU quota, so CPU throttling of the numpy
+dequantize path is the other candidate, and the logs could not tell them
+apart. Both arms accepted; both leaf checks true.
+
+The rerun (session 4): the weight cache now has a GPU tier first —
+LIGERO_WEIGHT_CACHE_GPU_FRACTION (default 0.4) of the free HBM at prove
+start holds the packed int32 weights (65 GB beside the 48 GiB peak at
+S=100; a store is 0.2 ms and never touches the cgroup), the pinned host
+tier is the fallback — gated 5/5 on the pod before it died. Run ONLY the
+on arm, in the off arm's slot (right after G, same page-cache state), with
+the sampler running from bootstrap and the driver's elapsed stamps on:
+
+```sh
+nohup tools/host_sampler.sh $VERINF_LOGS/sampler.log > /dev/null 2>&1 &     # at bootstrap
+LIGERO_WITNESS_CACHE=1 LIGERO_WITNESS_SPILL=0 LIGERO_WITNESS_SPILL_DISK=0 LIGERO_WEIGHT_CACHE_GPU_FRACTION=0.5 \
+    tools/spark_run.sh mavp-s100-wc-on2 $ARM --weight-cache && waitfor mavp-s100-wc-on2
+```
+Gate: EXIT=0, leaf check True, the closing line reading "64.7 GB packed:
+64.7 GB on the GPU, 0.0 GB pinned host", 0 refused, hits 3,620; then hold
+the build's per-layer stamps and R1's kind line against the sampler (a
+rising nr_throttled is CPU throttling; file falling while anon rises is
+reclaim). Copy home ~/*.memwatch and the sampler log with the arm logs.
+The off arm is not rerun: the driver's seeds fix the tape and session 3's
+off arm is the baseline (analysis/b200-session-3, once archived).
 
 ## D. The S=1000 instrumented prove, cache OFF, proof dumped (~30-60 min, unmeasured)
 

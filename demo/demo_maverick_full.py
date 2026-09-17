@@ -71,8 +71,16 @@ SEED = b"maverick-full-demo"
 UI = dict(s_c=1 << 28, s_y=1 << 28, s_b=1 << 12, gap_max=1 << 20)
 
 
+_LOG_T0 = None
+
+
 def _log(msg):
-    print(f"[maverick-full] {msg}", flush=True)
+    """Build progress with seconds since the first line, so a slow build (session
+    3's on arm: 303 s against 41.8 s for the same tape) shows WHICH layers."""
+    global _LOG_T0
+    if _LOG_T0 is None:
+        _LOG_T0 = time.time()
+    print(f"[maverick-full +{time.time() - _LOG_T0:.1f}s] {msg}", flush=True)
 
 
 def _field_loader(gguf, name, S_=S, transpose=False):
