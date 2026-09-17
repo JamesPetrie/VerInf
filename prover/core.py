@@ -3680,6 +3680,8 @@ def layout_breakdown(tape, cfg: LigeroConfig):
      _wv, _mw, _wn, _mwn) = _layout(claims, cfg)
     agg: Dict[str, List[int]] = {}
     for _tn, _v in _walk_claim_vars(claims):
+        if getattr(_v, 'external', False):
+            continue            # not laid out (the layout skips it); the composition counts it under ext
         row = agg.setdefault(_tn, [0, 0])
         row[0] += _v.n_rows(cfg.ELL)
         row[1] += _v.length
@@ -3711,7 +3713,7 @@ def _walk_claim_vars(claims):
                     yield _tn, _cv
 
 
-_COMPOSITION_KEYS = ('p1_out', 'p1_in', 'w', 'p2', 'p3')
+_COMPOSITION_KEYS = ('p1_out', 'p1_in', 'ext', 'w', 'p2', 'p3')
 
 
 def witness_composition(tape, cfg) -> Dict[str, Dict[str, int]]:
@@ -3727,7 +3729,9 @@ def witness_composition(tape, cfg) -> Dict[str, Dict[str, int]]:
     claims = _with_synthesized_settlements(tape.claims)
     comp: Dict[str, Dict[str, int]] = {}
     for tn, v in _walk_claim_vars(claims):
-        if v.persistent:
+        if getattr(v, 'external', False):
+            key = 'ext'        # bridge-held weight: a prover input, never a witness row
+        elif v.persistent:
             key = 'w'
         elif v.phase == 1:
             key = 'p1_in' if v in tape.inputs else 'p1_out'
@@ -3748,8 +3752,8 @@ def format_witness_composition(comp: Dict[str, Dict[str, int]],
     W = 15
     head = f"{'claim type':28s}" + "".join(f"{k:>{W}s}" for k in _COMPOSITION_KEYS)
     lines = ["[composition] witness elements by claim type and origin "
-             "(p1_out = produced each sweep, p1_in = committed, w = persistent "
-             "weights, p2/p3 = aux):", head]
+             "(p1_out = produced each sweep, p1_in = committed, ext = weights the "
+             "bridge holds outside the witness, w = persistent weights, p2/p3 = aux):", head]
     tot = {k: 0 for k in _COMPOSITION_KEYS}
     for tn, row in sorted(comp.items(), key=lambda kv: -kv[1]['p1_out']):
         lines.append(f"{tn:28s}" + "".join(f"{row[k]:>{W},d}" for k in _COMPOSITION_KEYS))

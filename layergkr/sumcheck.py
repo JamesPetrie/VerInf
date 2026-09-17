@@ -246,12 +246,38 @@ def prove(factors: Sequence[Sequence[int]], coin: Callable[[int], int],
     return prove_terms([(1, list(factors))], coin, tape, mu0)
 
 
+def _expected_rounds(size: int) -> int:
+    """log2 of the hypercube size; the transcript MUST carry exactly this many
+    rounds. Without the check a proof with fewer rounds folds fewer variables
+    and the terminal is evaluated at a short point (mle_eval folds only over
+    the point it is given), so a zero-round transcript is accepted whenever
+    the sum of products at index 0 alone matches the claim."""
+    if size <= 0 or size & (size - 1):
+        raise ValueError(f"sumcheck domain size {size} is not a power of two")
+    return size.bit_length() - 1
+
+
+def _rounds_ok(proof: SumcheckProof, n: int):
+    if len(proof.round_polys) != n or len(proof.challenges) != n \
+            or len(proof.final_point) != n:
+        return False, (f"expected {n} rounds, transcript has "
+                       f"{len(proof.round_polys)} polys / {len(proof.challenges)} "
+                       f"challenges / {len(proof.final_point)} point coordinates")
+    return True, "ok"
+
+
 def verify_terms(proof: SumcheckProof, terms: Sequence[Term],
                  coin: Callable[[int], int]) -> Tuple[bool, str]:
     """Check the round chain and the terminal evaluation of a sum-of-products
     sumcheck. For a masked proof the terminal check subtracts the carried mask --
     that subtraction is the 'authenticated masks' step of the ZK argument."""
     claim = proof.claim % FIELD_P
+    sizes = {len(f) for _, fs in terms for f in fs}
+    if len(sizes) != 1:
+        return False, f"factors of unequal size {sorted(sizes)}"
+    ok, why = _rounds_ok(proof, _expected_rounds(sizes.pop()))
+    if not ok:
+        return False, why
     deg = max(len(f) for _, f in terms)
     for rnd, samples in enumerate(proof.round_polys):
         if len(samples) != deg + 1:
@@ -280,6 +306,12 @@ def verify(proof: SumcheckProof, factors: Sequence[Sequence[int]],
            coin: Callable[[int], int]) -> Tuple[bool, str]:
     """Single-product convenience wrapper over `verify_terms`."""
     claim = proof.claim % FIELD_P
+    sizes = {len(f) for f in factors}
+    if len(sizes) != 1:
+        return False, f"factors of unequal size {sorted(sizes)}"
+    ok, why = _rounds_ok(proof, _expected_rounds(sizes.pop()))
+    if not ok:
+        return False, why
     deg = len(factors)
     for rnd, samples in enumerate(proof.round_polys):
         if len(samples) != deg + 1:
