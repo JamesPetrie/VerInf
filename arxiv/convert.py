@@ -49,16 +49,22 @@ body = re.sub(r"__TMP_SUBSEC__\{", r"\\subsection{", body)
 
 # Abstract: the markdown Abstract section, extracted and removed from the
 # body (the abstract environment in the preamble replaces it). Fallback:
-# the introduction's first paragraph, duplicated.
+# the introduction's first paragraph, duplicated. Newer pandoc emits
+# \section{Abstract}\label{abstract} rather than a hypertarget wrapper.
+heading_label = r"(?:\\label\{[^}]+\})?"
 abs_match = re.search(
-    r"\\section\{Abstract\}\s*\n(.*?)(?=\n\\section\{)", body, re.DOTALL
+    rf"\\section\{{Abstract\}}{heading_label}\s*\n(.*?)(?=\n\\section\{{)",
+    body,
+    re.DOTALL,
 )
 if abs_match:
     abstract = abs_match.group(1).strip()
     body = body[: abs_match.start()] + body[abs_match.end():]
 else:
     intro_match = re.search(
-        r"\\section\{1\. Introduction\}\s*\n\n?(.*?)(?=\n\n)", body, re.DOTALL
+        rf"\\section\{{1\. Introduction\}}{heading_label}\s*\n\n?(.*?)(?=\n\n)",
+        body,
+        re.DOTALL,
     )
     abstract = intro_match.group(1).strip() if intro_match else "TODO: abstract"
 
