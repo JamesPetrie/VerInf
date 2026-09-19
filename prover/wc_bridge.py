@@ -153,14 +153,20 @@ class EnrollmentLedger:
 
 def wc_block_masks(mask_seed: bytes, width: int, block: int,
                    params: WcParams) -> torch.Tensor:
-    """(width, lam) mask coefficients for one block — per-(width, block)
-    blake3-seeded PRG, shared by the resident and streaming builders."""
-    g = torch.Generator(device="cpu")
-    g.manual_seed(int.from_bytes(blake3.blake3(
-        mask_seed + b"|" + width.to_bytes(8, "little")
-        + block.to_bytes(8, "little")).digest()[:8], "little"))
-    return (torch.randint(0, 1 << 62, (width, params.lam), generator=g,
-                          dtype=torch.int64).to(torch.uint64)).cuda()
+    """(width, lam) mask coefficients for one block, shared by the resident
+    and streaming builders: out[j, h] = BLAKE3(key_w || (block*width + j) ||
+    h)[0:8] mod P with key_w = BLAKE3(mask_seed | width), generated on the
+    card by the prover's row PRG (cuda_primitives.row_prg, the same
+    construction that pads every committed row). Deterministic and
+    platform-independent by construction, which a registration that must
+    be reproducible from its seed needs, and GB/s on the card: the CPU
+    random draw it replaces cost 31 ms per 64 MB block and ran three times
+    per proof over about 3,700 Maverick blocks (session 4). Changes the
+    enrollment root's definition; no registration predates it."""
+    from cuda_primitives import row_prg
+    key = blake3.blake3(mask_seed + b"|" + width.to_bytes(8, "little")).digest()
+    seed_t = torch.frombuffer(bytearray(key), dtype=torch.uint8).cuda()
+    return row_prg(seed_t, block * width, width, params.lam)
 
 
 def _coeffs_to_codewords(coeffs: torch.Tensor, params: WcParams) -> torch.Tensor:
