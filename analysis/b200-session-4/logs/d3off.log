@@ -1,0 +1,3 @@
+D3 off arm (same host) START 21:33:12
+launched pgid 15739 job 15742 (log ~/mavp-s100-wc-off2.log; kill -- -$(cat ~/mavp-s100-wc-off2.pid))
+D3 off arm status 0 22:20:12

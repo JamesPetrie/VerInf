@@ -1,0 +1,90 @@
+W0919 19:56:35.420000 2365 torch/utils/cpp_extension.py:2425] TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
+W0919 19:56:35.420000 2365 torch/utils/cpp_extension.py:2425] If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'] to specific architectures.
+/workspace/verinf/prover/tests/../core.py:647: UserWarning: The given buffer is not writable, and PyTorch does not support non-writable tensors. This means you can write to the underlying (supposedly non-writable) buffer using the tensor. You may want to copy the buffer to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at /pytorch/torch/csrc/utils/tensor_new.cpp:1578.)
+  return torch.frombuffer(bytes(master_seed), dtype=torch.uint8).cuda()
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 0; W-ref False; Wnew rows 0; p3 rows 3; peak 0.00 GB
+/workspace/verinf/prover/tests/../protocol.py:282: UserWarning: The use of `x.T` on tensors of dimension other than 2 to reverse their shape is deprecated and it will throw an error in a future release. Consider `x.mT` to transpose batches of matrices or `x.permute(*torch.arange(x.ndim - 1, -1, -1))` to reverse the dimensions of a tensor. (Triggered internally at /pytorch/aten/src/ATen/native/TensorShape.cpp:4421.)
+  if hasattr(v, "T") and hasattr(v, "mult_var") and id(v) not in seen:
+    enrollment root: matching ACCEPT / wrong, missing, misplaced REJECT
+  PASS test_bridged_proof_accepts_with_its_enrollment_root_and_rejects_without
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 0; W-ref False; Wnew rows 0; p3 rows 3; peak 0.00 GB
+    legacy seeds: bridge refused
+  PASS test_legacy_seed_path_never_feeds_the_bridge
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 0; W-ref False; Wnew rows 0; p3 rows 3; peak 0.00 GB
+Traceback (most recent call last):
+  File "/workspace/verinf/prover/tests/run_tests.py", line 13, in <module>
+    getattr(mod, n)()
+  File "/workspace/verinf/prover/tests/test_wc_bridge_rust_negatives.py", line 103, in test_opening_count_below_the_floor_rejects
+    assert not acc and "below the floor" in msg, f"q_w = 1 accepted: {msg}"
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: q_w = 1 accepted: thread 'main' (2533) panicked at src/handlers.rs:428:41:
+use_bridge claim but no bridge-authenticated P_trace pin — the wc section is missing or its verification did not run
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+  FAIL test_opening_count_below_the_floor_rejects: AssertionError: q_w = 1 accepted: thread 'main' (2533) panicked at src/handlers.rs:428:41:
+use_bridge claim but no bridge-authenticated P_trace pin — the wc section is missing or its verification did not run
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 1; W-ref True; Wnew rows 0; p3 rows 3; peak 0.00 GB
+    production shape: both anchors bound
+  PASS test_production_shape_binds_both_anchors
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 0; W-ref False; Wnew rows 0; p3 rows 3; peak 0.00 GB
+Traceback (most recent call last):
+  File "/workspace/verinf/prover/tests/run_tests.py", line 13, in <module>
+    getattr(mod, n)()
+  File "/workspace/verinf/prover/tests/test_wc_bridge_rust_negatives.py", line 133, in test_stripped_wc_section_rejects
+    assert not acc and "no wc section" in msg, f"bridged claim without wc accepted: {msg}"
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: bridged claim without wc accepted: thread 'main' (2630) panicked at src/handlers.rs:428:41:
+use_bridge claim but no bridge-authenticated P_trace pin — the wc section is missing or its verification did not run
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+  FAIL test_stripped_wc_section_rejects: AssertionError: bridged claim without wc accepted: thread 'main' (2630) panicked at src/handlers.rs:428:41:
+use_bridge claim but no bridge-authenticated P_trace pin — the wc section is missing or its verification did not run
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 0; W-ref False; Wnew rows 0; p3 rows 3; peak 0.00 GB
+Traceback (most recent call last):
+  File "/workspace/verinf/prover/tests/run_tests.py", line 13, in <module>
+    getattr(mod, n)()
+  File "/workspace/verinf/prover/tests/test_wc_bridge_rust_negatives.py", line 86, in test_tampered_fold_rejects_in_rust
+    assert not acc and "wc bridge REJECT" in msg, f"tampered P_trace accepted: {msg}"
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: tampered P_trace accepted: thread 'main' (2631) panicked at src/handlers.rs:428:41:
+use_bridge claim but no bridge-authenticated P_trace pin — the wc section is missing or its verification did not run
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+  FAIL test_tampered_fold_rejects_in_rust: AssertionError: tampered P_trace accepted: thread 'main' (2631) panicked at src/handlers.rs:428:41:
+use_bridge claim but no bridge-authenticated P_trace pin — the wc section is missing or its verification did not run
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+=== 3 passed, 3 failed (of 6) ===
