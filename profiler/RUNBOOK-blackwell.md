@@ -574,6 +574,27 @@ verifier binds both anchors; the proof's wc section is plain JSON today
 (about a billion decimals at Maverick scale) — expect the dump to be
 large if `--dump-proof` is added, and do not add it on this arm.
 
+Past a trillion parameters: the two-level enrollment. The bridge's
+verifier receives the 40 opened enrollment columns whole, one value per
+polynomial, because the fold coefficients are per-proof coins and nothing
+can be pre-summed: 8.4 GB per proof at Maverick (26.2 M polynomials), 21
+GB at a 1 T model, 58 GB at 2.8 T, linear in the parameter count. The
+stated path past a trillion parameters is a second-level commitment:
+each enrollment column is itself laid out and encoded as a Ligero
+witness and its inner Merkle root becomes the enrollment leaf; the
+verifier checks the weighted column sum by Ligero's linear test — a
+folded row and 54 opened inner columns per point — instead of reading
+the column. Hash-based throughout, one primitive, the existing verifier's
+linear test reused. Hiding is unchanged: the inner openings reveal
+polynomial values only at the same 40 points the masks already cover, so
+no blinding rows and no change to the mask ledger. Enrollment cost
+multiplies (every one of the 32,768 columns is encoded once per
+registration; only the inner roots are stored), per-proof cost is
+minutes of NTT over the 40 columns, and the wire drops to a few hundred
+megabytes at 2.8 T and about 60 MB at Maverick. Not on the Maverick
+critical path (the compact wire encoding makes 8 GB tolerable); a design
+commitment for the paper, an implementation for the next model.
+
 ## D. The S=1000 instrumented prove, cache OFF, proof dumped (~30-60 min, unmeasured)
 
 ```sh
