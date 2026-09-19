@@ -565,6 +565,18 @@ enrollment root".into(), true));
         _ => {}
     }
 
+    if !cmap.is_empty() && wc_pins.len() != cmap.len() {
+        // The bridge did not authenticate every bridged claim's fold (a wc
+        // section missing, tampered, under the floor, or on the legacy seed
+        // path): the compile would ask for a pin that was never produced and
+        // abort. Report the policy table and REJECT instead — fail-closed,
+        // with the reason on its line rather than in a panic.
+        for (name, b) in &policy {
+            println!("  [{}] {}", if *b { "OK " } else { "XX " }, name);
+        }
+        println!("rust_verify: REJECT");
+        return;
+    }
     let t0 = std::time::Instant::now();
     let (ok_checks, per) = verify_bound_pinned(&mut cs, &roots, &r3, r4, &s_op,
                                         s_bind_out.as_deref(), &s_comb, &s_col,
