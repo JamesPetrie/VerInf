@@ -432,6 +432,21 @@ class Tape:
         self.inputs[v] = flat
         return WitnessTensor(flat, v, shape, self)
 
+    def external(self, name, data, shape):
+        """A prover INPUT that is NOT committed to the witness (WC-LCRL-STC):
+        the weight enrollment authenticates it instead. Only meaningful for
+        weights consumed by use_bridge claims — the builder asserts that."""
+        flat = data.contiguous().view(-1)
+        v = Variable(name, length=flat.numel(), phase=1, external=True)
+        self.inputs[v] = flat
+        return WitnessTensor(flat, v, shape, self)
+
+    def external_lazy(self, name, loader, shape, length):
+        """external() with on-demand loading (one expert shard resident)."""
+        v = Variable(name, length=length, phase=1, external=True)
+        self.inputs[v] = loader
+        return WitnessTensor(None, v, shape, self)
+
     def commit_lazy(self, name, loader, shape, length, *, persistent: bool = True):
         """Register a Variable whose data is loaded on demand via `loader`.
         tape.inputs[v] stores the callable, not a tensor — used for weight
@@ -673,7 +688,9 @@ class Tape:
         """Assert x ∈ table.T. Returns x itself (now range-proven)."""
         z = Variable(f"{x.var.name}_z", length=x.var.length, phase=2)
         table.z_vars.append(z)
-        claim = RangeWordClaim(x=x.var, z=z, table=table, length=x.var.length)
+        claim = RangeWordClaim(
+            x=x.var, z=z, table=table, length=x.var.length,
+            local_indices=x.var)
         def side_effects(values):
             lookup_multiplicities_into(values[x.var], table.T,
                                         self.inputs[table.mult_var])
@@ -1346,7 +1363,8 @@ class Tape:
         return WitnessTensor(outs[x_rot_var] if outs else None, x_rot_var, x.shape, self)
 
     def prove(self, seed=None, *, verbose=False, weight_commitment=None,
-              wnew_seed=None, claims_bytes=None, zk_seed=None, shard_plan=None):
+              wnew_seed=None, claims_bytes=None, zk_seed=None, shard_plan=None,
+              weight_enrollment=None):
         """Streaming prover — the sound four-round protocol (the single path).
         Requires a lazy tape (streaming replays the tape's deferred ops).
 
@@ -1370,10 +1388,12 @@ class Tape:
         from core import prove_streaming
         return prove_streaming(self, self.cfg, seed,
                                weight_commitment=weight_commitment,
+                               weight_enrollment=weight_enrollment,
                                wnew_seed=wnew_seed, claims_bytes=claims_bytes,
                                zk_seed=zk_seed, shard_plan=shard_plan)
 
-    def run_engine_pass(self, free_intermediates: bool = False, keep=None):
+    def run_engine_pass(self, free_intermediates: bool = False, keep=None,
+                        observer=None):
         """Process self._deferred (recorded by tape.X in lazy mode): for
         each claim, compute via COMPUTE_FNS and run its side effects.
         Returns a `live` dict {Variable: tensor} that mirrors what
@@ -1391,7 +1411,15 @@ class Tape:
         effects) have run, keeping only `keep` (e.g. the logits Variable).
         Peak memory falls from O(all layers) to O(one layer) — long contexts
         fit. MUST NOT be used when the witnesses are needed afterwards (a
-        proof commits/opens every row); the proof path calls with no args."""
+        proof commits/opens every row); the proof path calls with no args.
+
+        `observer`, when supplied, is called synchronously as
+        `observer(i, claim, input_vars, input_data, outs, live)` after the
+        claim and its side effects finish but before any value is released.
+        It is the one-pass sampled-audit seam: an observer may commit/copy the
+        current claim witness while it is resident. It must not retain device
+        tensors after returning unless it owns the corresponding memory budget.
+        """
         keep = set(keep or ())
         last_use, consumed = {}, set()
         if free_intermediates:
@@ -1407,6 +1435,10 @@ class Tape:
             val = live[v]
             return val() if callable(val) else val
         for i, (claim, input_vars, side_effects) in enumerate(self._deferred):
+            if observer is not None:
+                before_claim = getattr(observer, "before_claim", None)
+                if before_claim is not None:
+                    before_claim(i, claim)
             if self.time_ops:
                 torch.cuda.synchronize()
                 t0 = time.perf_counter()
@@ -1425,6 +1457,8 @@ class Tape:
                 live[v] = t
             if side_effects is not None:
                 side_effects({**input_data, **outs})
+            if observer is not None:
+                observer(i, claim, input_vars, input_data, outs, live)
             for v in list(outs):
                 fold.offer(v, live, allow_free=free_intermediates)
             if self.time_ops:
@@ -1449,4 +1483,3 @@ class Tape:
         # line with that contract.
         self.inputs.update(live)
         return live
-

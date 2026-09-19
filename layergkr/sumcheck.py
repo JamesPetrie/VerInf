@@ -41,6 +41,20 @@ def mle_eval(values: Sequence[int], point: Sequence[int]) -> int:
     """Evaluate the multilinear extension of `values` (2^n hypercube evals, the
     variable order is most-significant-first) at `point`."""
     charge(mul=max(len(values) - 1, 0), add=2 * max(len(values) - 1, 0))
+    # Production sampled-local proofs keep the authenticated wire vectors on
+    # device.  Folding them through Python scalar iteration would synchronize
+    # once per element, so use the bit-exact CUDA fold already shared by the
+    # prover whenever a CUDA tensor reaches the verifier.
+    if getattr(values, "is_cuda", False):
+        import torch
+
+        from . import gpu
+        cur = values.detach().contiguous().view(-1).to(torch.uint64)
+        for r in point:
+            rt = torch.tensor([int(r) % FIELD_P], dtype=torch.uint64,
+                              device=cur.device)
+            cur = gpu.fold_t(cur, rt)
+        return int(cur[0].item()) % FIELD_P
     cur = list(values)
     for r in point:
         half = len(cur) // 2

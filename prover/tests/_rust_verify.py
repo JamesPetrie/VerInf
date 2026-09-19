@@ -61,6 +61,10 @@ def rust_verify(claims, proof, seed, cfg):
     # tested in test_fiat_shamir.py.
     stmt = getattr(proof, "statement_digest", None)
     root_w = getattr(proof, "root_w", None)
+    if root_w is None and getattr(proof, "wc_bridge", None) is not None:
+        # wc-bridge proofs: the trusted model reference is the ENROLLMENT
+        # root (same circular-policy convention as root_w above).
+        root_w = proof.wc_bridge["root"]
     fd, path = tempfile.mkstemp(suffix=".json")
     os.close(fd)
     argv = [_verify_proof_bin(), path,

@@ -99,11 +99,24 @@ class RoutedProjectedMatmulClaim:
     K: int
     J: int
     E: int
+    # WC-LCRL-STC (spec 0.5): 1 = the P = W rho relation is proved by the
+    # coefficient bridge against the weight enrollment instead of the online
+    # per-expert LF1B fold. Part of the claim -> part of the statement; both
+    # compilers branch on it identically.
+    use_bridge: int = 0
 
 
 # ---------------------------------------------------------------- challenges
 def routed_sample(c: RoutedProjectedMatmulClaim, ci: int, s_op):
-    """R1 coin: the output-axis projection rho (length J)."""
+    """R1 coin: the output-axis projection rho (length J).
+
+    Bridged claims (use_bridge, spec 0.2) share ONE rho per output width —
+    safe because every claim's outputs are committed in R1 before s_op
+    exists, and required so all widths-J matmuls pack into one enrollment
+    group and one q_w-point opening (72 x 40 points would blow the lam
+    mask budget; shared rho spends exactly 40)."""
+    if c.use_bridge:
+        return protocol.op_vec(s_op, 0, f"rho-w{c.J}", c.J)
     return protocol.op_vec(s_op, ci, "rho", c.J)
 
 
@@ -218,15 +231,33 @@ def routed_compile(c: RoutedProjectedMatmulClaim, rho, cfg: LigeroConfig,
         for off in range(var.n_rows(ell)):
             row_pkts.append((var.row_start + off, pkt))
 
-    # ---- P = W rho : identity on P, LF1-B on the enrolled weights ----------
+    # ---- P = W rho ---------------------------------------------------------
+    # Bridge OFF: identity on P plus one LF1-B band per expert shard.
+    # Bridge ON (use_bridge, spec 0.5): the online fold over the enrolled
+    # weights is GONE; the committed Pj rows are pinned to the PUBLIC
+    # P_trace values (b_chunk), which the coefficient bridge authenticates
+    # against the enrollment root with error 1/p + H_qw. The pin tensor is
+    # attached to the claim at prove time (core) and used by any verifying
+    # compile; the streaming sweeps run with _SKIP_B_CHUNK and never read it.
     rows(c.Pj, L2_IdentityScalar(base=b_P, var_row_start=c.Pj.row_start,
                                  L=E * K, coef=1))
-    # One band per expert shard: expert e owns constraint ids [b_P + e*K,
-    # b_P + (e+1)*K), so the projection streams shard by shard.
-    for e, w_var in enumerate(c.W):
-        rows(w_var, L2_FreivaldsLF1B(base=b_P + e * K, B_row_start=w_var.row_start,
-                                     k=K, n=J, H=1, K=K,
-                                     transpose_b=False, neg_rho=neg_rho))
+    nz_pin: List[Tuple[int, int, object]] = []
+    if c.use_bridge:
+        pin = getattr(c, "_bridge_pin", None)
+        import core as _core
+        if pin is not None:
+            nz_pin.append((b_P - base, E * K, pin))
+        elif not _core._SKIP_B_CHUNK:
+            raise RuntimeError(
+                "use_bridge claim compiled for verification without its "
+                "_bridge_pin (P_trace) — the 0.8 chain would be broken")
+    else:
+        # One band per expert shard: expert e owns constraint ids [b_P + e*K,
+        # b_P + (e+1)*K), so the projection streams shard by shard.
+        for e, w_var in enumerate(c.W):
+            rows(w_var, L2_FreivaldsLF1B(base=b_P + e * K, B_row_start=w_var.row_start,
+                                         k=K, n=J, H=1, K=K,
+                                         transpose_b=False, neg_rho=neg_rho))
     # ---- yr = Y rho -------------------------------------------------------
     rows(c.yr, L2_IdentityScalar(base=b_yr, var_row_start=c.yr.row_start,
                                  L=T, coef=1))
@@ -274,7 +305,7 @@ def routed_compile(c: RoutedProjectedMatmulClaim, rho, cfg: LigeroConfig,
                                     m=T, n=K, H=1, L=T * K,
                                     lam=lam_t, rho=sig_t))
 
-    return row_pkts, quads, n_added, _build_b_chunk(n_added, [])
+    return row_pkts, quads, n_added, _build_b_chunk(n_added, nz_pin)
 
 
 # ------------------------------------------------------------------ witness
@@ -332,7 +363,8 @@ def routed_compute(c: RoutedProjectedMatmulClaim, live, rho=None,
     return {c.Y: Y.view(torch.uint64).reshape(-1)}
 
 
-def routed_projected_matmul(tape, x, m_routes, w_experts, *, T, K, J, E):
+def routed_projected_matmul(tape, x, m_routes, w_experts, *, T, K, J, E,
+                            use_bridge=False):
     """Record one routed expert matmul on `tape`.
 
     x:         (T, K) WitnessTensor — the layer input
@@ -344,6 +376,9 @@ def routed_projected_matmul(tape, x, m_routes, w_experts, *, T, K, J, E):
     """
     assert len(w_experts) == E, f"expected {E} expert shards, got {len(w_experts)}"
     w_vars = [w.var for w in w_experts]
+    assert use_bridge or not any(v.external for v in w_vars), (
+        "external (uncommitted) weights are only sound under use_bridge — "
+        "without the bridge nothing authenticates them")
     name = f"rp[{x.var.name}@{w_vars[0].name}..]"
     Y = tape._alloc(name, T * J, phase=1)
     Pj = tape._alloc(f"{name}.P", E * K, phase=2)
@@ -356,7 +391,7 @@ def routed_projected_matmul(tape, x, m_routes, w_experts, *, T, K, J, E):
     claim = RoutedProjectedMatmulClaim(
         X=x.var, Y=Y, M=m_routes.var, W=w_vars,
         Pj=Pj, Qm=Qm, Hd=Hd, yr=yr, f_y=f_y, f_u=f_u, f_p=f_p,
-        T=T, K=K, J=J, E=E)
+        T=T, K=K, J=J, E=E, use_bridge=int(use_bridge))
     # The expert shards are NOT declared as claim inputs: the generic sweep
     # pre-fetches every input_var, which for 128 Maverick shards is ~43 GB in
     # one go. They are claim fields (so they are laid out, compiled and

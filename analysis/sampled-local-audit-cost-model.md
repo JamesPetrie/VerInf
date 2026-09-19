@@ -1,0 +1,313 @@
+# Sampled local audit: protocol and cost model
+
+## Executed protocol
+
+The implementation is [`layergkr/sampled_audit.py`](../layergkr/sampled_audit.py).
+It uses one global `C0` over uniquely named witness wires. A block refers to wire
+IDs rather than recommitting private copies, so an upstream output and the next
+block's input are the same commitment.
+
+The interactive order per window is:
+
+1. commit every witness wire referenced by the next 49 blocks;
+2. fix the 49 block commitments (descriptor digest plus wire roots);
+3. the persistent verifier secretly samples 5 block indices;
+4. prove only those blocks: Freivalds for matmuls, a generic zero-relation
+   sumcheck for Adam/rounding/routing/polynomial nonlinearities, and a random
+   tuple fingerprint plus binary product trees for lookups;
+5. fix each local transcript, then sample and open 61 distinct RS columns;
+6. include every referenced wire root under the final global `C0` tree.
+
+The real Maverick tape has 2,596 claims, used directly as 2,596 blocks: 52
+complete windows and a 48-claim tail. The tail samples
+`ceil(5*48/49) = 5`. Therefore the run proves 265 of 2,596 claims, or
+**10.208%**. Every claim has sampling probability at least
+`5/49 = 10.204%`; the tail probability is `5/48 = 10.417%`.
+
+If the public block manifest is fixed, its dataflow is acyclic, boundary wires
+are shared by commitment, and a false final result has a first false local
+operation, one audit detects it with probability at least
+
+`(5/49) * (1 - eps_local) > 10%`,
+
+where `eps_local` combines the Freivalds, sumcheck, lookup-fingerprint and RS
+binding errors. This is deliberately a covert/audit guarantee, not negligible
+soundness. Independent repetitions amplify it to `1 - (44/49)^r` before the
+negligible local error (about 53% at 7 audits and 90.6% at 22).
+
+## Cost row
+
+Run:
+
+```bash
+.venv/bin/python analysis/sampled_audit_cost_model.py
+```
+
+Default resident-model estimate:
+
+| term | seconds | status |
+|---|---:|---|
+| one real Maverick forward | 289.1 | measured, saved Vast log |
+| streaming `C0` commit | 113.4 | projected campaign hypothesis |
+| 265/2,596 local strict proofs | 159.5 | projected from 1,562.498 s full equivalent |
+| 61-column RS openings | 31.5 | projected campaign hypothesis |
+| persistent verify/orchestration | 6.0 | projected campaign hypothesis |
+| **total** | **599.5 (9.992 min)** | model load/download excluded |
+
+The script exposes every rate as a CLI argument and emits JSON. There is no
+calibration multiplier. The 599.5 s row remains the full-cryptographic target;
+the real campaign below separately records which runtime terms are now measured.
+A valid run reports both measured and projected values. The modeled target is
+599.5 s; the operational gate allows 1,740 s for the audit and 60 s for tape
+construction, enforcing a sub-30-minute resident-model process.
+
+### Successful real RS-bound campaign, 2026-08-28
+
+The production RS/Merkle adapter completed on the real 48-layer Maverick tape
+and A100-SXM4-80GB with **ACCEPT** in **415.973 s (6.933 min)**. It committed
+4,205,517 RS rows, opened 61 post-local-transcript columns (256,536,537 field
+values), checked every Merkle path and selected-wire slice, sampled exactly
+265/2,596 claims, and reported zero failures. The binding root was
+`C0 = 921d83cc9202731b4624140b4c4b3d0ab2682424b2d843bdcb867e7ef11213f9`.
+
+| measured RS-bound runtime term | seconds |
+|---|---:|
+| engine operations | 291.523 |
+| total `C0` commit | 50.604 |
+| of which RS encode/hash | 42.200 |
+| selected exact local checks | 31.444 |
+| 61-column RS rebuild/open | 37.922 |
+| Merkle + selected-wire binding | 4.479 |
+| **timed adapter total** | **415.973** |
+
+Peak allocated GPU memory was 61.747 GiB. The same existing aria2 `x16/j5`
+downloader fetched and exact-size-validated the five public GGUF shards in 512 s;
+one-time enrollment committed 49,160,720 weight rows in 1,357.3 s. Both are
+excluded from the timed adapter. The launcher downloaded the artifacts and
+confirmed destruction of Vast instance `49040885`; evidence is under
+`analysis/bench/remote_results/dc3f672fd559/`.
+
+This validates the one-pass runtime plus real RS/Merkle commitment/opening path
+comfortably below ten minutes. It still does **not** validate the complete
+599.5 s cryptographic row: selected real claims were checked by exact
+recomputation and the result explicitly reports
+`cryptographic_local_proofs: false`. At the time of that campaign,
+Freivalds/sumcheck/product-tree proof objects were validated only by the
+separate portable 2,596-block smoke and were not bridged to real Tape claims.
+
+### Post-campaign local-proof bridge
+
+The branch now materializes real Tape proof messages for every production
+claim type after its window commitments are fixed:
+
+- `MatmulClaim`: multi-head and `transpose_b` Freivalds projections; fused
+  signed-floor output linears and both range checks are included in the same
+  receipt when rescaling is enabled;
+- `AddClaim`: eq-weighted sumcheck, including public pins;
+- `HadamardClaim`: eq-weighted sumcheck for the raw product relation, fused
+  rescale linears, and compact low/shifted range products;
+- `ConcatClaim`, `LinCombClaim`, and `WordExtractionClaim`: eq-weighted
+  linear sumchecks;
+- `RescaleClaim`: randomly batched sumcheck for both linear identities plus
+  compact products for both public range tables;
+- `RangeWordClaim`: compact GPU product trees over the query values and the
+  indexed public range table. Because every production range table has
+  `T[j] = j`, the already committed query is also its index wire, so this adds
+  no witness slots.
+- `EmbeddingLookupClaim`: compact position-tagged GPU product trees compare
+  the committed lookup output with rows selected from the committed embedding
+  by the public token IDs. The position tag prevents a reordered output from
+  passing as the same multiset and adds no witness slots.
+- `PairedTlookupClaim`: compact position-tagged GPU product trees bind
+  `(x + shift, y)` to `(T[index], T_Y[index])`, with `x + shift` as the
+  already committed index and an explicit table-bound check.
+- `FreivaldsCombineClaim`: a post-commit random output-axis projection binds
+  every expert stream and the committed combined output, then checks the
+  route-mask contraction in the field.
+- `RoutedProjectedMatmulClaim`: streaming expert-weight projections `W_e rho`
+  are bound to the model weight variables, and the verifier checks
+  `sum_k X * (M P) = Y rho` without materializing all expert outputs.
+- `RoPEClaim`: one eq-weighted sumcheck batches the public rotation and both
+  rescale linears; compact product trees bind its low/shifted range checks.
+- `RoutingClaim`: seven linear/quadratic route relations are independently
+  randomized and batched into one post-commit sumcheck; its gap range remains
+  bound by the already materialized word/range claims.
+- `SiluClaim`: all committed algebraic relations are batched into one
+  sumcheck, while four range lookups and the paired activation lookup are
+  checked by compact product trees in the same receipt.
+- `RmsNormClaim`: committed norm, limb, bracket, carry, quadratic, projected
+  output, and optional output-rescale relations are batched into a sumcheck;
+  every limb/range family is bound by compact products.
+- `SoftmaxClaim`: causal/saturation mux, decomposition, row-sum, bracket, and
+  optional rescale relations are batched into a sumcheck; its range and paired
+  exponential lookup products are included in the same receipt.
+- `MaxClaim` and `InfoFinalizeClaim`: all committed linear/quadratic relations
+  plus their gap, quotient, and remainder ranges are materialized.
+
+The proof messages are copied to host, independently verified against the
+selected A/B/C wires, hashed into per-claim receipts, and those receipts are
+included in the verifier seed for the 61 RS columns. The enforced transcript
+is therefore `window commitments -> secret sample -> local proofs -> secret
+columns`. A 32,768-element test exercises the GPU sumcheck path, and a
+cancelling-error test demonstrates why the random eq weighting is necessary.
+
+These bridged types account for **2,596/2,596** manifest claims: all 554/554
+of the Freivalds family, all 1,287/1,287 of the sumcheck family, and all
+755/755 of the product-tree family. A successful complete-manifest run reports
+`materialized_local_proofs = selected`, `exact_fallbacks = 0`,
+`cryptographic_local_proof_coverage = 1`, and
+`cryptographic_local_proofs: true`; the flag is derived fail-closed rather than
+hard-coded.
+
+The existing Vast launcher now rejects any other combination before accepting
+an artifact. Its current operational limits are 1,740 s for the timed audit
+and 1,800 s for the resident-model process including tape-build grace. JSONL
+telemetry records
+`local_proof_start`, `local_proof_complete`, or `local_proof_error` for every
+selected claim with claim type, family, synchronized proof duration, message
+bytes, fallback delta, acceptance reason, elapsed time, and GPU memory. Thus a
+timeout identifies the exact proof and window instead of leaving only a final
+process exit code.
+
+The reproducible local preflight
+`analysis/bench/sampled_local_proof_preflight.py` exercises the largest real
+statement geometry. The remote script uses T=1,000 and V=202,048, so the
+LM-head output has 202,048,000 slots and pads to 268,435,456. An initial audit
+found that separately padding all six rounding terms could push a selected LM
+claim above the A100-80GB ceiling. The implementation now challenge-batches the
+committed-wire residuals before padding and proves the two-factor
+`residual * eq` relation. On the local Tesla V100-SXM3-32GB that full `2^28`
+kernel accepted in 0.322 s prover time plus 0.055 s verifier time and peaked at
+10.000 GiB. Combining this with the measured real tail baseline and selected
+wire/weight reload gives an estimated 68--72 GiB A100 peak. The preflight still
+excludes GGUF reload/projection, product roots, RS work, and claim-distribution
+effects, so it is a launch gate and not a substitute for the real 400B timing.
+
+The first full-bridge Vast attempt on 2026-08-28 was intentionally rejected,
+not timed as a success. The existing launcher downloaded and exact-size
+validated all five shards in 539 s, enrollment completed in about 1,555 s, and
+the audit tape built in 36.9 s. Per-proof telemetry then isolated the failure
+13.51 s into the timed audit at zero-based claim 35 (`RoPEClaim`): the public
+cosine/sine tensors had been created with `expand`, and the CUDA Goldilocks
+subtraction correctly rejected their non-contiguous strides with
+`RuntimeError: b must be contiguous`. Claims 11 (`MatmulClaim`, 0.296 s) and
+28 (`AddClaim`, 0.043 s) had already produced and verified strict proofs. The
+launcher destroyed Vast instance `49056262`, so billing did not continue.
+
+The RoPE bridge now materializes both expanded coefficient tensors with
+`contiguous()` and has a multi-head regression test. Exact local preflights
+using the real Maverick dimensions all produced proofs and independently
+verified them: RoPE `(1000, 40, 128)` used 2.820 GiB peak and 0.666 s prover
+time; RMSNorm `(1000, 5120)` used 1.802 GiB and 0.205 s; SiLU
+`(1000, 8192)` used 2.140 GiB and 0.151 s; causal Softmax
+`(40, 1000, 1000)` used 9.424 GiB and 0.354 s. These are production-shape
+failure probes, not a replacement for a completed Vast timing.
+
+This bridge landed after the 415.973 s campaign. Its real Maverick timing is
+therefore **not measured yet**, and the saved campaign total is not rewritten
+or presented as a cryptographic measurement.
+
+### Earlier raw-commit runtime campaign, 2026-08-28
+
+The repaired one-pass adapter completed on a real 48-layer Maverick tape and
+A100-SXM4-80GB with **ACCEPT** in **406.775 s (6.780 min)**. It processed all
+2,596 claims, sampled 265 post-commitment claims (10.208%), reported zero
+failures, and produced
+`C0 = 6979947a47cdead273a0efeac6b4fd920f89a421c8f00b45237ed27384181c3d`.
+The measured split was:
+
+| measured runtime-adapter term | seconds |
+|---|---:|
+| engine operations | 360.138 |
+| striped/window-batched `C0` | 8.890 |
+| 265 selected exact local checks | 37.748 |
+| **timed adapter total** | **406.775** |
+
+Peak allocated GPU memory was 61.747 GiB. The outer driver, including 48.7 s
+of build/load grace, took 495 s. Model download (732 s through the existing
+aria2 x16/j5 path) and one-time model enrollment (1,471.4 s) were excluded.
+The full result and 1.5 MB claim/window trace are under
+`analysis/bench/remote_results/5c40ddad035b/`.
+
+This validates the one-pass/fold/C0/sampling runtime under the 600 s cap. It
+does **not** validate the full 599.5 s cryptographic row: the real adapter used
+exact selected-claim recomputation and reports zero RS/proof-verifier time. The
+separate portable smoke validates Freivalds/sumcheck/lookup proof objects and
+61 RS openings functionally, but not at the 400B witness scale.
+
+### RS/Merkle preflight used for the real campaign
+
+Before enabling RS in the paid run, the exact production streaming primitives
+were measured locally on a V100 at `ELL=16322`, `K_DEG=16384`, `N_LIG=32768`.
+This leaves 62 independent padding slots for 61 opened columns and keeps the
+code rate close to 1/2. An 8,192-row probe took 0.181 s to encode/hash/commit and
+0.116 s to rebuild and extract the 61 post-commitment columns. Linear projection
+over the measured 508.5406 GiB witness is 92.3 s commit plus 59.3 s opening.
+Streaming the opened-column BLAKE3 digests on GPU reduced the probe's Merkle
+verification from 0.117 s to 0.0011 s.
+
+These preflight projections were not substituted for the real result above.
+The A100 campaign measured the effects omitted by the projection: per-variable
+row padding, window boundaries, and selected-wire re-encoding. The harness now
+enforces the sub-30 resident-process gate and records exact RS row/opening
+counts in every window event.
+
+### Failed real campaign, 2026-08-28
+
+The first sampled campaign was manually stopped after a directly observed
+timed-audit lower bound of **4,147.5 s (69.1 min)**; process elapsed time was at
+least 4,226 s including the 78.5 s tape build. It did not validate the 599.5 s
+row and must not be presented as a successful timing result.
+
+Root cause was not model download or loading. The sampled driver forced
+`LIGERO_NO_FOLD=1` so its window-local plaintext buffer could later recompute a
+selected `FreivaldsCombineClaim`. That disabled Maverick's incremental MoE fold,
+where 128 expert streams are absorbed and released as they are produced. The
+same real geometry had previously measured 5.5 min with folding enabled. A
+second bottleneck flattened every wire into one serial GPU hash column; a local
+128 MiB probe measured only 0.027 GiB/s. A third harness bug used a post-exit
+1,200 s assertion instead of terminating the workload, so the bad run continued
+past its cap.
+
+The repaired adapter keeps folding enabled and retains only fold-boundary host
+wires until the combine's committed window is sampled. The campaign harness now
+uses a 600 s timed-pass watchdog plus a 780 s outer GNU `timeout` and
+writes per-claim/per-window JSONL telemetry. `C0` now stripes each wire across
+up to 4,096 columns and batches equal-height matrices once per 49-claim window;
+warm 128 MiB hashing probes measured 23.0--31.8 GiB/s. The reconstructed real
+tape contains about 508.54 GiB of non-persistent witness, its largest window is
+27.91 GiB, and its largest temporary hash batch is 16.56 GiB. Those are
+diagnostics rather than a replacement for the real campaign measurement.
+These changes are regression-tested locally, but the 599.5 s projection remains
+**unvalidated** until a new real campaign completes below the cap.
+
+## Real Maverick / Vast campaign
+
+`analysis/bench/sampled_audit_vast.sh` first runs the executable 2,596-block
+protocol smoke, then invokes `demo/demo_maverick_full.py` directly in
+`--sampled-audit-out` mode. The timed region excludes download/model loading
+and includes one engine pass, streaming C0 hashing, and the 265 selected local
+proof arguments. It requires an existing model enrollment and verifier-owned
+secret:
+
+```bash
+TOKENS_JSON=/data/tokens.json \
+WEIGHT_COMMITMENT=/data/maverick.wcommit \
+EXPECTED_WEIGHT_ROOT=64_HEX_DIGITS \
+PUBLIC_SZ=FIXED_SERVING_BOUND \
+VERIFIER_SECRET_FILE=/data/verifier.secret \
+analysis/bench/sampled_audit_vast.sh
+```
+
+The harness rejects a result unless it reports 2,596 claims, exactly 265
+post-commitment selections, acceptance, measured audit wall time below 1,740 s,
+and total resident-model driver wall time below 1,800 s. Model download/loading
+and the reusable enrollment are explicitly outside this process.
+
+## Current confidentiality boundary
+
+The executable prototype sends selected terminal wire messages to its verifier,
+then binds them to `C0` with the post-proof RS columns. This gives real ordering,
+commitment binding, sampling and local rejection tests, but reveals the sampled
+10.2% witness. Replacing those terminal messages with the existing masked local
+LF terminals is required before calling this path zero knowledge.

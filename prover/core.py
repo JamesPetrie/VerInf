@@ -89,6 +89,11 @@ class Variable:
     w_new: bool = False        # linking proofs (P5): persistent var belongs to
                                # the SECOND weight block "wnew" (the refreshed
                                # commitment's tree) instead of "w"
+    external: bool = False     # WC-LCRL-STC: a prover INPUT that is NOT a
+                               # committed witness row — the enrollment holds
+                               # it (weights under the bridge). Never laid
+                               # out, never streamed into a tree; any family
+                               # emitted over it crashes on row_start=-1.
 
     def __post_init__(self):
         # Variables derived by chaining tape ops (e.g. residual x + proj across
@@ -3050,6 +3055,7 @@ def _layout(claims: List, cfg: LigeroConfig):
     # Each block's vars are assigned row_starts in all_vars (op) order, so the
     # streaming sweep feeds each block's tree in row order even though weights
     # and activations interleave in op order.
+    all_vars = [v for v in all_vars if not v.external]   # bridge-held weights
     weight_vars = [v for v in all_vars if v.phase == 1 and v.persistent and not v.w_new]
     wnew_vars   = [v for v in all_vars if v.phase == 1 and v.persistent and v.w_new]
     p1_vars     = [v for v in all_vars if v.phase == 1 and not v.persistent]
@@ -3088,7 +3094,7 @@ def _claim_var_groups(claims, cfg):
     seen = set()
     groups = []
     def collect(v, buckets):
-        if isinstance(v, Variable) and id(v) not in seen:
+        if isinstance(v, Variable) and id(v) not in seen and not v.external:
             seen.add(id(v))
             buckets[min(v.phase, 3) - 1].append(v)
     for c in claims:
@@ -3870,20 +3876,23 @@ def new_zk_seed() -> bytes:
 
 
 def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None,
-                    claims_bytes=None, zk_seed=None, shard_plan=None):
+                    claims_bytes=None, zk_seed=None, shard_plan=None,
+                    weight_enrollment=None):
     """The streaming prover (_prove_streaming_body holds it). This wrapper
     only guarantees that the proof's decoded-weight cache — pinned host
     memory — is released however the prove ends, a raise included."""
     global _WEIGHT_CACHE
     try:
         return _prove_streaming_body(tape, cfg, seed, weight_commitment, wnew_seed,
-                                     claims_bytes, zk_seed, shard_plan)
+                                     claims_bytes, zk_seed, shard_plan,
+                                     weight_enrollment=weight_enrollment)
     finally:
         _WEIGHT_CACHE = None
 
 
 def _prove_streaming_body(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None,
-                          claims_bytes=None, zk_seed=None, shard_plan=None):
+                          claims_bytes=None, zk_seed=None, shard_plan=None,
+                          weight_enrollment=None):
     """Streaming prover — the single production path (the sound four-round protocol).
 
     `shard_plan` (a shard_plan.ShardPlan, weight-split M1): split the ENROLLED
@@ -4133,6 +4142,71 @@ def _prove_streaming_body(tape, cfg, seed=None, weight_commitment=None, wnew_see
     s_bind = pr.fs_s_bind(s_op, art_p2.root)
     has_p3 = bool(s['n_p3_total'])
     ch1 = _sample_late_chs(s['claims'], s_bind)
+    # ---- WC-LCRL-STC bridge (hosted mode, spec 0.3/0.4) ------------------
+    # rho is the routed claim's OWN R1 coin (ch0), so P_trace here is the
+    # same projection the terminal constraints consume (test_wc_tape_link);
+    # the low half (Pj) is already committed via the p2 rows whose root fed
+    # s_bind, and pi is bound through the bridge's hosted late coin until it
+    # becomes committed R2 rows proved by fresh qLin (interim, status doc).
+    wc_sidecar = None
+    from routed_projected import RoutedProjectedMatmulClaim as _RPC
+    _bridged = [(ci, c) for ci, c in enumerate(s['claims'])
+                if isinstance(c, _RPC) and c.use_bridge]
+    if _bridged and weight_enrollment is None:
+        raise RuntimeError(
+            "tape has use_bridge claims but no weight_enrollment — refusing "
+            "to prove (spec 0.8: every persistent map in exactly one chain)")
+    if weight_enrollment is not None:
+        import wc_bridge as _wcb
+        cmap = _wcb.bridged_claim_map(s['claims'])
+        assert cmap, "weight_enrollment given but no use_bridge claims"
+        # shared per-width rho (spec 0.2): every bridged claim of one width
+        # sampled the SAME coin — assert it, then hand one rho per width.
+        _rho = {}
+        for ci, width, off, ek in cmap:
+            r = list(ch0[ci])
+            assert _rho.setdefault(width, r) == r, \
+                "bridged claims of one width disagree on rho"
+        # fail-closed: the enrollment must cover exactly the tape's weights
+        for width in _rho:
+            want = sum(ek for _, w, _, ek in cmap if w == width)
+            got = weight_enrollment.groups[width].n_rows
+            assert got == want, (
+                f"enrollment width {width} has {got} rows, tape needs {want}")
+        if isinstance(weight_enrollment, _wcb.LazyEnrollment):
+            # production path: P_trace comes from the SAME fused projections
+            # the R2 sweep already computed (byte-equal to W rho — the link
+            # test), so no extra weight pass; pi from the mask PRG.
+            from routed_projected import _P_CACHE, _rho_key
+            _pt = {n: torch.zeros(b * weight_enrollment.params.B,
+                                  dtype=torch.uint64, device="cuda")
+                   for n, b in weight_enrollment.blocks_per_width.items()}
+            for ci, width, off, ek in cmap:
+                _c = s['claims'][ci]
+                _P = _P_CACHE.get(_rho_key(_c, _rho[width]))
+                assert _P is not None, (
+                    "fused projection missing from _P_CACHE — the R2 sweep "
+                    "must run before the bridge block")
+                _pt[width][off:off + ek] = _P.reshape(-1)
+            _pi = weight_enrollment.pi(_rho)
+        else:
+            _pt, _pi = _wcb.bridge_r2(weight_enrollment, _rho)
+        # the 0.8 chain: the SAME tensor slices the terminal pins consume
+        for ci, width, off, ek in cmap:
+            s['claims'][ci]._bridge_pin = _pt[width][off:off + ek]
+        _s_late = _wcb.hosted_s_late(s_bind, weight_enrollment.root,
+                                     weight_enrollment.manifest_digest,
+                                     _pt, _pi, weight_enrollment.params)
+        wc_sidecar = {
+            "bridge": _wcb.bridge_r3(weight_enrollment, _rho, _pt, _pi,
+                                     _s_late),
+            "root": weight_enrollment.root,
+            "manifest_digest": weight_enrollment.manifest_digest,
+            "group_meta": {n: (g.n_blocks, n)
+                           for n, g in weight_enrollment.groups.items()},
+            "params": weight_enrollment.params,
+            "claim_index": cmap[0][0],
+        }
     if has_p3:                                                            # R3: commit phase-3
         merkle_p3 = _acc(s['n_p3_total'])
         sweep("R3", want_aux=True, merkle_p3=merkle_p3)
@@ -4295,7 +4369,7 @@ def _prove_streaming_body(tape, cfg, seed=None, weight_commitment=None, wnew_see
                       + (["wnew"] if has_wnew else []) + ["p1", "p2"]
                       + (["p3"] if has_p3 else [])), (
         "row-block layout diverged from the one the statement digest fixed")
-    return Proof(
+    proof_out = Proof(
         q_irs=q_irs, q_lin=q_lin, p_0=p_0, blocks=blocks,
         seeds={"s_op": s_op, "s_bind": s_bind, "s_comb": s_comb, "s_col": s_col},
         statement_digest=stmt_digest, claims_bytes=claims_bytes, Q_cols=Q_cols,
@@ -4310,6 +4384,11 @@ def _prove_streaming_body(tape, cfg, seed=None, weight_commitment=None, wnew_see
         root_p3=(root_p3 if has_p3 else None),
         opened_p3=(opened_p3 if has_p3 else {}),
         paths_p3=(_paths(art_p3) if has_p3 else {}))
+    if wc_sidecar is not None:
+        # python-side sidecar; the Rust wire format is untouched until the
+        # verifier twin lands (integration brick 4)
+        proof_out.wc_bridge = wc_sidecar
+    return proof_out
 
 
 class _PhaseLogger:

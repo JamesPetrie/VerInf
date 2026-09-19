@@ -301,7 +301,9 @@ def _distinct_tables(claim_list):
 # scalars pass through. So it tracks the handlers without hand-listing fields.
 # ======================================================================
 def _ser_var(v):
-    return [v.row_start, v.length]
+    # external (bridge-held, uncommitted) vars have no row: null on the wire;
+    # the Rust side maps null to a poisoned sentinel it must never index.
+    return [None if getattr(v, "external", False) else v.row_start, v.length]
 
 def _ser_table(t, _cache=None):
     # The table's key domain T is (verified, check_tables.py) always

@@ -189,6 +189,33 @@ def dump_proof(path, claims_json, seeds, proof, Q, python_accept, *,
         if getattr(proof, "statement_digest", None) is not None:
             f.write(', "statement_digest": %s'
                     % json.dumps(proof.statement_digest.hex()))
+        wc = getattr(proof, "wc_bridge", None)
+        if wc is not None:
+            # WC-LCRL-STC bridge materials (spec 0.4): everything the Rust
+            # twin needs to recompute the hosted coins and check the bridge
+            # equation against the enrollment root. u64 values as decimal
+            # strings-free ints (same convention as the rest of the file).
+            br = wc["bridge"]
+            prm = wc["params"]
+            doc = {
+                "root": wc["root"].hex(),
+                "manifest_digest": wc["manifest_digest"].hex(),
+                "params": {"B": prm.B, "lam": prm.lam,
+                           "N_w": prm.N_w, "q_w": prm.q_w},
+                "claim_index": wc["claim_index"],
+                "group_meta": {str(n): list(v)
+                               for n, v in wc["group_meta"].items()},
+                "p_trace": {str(n): t.cpu().tolist()
+                            for n, t in br.p_trace.items()},
+                "pi": {str(n): t.cpu().tolist() for n, t in br.pi.items()},
+                "c": br.c, "v": br.v, "eta": br.eta_idx,
+                "opened": {str(i): br.opened[i] for i in br.eta_idx},
+                "paths": {str(i): [[sib.hex(), int(side)]
+                                   for sib, side in br.paths[i]]
+                          for i in br.eta_idx},
+            }
+            f.write(', "wc": ')
+            json.dump(doc, f)
         f.write(', "proof": {')
         f.write('"blocks": %s, ' % json.dumps(blocks))
         for b in blocks:
