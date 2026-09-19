@@ -38,6 +38,42 @@ import torch
 import protocol as pr
 from cuda_primitives import (P, gl_axpy, gl_matvec, ntt_forward,
                              ntt_forward_batched, poly_eval)
+import contextlib
+import time
+
+# Where the bridge's per-proof pass goes (session 4 measured 592 s outside
+# the sweeps on a B200 with no counted loader call — the enrollment streams
+# its shards directly). Seconds per stage, CUDA-synced, cleared by
+# wc_times_reset() and printed by the prove's closing line.
+WC_TIMES: Dict[str, float] = {}
+WC_COUNTS: Dict[str, int] = {}
+
+
+def wc_times_reset():
+    WC_TIMES.clear(); WC_COUNTS.clear()
+
+
+@contextlib.contextmanager
+def _timed(key: str):
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    t0 = time.time()
+    try:
+        yield
+    finally:
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        WC_TIMES[key] = WC_TIMES.get(key, 0.0) + (time.time() - t0)
+        WC_COUNTS[key] = WC_COUNTS.get(key, 0) + 1
+
+
+def wc_times_line() -> str:
+    """One line: stage seconds and counts, largest first."""
+    if not WC_TIMES:
+        return "[wc-bridge] no stage timings"
+    parts = [f"{k} {v:.1f} s/{WC_COUNTS.get(k, 0)}" for k, v in
+             sorted(WC_TIMES.items(), key=lambda kv: -kv[1])]
+    return "[wc-bridge] stages: " + "; ".join(parts)
 
 
 # Production geometry (spec §0.1).  Tests shrink these; every function takes
@@ -333,24 +369,26 @@ def bridge_r3(enr: Enrollment, rho, p_trace, pi, s_late: bytes,
     params = enr.params
     c = torch.zeros(params.K_w, dtype=torch.uint64, device="cuda")
     bi = 0
-    for n in sorted(enr.groups):
-        g = enr.groups[n]
-        for a in range(g.n_blocks):
-            alpha = pr.challenge(s_late, bi, "alpha")
-            u = torch.cat([p_trace[n][a * params.B:(a + 1) * params.B],
-                           pi[n][a]])                          # (K_w,)
-            gl_axpy(c, alpha, u)                               # c += alpha*u mod P
-            bi += 1
+    with _timed("aggregate c"):
+        for n in sorted(enr.groups):
+            g = enr.groups[n]
+            for a in range(g.n_blocks):
+                alpha = pr.challenge(s_late, bi, "alpha")
+                u = torch.cat([p_trace[n][a * params.B:(a + 1) * params.B],
+                               pi[n][a]])                          # (K_w,)
+                gl_axpy(c, alpha, u)                               # c += alpha*u mod P
+                bi += 1
     eta_idx = pr.random_columns_n(pr.fs_seed("wc/eta", s_late),
                                   params.q_w, params.N_w)
     if ledger is not None:
         ledger.charge(eta_idx)
-    domain = _rs_domain(params)
-    # uint64 CUDA tensors lack fancy indexing; gather via a bit-preserving
-    # int64 view (values are raw 64-bit field words either way).
-    idx = torch.tensor(eta_idx, dtype=torch.long, device="cuda")
-    eta_pts = domain.view(torch.int64)[idx].view(torch.uint64)
-    v = poly_eval(c, eta_pts).cpu().tolist()
+    with _timed("eval v"):
+        domain = _rs_domain(params)
+        # uint64 CUDA tensors lack fancy indexing; gather via a bit-preserving
+        # int64 view (values are raw 64-bit field words either way).
+        idx = torch.tensor(eta_idx, dtype=torch.long, device="cuda")
+        eta_pts = domain.view(torch.int64)[idx].view(torch.uint64)
+        v = poly_eval(c, eta_pts).cpu().tolist()
     # --- openings ------------------------------------------------------------
     if isinstance(enr, LazyEnrollment):
         opened, paths = enr.open_columns(eta_idx)
@@ -570,12 +608,14 @@ class LazyEnrollment:
         self.total_polys = total_polys
         acc = _make_merkle_acc(params.N_w, total_polys)
         for width, block, coeff_cw in self._stream_codewords():
-            acc.update(coeff_cw)
-        inner = acc.finalize().cpu().numpy()
-        leaves = [_leaf_from_inner(bytes(inner[i].tolist()))
-                  for i in range(params.N_w)]
-        self.levels = _tree(leaves)
-        self.root = self.levels[-1][0]
+            with _timed("merkle update"):
+                acc.update(coeff_cw)
+        with _timed("merkle finalize + tree"):
+            inner = acc.finalize().cpu().numpy()
+            leaves = [_leaf_from_inner(bytes(inner[i].tolist()))
+                      for i in range(params.N_w)]
+            self.levels = _tree(leaves)
+            self.root = self.levels[-1][0]
 
     @property
     def groups(self):
@@ -587,6 +627,18 @@ class LazyEnrollment:
 
     def _masks(self, width, block):
         return wc_block_masks(self.mask_seed, width, block, self.params)
+
+    def _timed_stream(self):
+        """unit_stream with the shard decode timed (the loader's own work:
+        GGUF slice, dequantize, field)."""
+        it = self.unit_stream()
+        while True:
+            with _timed("shard decode"):
+                try:
+                    item = next(it)
+                except StopIteration:
+                    return
+            yield item
 
     def _stream_codewords(self):
         """Yield (width, block, codewords (width, N_w)) in width-sorted,
@@ -602,16 +654,19 @@ class LazyEnrollment:
             fill, block = 0, 0
 
             def emit(rows_b, blk):
-                masks = self._masks(width, blk)
-                coeffs = torch.zeros(width, params.N_w, dtype=torch.uint64,
-                                     device="cuda")
-                coeffs[:, :params.B] = (rows_b.view(torch.int64).T
-                                        .contiguous().view(torch.uint64))
-                coeffs[:, params.B:params.K_w] = masks
-                ntt_forward_batched(coeffs)
+                with _timed("masks"):
+                    masks = self._masks(width, blk)
+                with _timed("pack"):
+                    coeffs = torch.zeros(width, params.N_w, dtype=torch.uint64,
+                                         device="cuda")
+                    coeffs[:, :params.B] = (rows_b.view(torch.int64).T
+                                            .contiguous().view(torch.uint64))
+                    coeffs[:, params.B:params.K_w] = masks
+                with _timed("ntt"):
+                    ntt_forward_batched(coeffs)
                 return coeffs
 
-            for w, rows in self.unit_stream():
+            for w, rows in self._timed_stream():
                 if w != width:
                     continue
                 r, off = rows.size(0), 0
@@ -638,9 +693,13 @@ class LazyEnrollment:
         out = {}
         for n, b in self.blocks_per_width.items():
             rho_t = torch.tensor(rho[n], dtype=torch.uint64, device="cuda")
-            out[n] = torch.stack([
-                gl_matvec(self._masks(n, a).view(torch.int64).T.contiguous()
-                          .view(torch.uint64), rho_t) for a in range(b)])
+            rows = []
+            for a in range(b):
+                with _timed("pi masks"):
+                    m = self._masks(n, a).view(torch.int64).T.contiguous().view(torch.uint64)
+                with _timed("pi matvec"):
+                    rows.append(gl_matvec(m, rho_t))
+            out[n] = torch.stack(rows)
         return out
 
     def open_columns(self, eta_idx: List[int]):
@@ -652,18 +711,22 @@ class LazyEnrollment:
         opened = {i: [] for i in eta_idx}
         chk = _make_merkle_acc(len(eta_idx), self.total_polys)
         for width, block, cw in self._stream_codewords():
-            cols = cw.view(torch.int64)[:, idx].view(torch.uint64)
-            chk.update(cols)
-            cc = cols.cpu()
+            with _timed("columns gather"):
+                cols = cw.view(torch.int64)[:, idx].view(torch.uint64)
+                chk.update(cols)
+            with _timed("columns to host"):
+                cc = cols.cpu()
+                for k, i in enumerate(eta_idx):
+                    opened[i].append(cc[:, k])
+        with _timed("columns drift check"):
+            inner = chk.finalize().cpu().numpy()
             for k, i in enumerate(eta_idx):
-                opened[i].append(cc[:, k])
-        inner = chk.finalize().cpu().numpy()
-        for k, i in enumerate(eta_idx):
-            leaf = _leaf_from_inner(bytes(inner[k].tolist()))
-            assert leaf == self.levels[0][i], (
-                f"enrollment drift at eta column {i}")
-        return ({i: torch.cat(opened[i]).tolist() for i in eta_idx},
-                {i: _path(self.levels, i) for i in eta_idx})
+                leaf = _leaf_from_inner(bytes(inner[k].tolist()))
+                assert leaf == self.levels[0][i], (
+                    f"enrollment drift at eta column {i}")
+        with _timed("columns to python ints"):
+            opened_lists = {i: torch.cat(opened[i]).tolist() for i in eta_idx}
+        return (opened_lists, {i: _path(self.levels, i) for i in eta_idx})
 
 
 def lazy_enroll_tape(tape, mask_seed: bytes, manifest: bytes,

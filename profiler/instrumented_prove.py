@@ -221,6 +221,8 @@ def main(argv=None) -> int:
         t_wc_enroll = time.time() - t0
         log(f"wc enrollment (streaming coefficient-RS, throwaway) {t_wc_enroll:.1f}s "
             f"root {wc_enr.root.hex()[:16]}…")
+        log(_wcb.wc_times_line())
+        _wcb.wc_times_reset()
 
     # Reveal pass: discover Sz and pin it as the public bound, then re-zero
     # the LogUp multiplicities so the prove sweeps re-accumulate cleanly —

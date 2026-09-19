@@ -4162,6 +4162,8 @@ def _prove_streaming_body(tape, cfg, seed=None, weight_commitment=None, wnew_see
             "to prove (spec 0.8: every persistent map in exactly one chain)")
     if weight_enrollment is not None:
         import wc_bridge as _wcb
+        _wcb.wc_times_reset()
+        _t_wc0 = time.time()
         cmap = _wcb.bridged_claim_map(s['claims'])
         assert cmap, "weight_enrollment given but no use_bridge claims"
         # shared per-width rho (spec 0.2): every bridged claim of one width
@@ -4211,6 +4213,8 @@ def _prove_streaming_body(tape, cfg, seed=None, weight_commitment=None, wnew_see
             "params": weight_enrollment.params,
             "claim_index": cmap[0][0],
         }
+        print(f"  [wc-bridge] the bridge's per-proof pass took {time.time() - _t_wc0:.1f} s "
+              f"outside the sweeps; {_wcb.wc_times_line()[12:]}", flush=True)
     if has_p3:                                                            # R3: commit phase-3
         merkle_p3 = _acc(s['n_p3_total'])
         sweep("R3", want_aux=True, merkle_p3=merkle_p3)

@@ -72,4 +72,6 @@ gate driver-small-bridge python3 profiler/instrumented_prove.py --from-gguf "$VE
 need driver-small-bridge 'rust verify_proof: ACCEPT'
 need driver-small-bridge 'opened columns match committed leaves: True'
 need driver-small-bridge 'wc enrollment (streaming coefficient-RS'
+need driver-small-bridge '\[wc-bridge\] stages:'
+need driver-small-bridge "the bridge's per-proof pass took"
 echo "== all gates passed"
