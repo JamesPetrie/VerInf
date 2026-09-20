@@ -616,9 +616,13 @@ enrollment of every Maverick expert shard 133.9 s (shard decode 71, NTT
 41, Merkle 12, masks 4), the per-proof pass 198.5 s against 592 s in
 session 4 (shard decode 66.5 s for 18,434 decodes — each shard twice,
 once per output-width pass of the stream; the columns converted to
-Python integers 46 s; NTT 41 s; the rest under 6 s each). Next: decode
-each shard once and keep the columns as tensors until the compact dump,
-which puts the pass near 100 s.
+Python integers 46 s; NTT 41 s; the rest under 6 s each). Both fixed
+after the session and not yet measured: the stream decodes each shard
+once (the unit stream takes the width it should yield), and the columns
+stay tensors until the dump, which writes every wc array on the proof's
+u64 wire (the Rust side decodes `u64le:` or decimal alike; pi flat,
+row-major). Expect the pass near 100 s and the wc section about a third
+of its JSON size.
 
 ## D. The S=1000 instrumented prove, cache OFF, proof dumped (~30-60 min, unmeasured)
 

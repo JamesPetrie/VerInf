@@ -7,6 +7,7 @@ memory is one CHUNK of ints — so dump cost is I/O, not RAM.
 """
 import json
 import base64
+import torch
 import os
 import shutil
 
@@ -64,6 +65,16 @@ def _w_u64_b64(f, t):
         arr = t[lo:lo + B64_CHUNK].cpu().contiguous().numpy().astype("<u8", copy=False)
         f.write(base64.b64encode(memoryview(arr)).decode("ascii"))
     f.write('"')
+
+
+def _u64_of(vals):
+    """A CPU uint64 tensor from a tensor (any device, uint64 or int64 view) or
+    a list of Python ints in [0, 2^64)."""
+    import numpy as _np
+    if isinstance(vals, torch.Tensor):
+        v = vals.detach().cpu()
+        return v if v.dtype == torch.uint64 else v.view(torch.uint64)
+    return torch.from_numpy(_np.asarray(list(vals), dtype=_np.uint64))
 
 
 def _write_u64(f, t, encoding):
@@ -197,7 +208,7 @@ def dump_proof(path, claims_json, seeds, proof, Q, python_accept, *,
             # strings-free ints (same convention as the rest of the file).
             br = wc["bridge"]
             prm = wc["params"]
-            doc = {
+            head = {
                 "root": wc["root"].hex(),
                 "manifest_digest": wc["manifest_digest"].hex(),
                 "params": {"B": prm.B, "lam": prm.lam,
@@ -205,17 +216,32 @@ def dump_proof(path, claims_json, seeds, proof, Q, python_accept, *,
                 "claim_index": wc["claim_index"],
                 "group_meta": {str(n): list(v)
                                for n, v in wc["group_meta"].items()},
-                "p_trace": {str(n): t.cpu().tolist()
-                            for n, t in br.p_trace.items()},
-                "pi": {str(n): t.cpu().tolist() for n, t in br.pi.items()},
-                "c": br.c, "v": br.v, "eta": br.eta_idx,
-                "opened": {str(i): br.opened[i] for i in br.eta_idx},
                 "paths": {str(i): [[sib.hex(), int(side)]
                                    for sib, side in br.paths[i]]
                           for i in br.eta_idx},
             }
+            # The arrays go on the proof's own u64 encoding, not as JSON
+            # decimals: the 40 opened columns are one value per polynomial
+            # (about a billion at Maverick scale), and pi is written flat,
+            # row-major (n_blocks x lam), which the Rust side reshapes.
             f.write(', "wc": ')
-            json.dump(doc, f)
+            f.write(json.dumps(head, separators=(",", ":"))[:-1])
+            f.write(', "p_trace": {')
+            for k, (n, tt) in enumerate(sorted(br.p_trace.items())):
+                f.write(("," if k else "") + json.dumps(str(n)) + ": ")
+                _write_u64(f, tt.reshape(-1), u64_encoding)
+            f.write('}, "pi": {')
+            for k, (n, tt) in enumerate(sorted(br.pi.items())):
+                f.write(("," if k else "") + json.dumps(str(n)) + ": ")
+                _write_u64(f, tt.reshape(-1), u64_encoding)
+            f.write('}, "c": '); _write_u64(f, _u64_of(br.c), u64_encoding)
+            f.write(', "v": '); _write_u64(f, _u64_of(br.v), u64_encoding)
+            f.write(', "eta": '); _write_u64(f, _u64_of(br.eta_idx), u64_encoding)
+            f.write(', "opened": {')
+            for k, i in enumerate(br.eta_idx):
+                f.write(("," if k else "") + json.dumps(str(i)) + ": ")
+                _write_u64(f, _u64_of(br.opened[i]), u64_encoding)
+            f.write('}}')
         f.write(', "proof": {')
         f.write('"blocks": %s, ' % json.dumps(blocks))
         for b in blocks:

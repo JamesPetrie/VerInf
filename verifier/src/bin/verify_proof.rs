@@ -61,6 +61,13 @@ impl WireU64Vec {
     fn into_vec(self) -> Result<Vec<u64>, String> {
         match self {
             Self::Legacy(v) => Ok(v),
+            Self::U64Le(s) => Self::U64Le(s).to_vec(),
+        }
+    }
+
+    fn to_vec(&self) -> Result<Vec<u64>, String> {
+        match self {
+            Self::Legacy(v) => Ok(v.clone()),
             Self::U64Le(s) => {
                 let payload = s.strip_prefix("u64le:")
                     .ok_or("unknown string encoding for field vector")?;
@@ -153,12 +160,14 @@ struct WcSection {
     params: WcGeom,
     claim_index: usize,
     group_meta: HashMap<String, (usize, usize)>,
-    p_trace: HashMap<String, Vec<u64>>,
-    pi: HashMap<String, Vec<Vec<u64>>>,
-    c: Vec<u64>,
-    v: Vec<u64>,
-    eta: Vec<u64>,
-    opened: HashMap<String, Vec<u64>>,
+    // every array on the proof's u64 wire (decimal JSON or "u64le:" base64,
+    // like the rest of the proof); pi is flat, row-major (n_blocks x lam)
+    p_trace: HashMap<String, WireU64Vec>,
+    pi: HashMap<String, WireU64Vec>,
+    c: WireU64Vec,
+    v: WireU64Vec,
+    eta: WireU64Vec,
+    opened: HashMap<String, WireU64Vec>,
     paths: HashMap<String, Vec<(String, u8)>>,
 }
 
@@ -202,6 +211,16 @@ fn wc_verify(wc: &WcSection, s_op: &[u8], s_bind: &[u8],
     use ligero_verifier::field::{add, mul, pow, P};
     let g = &wc.params;
     let k_w = g.B + g.lam;
+    // decode the wire arrays once (a bad encoding is a REJECT, not a panic)
+    let mut p_trace: HashMap<String, Vec<u64>> = HashMap::new();
+    for (k, v) in &wc.p_trace { p_trace.insert(k.clone(), v.to_vec()?); }
+    let mut pi: HashMap<String, Vec<u64>> = HashMap::new();
+    for (k, v) in &wc.pi { pi.insert(k.clone(), v.to_vec()?); }
+    let wc_c = wc.c.to_vec()?;
+    let wc_v = wc.v.to_vec()?;
+    let wc_eta = wc.eta.to_vec()?;
+    let mut opened: HashMap<String, Vec<u64>> = HashMap::new();
+    for (k, v) in &wc.opened { opened.insert(k.clone(), v.to_vec()?); }
     // The geometry is the prover's to declare (it is pinned into every coin,
     // so a proof cannot be replayed under other parameters) but it is ALSO
     // validated here: q_w is the whole soundness of the bridge, and a proof
@@ -223,7 +242,7 @@ fn wc_verify(wc: &WcSection, s_op: &[u8], s_bind: &[u8],
         return Err(format!("q_w = {} below the floor ceil(0.416 * {t_cols}) for \
 {t_cols} opened Ligero columns", g.q_w));
     }
-    if wc.c.len() != k_w { return Err("c length != K_w".into()); }
+    if wc_c.len() != k_w { return Err("c length != K_w".into()); }
     let mut widths: Vec<usize> =
         wc.group_meta.keys().map(|w| w.parse().unwrap()).collect();
     widths.sort();
@@ -241,12 +260,12 @@ fn wc_verify(wc: &WcSection, s_op: &[u8], s_bind: &[u8],
             return Err(format!("claim {} width {} not enrolled", m.0, m.1));
         }
     }
-    for (&ref wkey, pt) in &wc.p_trace {
-        let w: usize = wkey.parse().unwrap();
+    for (&ref wkey, pt) in &p_trace {
+        let w: usize = wkey.parse().map_err(|_| "width key")?;
         let (n_blocks, _) = *wc.group_meta.get(wkey).ok_or("group missing")?;
         if pt.len() != n_blocks * g.B { return Err("p_trace length".into()); }
-        let pim = wc.pi.get(wkey).ok_or("pi group missing")?;
-        if pim.len() != n_blocks || pim.iter().any(|r| r.len() != g.lam) {
+        let pim = pi.get(wkey).ok_or("pi group missing")?;
+        if pim.len() != n_blocks * g.lam {
             return Err("pi shape".into());
         }
         let _ = w;
@@ -262,8 +281,9 @@ fn wc_verify(wc: &WcSection, s_op: &[u8], s_bind: &[u8],
     let mut r2 = blake3::Hasher::new();
     r2.update(b"wc-r2");
     for &w in &widths {
-        r2.update(&wc_u64le(&wc.p_trace[&w.to_string()]));
-        for row in &wc.pi[&w.to_string()] { r2.update(&wc_u64le(row)); }
+        r2.update(&wc_u64le(&p_trace[&w.to_string()]));
+        let pim = &pi[&w.to_string()];
+        for row in pim.chunks_exact(g.lam) { r2.update(&wc_u64le(row)); }
     }
     let r2d = *r2.finalize().as_bytes();
     let s_late = fs::fs_seed("wc/hosted-late",
@@ -273,39 +293,39 @@ fn wc_verify(wc: &WcSection, s_op: &[u8], s_bind: &[u8],
         &fs::fs_seed("wc/eta", &[&s_late]), g.q_w, g.N_w as u64);
     let mut ded = eta.clone(); ded.sort(); ded.dedup();
     if ded.len() != g.q_w { return Err("eta not distinct".into()); }
-    if eta != wc.eta { return Err("eta mismatch".into()); }
+    if eta != wc_eta { return Err("eta mismatch".into()); }
     // c aggregation: alpha indexed width-major (sorted), then block —
     // exactly bridge_r3's order
     let mut c = vec![0u64; k_w];
     let mut bi: u64 = 0;
     for &w in &widths {
         let (n_blocks, _) = wc.group_meta[&w.to_string()];
-        let pt = &wc.p_trace[&w.to_string()];
-        let pim = &wc.pi[&w.to_string()];
+        let pt = &p_trace[&w.to_string()];
+        let pim = &pi[&w.to_string()];
         for a in 0..n_blocks {
             let alpha = protocol::challenge(&s_late, bi, "alpha");
             for i in 0..g.B {
                 c[i] = add(c[i], mul(alpha, pt[a * g.B + i]));
             }
             for h in 0..g.lam {
-                c[g.B + h] = add(c[g.B + h], mul(alpha, pim[a][h]));
+                c[g.B + h] = add(c[g.B + h], mul(alpha, pim[a * g.lam + h]));
             }
             bi += 1;
         }
     }
-    if c != wc.c { return Err("c does not aggregate P_trace/pi".into()); }
+    if c != wc_c { return Err("c does not aggregate P_trace/pi".into()); }
     // v = c(eta) on the pinned natural domain omega = 7^((P-1)/N_w)
     let omega = pow(7, (P - 1) / g.N_w as u64);
     for (l, &ei) in eta.iter().enumerate() {
         let x = pow(omega, ei);
         let mut acc = 0u64;
         for k in (0..k_w).rev() { acc = add(mul(acc, x), c[k]); }
-        if acc != wc.v[l] { return Err(format!("v[{l}] != c(eta)")); }
+        if acc != wc_v[l] { return Err(format!("v[{l}] != c(eta)")); }
     }
     // enrollment side: merkle-verified columns + the bridge equation, under
     // the SHARED per-width rho from the host transcript (spec 0.2)
     for (l, &ei) in eta.iter().enumerate() {
-        let col = wc.opened.get(&ei.to_string()).ok_or("column missing")?;
+        let col = opened.get(&ei.to_string()).ok_or("column missing")?;
         let total: usize = widths.iter()
             .map(|w| { let (nb, _) = wc.group_meta[&w.to_string()]; nb * w })
             .sum();
@@ -331,10 +351,10 @@ fn wc_verify(wc: &WcSection, s_op: &[u8], s_bind: &[u8],
             }
             off += n_blocks * w;
         }
-        if rhs != wc.v[l] { return Err(format!("bridge equation fails at eta[{l}]")); }
+        if rhs != wc_v[l] { return Err(format!("bridge equation fails at eta[{l}]")); }
     }
     Ok(cmap.iter().map(|&(ci, w, off, ek)| {
-        (ci, wc.p_trace[&w.to_string()][off..off + ek].to_vec())
+        (ci, p_trace[&w.to_string()][off..off + ek].to_vec())
     }).collect())
 }
 

@@ -313,7 +313,7 @@ class BridgeProof:
     c: List[int]                           # aggregated coefficients, len K_w
     v: List[int]                           # c(eta_l), len q_w
     eta_idx: List[int]                     # opened domain indices
-    opened: Dict[int, List[int]]           # domain idx -> full column values
+    opened: Dict[int, object]              # domain idx -> full column: a CPU uint64 tensor (or a list in the toy path)
     paths: Dict[int, List[Tuple[bytes, int]]]
 
 
@@ -400,7 +400,7 @@ def bridge_r3(enr: Enrollment, rho, p_trace, pi, s_late: bytes,
         opened, paths = enr.open_columns(eta_idx)
     else:
         all_cw = torch.cat([enr.groups[n].codewords for n in sorted(enr.groups)])
-        opened = {i: all_cw[:, i].cpu().tolist() for i in eta_idx}
+        opened = {i: all_cw[:, i].cpu() for i in eta_idx}
         paths = {i: _path(enr.levels, i) for i in eta_idx}
     return BridgeProof(rho, p_trace, pi, c.cpu().tolist(), v,
                        eta_idx, opened, paths)
@@ -524,6 +524,9 @@ def _verify_core(root: bytes, group_meta: Dict[int, Tuple[int, int]],
     domain = _rs_domain(params).cpu().tolist()
     for l, i in enumerate(eta_idx):
         col = proof.opened[i]
+        if isinstance(col, torch.Tensor):       # the CPU twin works in Python ints
+            col = col.view(torch.int64).tolist()
+            col = [x % P for x in col]
         if not _verify_path(_leaf(torch.tensor(col, dtype=torch.uint64)),
                             proof.paths[i], root):
             return False, f"merkle path fails at eta[{l}]"
@@ -738,9 +741,12 @@ class LazyEnrollment:
                 leaf = _leaf_from_inner(bytes(inner[k].tolist()))
                 assert leaf == self.levels[0][i], (
                     f"enrollment drift at eta column {i}")
-        with _timed("columns to python ints"):
-            opened_lists = {i: torch.cat(opened[i]).tolist() for i in eta_idx}
-        return (opened_lists, {i: _path(self.levels, i) for i in eta_idx})
+        with _timed("columns concat"):
+            # kept as CPU uint64 tensors: the dump writes them on the compact
+            # wire straight from the buffer (session 5: the conversion to
+            # Python integers was 46 s of the pass at Maverick scale)
+            opened_t = {i: torch.cat(opened[i]) for i in eta_idx}
+        return (opened_t, {i: _path(self.levels, i) for i in eta_idx})
 
 
 def lazy_enroll_tape(tape, mask_seed: bytes, manifest: bytes,

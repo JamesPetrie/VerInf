@@ -7,6 +7,7 @@ missing trusted enrollment root, the production shape (a committed weight
 block AND a wc section, each with its own anchor), an opening count below
 the floor, the legacy seed path, and a stripped wc section. GPU: the toy
 tapes prove on CUDA, as the rest of the bridge suites do."""
+import base64
 import json
 import os
 import subprocess
@@ -16,6 +17,7 @@ import tempfile
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.dirname(__file__))
 
+import numpy as np
 import torch
 
 import core
@@ -51,6 +53,21 @@ def _rewrite(path, mutate):
         json.dump(doc, f)
 
 
+def _u64_list(v):
+    """A wc-section array from the JSON, whichever encoding the dump used."""
+    if isinstance(v, str):
+        raw = base64.b64decode(v[len("u64le:"):])
+        return [int(x) for x in np.frombuffer(raw, dtype="<u8")]
+    return list(v)
+
+
+def _u64_wire(vals, like):
+    """The same array back, in the encoding `like` was in."""
+    if isinstance(like, str):
+        return "u64le:" + base64.b64encode(np.asarray(vals, dtype="<u8").tobytes()).decode("ascii")
+    return list(vals)
+
+
 def _policy(proof):
     return (proof.root_w.hex() if getattr(proof, "root_w", None) else "-",
             proof.statement_digest.hex(), proof.wc_bridge["root"].hex())
@@ -80,7 +97,8 @@ def test_tampered_fold_rejects_in_rust():
     try:
         def flip(doc):
             k = next(iter(doc["wc"]["p_trace"]))
-            doc["wc"]["p_trace"][k][3] ^= 1
+            vals = _u64_list(doc["wc"]["p_trace"][k]); vals[3] ^= 1
+            doc["wc"]["p_trace"][k] = _u64_wire(vals, doc["wc"]["p_trace"][k])
         _rewrite(path, flip)
         acc, msg = _run(path, *_policy(proof))
         assert not acc and "wc bridge REJECT" in msg, f"tampered P_trace accepted: {msg}"
@@ -96,8 +114,8 @@ def test_opening_count_below_the_floor_rejects():
     try:
         def downgrade(doc):
             doc["wc"]["params"]["q_w"] = 1
-            doc["wc"]["eta"] = doc["wc"]["eta"][:1]
-            doc["wc"]["v"] = doc["wc"]["v"][:1]
+            for key in ("eta", "v"):
+                doc["wc"][key] = _u64_wire(_u64_list(doc["wc"][key])[:1], doc["wc"][key])
         _rewrite(path, downgrade)
         acc, msg = _run(path, *_policy(proof))
         assert not acc and "below the floor" in msg, f"q_w = 1 accepted: {msg}"
