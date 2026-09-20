@@ -270,6 +270,17 @@ export VERINF_GGUF=$VERINF_GGUF_DIR/UD-Q4_K_XL/Llama-4-Maverick-17B-128E-Instruc
 export VERINF_OUT=$VERINF_ROOT/crosscheck-out; export VERINF_PROOF=$VERINF_ROOT/proofs/mavp-s1000.bin
 export VERINF_LOGS=$VERINF_ROOT/logs
 export PATH=/usr/local/cuda/bin:$PATH         # nvcc is not on the login PATH
+# The container SEES the host's CPUs (224–288 on the B200 boxes) while the
+# pod is allotted a quota (cpu.max: 23.8 and 30.6 CPUs in sessions 4 and 5);
+# torch sizes its pools by the visible count (112 and 144 threads) and the
+# cgroup throttles them — session 5's sampler counted thousands of throttled
+# CPU-seconds in the enrollments and the reveal pass, and every CPU-side
+# phase ran two to four times slower than on the less-oversubscribed host.
+# Cap the pools to the quota (session 6 measures the effect; hold it fixed
+# within an A/B).
+_q=$(cut -d' ' -f1 /sys/fs/cgroup/cpu.max 2>/dev/null || echo max)   # 'max' = no quota: leave the pools alone
+[ "$_q" != max ] && export OMP_NUM_THREADS=$(( _q / $(cut -d' ' -f2 /sys/fs/cgroup/cpu.max) ))
+[ "$_q" != max ] && export MKL_NUM_THREADS=$OMP_NUM_THREADS
 mkdir -p "$VERINF_OUT" "$(dirname "$VERINF_PROOF")" "$VERINF_ROOT/probe" "$VERINF_LOGS"
 waitfor() { until grep -q '^EXIT=' ~/"$1".log 2>/dev/null; do sleep 60; done
             grep -qx 'EXIT=0' ~/"$1".log && return 0
@@ -594,6 +605,20 @@ minutes of NTT over the 40 columns, and the wire drops to a few hundred
 megabytes at 2.8 T and about 60 MB at Maverick. Not on the Maverick
 critical path (the compact wire encoding makes 8 GB tolerable); a design
 commitment for the paper, an implementation for the next model.
+
+### The bridge's per-proof pass, measured (session 5)
+
+With stage timers in `prover/wc_bridge.py` (printed by the driver after
+the streaming enrollment and by the prove's closing "[wc-bridge]" line,
+both required by the gates) and the mask coefficients moved from a CPU
+random draw to the prover's BLAKE3 row PRG on the card: the streaming
+enrollment of every Maverick expert shard 133.9 s (shard decode 71, NTT
+41, Merkle 12, masks 4), the per-proof pass 198.5 s against 592 s in
+session 4 (shard decode 66.5 s for 18,434 decodes — each shard twice,
+once per output-width pass of the stream; the columns converted to
+Python integers 46 s; NTT 41 s; the rest under 6 s each). Next: decode
+each shard once and keep the columns as tensors until the compact dump,
+which puts the pass near 100 s.
 
 ## D. The S=1000 instrumented prove, cache OFF, proof dumped (~30-60 min, unmeasured)
 
