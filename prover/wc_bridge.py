@@ -525,8 +525,9 @@ def _verify_core(root: bytes, group_meta: Dict[int, Tuple[int, int]],
     for l, i in enumerate(eta_idx):
         col = proof.opened[i]
         if isinstance(col, torch.Tensor):       # the CPU twin works in Python ints
-            col = col.view(torch.int64).tolist()
-            col = [x % P for x in col]
+            # unsigned values as they are: an int64 view would shift every
+            # value at or above 2^63 (review, 2026-09-20)
+            col = (col if col.dtype == torch.uint64 else col.view(torch.uint64)).cpu().tolist()
         if not _verify_path(_leaf(torch.tensor(col, dtype=torch.uint64)),
                             proof.paths[i], root):
             return False, f"merkle path fails at eta[{l}]"

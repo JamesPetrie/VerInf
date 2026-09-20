@@ -238,6 +238,9 @@ fn wc_verify(wc: &WcSection, s_op: &[u8], s_bind: &[u8],
     if g.q_w == 0 || g.q_w > g.N_w {
         return Err(format!("q_w = {} out of range", g.q_w));
     }
+    if g.lam == 0 || g.B == 0 {
+        return Err("lam and B must be positive: the masks are the hiding".into());
+    }
     if g.q_w * 1000 < 416 * t_cols {
         return Err(format!("q_w = {} below the floor ceil(0.416 * {t_cols}) for \
 {t_cols} opened Ligero columns", g.q_w));
@@ -282,8 +285,9 @@ fn wc_verify(wc: &WcSection, s_op: &[u8], s_bind: &[u8],
     r2.update(b"wc-r2");
     for &w in &widths {
         r2.update(&wc_u64le(&p_trace[&w.to_string()]));
-        let pim = &pi[&w.to_string()];
-        for row in pim.chunks_exact(g.lam) { r2.update(&wc_u64le(row)); }
+        // the flat row-major vector hashes to the same bytes as its rows in
+        // order, and never chunks by a zero width
+        r2.update(&wc_u64le(&pi[&w.to_string()]));
     }
     let r2d = *r2.finalize().as_bytes();
     let s_late = fs::fs_seed("wc/hosted-late",
