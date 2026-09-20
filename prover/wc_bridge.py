@@ -634,10 +634,18 @@ class LazyEnrollment:
     def _masks(self, width, block):
         return wc_block_masks(self.mask_seed, width, block, self.params)
 
-    def _timed_stream(self):
+    def _timed_stream(self, width=None):
         """unit_stream with the shard decode timed (the loader's own work:
-        GGUF slice, dequantize, field)."""
-        it = self.unit_stream()
+        GGUF slice, dequantize, field). A stream that accepts a width yields
+        only that width's units and never decodes the others — the
+        codeword stream walks the units once PER WIDTH, and session 5
+        measured every shard decoded twice for it (66.5 s of the pass)."""
+        import inspect
+        try:
+            takes_width = len(inspect.signature(self.unit_stream).parameters) >= 1
+        except (TypeError, ValueError):
+            takes_width = False
+        it = self.unit_stream(width) if (takes_width and width is not None) else self.unit_stream()
         while True:
             with _timed("shard decode"):
                 try:
@@ -672,7 +680,7 @@ class LazyEnrollment:
                     ntt_forward_batched(coeffs)
                 return coeffs
 
-            for w, rows in self._timed_stream():
+            for w, rows in self._timed_stream(width):
                 if w != width:
                     continue
                 r, off = rows.size(0), 0
@@ -745,8 +753,10 @@ def lazy_enroll_tape(tape, mask_seed: bytes, manifest: bytes,
     for ci, width, off, ek in cmap:
         rows_per_width[width] = rows_per_width.get(width, 0) + ek
 
-    def stream():
+    def stream(only_width=None):
         for ci, width, off, ek in cmap:
+            if only_width is not None and width != only_width:
+                continue                      # skipped BEFORE the loader runs
             c = tape.claims[ci]
             for wv in c.W:
                 val = tape.inputs[wv]
