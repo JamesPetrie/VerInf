@@ -423,6 +423,8 @@ def layout_from_manifest(man: Manifest) -> dict:
     agg: dict = {}
     for name, t in owner.items():
         v = by_name.get(name)
+        if v is not None and getattr(v, "external", False):
+            continue                  # bridge-held: the prover's layout skips it too
         if v is None:
             continue
         row = agg.setdefault(t, [0, 0])

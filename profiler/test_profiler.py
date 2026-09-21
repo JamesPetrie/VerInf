@@ -1701,3 +1701,66 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def test_extractor_bridged_external_weights():
+    """WC-LCRL-STC: expert weights held OUTSIDE the witness (Variable.external)
+    are source dependencies with provenance, never claim outputs — the routed
+    claims keep their shards out of the input list so the sweep does not
+    preload them, and before the 2026-09-21 fix extraction counted them as
+    fresh routed-claim outputs (386 G slots on a bridged Maverick). Two
+    experts, 8x8 each, one token, per the finding's reproduction."""
+    import dataclasses, math
+
+    @dataclasses.dataclass
+    class RoutedProjectedMatmulClaim(globals()["RoutedProjectedMatmulClaim"]):   # same type name: the cost table keys on it
+        use_bridge: int = 1
+
+    x, y, mask = Variable("X", 8), Variable("Y", 8), Variable("M", 2)
+    weights = [Variable(f"W{i}", 64) for i in range(2)]
+    for w in weights:
+        w.external = True
+    pj, qm, hd, yr = [Variable(n, size, phase=2) for n, size in
+                      [("Pj", 16), ("Qm", 8), ("Hd", 8), ("yr", 1)]]
+    fy, fu, fp = [Variable(n, 2, phase=3) for n in ("f_y", "f_u", "f_p")]
+    claim = RoutedProjectedMatmulClaim(x, y, mask, weights, pj, qm, hd, yr, fy, fu, fp,
+                          T=1, K=8, J=8, E=2)
+    t = FakeTape(Cfg())
+    t.add(claim, [x, mask])                 # the shards are NOT declared inputs
+
+    def _shard_loader():
+        raise AssertionError("extraction must not resolve a shard")
+    _shard_loader.provenance = {"quant": "Q4_K", "packed_bytes": 36.0,
+                                "packed_source": "blk.1.ffn_gate_exps.weight"}
+    t.inputs[weights[0]] = _shard_loader
+    with _fake_core():
+        man = extract_tape(t, model={"name": "bridge-gap"}, seq=1)
+    rec = man.claims[0]
+    assert rec.params["use_bridge"] == 1
+    assert rec.outputs == ["Y", "Pj", "Qm", "Hd", "yr", "f_y", "f_u", "f_p"], rec.outputs
+    assert set(rec.inputs) == {"X", "M", "W0", "W1"}, rec.inputs
+    assert rec.w_slots == 47, rec.w_slots
+    by = man.var_by_name()
+    for name in ("W0", "W1"):
+        v = by[name]
+        assert v.external and not v.persistent and v.producer is None and v.consumers == [0]
+    assert by["W0"].quant == "Q4_K" and by["W0"].packed_bytes == 36.0 \
+        and by["W0"].packed_source == "blk.1.ffn_gate_exps.weight"
+    tot = predict.totals(man)
+    assert tot.W == 57 and tot.W_external == 128 and tot.n_external == 2, (tot.W, tot.W_external)
+    rows = sum(math.ceil(v.length / t.cfg.ELL) for v in man.variables if not v.external)
+    assert rows == 10, rows
+    # the manifest round-trips the flag, and a report says the estimate is unsupported
+    import json, tempfile, os
+    fd, path = tempfile.mkstemp(suffix=".json"); os.close(fd)
+    try:
+        man.save(path); back = Manifest.load(path)
+    finally:
+        os.unlink(path)
+    assert back.var_by_name()["W1"].external
+    mp = MachineProfile.load(os.path.join(os.path.dirname(__file__), "machines", "gb10-spark.json"))
+    text = predict.report(back, mp)
+    assert "UNSUPPORTED ESTIMATE: bridged manifest" in text
+    assert "2 bridge-held weight variables" in text
+    peak = predict.live_set_peak(back)
+    assert peak["peak_bytes"] <= (8 + 2 + 47) * 8 + 8 * 8, peak    # no shard resident from the start

@@ -60,6 +60,16 @@ class VariableRecord:
     # deduplicate within one device, never across independent device holds.
     # None keeps legacy per-variable accounting. IDs are scoped to a manifest.
     packed_source: Optional[str] = None
+    # WC-LCRL-STC bridge: a weight the prover holds OUTSIDE the witness
+    # (Variable.external — tape.external / external_lazy under use_bridge).
+    # The enrollment authenticates it; core._layout never lays it out. It is
+    # a source dependency (producer None, consumers set, provenance kept) and
+    # contributes NO witness slots, rows, opening or fold work. Additive
+    # field, default False, schema unchanged: a reader without it would
+    # count these slots as witness again, so bridged manifests must be read
+    # by this version or later (predict flags them as unsupported estimates
+    # until the bridge's own work is modeled).
+    external: bool = False
 
 
 @dataclass
@@ -115,7 +125,8 @@ class Manifest:
                     persistent=v.get("persistent", False),
                     producer=v.get("producer"), consumers=v.get("consumers", []),
                     quant=v.get("quant"), packed_bytes=v.get("packed_bytes"),
-                    w_new=v.get("w_new", False), packed_source=v.get("packed_source")))
+                    w_new=v.get("w_new", False), packed_source=v.get("packed_source"),
+                    external=v.get("external", False)))
         except (KeyError, TypeError, AttributeError) as e:
             # structural failures (non-dict records, missing required keys)
             # normalize to ValueError: the CLI boundary catches that

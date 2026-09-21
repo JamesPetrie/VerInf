@@ -275,7 +275,8 @@ def evaluate(m: Manifest, assignment: List[int], n: int,
     for c, s in settle_claims:
         for name in c.inputs:
             v = by_name.get(name)
-            if v is None or v.persistent or v.producer is not None:
+            if v is None or v.persistent or v.producer is not None \
+                    or getattr(v, "external", False):
                 continue
             senders = {assignment[ci] for ci in v.consumers} - {s}
             mult_bytes += len(senders) * v.length * BYTES_PER_SLOT
@@ -285,8 +286,9 @@ def evaluate(m: Manifest, assignment: List[int], n: int,
                                if v.producer is None and v.persistent
                                and v.phase == 1 and not v.w_new)
     total_fresh_inputs = sum(v.length for v in m.variables
-                            if v.producer is None and not (
-                                v.persistent and v.phase == 1 and not v.w_new))
+                            if v.producer is None
+                            and not getattr(v, "external", False)   # bridge-held: never committed
+                            and not (v.persistent and v.phase == 1 and not v.w_new))
     # Fold merge: each remote shard ships its q_irs (K_DEG) and q_lin
     # (2*K_DEG-1, or the n_eval buffer when fused) partials once per proof —
     # exact field sums (core.QIrsAccumulator.merge / QLinAccumulator.merge).

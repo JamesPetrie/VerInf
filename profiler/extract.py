@@ -153,9 +153,10 @@ def extract_tape(tape, *, model: dict, seq: int) -> Manifest:
         rec = VariableRecord(
             name=name, length=int(v.length), phase=int(v.phase),
             persistent=bool(getattr(v, "persistent", False)),
+            external=bool(getattr(v, "external", False)),
             producer=producer,
             w_new=bool(getattr(v, "w_new", False)))
-        if rec.persistent:
+        if rec.persistent or rec.external:
             # Source provenance for the storage models (weightsplit): lazy
             # weight loaders may carry a `provenance` dict — the GGUF/
             # safetensors quant type and the exact PACKED source bytes
@@ -186,8 +187,15 @@ def extract_tape(tape, *, model: dict, seq: int) -> Manifest:
                 # Persistent variables are committed run inputs by
                 # construction — never claim outputs, even if a claim's
                 # _deferred input list omits them (e.g. lookup tables).
+                # External (bridge-held) weights likewise: the routed claims
+                # keep their shards out of the input list so the sweep does
+                # not preload them, and the enrollment, not the witness,
+                # authenticates them — a source dependency, never an output
+                # (the 2026-09-21 finding: they were counted as fresh
+                # routed-claim outputs, 386 G slots on a bridged Maverick).
                 is_input = (id(v) in input_ids
-                            or bool(getattr(v, "persistent", False)))
+                            or bool(getattr(v, "persistent", False))
+                            or bool(getattr(v, "external", False)))
                 rec = record(v, producer=None if is_input else idx)
                 if is_input:
                     rec.consumers.append(idx)

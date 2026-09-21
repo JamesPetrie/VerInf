@@ -62,6 +62,8 @@ class CostTotals:
     n_claims: int = 0
     W_enrolled: float = 0.0   # old phase-1 weights eligible for commitment reuse
     W_new: float = 0.0        # refreshed Wnew: committed/folded/opened as fresh
+    W_external: float = 0.0   # bridge-held weights: OUTSIDE the witness, not in W
+    n_external: int = 0
 
 
 def totals(m: Manifest) -> CostTotals:
@@ -79,6 +81,10 @@ def totals(m: Manifest) -> CostTotals:
     for v in m.variables:
         if v.producer is not None:
             continue                # claim outputs: already counted above
+        if getattr(v, "external", False):
+            t.W_external += v.length    # authenticated by the bridge, never a row
+            t.n_external += 1
+            continue
         t.W += v.length             # committed rows, not claim-counted
         if v.persistent:
             t.W_weights += v.length # weights (streamed, own Merkle block)
@@ -107,6 +113,8 @@ def live_set_peak(m: Manifest) -> Optional[dict]:
     peak, peak_idx = 0, 0
     expiring: Dict[int, list] = {}
     for v in m.variables:
+        if getattr(v, "external", False):
+            continue                # streamed one shard at a time, never resident
         if v.producer is None and not v.persistent and v.consumers:
             live += v.length * BYTES_PER_SLOT
             expiring.setdefault(last_use[v.name], []).append(v.name)
@@ -148,12 +156,14 @@ def report(m: Manifest, mp: MachineProfile, gpus: int = 1,
 
     # Rows: per-variable row rounding when variables are present, else W/ELL.
     if m.variables:
-        m_rows = sum(math.ceil(v.length / ELL) for v in m.variables)
+        m_rows = sum(math.ceil(v.length / ELL) for v in m.variables
+                     if not getattr(v, "external", False))
         # phase-2/aux vars are only itemized by the extractor; cover the
         # formula-only remainder at W/ELL density. Core layout rounds every
         # variable up independently, so pooling understates slightly — the
         # report labels such totals approximate.
-        itemized = sum(v.length for v in m.variables)
+        itemized = sum(v.length for v in m.variables
+                       if not getattr(v, "external", False))
         aux_pooled = max(0.0, t.W - itemized)
         m_rows += aux_pooled / ELL
     else:
@@ -168,6 +178,14 @@ def report(m: Manifest, mp: MachineProfile, gpus: int = 1,
 
     L = []
     L.append(f"== VerInf dry-run prediction ==")
+    if t.W_external:
+        L.append("!! UNSUPPORTED ESTIMATE: bridged manifest. "
+                 f"{t.n_external:,} bridge-held weight variables ({t.W_external:.3e} slots) "
+                 "are outside the witness and excluded below, as the prover's layout "
+                 "excludes them; the bridge's own work — the one-time enrollment, the "
+                 "per-proof pass (masks, aggregate, column re-derivation) and the wc "
+                 "proof section — is NOT modeled. The totals, rows, sizes and times "
+                 "below cover the Ligero part of a bridged proof only.")
     L.append(f"model: {m.model.get('name', '?')}   seq: {seq}   "
              f"claims: {t.n_claims:,}   source: {m.source.get('kind', '?')}")
     L.append(f"machine: {mp.name}" + (f"   what-if: {gpus} GPUs" if gpus > 1 else ""))
