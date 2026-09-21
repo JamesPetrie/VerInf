@@ -60,7 +60,7 @@ from collections import defaultdict
 from typing import Callable, Dict, List, Optional
 
 import claimcosts
-from manifest import Manifest
+from manifest import Manifest, bridged_note
 from machine import MachineProfile
 from predict import (_fmt_s, _gb, BYTES_PER_SLOT,
                      ENROLLED_QLIN_RATIO, ENROLLED_OPEN_RATIO)
@@ -447,6 +447,8 @@ def report(m: Manifest, strategy: str, n: int, mp: MachineProfile, *,
     L = [f"== partition scorecard: {strategy} x{n} on {mp.name} "
          f"({m.model.get('name', '?')} S={m.run.get('seq', '?')})"
          + _mode_suffix(m, enrolled_weights, skip_weight_commit) + " =="]
+    if bridged_note(m):
+        L.append(bridged_note(m))
     if strategy == "experts" and _no_expert_labels(m):
         L.append("NOTE: no expert labels ('.eN.' or '_Wg|u|dN') in this "
                  "manifest — assignment is identical to the layers backbone.")
@@ -493,6 +495,8 @@ def compare(m: Manifest, n: int, mp: MachineProfile, *,
          f"floor model, {n_sweeps(m)} sweeps)"
          + _mode_suffix(m, enrolled_weights, skip_weight_commit)
          + " ==", ""]
+    if bridged_note(m):
+        L.append(bridged_note(m))
     header = (f"{'strategy':10s} {'wall':>12s} {'speedup':>8s} {'imbal':>6s} "
               f"{'traffic/sweep':>14s} {'fold/proof(B)':>13s} "
               f"{'wstream max':>12s} {'opened max':>11s}")

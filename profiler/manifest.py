@@ -72,6 +72,23 @@ class VariableRecord:
     external: bool = False
 
 
+def bridged_note(m) -> str:
+    """The line every report opens with when a manifest holds bridge-held
+    (external) weights: their slots are outside the witness and excluded,
+    and the bridge's own work is not modeled, so the estimate is unsupported.
+    Empty for an ordinary manifest."""
+    ext = [v for v in m.variables if getattr(v, "external", False)]
+    if not ext:
+        return ""
+    slots = sum(v.length for v in ext)
+    return ("!! UNSUPPORTED ESTIMATE: bridged manifest. "
+            f"{len(ext):,} bridge-held weight variables ({slots:.3e} slots) are outside "
+            "the witness and excluded below, as the prover's layout excludes them; the "
+            "bridge's own work — the one-time enrollment, the per-proof pass (masks, "
+            "aggregate, column re-derivation) and the wc proof section — is NOT modeled. "
+            "The totals, rows, sizes and times below cover the Ligero part only.")
+
+
 @dataclass
 class Manifest:
     schema_version: int = SCHEMA_VERSION

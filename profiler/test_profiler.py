@@ -69,6 +69,8 @@ import cli                                  # noqa: E402
 import dag                                  # noqa: E402
 import partition                            # noqa: E402
 import predict                              # noqa: E402
+import crosscheck                           # noqa: E402
+import weightsplit                          # noqa: E402
 
 # --- fake claims with the real prover field spellings ---
 
@@ -1671,37 +1673,6 @@ def test_shared_source_extraction_roundtrip():
             assert blk.bytes(0, 2) == blk.bytes(0, 1) == blk.bytes(1, 2) == 128
 
 
-def main():
-    test_extractor()
-    test_explicit_settlement_reused()
-    test_core_isolation()
-    test_costs()
-    test_mode_flags_extracted()
-    test_expert_labels()
-    test_manifest_gz_roundtrip()
-    test_manifest_validation()
-    test_consumers()
-    test_cli_validation()
-    test_rows_approx_label()
-    test_enrolled_weights()
-    test_partition_serial_baseline()
-    test_partition_opened_ownership()
-    test_partition_fold_merge_traffic()
-    test_projected_protocol()
-    test_projected_extraction()
-    test_weightsplit()
-    test_linking_manifest_roundtrip_and_plan()
-    test_weightsplit_prices_refreshed_rows()
-    test_linking_cost_tools_agree()
-    test_refreshed_only_rows_are_fresh()
-    test_weightsplit_shared_sources()
-    test_shared_source_extraction_roundtrip()
-    print("profiler regression tests OK (no torch needed)")
-
-
-if __name__ == "__main__":
-    main()
-
 
 def test_extractor_bridged_external_weights():
     """WC-LCRL-STC: expert weights held OUTSIDE the witness (Variable.external)
@@ -1764,3 +1735,45 @@ def test_extractor_bridged_external_weights():
     assert "2 bridge-held weight variables" in text
     peak = predict.live_set_peak(back)
     assert peak["peak_bytes"] <= (8 + 2 + 47) * 8 + 8 * 8, peak    # no shard resident from the start
+    # the review's three edges: the crosscheck's row total, and the note on
+    # every report entry point, the weight-split one included even when the
+    # bridged tape leaves no enrolled block to split
+    assert crosscheck.rows_total(back) == 10
+    strategy = next(iter(partition.STRATEGIES))
+    for text in (partition.report(back, strategy, 2, mp), partition.compare(back, 2, mp),
+                 weightsplit.report(back, mp, [1, 2])):
+        assert "UNSUPPORTED ESTIMATE: bridged manifest" in text
+
+
+def main():
+    test_extractor()
+    test_explicit_settlement_reused()
+    test_core_isolation()
+    test_costs()
+    test_mode_flags_extracted()
+    test_expert_labels()
+    test_manifest_gz_roundtrip()
+    test_manifest_validation()
+    test_consumers()
+    test_cli_validation()
+    test_rows_approx_label()
+    test_enrolled_weights()
+    test_partition_serial_baseline()
+    test_partition_opened_ownership()
+    test_partition_fold_merge_traffic()
+    test_projected_protocol()
+    test_projected_extraction()
+    test_weightsplit()
+    test_linking_manifest_roundtrip_and_plan()
+    test_weightsplit_prices_refreshed_rows()
+    test_linking_cost_tools_agree()
+    test_refreshed_only_rows_are_fresh()
+    test_weightsplit_shared_sources()
+    test_shared_source_extraction_roundtrip()
+    test_extractor_bridged_external_weights()
+    print("profiler regression tests OK (no torch needed)")
+
+
+if __name__ == "__main__":
+    main()
+

@@ -112,7 +112,8 @@ def persistent_slots(man: Manifest) -> int:
 
 def rows_total(man: Manifest) -> int:
     ell = man.run["ligero"]["ELL"]
-    return sum((v.length + ell - 1) // ell for v in man.variables)
+    return sum((v.length + ell - 1) // ell for v in man.variables
+               if not getattr(v, "external", False))   # bridge-held: never laid out
 
 
 def _fmt(x: float) -> str:

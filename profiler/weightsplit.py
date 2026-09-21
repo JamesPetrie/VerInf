@@ -132,7 +132,7 @@ from bisect import bisect_left
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
-from manifest import Manifest
+from manifest import Manifest, bridged_note
 from machine import MachineProfile
 from predict import ENROLLED_OPEN_RATIO, ENROLLED_QLIN_RATIO, totals, _fmt_s, _gb
 
@@ -666,10 +666,18 @@ def evaluate(m: Manifest, mp: MachineProfile, n: int, *,
 
 def report(m: Manifest, mp: MachineProfile, gpus: Sequence[int], **kw) -> str:
     L = []
-    enc = kw.get("encode_share", ENCODE_SHARE_OF_A)
-    st = stages(m, mp, enc, kw.get("bytes_per_param"),
-                kw.get("w_fold_ratio", ENROLLED_QLIN_RATIO))
     L.append(f"== weight-split (stage-aware, enrolled block, executable plans) — {mp.name} ==")
+    if bridged_note(m):
+        L.append(bridged_note(m))
+    enc = kw.get("encode_share", ENCODE_SHARE_OF_A)
+    try:
+        st = stages(m, mp, enc, kw.get("bytes_per_param"),
+                    kw.get("w_fold_ratio", ENROLLED_QLIN_RATIO))
+    except ValueError as e:
+        # a fully bridged tape has no enrolled block to split: say so, after
+        # the note, instead of raising past the report
+        L.append(f"  UNAVAILABLE — {e}")
+        return "\n".join(L)
     if st is None:
         L.append("  UNAVAILABLE — prove_constants not calibrated on this machine")
         return "\n".join(L)

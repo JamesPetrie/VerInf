@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Optional
 
 import claimcosts
-from manifest import Manifest
+from manifest import Manifest, bridged_note
 from machine import MachineProfile
 
 BYTES_PER_SLOT = 8            # Goldilocks element = u64
@@ -178,14 +178,9 @@ def report(m: Manifest, mp: MachineProfile, gpus: int = 1,
 
     L = []
     L.append(f"== VerInf dry-run prediction ==")
-    if t.W_external:
-        L.append("!! UNSUPPORTED ESTIMATE: bridged manifest. "
-                 f"{t.n_external:,} bridge-held weight variables ({t.W_external:.3e} slots) "
-                 "are outside the witness and excluded below, as the prover's layout "
-                 "excludes them; the bridge's own work — the one-time enrollment, the "
-                 "per-proof pass (masks, aggregate, column re-derivation) and the wc "
-                 "proof section — is NOT modeled. The totals, rows, sizes and times "
-                 "below cover the Ligero part of a bridged proof only.")
+    _bn = bridged_note(m)
+    if _bn:
+        L.append(_bn)
     L.append(f"model: {m.model.get('name', '?')}   seq: {seq}   "
              f"claims: {t.n_claims:,}   source: {m.source.get('kind', '?')}")
     L.append(f"machine: {mp.name}" + (f"   what-if: {gpus} GPUs" if gpus > 1 else ""))
