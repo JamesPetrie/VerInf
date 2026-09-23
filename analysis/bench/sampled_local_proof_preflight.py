@@ -31,19 +31,19 @@ def run(elements: int = 1 << 28) -> dict:
     zero = torch.zeros(elements, dtype=torch.uint64, device="cuda")
     one = torch.ones(elements, dtype=torch.uint64, device="cuda")
     terms = [(1, [zero, one])]
-    rounds = elements.bit_length() - 1
-    coins = list(range(1, rounds + 1))
+    # the production coin schedule: one round coin after each polynomial
+    context = (b"sampled-local-proof-preflight", elements.to_bytes(8, "little"))
 
     torch.cuda.reset_peak_memory_stats()
     torch.cuda.synchronize()
     started = time.perf_counter()
-    proof = sc.prove_terms(terms, lambda index: coins[index])
+    proof = sc.prove_terms(terms, sc.RoundTranscript(*context))
     torch.cuda.synchronize()
     prove_s = time.perf_counter() - started
 
     started = time.perf_counter()
     accepted, reason = sc.verify_terms(
-        proof, terms, lambda index: coins[index])
+        proof, terms, sc.RoundTranscript(*context))
     torch.cuda.synchronize()
     verify_s = time.perf_counter() - started
     result = {

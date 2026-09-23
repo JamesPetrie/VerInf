@@ -28,6 +28,7 @@ from prover.protocol import merkle_leaf, merkle_verify
 
 from . import rs
 from . import sumcheck as sc
+from .logup import eq_vector
 
 
 def _b3(domain: bytes, *parts: bytes) -> bytes:
@@ -180,12 +181,15 @@ class MatmulBlock:
 
 @dataclass
 class RelationBlock:
-    """A zero relation proved by sumcheck.
+    """A zero relation proved by sumcheck, at EVERY coordinate.
 
     ``terms`` contains ``(coefficient, [wire-role, ...])``.  Each role names a
     one-row wire of the same power-of-two length.  This covers Adam updates,
     deterministic rounding/rescale, routing booleanity and simple nonlinear
     polynomial identities without making any of them a trusted prover opcode.
+    The residual is weighted by eq(z, .) at a point z drawn after the wires
+    are committed, so the sumcheck's zero claim is the residual's multilinear
+    extension at z: errors at two coordinates no longer cancel.
     """
     index: int
     name: str
@@ -405,7 +409,28 @@ def _tuple_fp(table_id: int, values: Sequence[int], beta: int) -> int:
     return acc
 
 
-def _prove_local(block: AuditBlock, challenge: bytes) -> LocalProof:
+def _relation_terms(terms, messages: Mapping[str, Sequence[Sequence[int]]],
+                    challenge: bytes):
+    """The relation's sumcheck terms, each weighted by eq(z, .) at z drawn
+    from the block's post-commit challenge (the same z on both sides)."""
+    width = len(messages[terms[0][1][0]][0])
+    z = _field_stream(challenge, b"relation-eq", width.bit_length() - 1)
+    eq = eq_vector(z)
+    return [(int(c) % FIELD_P, [messages[role][0] for role in roles] + [eq])
+            for c, roles in terms]
+
+
+def _relation_transcript(challenge: bytes, index: int,
+                         block_commitment: bytes) -> sc.RoundTranscript:
+    """Per-round coins bound to the post-commit block challenge, the block and
+    its commitment (which covers the relation's descriptor and wire roots);
+    each round's coin follows that round's polynomial."""
+    return sc.RoundTranscript(b"verinf/audit/relation/v1", challenge,
+                              index.to_bytes(8, "little"), block_commitment)
+
+
+def _prove_local(block: AuditBlock, challenge: bytes,
+                 block_commitment: bytes) -> LocalProof:
     if isinstance(block, MatmulBlock):
         n_out = len(block.w.messages)
         rho = _field_stream(challenge, b"freivalds-rho", n_out)
@@ -415,12 +440,11 @@ def _prove_local(block: AuditBlock, challenge: bytes) -> LocalProof:
               for row in block.y.messages]
         return MatmulLocalProof(wp, yp)
     if isinstance(block, RelationBlock):
-        terms = [(c % FIELD_P,
-                  [block.wires[role].messages[0] for role in roles])
-                 for c, roles in block.terms]
-        n_rounds = len(terms[0][1][0]).bit_length() - 1
-        coins = _field_stream(challenge, b"sumcheck", n_rounds)
-        return RelationLocalProof(sc.prove_terms(terms, lambda i: coins[i]))
+        terms = _relation_terms(block.terms,
+                                {r: w.messages for r, w in block.wires.items()},
+                                challenge)
+        return RelationLocalProof(sc.prove_terms(
+            terms, _relation_transcript(challenge, block.index, block_commitment)))
     beta, alpha = _field_stream(challenge, b"lookup-beta-alpha", 2)
     q = [_tuple_fp(block.table_id, row, beta) for row in block.queries.messages]
     mult = [int(x) for x in block.multiplicities.messages[0]]
@@ -492,7 +516,7 @@ def prove(blocks: Sequence[AuditBlock], cfg: rs.Config, statement: AuditStatemen
             local_index = absolute_index - start
             block = window[local_index]
             challenge = verifier._challenge(statement.digest, window_root, block.index)
-            local = _prove_local(block, challenge)
+            local = _prove_local(block, challenge, window_coms[local_index])
             ld = _local_digest(block.index, challenge, local, block.wires)
             columns = verifier._columns(statement.digest, block.index, ld,
                                         p.rs_columns, cfg.N_LIG)
@@ -530,7 +554,8 @@ def prove(blocks: Sequence[AuditBlock], cfg: rs.Config, statement: AuditStatemen
 
 
 def _verify_local(descriptor: dict, local: LocalProof,
-                  openings: Mapping[str, WireOpening], challenge: bytes) -> Tuple[bool, str]:
+                  openings: Mapping[str, WireOpening], challenge: bytes,
+                  index: int, block_commitment: bytes) -> Tuple[bool, str]:
     messages = {role: op.messages for role, op in openings.items()}
     kind = descriptor["kind"]
     if kind == "matmul":
@@ -550,13 +575,16 @@ def _verify_local(descriptor: dict, local: LocalProof,
     if kind == "sumcheck":
         if not isinstance(local, RelationLocalProof):
             return False, "wrong local proof type for sumcheck"
-        terms = [(int(c) % FIELD_P, [messages[role][0] for role in roles])
-                 for c, roles in descriptor["terms"]]
-        n_rounds = len(terms[0][1][0]).bit_length() - 1
-        coins = _field_stream(challenge, b"sumcheck", n_rounds)
+        # the local argument is unmasked: a carried mask would be a free
+        # term the prover could set to cancel the terminal value
+        if local.sumcheck.masked:
+            return False, "masked transcript in an unmasked local argument"
+        terms = _relation_terms(descriptor["terms"], messages, challenge)
         if local.sumcheck.claim % FIELD_P != 0:
             return False, "sumcheck relation claim is not zero"
-        ok, why = sc.verify_terms(local.sumcheck, terms, lambda i: coins[i])
+        ok, why = sc.verify_terms(local.sumcheck, terms,
+                                  _relation_transcript(challenge, index,
+                                                       block_commitment))
         return (ok, why if not ok else "ok")
     if not isinstance(local, LookupLocalProof):
         return False, "wrong local proof type for lookup"
@@ -675,7 +703,8 @@ def verify(proof: AuditProof, cfg: rs.Config, statement: AuditStatement,
                 if values != [row[col] for row in reencoded]:
                     return False, f"block {selected.index}: local witness is not bound to C0"
 
-        ok, why = _verify_local(desc, selected.local, selected.openings, challenge)
+        ok, why = _verify_local(desc, selected.local, selected.openings, challenge,
+                                selected.index, bc)
         if not ok:
             return False, f"block {selected.index}: {why}"
     return True, "ok"

@@ -1069,18 +1069,22 @@ def _relation_terms(claim: object, live: dict, *, claim_index: int,
     ]
 
 
-def _sumcheck_coins(challenge: bytes, claim_index: int, rounds: int):
-    coins = protocol.op_vec(
-        challenge, claim_index, "sampled-sumcheck-round", rounds)
-    return coins, lambda index: coins[index]
+def _sumcheck_transcript(challenge: bytes, claim_index: int,
+                         relation: str) -> sc.RoundTranscript:
+    """Per-round coins: each round's challenge follows its polynomial, bound
+    to the post-commit block challenge (which hashes the window root over the
+    block commitments), the claim and the relation. Expanding every round's
+    coin from the challenge up front let a prover steer a false claim onto
+    the true terminal value."""
+    return sc.RoundTranscript(b"verinf/sampled-local/relation/v1", bytes(challenge),
+                              int(claim_index).to_bytes(8, "little"),
+                              relation.encode())
 
 
 def prove_sumcheck(claim: object, live: dict, *, claim_index: int,
                    challenge: bytes) -> RelationSumcheckProof:
     relation, terms = _relation_terms(
         claim, live, claim_index=claim_index, challenge=challenge)
-    rounds = len(terms[0][1][0]).bit_length() - 1
-    _coins, coin = _sumcheck_coins(challenge, claim_index, rounds)
     work = len(terms[0][1][0]) * sum(len(factors)
                                      for _coef, factors in terms)
     if work < sc.GPU_MIN_SUMCHECK_WORK:
@@ -1088,7 +1092,8 @@ def prove_sumcheck(claim: object, live: dict, *, claim_index: int,
                         for coef, factors in terms]
     else:
         prover_terms = terms
-    proof = sc.prove_terms(prover_terms, coin)
+    proof = sc.prove_terms(
+        prover_terms, _sumcheck_transcript(challenge, claim_index, relation))
     return RelationSumcheckProof(
         claim_index, bytes(challenge), relation, proof)
 
@@ -1102,11 +1107,13 @@ def verify_sumcheck(claim: object, live: dict,
         claim, live, claim_index=claim_index, challenge=challenge)
     if proof.relation != relation:
         return False, "sumcheck relation mismatch"
+    # the local argument is unmasked: a carried mask would be a free term
+    if proof.sumcheck.masked:
+        return False, "masked transcript in an unmasked local argument"
     if proof.sumcheck.claim % P != 0:
         return False, "sumcheck relation claim is not zero"
-    rounds = len(terms[0][1][0]).bit_length() - 1
-    _coins, coin = _sumcheck_coins(challenge, claim_index, rounds)
-    ok, why = sc.verify_terms(proof.sumcheck, terms, coin)
+    ok, why = sc.verify_terms(proof.sumcheck, terms,
+                              _sumcheck_transcript(challenge, claim_index, relation))
     return ok, why if not ok else "ok"
 
 
@@ -1236,8 +1243,6 @@ def _matmul_rounding_terms(claim: MatmulClaim, live: dict, *,
 def _prove_explicit_relation(
         relation: str, terms, *, claim_index: int,
         challenge: bytes) -> RelationSumcheckProof:
-    rounds = len(terms[0][1][0]).bit_length() - 1
-    _coins, coin = _sumcheck_coins(challenge, claim_index, rounds)
     work = len(terms[0][1][0]) * sum(len(factors)
                                      for _coef, factors in terms)
     if work < sc.GPU_MIN_SUMCHECK_WORK:
@@ -1247,7 +1252,8 @@ def _prove_explicit_relation(
         prover_terms = terms
     return RelationSumcheckProof(
         claim_index, bytes(challenge), relation,
-        sc.prove_terms(prover_terms, coin))
+        sc.prove_terms(prover_terms,
+                       _sumcheck_transcript(challenge, claim_index, relation)))
 
 
 def _verify_explicit_relation(
@@ -1257,11 +1263,12 @@ def _verify_explicit_relation(
         return False, "rounding sumcheck transcript challenge mismatch"
     if proof.relation != relation:
         return False, "rounding sumcheck relation mismatch"
+    if proof.sumcheck.masked:
+        return False, "masked transcript in an unmasked local argument"
     if proof.sumcheck.claim % P != 0:
         return False, "rounding relation claim is not zero"
-    rounds = len(terms[0][1][0]).bit_length() - 1
-    _coins, coin = _sumcheck_coins(challenge, claim_index, rounds)
-    ok, why = sc.verify_terms(proof.sumcheck, terms, coin)
+    ok, why = sc.verify_terms(proof.sumcheck, terms,
+                              _sumcheck_transcript(challenge, claim_index, relation))
     return ok, why if not ok else "ok"
 
 

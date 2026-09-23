@@ -164,3 +164,117 @@ def test_public_manifest_cannot_be_replaced():
     bad_statement = AuditStatement(statement.params, statement.public_io_digest, tuple(other))
     ok, why = verify(proof, CFG, bad_statement, session)
     assert not ok and "statement" in why, why
+
+
+# -- review 2026-09-23 findings 3, 4 and 7: the relation's local sumcheck ----
+# One elementwise-product block, every block selected, 61 RS columns; each
+# forgery replaces only the local proof the prover sends, and is built with
+# the verifier's own coins where it can be, so each test fails for one reason.
+from layergkr import sampled_audit as audit
+from layergkr import sumcheck as sc
+
+
+def _product_block(c):
+    return RelationBlock(0, "elementwise-product", "rounding", {
+        "a": Wire("a", [[2, 3, 4, 5]]),
+        "b": Wire("b", [[7, 8, 9, 10]]),
+        "c": Wire("c", [c]),
+    }, [(1, ["a", "b"]), (P - 1, ["c"])])
+
+
+def _audit(block, producer=None):
+    params = AuditParams(1, 1, 1, 61)
+    statement = AuditStatement.from_blocks(params, b"fixed public IO", [block])
+    verifier = VerifierSession(b"private verifier entropy for testing")
+    original = audit._prove_local
+    if producer is not None:
+        audit._prove_local = producer
+    try:
+        proof = prove([block], CFG, statement, verifier)
+    finally:
+        audit._prove_local = original
+    return verify(proof, CFG, statement, verifier)
+
+
+def _terms(block, challenge):
+    return audit._relation_terms(block.terms,
+                                 {r: w.messages for r, w in block.wires.items()},
+                                 challenge)
+
+
+def _terminal(terms, point):
+    total = 0
+    for coef, factors in terms:
+        v = coef
+        for f in factors:
+            v = v * sc.mle_eval(f, point) % P
+        total = (total + v) % P
+    return total
+
+
+def _zero_rounds(block, challenge, block_com):
+    """Round polynomials that are identically zero (the claim is 0), with the
+    coins the verifier's transcript would draw for them."""
+    tr = audit._relation_transcript(challenge, block.index, block_com)
+    polys, coins = [], []
+    for rnd in range(2):
+        samples = [(x, 0) for x in range(4)]          # degree 3 with eq
+        polys.append(samples)
+        coins.append(sc.draw_coin(tr, rnd, samples))
+    return polys, coins
+
+
+def test_honest_relation_accepts_and_a_single_error_rejects():
+    assert _audit(_product_block([14, 24, 36, 50]))[0]
+    ok, why = _audit(_product_block([14, 25, 36, 50]))
+    assert not ok and "not zero" in why, why
+
+
+def test_cancelling_elementwise_errors_reject():
+    # finding 7: +1 and -1 at two coordinates summed to zero before the eq weight
+    ok, why = _audit(_product_block([15, 23, 36, 50]))
+    assert not ok and "not zero" in why, why
+
+
+def test_round_coins_known_in_advance_do_not_verify():
+    # finding 3: with every coin expanded from the block challenge up front,
+    # linear round polynomials walk a false zero claim onto the true terminal
+    def known_coins(block, challenge, block_com):
+        terms = _terms(block, challenge)
+        coins = audit._field_stream(challenge, b"sumcheck", 2)
+        target, current, polys = _terminal(terms, coins), 0, []
+        for i, r in enumerate(coins):
+            nxt = target if i == len(coins) - 1 else 0
+            a = (r * current - nxt) * pow((2 * r - 1) % P, P - 2, P) % P
+            slope = (current - 2 * a) % P
+            polys.append([(x, (a + slope * x) % P) for x in range(4)])
+            current = nxt
+        return audit.RelationLocalProof(sc.SumcheckProof(
+            claim=0, round_polys=polys, challenges=coins, final_point=coins,
+            n_terms=len(terms)))
+    ok, why = _audit(_product_block([14, 25, 36, 50]), known_coins)
+    assert not ok and "challenge mismatch" in why, why
+
+
+def test_a_proof_chosen_terminal_point_rejects():
+    # finding 4: zero rounds, the verifier's own coins, and a terminal point at
+    # a vertex where the residual vanishes
+    def moved_point(block, challenge, block_com):
+        polys, coins = _zero_rounds(block, challenge, block_com)
+        return audit.RelationLocalProof(sc.SumcheckProof(
+            claim=0, round_polys=polys, challenges=coins, final_point=[0, 0],
+            n_terms=2))
+    ok, why = _audit(_product_block([14, 25, 36, 50]), moved_point)
+    assert not ok and "terminal point" in why, why
+
+
+def test_an_unauthenticated_mask_rejects():
+    # finding 4: the right point and coins, the terminal cancelled by a mask
+    def masked(block, challenge, block_com):
+        polys, coins = _zero_rounds(block, challenge, block_com)
+        return audit.RelationLocalProof(sc.SumcheckProof(
+            claim=0, round_polys=polys, challenges=coins, final_point=coins,
+            n_terms=2, masked=True,
+            final_mask=(-_terminal(_terms(block, challenge), coins)) % P))
+    ok, why = _audit(_product_block([14, 25, 36, 50]), masked)
+    assert not ok and "masked" in why, why
