@@ -425,18 +425,16 @@ def main():
             if not pathlib.Path(path).is_file():
                 raise SystemExit(f"refusing sampled audit: {path} does not exist")
     if proving:
-        # Under the bridge the model reference is the WC enrollment root
-        # (checked by the verifier against external policy), not a committed
-        # weight tree — those two arguments stop applying.
-        req = ((("--public-sz", a.public_sz),
-                ("--admission-report", a.admission_report),
-                ("--dump-proof", a.dump_proof))
-               if a.wc_bridge else
-               (("--weight-commitment", a.weight_commitment),
-                ("--expected-weight-root", a.expected_weight_root),
-                ("--public-sz", a.public_sz),
-                ("--admission-report", a.admission_report),
-                ("--dump-proof", a.dump_proof)))
+        # Under the bridge the expert weights are authenticated by the WC
+        # enrollment, but the dense weights stay persistent rows of the W
+        # block: they still need their enrolled commitment and its trusted
+        # root, or each proof would commit a fresh W root that nothing outside
+        # the proof vouches for. Both anchors, in both modes.
+        req = (("--weight-commitment", a.weight_commitment),
+               ("--expected-weight-root", a.expected_weight_root),
+               ("--public-sz", a.public_sz),
+               ("--admission-report", a.admission_report),
+               ("--dump-proof", a.dump_proof))
         missing = [n for n, v in req if v is None]
         if missing:
             raise SystemExit(
@@ -516,16 +514,14 @@ def main():
         return 0
 
     # ---- PROOF: policy first, then the admission gate, then prove ---------
-    if a.weight_commitment:
-        wc = core.WeightCommitment.load(a.weight_commitment)
-        expected_root = bytes.fromhex(a.expected_weight_root.removeprefix("0x"))
-        if wc.root != expected_root:
-            raise SystemExit(
-                f"refusing to prove: the commitment's root {wc.root.hex()} is not "
-                f"the trusted enrolled root {expected_root.hex()}")
-        _log(f"model: enrolled root {wc.root.hex()[:16]}… ({wc.m_w} weight rows)")
-    else:
-        wc = None       # bridge mode: the WC enrollment (built below) is the model
+    # (the dense commitment is required in both modes; see the policy check)
+    wc = core.WeightCommitment.load(a.weight_commitment)
+    expected_root = bytes.fromhex(a.expected_weight_root.removeprefix("0x"))
+    if wc.root != expected_root:
+        raise SystemExit(
+            f"refusing to prove: the commitment's root {wc.root.hex()} is not "
+            f"the trusted enrolled root {expected_root.hex()}")
+    _log(f"model: enrolled root {wc.root.hex()[:16]}… ({wc.m_w} weight rows)")
 
     # The public bound is an INPUT to the statement, not something the prover
     # discovers: pinning it here removes the extra pre-proof reveal pass (a
@@ -652,7 +648,7 @@ def main():
     claims_bytes, manifest, stmt = admission.prepare(tape, CFG)
     report = admission.load_report(a.admission_report)
     admission.check(report, cfg=CFG,
-                    model_root=(wc.root if wc is not None else wc_enr.root),
+                    model_root=(wc_enr.root if wc_enr is not None else wc.root),
                     statement_digest=stmt,
                     manifest=manifest, output_path=a.dump_proof)
     _log(f"admission: PASSED on {report['machine']['gpu_name']} "
@@ -679,13 +675,13 @@ def main():
     # budget for a proof whose final write later fails is conservative; the
     # reverse order is unsafe because a crash can publish openings and lose
     # their ledger update.
-    if wc is not None:
-        wc.record_openings(proof.Q_cols)
-        wc.save(a.weight_commitment)
-    else:
+    wc.record_openings(proof.Q_cols)
+    wc.save(a.weight_commitment)
+    if wc_enr is not None:
         # bridge mode: the mask-point ledger is the enrollment's budget
-        # (40 eta points per proof of lam=1024); persist it next to the proof
-        import json as _json
+        # (40 eta points per proof of lam=1024). A RECORD next to the proof,
+        # not an enforced budget: it follows the proof's filename and nothing
+        # refuses a proof over it (rotation is unfinished)
         _sc = getattr(proof, "wc_bridge", None)
         _led = a.dump_proof + ".wc-ledger.json"
         _prev = []
@@ -709,7 +705,7 @@ def main():
          "u64le-base64 wire)")
 
     spent, budget = len(wc.opened_columns), wc.opening_budget(CFG)
-    _log(f"opening ledger: {spent}/{budget} columns of the enrollment spent"
+    _log(f"opening ledger: {spent}/{budget} columns of the dense enrollment spent"
          + ("" if spent < budget else " — REFRESH the enrollment before the "
             "next proof"))
     return 0

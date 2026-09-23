@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # WC-LCRL-STC FINAL RUN: the full 400B Maverick proof through the bridge.
-# The s5b chain with the bridge switched on: no weight commitment, no online
-# W fold — the streaming enrollment authenticates the model.
+# The s5b chain with the bridge switched on: no online W fold for the expert
+# shards — the streaming enrollment authenticates them — while the dense
+# weights keep their enrolled commitment, and the verifier is given both
+# anchors (the dense root and the enrollment identity). Revised 2026-09-23 for
+# the two anchors; not rerun at this revision.
 #   0. network probe   1. download 5 shards   2. smoke + BRIDGED SHAKEDOWN
-#   3. witness-only (Sz + cold sweep)   4. admission report (--wc-bridge)
-#   5. PROVE --wc-bridge (the timed run)   6. Rust verify   7. results
+#   3. witness-only (Sz + cold sweep)   3b. enroll the dense weights
+#   4. admission report (--wc-bridge)   5. PROVE --wc-bridge (the timed run)
+#   6. Rust verify   7. results
 set -u
 cd "${VERINF_ROOT:-/workspace/VerInf}"
 PY="uv run --project $PWD python3"
@@ -106,6 +110,15 @@ COLD=$(grep -oE "witness pass [0-9.]+s" "$OUT/witness.log" | head -1 | grep -oE 
 [ -n "$COLD" ] || fail "no witness pass time"
 echo "public Sz = $SZ, cold sweep ${COLD}s"; echo "$SZ" > "$OUT/public_sz.txt"
 
+step "3b. enroll the dense weights (the W block the bridge leaves)"
+$PY demo/demo_maverick_full.py --from-gguf "$GGUF" --tokens "$OUT/tokens.json" \
+    --layers 48 --experts 128 --d 5120 --d-ff 8192 --vocab 202048 \
+    --wc-bridge --enroll-weights "$MODEL_DIR/maverick-dense.wcommit" 2>&1 \
+    | tee "$OUT/enroll.log" | tail -10
+WROOT=$(grep -oE "root=[0-9a-f]{64}" "$OUT/enroll.log" | head -1 | cut -d= -f2)
+[ -n "$WROOT" ] || fail "no dense root in enroll.log"
+echo "$WROOT" > "$OUT/weight_root.txt"
+
 step "4. admission report (wc-bridge)"
 $PY analysis/bench/make_admission_report.py --from-gguf "$GGUF" \
     --tokens "$OUT/tokens.json" --layers 48 --experts 128 --d 5120 --d-ff 8192 \
@@ -118,18 +131,24 @@ step "5. PROVE (wc-bridge) — the timed run"
 $PY demo/demo_maverick_full.py --from-gguf "$GGUF" --tokens "$OUT/tokens.json" \
     --layers 48 --experts 128 --d 5120 --d-ff 8192 --vocab 202048 \
     --wc-bridge --admission-report "$OUT/admission.json" --public-sz "$SZ" \
+    --weight-commitment "$MODEL_DIR/maverick-dense.wcommit" --expected-weight-root "$WROOT" \
     --dump-proof "$MODEL_DIR/maverick-wc-proof.json" 2>&1 | tee "$OUT/prove.log" | tail -30
 ROOT=$(grep -oE "enrollment_root=[0-9a-f]{64}" "$OUT/prove.log" | head -1 | cut -d= -f2)
+IDENT=$(grep -oE "enrollment_identity=[0-9a-f]{64}" "$OUT/prove.log" | head -1 | cut -d= -f2)
 STMT=$(grep -oE "statement_digest=[0-9a-f]{64}" "$OUT/prove.log" | head -1 | cut -d= -f2)
 TPROVE=$(grep -oE "prove returned \([0-9.]+s\)" "$OUT/prove.log" | grep -oE "[0-9.]+")
 [ -n "$ROOT" ] || fail "no enrollment root in prove.log"
+[ -n "$IDENT" ] || fail "no enrollment identity in prove.log"
+echo "$IDENT" > "$OUT/enrollment_identity.txt"
 [ -n "$STMT" ] || fail "no statement_digest in prove.log"
 echo "$ROOT" > "$OUT/enrollment_root.txt"; echo "$STMT" > "$OUT/statement_digest.txt"
 echo "PROVE WALL TIME: ${TPROVE}s"
 
-step "6. Rust verify (external root = enrollment root)"
+step "6. Rust verify (policy: dense root, statement, enrollment identity)"
+# In this campaign the policy values come from the prover's own logs, which
+# checks the mechanism only; a deployment takes them from its auditor.
 ./verifier/target/release/verify_proof "$MODEL_DIR/maverick-wc-proof.json" \
-    "$ROOT" "$STMT" 2>&1 | tee "$OUT/verify.log" | tail -20
+    "$WROOT" "$STMT" "$IDENT" 2>&1 | tee "$OUT/verify.log" | tail -20
 
 $PY - "$OUT" "$TPROVE" <<'PY'
 import json, pathlib, sys
@@ -138,7 +157,9 @@ v = (out / "verify.log").read_text() if (out / "verify.log").exists() else ""
 json.dump({"kind": "wc_final", "accepted": "rust_verify: ACCEPT" in v,
            "t_prove_s": tprove, "under_one_hour": bool(tprove and tprove < 3600),
            "sz": (out / "public_sz.txt").read_text().strip(),
-           "enrollment_root": (out / "enrollment_root.txt").read_text().strip()},
+           "enrollment_root": (out / "enrollment_root.txt").read_text().strip(),
+           "enrollment_identity": (out / "enrollment_identity.txt").read_text().strip(),
+           "weight_root": (out / "weight_root.txt").read_text().strip()},
           open(out / "campaign_results.json", "w"), indent=1)
 print("campaign_results.json written")
 PY
