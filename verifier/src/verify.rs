@@ -203,7 +203,7 @@ pub fn verify_bound_pinned(cs: &mut ClaimSet,
     let t0 = std::time::Instant::now();
     let mark = |name: &str| eprintln!("[verify] {name} @ {:.1} min", t0.elapsed().as_secs_f64() / 60.0);
     let mut r = Vec::new();
-    mark("merkle");    r.push(("merkle",    merkle_test(&cols, roots)));
+    mark("merkle");    r.push(("merkle",    merkle_test(&cols, roots, &q, cfg.n_lig)));
     // Only merkle needs the raw per-commit subcolumns. Join them into one set once
     // (freeing the raw form as it goes), then irs/lin/quad share this single cj —
     // built once instead of three times, and never held alongside the raw columns.
@@ -283,8 +283,10 @@ fn lagrange_table(cfg: &Config, etas: &[u64], ncols: usize) -> Vec<u64> {
     lag
 }
 
-// 1. Merkle: every opened sub-column hashes to its commit's root.
-fn merkle_test(cols: &OpenedColumns, roots: &[[u8; 32]]) -> bool {
+// 1. Merkle: every opened sub-column hashes to its commit's root AT the queried
+// index q[qi] of a tree over n_lig columns (a valid path for another column is
+// not an answer).
+fn merkle_test(cols: &OpenedColumns, roots: &[[u8; 32]], q: &[u64], n_lig: u64) -> bool {
     for (ci, rt) in roots.iter().enumerate() {
         if *rt == EMPTY_COMMIT_ROOT {
             // The all-zeros root is the prover's sentinel for a ZERO-ROW block
@@ -298,7 +300,8 @@ fn merkle_test(cols: &OpenedColumns, roots: &[[u8; 32]]) -> bool {
             return false;
         }
         for qi in 0..cols.subcols[ci].len() {
-            if !merkle_verify(merkle_leaf(&cols.subcols[ci][qi]), &cols.paths[ci][qi], *rt) {
+            if !merkle_verify(merkle_leaf(&cols.subcols[ci][qi]), &cols.paths[ci][qi], *rt,
+                              q[qi], n_lig) {
                 return false;
             }
         }

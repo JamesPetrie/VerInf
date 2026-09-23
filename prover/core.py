@@ -323,12 +323,9 @@ def merkle_path(levels: List[List[bytes]], idx: int) -> List[Tuple[bytes, int]]:
     return path
 
 
-def merkle_verify(leaf: bytes, path: List[Tuple[bytes, int]],
-                  claimed_root: bytes) -> bool:
-    h = leaf
-    for sibling, side in path:
-        h = _b3(sibling, h) if side == 0 else _b3(h, sibling)
-    return h == claimed_root
+# One index-bound check for every caller (protocol.merkle_verify): the
+# ordering comes from the queried index, with the exact depth of the tree.
+merkle_verify = pr.merkle_verify
 
 
 @dataclass

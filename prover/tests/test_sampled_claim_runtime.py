@@ -211,7 +211,7 @@ def test_window_rs_rejects_invalid_merkle_opening(monkeypatch):
         rs_ell=3, rs_k_deg=8, rs_n_lig=32,
         heartbeat_every=1000)
     monkeypatch.setattr(core, "merkle_verify",
-                        lambda _leaf, _path, _root: False)
+                        lambda _leaf, _path, _root, _index, _n_leaves: False)
 
     tape.run_engine_pass(free_intermediates=True, keep={dst.var},
                          observer=audit)

@@ -669,7 +669,8 @@ def verify(proof: AuditProof, cfg: rs.Config, statement: AuditStatement,
             reencoded = [rs.encode_row(cfg, row) for row in opening.messages]
             for k, col in enumerate(columns):
                 values = opening.values[k]
-                if not merkle_verify(merkle_leaf(values), opening.paths[k], record.root):
+                if not merkle_verify(merkle_leaf(values), opening.paths[k], record.root,
+                                     col, cfg.N_LIG):
                     return False, f"block {selected.index}: Merkle opening failed"
                 if values != [row[col] for row in reencoded]:
                     return False, f"block {selected.index}: local witness is not bound to C0"

@@ -96,7 +96,8 @@ def main() -> int:
     def verify():
         for k, column in enumerate(columns):
             path = core.merkle_path(artifact.levels, column)
-            if not core.merkle_verify(opened_digests[k], path, artifact.root):
+            if not core.merkle_verify(opened_digests[k], path, artifact.root,
+                                      column, cfg.N_LIG):
                 raise RuntimeError(f"Merkle opening failed at column {column}")
 
     verify_s, _ = timed(verify)

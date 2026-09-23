@@ -103,11 +103,35 @@ def pack_column(col: List[int]) -> bytes:
 def merkle_leaf(col: List[int]) -> bytes:
     return blake3.blake3(pack_column(col)).digest()
 
-def merkle_verify(leaf: bytes, path: List[Tuple[bytes, int]], root: bytes) -> bool:
-    """path: list of (sibling, side); side==0 → sibling is the left child."""
-    h = leaf
+def merkle_depth(n_leaves: int) -> int:
+    """Levels above the leaves of a tree over `n_leaves` whose odd last node
+    is paired with itself (core.merkle_path's rule): ceil(log2(n_leaves))."""
+    n, d = n_leaves, 0
+    while n > 1:
+        n, d = (n + 1) // 2, d + 1
+    return d
+
+def merkle_verify(leaf: bytes, path: List[Tuple[bytes, int]], root: bytes,
+                  index: int, n_leaves: int) -> bool:
+    """Verify that `leaf` sits at position `index` of a tree over `n_leaves`
+    committing to `root` (the Rust twin is verifier/src/protocol.rs). The
+    ordering at every level comes from `index`, never from the proof: a valid
+    path for another column is a REJECT, as are an index out of range and a
+    path shorter or longer than the tree. path is core.merkle_path's list of
+    (sibling, side); the side bit must agree with the index (side==0 ⇔ this
+    node is a right child, sibling + h), and a last node with no right
+    neighbour must be paired with itself."""
+    if not 0 <= index < n_leaves or len(path) != merkle_depth(n_leaves):
+        return False
+    h, idx, width = leaf, index, n_leaves
     for sibling, side in path:
-        h = blake3.blake3((sibling + h) if side == 0 else (h + sibling)).digest()
+        right = idx & 1
+        if side != (0 if right else 1):
+            return False
+        if not right and idx + 1 >= width and sibling != h:
+            return False
+        h = blake3.blake3((sibling + h) if right else (h + sibling)).digest()
+        idx, width = idx >> 1, (width + 1) // 2
     return h == root
 
 # ----------------------------------------------------------------------

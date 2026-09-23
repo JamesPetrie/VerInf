@@ -111,7 +111,7 @@ def _checks(claims, cfg, s_op, s_comb, s_col,
     cons = pvc.compile_claims(claims, cfg, s_op)           # verifier compiles its OWN constraints
     Q    = pr.random_columns(s_col, cfg)
     cols = OpenedColumns([opened_p1, opened_p2], [paths_p1, paths_p2])
-    return (merkle_test(cols, Q, [root_p1, root_p2])
+    return (merkle_test(cols, Q, [root_p1, root_p2], cfg.N_LIG)
             and irs_column_test(cols, q_irs, Q, s_comb, cfg)
             and linear_constraint_test(q_lin, cons, s_comb, cfg)
             and linear_column_test(cols, q_lin, Q, cons, s_comb, cfg)
@@ -147,14 +147,14 @@ def run_verification_fast(prover, claims, cfg, rand):
 # ----------------------------------------------------------------------
 # 1. Merkle: every opened sub-column hashes to its commit's root.
 # ----------------------------------------------------------------------
-def merkle_test(cols: OpenedColumns, Q, roots) -> bool:
+def merkle_test(cols: OpenedColumns, Q, roots, n_lig: int) -> bool:
     for subcols, paths, root in zip(cols.subcols, cols.paths, roots):
         if root == pr.EMPTY_COMMIT_ROOT:
             continue
         for j in Q:
             if j not in subcols:
                 return False
-            if not pr.merkle_verify(pr.merkle_leaf(subcols[j]), paths[j], root):
+            if not pr.merkle_verify(pr.merkle_leaf(subcols[j]), paths[j], root, j, n_lig):
                 return False
     return True
 

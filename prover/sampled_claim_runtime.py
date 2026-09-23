@@ -787,7 +787,8 @@ class ClaimWindowAudit:
         for k, column in enumerate(columns):
             path = prover_core.merkle_path(artifact.levels, column)
             if not prover_core.merkle_verify(
-                    opened_digests[k], path, artifact.root):
+                    opened_digests[k], path, artifact.root, column,
+                    self.rs_cfg.N_LIG):
                 self.failures.append(
                     f"window {window_index}: RS Merkle opening failed at {column}")
 
