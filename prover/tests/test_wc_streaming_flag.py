@@ -78,7 +78,8 @@ def test_flagged_proof_keeps_rust_accept_and_bridge_accepts():
                                       proof.seeds["s_bind"], {J: rho},
                                       sc["params"],
                                       trusted_identity=sc["identity"],
-                                      layout=_layout(tape))
+                                      layout=_layout(tape),
+                                      t_cols=CFG.T_QUERIES)
     assert ok, f"hosted bridge REJECT: {why}"
     # and the bridge P_trace is the claim's projection (link invariant)
     assert sc["bridge"].p_trace[J].numel() >= E * K
@@ -100,7 +101,8 @@ def test_hosted_bridge_rejects_foreign_rho():
                                       proof.seeds["s_bind"], bad_rho,
                                       sc["params"],
                                       trusted_identity=sc["identity"],
-                                      layout=_layout(tape))
+                                      layout=_layout(tape),
+                                      t_cols=CFG.T_QUERIES)
     assert not ok and "rho" in why, why
 
 
@@ -116,7 +118,8 @@ def test_hosted_bridge_rejects_tampered_p_trace():
                                       proof.seeds["s_bind"], {J: rho},
                                       sc["params"],
                                       trusted_identity=sc["identity"],
-                                      layout=_layout(tape))
+                                      layout=_layout(tape),
+                                      t_cols=CFG.T_QUERIES)
     assert not ok, "tampered hosted P_trace accepted"
 
 
@@ -140,7 +143,8 @@ def test_hosted_bridge_rejects_foreign_enrollment():
                                       proof.seeds["s_bind"], {J: rho},
                                       sc["params"],
                                       trusted_identity=enr_true.identity(),
-                                      layout=_layout(tape2))
+                                      layout=_layout(tape2),
+                                      t_cols=CFG.T_QUERIES)
     assert not ok, "bridge against a substituted model accepted"
 
 

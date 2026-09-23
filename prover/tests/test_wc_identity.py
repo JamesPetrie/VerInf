@@ -60,7 +60,10 @@ def test_identity_check_reads_the_verifiers_layout():
                               trusted, {1: [16]})
     assert not ok and "enrollment identity" in why
     ok, why = wc._identity_ok(ROOT, MANIFEST, {1: (3, 1)}, P12, trusted, {1: [16]})
-    assert not ok and "block count" in why
+    assert not ok and "group metadata" in why
+    # the width in the metadata is the key's (the bridge equation reads it)
+    ok, why = wc._identity_ok(ROOT, MANIFEST, {1: (2, 2)}, P12, trusted, {1: [16]})
+    assert not ok and "group metadata" in why
     ok, why = wc._identity_ok(ROOT, MANIFEST, {1: (2, 1), 2: (1, 2)}, P12,
                               trusted, {1: [16]})
     assert not ok and "widths" in why

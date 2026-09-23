@@ -14,6 +14,7 @@ from cuda_primitives import P, poly_eval
 
 PARAMS = wc.WcParams(B=48, lam=16, N_w=128, q_w=8)
 S_R1 = b"\x11" * 32          # transcript state after R1 (outputs fixed)
+T_COLS = 16                  # the Ligero columns q_w is floored against (8 >= ceil(0.416*16))
 
 
 def _toy_enrollment(seed=0):
@@ -46,7 +47,8 @@ def test_honest_bridge_accepts():
     proof = wc.prove_bridge(enr, S_R1)
     ok, why = wc.verify_bridge(enr.root, enr.manifest_digest, meta,
                                proof, S_R1, PARAMS,
-                               trusted_identity=enr.identity(), layout=enr.layout)
+                               trusted_identity=enr.identity(), layout=enr.layout,
+                               t_cols=T_COLS)
     assert ok, why
     # and P_trace really is W rho, checked independently in python ints
     n = 4
@@ -74,7 +76,8 @@ def test_tampered_p_trace_rejects():
     # rebuild them the way the prover does — the bridge equation still fails.
     ok, why = wc.verify_bridge(enr.root, enr.manifest_digest, meta,
                                proof, S_R1, PARAMS,
-                               trusted_identity=enr.identity(), layout=enr.layout)
+                               trusted_identity=enr.identity(), layout=enr.layout,
+                               t_cols=T_COLS)
     assert not ok, "tampered P_trace accepted"
 
 
@@ -92,7 +95,8 @@ def test_recommitted_fake_projection_rejects():
     proof = wc.prove_bridge(enr_fake, S_R1)      # internally consistent lie
     ok, why = wc.verify_bridge(enr.root, enr.manifest_digest, meta,
                                proof, S_R1, PARAMS,
-                               trusted_identity=enr.identity(), layout=enr.layout)
+                               trusted_identity=enr.identity(), layout=enr.layout,
+                               t_cols=T_COLS)
     assert not ok, "re-committed fake projection accepted"
     assert "bridge equation" in why or "merkle" in why, why
 
@@ -104,7 +108,8 @@ def test_tampered_enrollment_column_rejects():
     proof.opened[i][0] = (int(proof.opened[i][0]) + 1) % P
     ok, why = wc.verify_bridge(enr.root, enr.manifest_digest, meta,
                                proof, S_R1, PARAMS,
-                               trusted_identity=enr.identity(), layout=enr.layout)
+                               trusted_identity=enr.identity(), layout=enr.layout,
+                               t_cols=T_COLS)
     assert not ok and "merkle" in why, why
 
 
@@ -115,7 +120,8 @@ def test_foreign_eta_rejects():
     proof.eta_idx = list(range(PARAMS.q_w))          # attacker-chosen points
     ok, why = wc.verify_bridge(enr.root, enr.manifest_digest, meta,
                                proof, S_R1, PARAMS,
-                               trusted_identity=enr.identity(), layout=enr.layout)
+                               trusted_identity=enr.identity(), layout=enr.layout,
+                               t_cols=T_COLS)
     assert not ok and "eta" in why, why
 
 
@@ -129,7 +135,8 @@ def test_zero_pad_tail_is_bound():
     proof.p_trace[6][g.n_rows + 1] = 12345          # inside the padded tail
     ok, _ = wc.verify_bridge(enr.root, enr.manifest_digest, meta,
                              proof, S_R1, PARAMS,
-                             trusted_identity=enr.identity(), layout=enr.layout)
+                             trusted_identity=enr.identity(), layout=enr.layout,
+                               t_cols=T_COLS)
     assert not ok, "padded tail is not bound"
 
 
@@ -145,7 +152,8 @@ def test_tampered_pi_rejects():
     proof = wc.prove_bridge(enr_fake, S_R1)
     ok, why = wc.verify_bridge(enr.root, enr.manifest_digest, meta,
                                proof, S_R1, PARAMS,
-                               trusted_identity=enr.identity(), layout=enr.layout)
+                               trusted_identity=enr.identity(), layout=enr.layout,
+                               t_cols=T_COLS)
     assert not ok, "substituted masks accepted"
 
 
@@ -157,7 +165,8 @@ def test_geometry_is_bound():
     other = wc.WcParams(B=48, lam=16, N_w=256, q_w=8)   # same K_w, bigger N_w
     ok, why = wc.verify_bridge(enr.root, enr.manifest_digest, meta,
                                proof, S_R1, other,
-                               trusted_identity=enr.identity(), layout=enr.layout)
+                               trusted_identity=enr.identity(), layout=enr.layout,
+                               t_cols=T_COLS)
     assert not ok, "geometry downgrade accepted"
 
 
@@ -170,7 +179,8 @@ def test_a_redeclared_block_boundary_names_another_identity():
     moved = wc.WcParams(B=40, lam=24, N_w=128, q_w=8)
     ok, why = wc.verify_bridge(enr.root, enr.manifest_digest, meta,
                                proof, S_R1, moved,
-                               trusted_identity=enr.identity(), layout=enr.layout)
+                               trusted_identity=enr.identity(), layout=enr.layout,
+                               t_cols=T_COLS)
     assert not ok and "enrollment identity" in why, why
 
 
@@ -182,7 +192,8 @@ def test_duplicate_eta_rejects():
     proof.eta_idx = [proof.eta_idx[0]] * PARAMS.q_w
     ok, why = wc.verify_bridge(enr.root, enr.manifest_digest, meta,
                                proof, S_R1, PARAMS,
-                               trusted_identity=enr.identity(), layout=enr.layout)
+                               trusted_identity=enr.identity(), layout=enr.layout,
+                               t_cols=T_COLS)
     assert not ok and "distinct" in why, why
 
 
@@ -323,11 +334,13 @@ def test_relabeled_columns_do_not_authenticate_a_changed_projection():
     try:
         assert wc.verify_bridge(enr.root, enr.manifest_digest, meta, forged,
                                 S_R1, PARAMS,
-                                trusted_identity=enr.identity(), layout=enr.layout)[0]
+                                trusted_identity=enr.identity(), layout=enr.layout,
+                               t_cols=T_COLS)[0]
     finally:
         wc._verify_path = real
     # ... and the index-bound check rejects it at the paths
     ok, why = wc.verify_bridge(enr.root, enr.manifest_digest, meta, forged,
                                S_R1, PARAMS,
-                               trusted_identity=enr.identity(), layout=enr.layout)
+                               trusted_identity=enr.identity(), layout=enr.layout,
+                               t_cols=T_COLS)
     assert not ok and "merkle path fails" in why, why

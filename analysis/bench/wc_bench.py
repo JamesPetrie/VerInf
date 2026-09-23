@@ -76,7 +76,8 @@ def main():
     t0 = time.time()
     ok, why = wc.verify_bridge(enr.root, enr.manifest_digest, meta,
                                proof, b"\x22" * 32, params,
-                               trusted_identity=enr.identity(), layout=enr.layout)
+                               trusted_identity=enr.identity(), layout=enr.layout,
+                               t_cols=54)   # the production Ligero opening count
     t_verify = time.time() - t0
     assert ok, why
 

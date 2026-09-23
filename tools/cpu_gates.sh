@@ -28,6 +28,7 @@ SUITES=(
   prover/tests/test_shard_worker.py
   prover/tests/test_statement_stability.py
   prover/tests/test_token_recorder.py
+  prover/tests/test_wc_bridge_cpu.py
   prover/tests/test_wc_identity.py
   prover/tests/test_weight_provenance.py
   layergkr/tests/test_count_model.py
