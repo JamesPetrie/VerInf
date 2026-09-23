@@ -255,3 +255,15 @@ def test_lazy_enrollment_end_to_end():
     proof = tape.prove(weight_enrollment=enr)
     acc, msg = rust_verify_tape(tape, proof, seed=None)
     assert acc, f"lazy-enrollment proof rejected: {msg}"
+
+
+def test_repeated_bridged_proofs_keep_one_statement():
+    """Review 2026-09-23 finding 8: the first proof attaches its P_trace pin to
+    the claim; a second proof of the same tape must state the same claims
+    (the pin is prover state, not statement), and still verify."""
+    tape, first, enr = _prove_with_flag()
+    second = tape.prove(weight_enrollment=enr)
+    assert first.statement_digest == second.statement_digest, \
+        "a tape's statement digest changed after its first bridged proof"
+    acc, msg = rust_verify_tape(tape, second, seed=None)
+    assert acc, f"second bridged proof rejected: {msg}"

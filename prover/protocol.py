@@ -416,7 +416,11 @@ def claims_to_json(claim_list, cfg: Config) -> dict:
     tbl_cache = {}          # share one serialized dict per table id (see _ser_table)
     out = []
     for cl in claim_list:
-        fields = {k: _ser_value(v, tbl_cache) for k, v in _obj_vars(cl).items()}
+        # An underscore attribute is prover-side state attached for one proof
+        # (the bridge's _bridge_pin), never a statement field: serializing it
+        # changed a tape's statement bytes after its first bridged proof.
+        fields = {k: _ser_value(v, tbl_cache) for k, v in _obj_vars(cl).items()
+                  if not k.startswith("_")}
         out.append({"op": type(cl).__name__, "fields": fields})
     # Explicit settle order (= _distinct_tables, by table id) so the Rust side
     # need not re-derive it from field-iteration order (which JSON does not
