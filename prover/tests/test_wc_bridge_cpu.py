@@ -55,7 +55,8 @@ def _proof(used_width=4, params=PARAMS):
     alpha = wc.pr.challenge(late, 0, "alpha")
     c = [(alpha * x) % P for x in proj]
     eta = wc.pr.random_columns_n(wc.pr.fs_seed("wc/eta", late), params.q_w, params.N_w)
-    return wc.BridgeProof(RHO, pt, pi, c, [_eval(c, DOMAIN[i]) for i in eta], eta,
+    return wc.BridgeProof({n: list(r) for n, r in RHO.items()}, pt, pi, c,
+                          [_eval(c, DOMAIN[i]) for i in eta], eta,
                           {i: COLUMNS[i] for i in eta},
                           {i: wc._path(LEVELS, i) for i in eta})
 
@@ -98,13 +99,13 @@ def test_opening_count_is_checked_though_outside_the_identity():
 def test_malformed_arrays_reject_instead_of_raising():
     pf = _proof()
     pf.p_trace = {4: pf.p_trace[4][:-1]}
-    assert _verify(pf) == (False, "p_trace length")
+    assert _verify(pf) == (False, "p_trace shape")
     pf = _proof()
     pf.pi = {4: torch.zeros(2, PARAMS.lam, dtype=torch.uint64)}
     assert _verify(pf) == (False, "pi shape")
     pf = _proof()
     pf.v = pf.v[:-1]
-    assert _verify(pf) == (False, "v/eta length != q_w")
+    assert _verify(pf) == (False, "v/eta are not q_w field elements")
     pf = _proof()
     del pf.opened[pf.eta_idx[3]]
     assert _verify(pf) == (False, "column or path missing at eta[3]")
@@ -112,3 +113,43 @@ def test_malformed_arrays_reject_instead_of_raising():
     i = pf.eta_idx[0]
     pf.opened[i] = torch.cat([pf.opened[i], torch.zeros(1, dtype=torch.uint64)])
     assert _verify(pf) == (False, "column length at eta[0]")
+
+
+def test_malformed_forms_reject_before_identity_or_transcript_work():
+    """Review of the second round, 2026-09-23: the form is checked first, so
+    none of these reaches the identity hash, the R2 commitment or the
+    aggregation (they raised ZeroDivisionError, KeyError and MemoryError)."""
+    # B = 0 divided in the identity's block count
+    zero_b = wc.WcParams(B=0, lam=16, N_w=64, q_w=40)
+    assert _verify(_proof(), params=zero_b) == (
+        False, "lam and B must be positive: the masks are the hiding")
+    # an absent group was read by the R2 commitment
+    pf = _proof()
+    del pf.pi[4]
+    assert _verify(pf) == (False, "pi groups are not the enrolled widths")
+    pf = _proof()
+    pf.p_trace[5] = pf.p_trace[4]
+    assert _verify(pf) == (False, "p_trace groups are not the enrolled widths")
+    # the standalone entrypoint reads rho before the transcript
+    pf = _proof()
+    del pf.rho[4]
+    ok, why = wc.verify_bridge(ROOT, MANIFEST, {4: (1, 4)}, pf, b"r" * 32, PARAMS,
+                               trusted_identity=TRUSTED, layout=LAYOUT, t_cols=T_COLS)
+    assert (ok, why) == (False, "rho groups are not the enrolled widths")
+    # the right element count in the wrong rank reached the aggregation
+    pf = _proof()
+    pf.p_trace = {4: pf.p_trace[4].reshape(2, 6)}
+    assert _verify(pf) == (False, "p_trace shape")
+    pf = _proof()
+    pf.p_trace = {4: pf.p_trace[4].to(torch.int64)}
+    assert _verify(pf) == (False, "p_trace shape")
+    # nested or non-integer scalars
+    pf = _proof()
+    pf.c = [[x] for x in pf.c]
+    assert _verify(pf) == (False, "c is not K_w field elements")
+    pf = _proof()
+    i = pf.eta_idx[2]
+    pf.opened[i] = pf.opened[i].reshape(-1, 1)
+    assert _verify(pf) == (False, "column shape at eta[2]")
+    # malformed group metadata values are a reject too
+    assert _verify(_proof(), meta_width=None)[1].startswith("width 4: group metadata")

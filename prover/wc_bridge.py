@@ -27,6 +27,7 @@ prove_streaming transcript and the message cache is part 3.
 from __future__ import annotations
 
 import math
+import numbers
 
 import blake3
 from dataclasses import dataclass, field
@@ -546,13 +547,35 @@ def _identity_ok(root: bytes, manifest_digest: bytes,
     if enrollment_identity(root, manifest_digest, params, layout) != trusted_identity:
         return False, ("enrollment identity (root, geometry, layout, manifest) "
                        "is not the trusted identity")
-    if sorted(group_meta) != sorted(layout):
+    return _group_meta_ok(group_meta, params, layout)
+
+
+def _group_meta_ok(group_meta, params: WcParams,
+                   layout: Dict[int, List[int]]) -> Tuple[bool, str]:
+    """(blocks, width) for each of the layout's widths, exactly: the bridge
+    equation combines `width` outputs, so a smaller value there would drop
+    the others unchecked. Needs B > 0 (_geometry_ok first)."""
+    if not isinstance(group_meta, dict) or set(group_meta) != set(layout):
         return False, "enrolled widths are not the claim set's"
     for n, segs in layout.items():
-        # (blocks, width) exactly: the bridge equation combines `width`
-        # outputs, so a smaller value there would drop the others unchecked
-        if tuple(group_meta[n]) != (-(-sum(segs) // params.B), n):
+        v = group_meta[n]
+        if not isinstance(v, (tuple, list)) or tuple(v) != (-(-sum(segs) // params.B), n):
             return False, f"width {n}: group metadata is not the layout's (blocks, width)"
+    return True, "ok"
+
+
+def _wire_ok(group_meta, proof: BridgeProof, params: WcParams, t_cols: int,
+             layout: Dict[int, List[int]]) -> Tuple[bool, str]:
+    """Everything about the proof's form, before the identity hash or any
+    transcript reads it: the geometry, the group metadata against the
+    verifier's own layout, and every array's exact type and shape (the Rust
+    twin's checks). A malformed proof is a REJECT, never an exception."""
+    for check in (lambda: _geometry_ok(params, t_cols),
+                  lambda: _group_meta_ok(group_meta, params, layout),
+                  lambda: _shapes_ok(group_meta, proof, params)):
+        ok, why = check()
+        if not ok:
+            return False, why
     return True, "ok"
 
 
@@ -568,10 +591,12 @@ def verify_bridge_hosted(root: bytes, manifest_digest: bytes,
     checks identity against it instead of deriving its own. t_cols is the
     verifier's own count of opened Ligero columns, which q_w is floored
     against (never read off the proof)."""
-    ok, why = _identity_ok(root, manifest_digest, group_meta, params,
-                           trusted_identity, layout)
-    if not ok:
-        return False, why
+    for check in (lambda: _wire_ok(group_meta, proof, params, t_cols, layout),
+                  lambda: _identity_ok(root, manifest_digest, group_meta, params,
+                                       trusted_identity, layout)):
+        ok, why = check()
+        if not ok:
+            return False, why
     for n in sorted(group_meta):
         if proof.rho.get(n) != list(expected_rho[n]):
             return False, "rho mismatch vs host transcript"
@@ -586,10 +611,12 @@ def verify_bridge(root: bytes, manifest_digest: bytes,
                   params: WcParams, *, trusted_identity: bytes,
                   layout: Dict[int, List[int]],
                   t_cols: int) -> Tuple[bool, str]:
-    ok, why = _identity_ok(root, manifest_digest, group_meta, params,
-                           trusted_identity, layout)
-    if not ok:
-        return False, why
+    for check in (lambda: _wire_ok(group_meta, proof, params, t_cols, layout),
+                  lambda: _identity_ok(root, manifest_digest, group_meta, params,
+                                       trusted_identity, layout)):
+        ok, why = check()
+        if not ok:
+            return False, why
     # recompute every coin — none is trusted from the proof (spec §0.4);
     # the geometry is part of every coin (review §5.5)
     s_rho = pr.fs_seed("wc/rho", s_r1, root, manifest_digest,
@@ -623,22 +650,38 @@ def _geometry_ok(params: WcParams, t_cols: int) -> Tuple[bool, str]:
     return True, "ok"
 
 
+def _ints(seq, n: int) -> bool:
+    """A flat sequence of exactly n integers (Python or numpy; never a bool,
+    a float or a nested sequence)."""
+    return (isinstance(seq, (list, tuple)) and len(seq) == n
+            and all(isinstance(x, numbers.Integral) and not isinstance(x, bool)
+                    for x in seq))
+
+
 def _shapes_ok(group_meta: Dict[int, Tuple[int, int]], proof: BridgeProof,
                params: WcParams) -> Tuple[bool, str]:
-    """Every wire array has the length the geometry and the groups give it, so
-    a malformed proof is a REJECT, not an IndexError (the Rust twin's checks)."""
-    if len(proof.c) != params.K_w:
-        return False, "c length != K_w"
-    if len(proof.v) != params.q_w or len(proof.eta_idx) != params.q_w:
-        return False, "v/eta length != q_w"
+    """Every wire array has exactly the type and shape the geometry and the
+    groups give it (group_meta already checked against the layout), so a
+    malformed proof is a REJECT, not an exception."""
+    if not _ints(proof.c, params.K_w):
+        return False, "c is not K_w field elements"
+    if not _ints(proof.v, params.q_w) or not _ints(proof.eta_idx, params.q_w):
+        return False, "v/eta are not q_w field elements"
+    for name in ("p_trace", "pi", "rho"):
+        arr = getattr(proof, name)
+        if not isinstance(arr, dict) or set(arr) != set(group_meta):
+            return False, f"{name} groups are not the enrolled widths"
+    if not isinstance(proof.opened, dict) or not isinstance(proof.paths, dict):
+        return False, "openings malformed"
     for n, (n_blocks, _w) in group_meta.items():
-        if n not in proof.p_trace or n not in proof.pi or n not in proof.rho:
-            return False, f"width {n}: group missing from the proof"
-        if len(proof.p_trace[n].reshape(-1)) != n_blocks * params.B:
-            return False, "p_trace length"
-        if tuple(proof.pi[n].shape) != (n_blocks, params.lam):
+        pt, pim = proof.p_trace[n], proof.pi[n]
+        if not (isinstance(pt, torch.Tensor) and pt.dtype == torch.uint64
+                and tuple(pt.shape) == (n_blocks * params.B,)):
+            return False, "p_trace shape"
+        if not (isinstance(pim, torch.Tensor) and pim.dtype == torch.uint64
+                and tuple(pim.shape) == (n_blocks, params.lam)):
             return False, "pi shape"
-        if len(proof.rho[n]) != n:
+        if not _ints(list(proof.rho[n]), n):
             return False, f"width {n}: rho length"
     return True, "ok"
 
@@ -646,9 +689,7 @@ def _shapes_ok(group_meta: Dict[int, Tuple[int, int]], proof: BridgeProof,
 def _verify_core(root: bytes, group_meta: Dict[int, Tuple[int, int]],
                  proof: BridgeProof, s_late: bytes,
                  params: WcParams, t_cols: int) -> Tuple[bool, str]:
-    for check in (_geometry_ok(params, t_cols), _shapes_ok(group_meta, proof, params)):
-        if not check[0]:
-            return check
+    # (the entrypoints checked the geometry and every array's form: _wire_ok)
     eta_idx = pr.random_columns_n(pr.fs_seed("wc/eta", s_late),
                                   params.q_w, params.N_w)
     # H_qw assumes sampling WITHOUT replacement (review §5.3) — check the
@@ -681,10 +722,12 @@ def _verify_core(root: bytes, group_meta: Dict[int, Tuple[int, int]],
             return False, f"column or path missing at eta[{l}]"
         col = proof.opened[i]
         if isinstance(col, torch.Tensor):       # the CPU twin works in Python ints
+            if col.dim() != 1:
+                return False, f"column shape at eta[{l}]"
             # unsigned values as they are: an int64 view would shift every
             # value at or above 2^63 (review, 2026-09-20)
             col = (col if col.dtype == torch.uint64 else col.view(torch.uint64)).cpu().tolist()
-        if len(col) != total:
+        if not _ints(col, total):
             return False, f"column length at eta[{l}]"
         if not _verify_path(_leaf(torch.tensor(col, dtype=torch.uint64)),
                             proof.paths[i], root, i, params.N_w):
