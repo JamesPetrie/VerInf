@@ -143,7 +143,7 @@ struct RawTop {
     #[serde(default)]
     python_accept: Option<bool>,
     // WC-LCRL-STC bridge materials (analysis/wc-lcrl-stc-spec.md 0.4):
-    // verified HERE against the enrollment root before compile consumes the
+    // verified HERE against the trusted enrollment identity before compile consumes the
     // P_trace pin for use_bridge claims.
     #[serde(default)]
     wc: Option<WcSection>,
@@ -478,7 +478,7 @@ fn conv_paths(m: HashMap<String, Vec<(String, u8)>>) -> HashMap<u64, Vec<([u8; 3
 
 fn main() {
     // argv: proof.json [EXPECTED_R_W_HEX] [EXPECTED_STATEMENT_DIGEST_HEX]
-    //       [EXPECTED_WC_ENROLLMENT_ROOT_HEX]
+    //       [EXPECTED_WC_ENROLLMENT_IDENTITY_HEX]  (wc_enrollment_identity, not the root)
     // The policy arguments come from OUTSIDE the proof (the runbook's trusted
     // enrolled weight root and trusted statement digest). They are optional
     // today so the existing test corpus still runs; the driver work (S4) makes
