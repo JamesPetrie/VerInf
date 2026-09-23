@@ -61,18 +61,19 @@ def rust_verify(claims, proof, seed, cfg):
     # tested in test_fiat_shamir.py.
     stmt = getattr(proof, "statement_digest", None)
     root_w = getattr(proof, "root_w", None)
-    # A wc-bridge proof's enrollment root is a SECOND trust anchor with its
-    # own policy slot (argv[4]); it is never passed in the weight-root slot,
-    # and a production proof carries both. Circular here like root_w; the
-    # enforcement negatives are in test_wc_bridge_rust_negatives.py.
+    # A wc-bridge proof's enrollment identity (root, geometry, layout,
+    # manifest) is a SECOND trust anchor with its own policy slot (argv[4]);
+    # it is never passed in the weight-root slot, and a production proof
+    # carries both. Circular here like root_w; the enforcement negatives are
+    # in test_wc_bridge_rust_negatives.py.
     wc = getattr(proof, "wc_bridge", None)
-    wc_root = wc["root"] if wc is not None else None
+    wc_identity = wc["identity"] if wc is not None else None
     fd, path = tempfile.mkstemp(suffix=".json")
     os.close(fd)
     argv = [_verify_proof_bin(), path,
             root_w.hex() if root_w else "-",
             stmt.hex() if stmt else "-",
-            wc_root.hex() if wc_root else "-"]
+            wc_identity.hex() if wc_identity else "-"]
     try:
         dump_proof(path, pr.claims_to_json(claims, cfg), seeds, proof, Q, None)
         r = subprocess.run(argv, capture_output=True, text=True)

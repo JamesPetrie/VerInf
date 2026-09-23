@@ -220,7 +220,7 @@ def main(argv=None) -> int:
             f"maverick|{a.from_gguf}|S={1 << 12}".encode(), _wcb.WcParams())
         t_wc_enroll = time.time() - t0
         log(f"wc enrollment (streaming coefficient-RS, throwaway) {t_wc_enroll:.1f}s "
-            f"root {wc_enr.root.hex()[:16]}…")
+            f"root {wc_enr.root.hex()[:16]}… identity {wc_enr.identity().hex()[:16]}…")
         log(_wcb.wc_times_line())
         _wcb.wc_times_reset()
 

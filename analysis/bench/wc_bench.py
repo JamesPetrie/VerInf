@@ -75,7 +75,8 @@ def main():
     meta = {n: (enr.groups[n].n_blocks, n) for n in enr.groups}
     t0 = time.time()
     ok, why = wc.verify_bridge(enr.root, enr.manifest_digest, meta,
-                               proof, b"\x22" * 32, params)
+                               proof, b"\x22" * 32, params,
+                               trusted_identity=enr.identity(), layout=enr.layout)
     t_verify = time.time() - t0
     assert ok, why
 

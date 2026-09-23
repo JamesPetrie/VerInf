@@ -45,7 +45,8 @@ def test_honest_bridge_accepts():
     enr, meta = _toy_enrollment()
     proof = wc.prove_bridge(enr, S_R1)
     ok, why = wc.verify_bridge(enr.root, enr.manifest_digest, meta,
-                               proof, S_R1, PARAMS)
+                               proof, S_R1, PARAMS,
+                               trusted_identity=enr.identity(), layout=enr.layout)
     assert ok, why
     # and P_trace really is W rho, checked independently in python ints
     n = 4
@@ -72,7 +73,8 @@ def test_tampered_p_trace_rejects():
     # a cheating prover would instead recompute c/v from the fake P_trace, so
     # rebuild them the way the prover does — the bridge equation still fails.
     ok, why = wc.verify_bridge(enr.root, enr.manifest_digest, meta,
-                               proof, S_R1, PARAMS)
+                               proof, S_R1, PARAMS,
+                               trusted_identity=enr.identity(), layout=enr.layout)
     assert not ok, "tampered P_trace accepted"
 
 
@@ -89,7 +91,8 @@ def test_recommitted_fake_projection_rejects():
         (int(enr_fake.groups[4].weights[3, 2].item()) + 5) % P
     proof = wc.prove_bridge(enr_fake, S_R1)      # internally consistent lie
     ok, why = wc.verify_bridge(enr.root, enr.manifest_digest, meta,
-                               proof, S_R1, PARAMS)
+                               proof, S_R1, PARAMS,
+                               trusted_identity=enr.identity(), layout=enr.layout)
     assert not ok, "re-committed fake projection accepted"
     assert "bridge equation" in why or "merkle" in why, why
 
@@ -100,7 +103,8 @@ def test_tampered_enrollment_column_rejects():
     i = proof.eta_idx[0]
     proof.opened[i][0] = (int(proof.opened[i][0]) + 1) % P
     ok, why = wc.verify_bridge(enr.root, enr.manifest_digest, meta,
-                               proof, S_R1, PARAMS)
+                               proof, S_R1, PARAMS,
+                               trusted_identity=enr.identity(), layout=enr.layout)
     assert not ok and "merkle" in why, why
 
 
@@ -110,7 +114,8 @@ def test_foreign_eta_rejects():
     proof = wc.prove_bridge(enr, S_R1)
     proof.eta_idx = list(range(PARAMS.q_w))          # attacker-chosen points
     ok, why = wc.verify_bridge(enr.root, enr.manifest_digest, meta,
-                               proof, S_R1, PARAMS)
+                               proof, S_R1, PARAMS,
+                               trusted_identity=enr.identity(), layout=enr.layout)
     assert not ok and "eta" in why, why
 
 
@@ -123,7 +128,8 @@ def test_zero_pad_tail_is_bound():
     assert g.n_blocks * PARAMS.B > g.n_rows, "toy shape should need padding"
     proof.p_trace[6][g.n_rows + 1] = 12345          # inside the padded tail
     ok, _ = wc.verify_bridge(enr.root, enr.manifest_digest, meta,
-                             proof, S_R1, PARAMS)
+                             proof, S_R1, PARAMS,
+                             trusted_identity=enr.identity(), layout=enr.layout)
     assert not ok, "padded tail is not bound"
 
 
@@ -138,7 +144,8 @@ def test_tampered_pi_rejects():
         b"other-mask-seed", b"manifest-v1", PARAMS)   # pi != z^T rho for root
     proof = wc.prove_bridge(enr_fake, S_R1)
     ok, why = wc.verify_bridge(enr.root, enr.manifest_digest, meta,
-                               proof, S_R1, PARAMS)
+                               proof, S_R1, PARAMS,
+                               trusted_identity=enr.identity(), layout=enr.layout)
     assert not ok, "substituted masks accepted"
 
 
@@ -149,8 +156,22 @@ def test_geometry_is_bound():
     proof = wc.prove_bridge(enr, S_R1)
     other = wc.WcParams(B=48, lam=16, N_w=256, q_w=8)   # same K_w, bigger N_w
     ok, why = wc.verify_bridge(enr.root, enr.manifest_digest, meta,
-                               proof, S_R1, other)
+                               proof, S_R1, other,
+                               trusted_identity=enr.identity(), layout=enr.layout)
     assert not ok, "geometry downgrade accepted"
+
+
+def test_a_redeclared_block_boundary_names_another_identity():
+    """Review 2026-09-23 finding 2: the same K_w split elsewhere (B = 40,
+    lam = 24) keeps the root and would read enrolled weights as masks; read
+    under the verifier's layout it is not the trusted enrollment."""
+    enr, meta = _toy_enrollment()
+    proof = wc.prove_bridge(enr, S_R1)
+    moved = wc.WcParams(B=40, lam=24, N_w=128, q_w=8)
+    ok, why = wc.verify_bridge(enr.root, enr.manifest_digest, meta,
+                               proof, S_R1, moved,
+                               trusted_identity=enr.identity(), layout=enr.layout)
+    assert not ok and "enrollment identity" in why, why
 
 
 def test_duplicate_eta_rejects():
@@ -160,7 +181,8 @@ def test_duplicate_eta_rejects():
     proof = wc.prove_bridge(enr, S_R1)
     proof.eta_idx = [proof.eta_idx[0]] * PARAMS.q_w
     ok, why = wc.verify_bridge(enr.root, enr.manifest_digest, meta,
-                               proof, S_R1, PARAMS)
+                               proof, S_R1, PARAMS,
+                               trusted_identity=enr.identity(), layout=enr.layout)
     assert not ok and "distinct" in why, why
 
 
@@ -300,10 +322,12 @@ def test_relabeled_columns_do_not_authenticate_a_changed_projection():
     wc._verify_path = walk
     try:
         assert wc.verify_bridge(enr.root, enr.manifest_digest, meta, forged,
-                                S_R1, PARAMS)[0]
+                                S_R1, PARAMS,
+                                trusted_identity=enr.identity(), layout=enr.layout)[0]
     finally:
         wc._verify_path = real
     # ... and the index-bound check rejects it at the paths
     ok, why = wc.verify_bridge(enr.root, enr.manifest_digest, meta, forged,
-                               S_R1, PARAMS)
+                               S_R1, PARAMS,
+                               trusted_identity=enr.identity(), layout=enr.layout)
     assert not ok and "merkle path fails" in why, why

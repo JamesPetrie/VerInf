@@ -4176,6 +4176,10 @@ def _prove_streaming_body(tape, cfg, seed=None, weight_commitment=None, wnew_see
             got = weight_enrollment.groups[width].n_rows
             assert got == want, (
                 f"enrollment width {width} has {got} rows, tape needs {want}")
+        # ... in the claim set's order: the verifier reads the enrollment's
+        # identity under the claim map's layout, never the enrollment's own
+        assert weight_enrollment.layout == _wcb.claim_layout(cmap), \
+            "the enrollment's row layout is not the tape's claim layout"
         if isinstance(weight_enrollment, _wcb.LazyEnrollment):
             # production path: P_trace comes from the SAME fused projections
             # the R2 sweep already computed (byte-equal to W rho — the link
@@ -4205,6 +4209,9 @@ def _prove_streaming_body(tape, cfg, seed=None, weight_commitment=None, wnew_see
                                      _s_late),
             "root": weight_enrollment.root,
             "manifest_digest": weight_enrollment.manifest_digest,
+            # what the verifier's policy slot is given (an auditor's
+            # certificate in production; the prover's own value in tests)
+            "identity": weight_enrollment.identity(),
             "group_meta": {n: (g.n_blocks, n)
                            for n, g in weight_enrollment.groups.items()},
             "params": weight_enrollment.params,

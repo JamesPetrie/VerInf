@@ -26,7 +26,6 @@ prove_streaming transcript and the message cache is part 3.
 """
 from __future__ import annotations
 
-import hashlib
 import math
 
 import blake3
@@ -115,6 +114,55 @@ def _params_bytes(params: WcParams) -> bytes:
     return b"wc-geom" + b"".join(
         v.to_bytes(8, "little")
         for v in (params.B, params.lam, params.N_w, params.q_w))
+
+
+# The enrollment's trusted identity: what an auditor certifies and the
+# verifier's policy slot carries (argv[4]). The Merkle root alone commits the
+# columns but not how they are read, so the geometry, the ordered layout of the
+# claims' rows and the padding rule are hashed with it; a proof that declares
+# another split between weights and masks, or another row order, names
+# another identity. Versioned and domain-separated; the Rust twin is
+# wc_enrollment_identity and the two encodings are pinned by a shared vector.
+IDENTITY_DOMAIN = b"verinf/wc-enrollment-identity/v1"
+IDENTITY_RULE = (b"polys=width-asc,block,output;coeffs=weights[0,B),masks[B,B+lam);"
+                 b"rows=segments-in-claim-order,zero-padded-to-B;"
+                 b"domain=omega^i,omega=7^((P-1)/N_w);"
+                 b"leaf=blake3('wc-leaf'||blake3(column-u64le))")
+
+
+def claim_layout(cmap) -> Dict[int, List[int]]:
+    """width -> the ordered row counts of its bridged claims (E*K each), from
+    bridged_claim_map: the layout the enrollment concatenates."""
+    layout: Dict[int, List[int]] = {}
+    for _ci, width, _off, ek in cmap:
+        layout.setdefault(width, []).append(ek)
+    return layout
+
+
+def enrollment_identity(root: bytes, manifest_digest: bytes, params: WcParams,
+                        layout: Dict[int, List[int]]) -> bytes:
+    def u64(v):
+        return int(v).to_bytes(8, "little")
+    h = blake3.blake3()
+    for tag in (IDENTITY_DOMAIN, IDENTITY_RULE):
+        h.update(u64(len(tag)) + tag)
+    assert len(root) == 32 and len(manifest_digest) == 32
+    h.update(root + manifest_digest)
+    h.update(u64(params.B) + u64(params.lam) + u64(params.N_w))
+    h.update(u64(len(layout)))
+    for width in sorted(layout):
+        segs = layout[width]
+        rows = sum(segs)
+        n_blocks = -(-rows // params.B)
+        h.update(u64(width) + u64(len(segs)) + b"".join(u64(s) for s in segs))
+        h.update(u64(rows) + u64(n_blocks) + u64(n_blocks * params.B - rows))
+    return h.digest()
+
+
+def manifest_digest_of(manifest: bytes) -> bytes:
+    """One definition for both builds: a 32-byte manifest is already a digest,
+    anything else is hashed with blake3."""
+    return manifest if len(manifest) == 32 else blake3.blake3(manifest).digest()
 
 
 class LedgerExhausted(Exception):
@@ -271,19 +319,26 @@ class Enrollment:
     root: bytes
     levels: List[List[bytes]] = field(repr=False)
     manifest_digest: bytes = b""
+    layout: Dict[int, List[int]] = field(default_factory=dict)
 
     def poly_count(self) -> int:
         return sum(g.n_blocks * g.width for g in self.groups.values())
+
+    def identity(self) -> bytes:
+        return enrollment_identity(self.root, self.manifest_digest,
+                                   self.params, self.layout)
 
 
 def build_enrollment(weight_groups: Dict[int, torch.Tensor],
                      mask_seed: bytes,
                      manifest: bytes,
-                     params: WcParams) -> Enrollment:
+                     params: WcParams,
+                     layout: Optional[Dict[int, List[int]]] = None) -> Enrollment:
     """weight_groups: width n -> (rows, n) uint64 CUDA tensor of decoded
     weights (input coords concatenated across all maps of that width, spec
     §0.1).  Rows are zero-padded to a multiple of B — the manifest records
-    the true row count, so padding is not free weight material."""
+    the true row count, so padding is not free weight material.  `layout`
+    (width -> ordered row segments) defaults to one segment per width."""
     groups: Dict[int, EnrolledGroup] = {}
     for gi, n in enumerate(sorted(weight_groups)):
         W = weight_groups[n]
@@ -312,8 +367,12 @@ def build_enrollment(weight_groups: Dict[int, torch.Tensor],
     all_cw = torch.cat([groups[n].codewords for n in sorted(groups)])
     leaves = [_leaf(all_cw[:, i]) for i in range(params.N_w)]
     levels = _tree(leaves)
+    if layout is None:
+        layout = {n: [g.n_rows] for n, g in groups.items()}
+    assert {n: sum(s) for n, s in layout.items()} == \
+        {n: g.n_rows for n, g in groups.items()}, "layout does not cover the rows"
     return Enrollment(params, groups, levels[-1][0], levels,
-                      hashlib.sha256(manifest).digest())
+                      manifest_digest_of(manifest), layout)
 
 
 # ---------------------------------------------------------------------------
@@ -477,14 +536,37 @@ def hosted_s_late(s_bind: bytes, root: bytes, manifest_digest: bytes,
                       _params_bytes(params), _commit_r2(p_trace, pi))
 
 
+def _identity_ok(root: bytes, manifest_digest: bytes,
+                 group_meta: Dict[int, Tuple[int, int]], params: WcParams,
+                 trusted_identity: bytes,
+                 layout: Dict[int, List[int]]) -> Tuple[bool, str]:
+    """The enrollment named by the proof (root, manifest digest, geometry) read
+    under the verifier's OWN layout (from the claim set, never the wire) must
+    be the trusted identity, and the proof's blocks must be that layout's."""
+    if enrollment_identity(root, manifest_digest, params, layout) != trusted_identity:
+        return False, ("enrollment identity (root, geometry, layout, manifest) "
+                       "is not the trusted identity")
+    if sorted(group_meta) != sorted(layout):
+        return False, "enrolled widths are not the claim set's"
+    for n, segs in layout.items():
+        if group_meta[n][0] != -(-sum(segs) // params.B):
+            return False, f"width {n}: block count is not the layout's"
+    return True, "ok"
+
+
 def verify_bridge_hosted(root: bytes, manifest_digest: bytes,
                          group_meta: Dict[int, Tuple[int, int]],
                          proof: BridgeProof, s_bind: bytes,
                          expected_rho: Dict[int, List[int]],
-                         params: WcParams) -> Tuple[bool, str]:
+                         params: WcParams, *, trusted_identity: bytes,
+                         layout: Dict[int, List[int]]) -> Tuple[bool, str]:
     """Hosted-mode verify: rho is the HOST transcript's coin (the claim's
     routed_sample output, recomputed by the host verifier) — the bridge
     checks identity against it instead of deriving its own."""
+    ok, why = _identity_ok(root, manifest_digest, group_meta, params,
+                           trusted_identity, layout)
+    if not ok:
+        return False, why
     for n in sorted(group_meta):
         if proof.rho.get(n) != list(expected_rho[n]):
             return False, "rho mismatch vs host transcript"
@@ -496,7 +578,12 @@ def verify_bridge_hosted(root: bytes, manifest_digest: bytes,
 def verify_bridge(root: bytes, manifest_digest: bytes,
                   group_meta: Dict[int, Tuple[int, int]],   # width->(blocks,n)
                   proof: BridgeProof, s_r1: bytes,
-                  params: WcParams) -> Tuple[bool, str]:
+                  params: WcParams, *, trusted_identity: bytes,
+                  layout: Dict[int, List[int]]) -> Tuple[bool, str]:
+    ok, why = _identity_ok(root, manifest_digest, group_meta, params,
+                           trusted_identity, layout)
+    if not ok:
+        return False, why
     # recompute every coin — none is trusted from the proof (spec §0.4);
     # the geometry is part of every coin (review §5.5)
     s_rho = pr.fs_seed("wc/rho", s_r1, root, manifest_digest,
@@ -607,7 +694,7 @@ def enroll_tape(tape, mask_seed: bytes, manifest: bytes,
                 flat.reshape(c.K, c.J).cuda())
     return build_enrollment(
         {n: torch.cat(rows) for n, rows in groups.items()},
-        mask_seed, manifest, params)
+        mask_seed, manifest, params, claim_layout(cmap))
 
 
 class LazyEnrollment:
@@ -619,12 +706,16 @@ class LazyEnrollment:
     in the SAME canonical order every time (bridged_claim_map order)."""
 
     def __init__(self, params: WcParams, mask_seed: bytes, manifest: bytes,
-                 unit_stream, rows_per_width: Dict[int, int]):
+                 unit_stream, rows_per_width: Dict[int, int],
+                 layout: Optional[Dict[int, List[int]]] = None):
         from core import _make_merkle_acc
         self.params = params
         self.mask_seed = mask_seed
-        self.manifest_digest = blake3.blake3(manifest).digest() if len(
-            manifest) != 32 else manifest
+        self.manifest_digest = manifest_digest_of(manifest)
+        self.layout = (dict(layout) if layout is not None
+                       else {n: [r] for n, r in rows_per_width.items()})
+        assert {n: sum(s) for n, s in self.layout.items()} == dict(rows_per_width), \
+            "layout does not cover the rows"
         self.unit_stream = unit_stream
         self.blocks_per_width = {n: -(-r // params.B)
                                  for n, r in rows_per_width.items()}
@@ -641,6 +732,10 @@ class LazyEnrollment:
                       for i in range(params.N_w)]
             self.levels = _tree(leaves)
             self.root = self.levels[-1][0]
+
+    def identity(self) -> bytes:
+        return enrollment_identity(self.root, self.manifest_digest,
+                                   self.params, self.layout)
 
     @property
     def groups(self):
@@ -785,4 +880,5 @@ def lazy_enroll_tape(tape, mask_seed: bytes, manifest: bytes,
                 flat = val() if callable(val) else val
                 yield width, flat.reshape(c.K, c.J).cuda()
 
-    return LazyEnrollment(params, mask_seed, manifest, stream, rows_per_width)
+    return LazyEnrollment(params, mask_seed, manifest, stream, rows_per_width,
+                          claim_layout(cmap))

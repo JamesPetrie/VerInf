@@ -644,7 +644,10 @@ def main():
             tape, b"wc-maverick-mask-v1",
             f"maverick|{a.from_gguf}|S={1 << 12}".encode(),
             _wcb.WcParams())
+        # the identity (root, geometry, layout, manifest) is what the
+        # verifier's enrollment policy slot is given, never the bare root
         _log(f"enrollment_root={wc_enr.root.hex()} "
+             f"enrollment_identity={wc_enr.identity().hex()} "
              f"({time.time() - _t0:.1f}s)")
     claims_bytes, manifest, stmt = admission.prepare(tape, CFG)
     report = admission.load_report(a.admission_report)

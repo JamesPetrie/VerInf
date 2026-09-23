@@ -215,12 +215,58 @@ fn wc_path_ok(leaf: [u8; 32], path: &[(String, u8)], root: [u8; 32],
     h == root
 }
 
+// The enrollment's trusted identity (python twin: wc_bridge.enrollment_identity),
+// what the policy slot argv[4] carries. The Merkle root commits the columns but
+// not how they are read: the geometry, the ordered layout of the claims' rows
+// and the padding rule are hashed with it, so a proof declaring another split
+// between weights and masks, or another row order, names another identity.
+const WC_IDENTITY_DOMAIN: &[u8] = b"verinf/wc-enrollment-identity/v1";
+const WC_IDENTITY_RULE: &[u8] =
+    b"polys=width-asc,block,output;coeffs=weights[0,B),masks[B,B+lam);\
+rows=segments-in-claim-order,zero-padded-to-B;\
+domain=omega^i,omega=7^((P-1)/N_w);\
+leaf=blake3('wc-leaf'||blake3(column-u64le))";
+
+/// width -> the ordered row counts (E*K) of its bridged claims, width-sorted,
+/// from the CANONICAL claim map (python twin: wc_bridge.claim_layout).
+fn wc_layout(cmap: &[(usize, usize, usize, usize)]) -> Vec<(usize, Vec<usize>)> {
+    let mut widths: Vec<usize> = cmap.iter().map(|m| m.1).collect();
+    widths.sort();
+    widths.dedup();
+    widths.into_iter().map(|w| {
+        (w, cmap.iter().filter(|m| m.1 == w).map(|m| m.3).collect())
+    }).collect()
+}
+
+fn wc_enrollment_identity(root: &[u8; 32], manifest: &[u8; 32], b: usize, lam: usize,
+                          n_w: usize, layout: &[(usize, Vec<usize>)]) -> [u8; 32] {
+    let u64le = |v: usize| (v as u64).to_le_bytes();
+    let mut h = blake3::Hasher::new();
+    for tag in [WC_IDENTITY_DOMAIN, WC_IDENTITY_RULE] {
+        h.update(&u64le(tag.len()));
+        h.update(tag);
+    }
+    h.update(root);
+    h.update(manifest);
+    for v in [b, lam, n_w] { h.update(&u64le(v)); }
+    h.update(&u64le(layout.len()));
+    for (width, segs) in layout {
+        let rows: usize = segs.iter().sum();
+        let n_blocks = (rows + b - 1) / b;
+        h.update(&u64le(*width));
+        h.update(&u64le(segs.len()));
+        for &s in segs { h.update(&u64le(s)); }
+        for v in [rows, n_blocks, n_blocks * b - rows] { h.update(&u64le(v)); }
+    }
+    *h.finalize().as_bytes()
+}
+
 /// The full WC bridge check (python twin: wc_bridge.verify_bridge_hosted +
 /// _verify_core), width-general.  Every coin recomputed from (s_op, s_bind)
 /// — nothing from the wire is trusted.  `cmap` is the CANONICAL claim map
 /// recomputed from the claim set (never from the wire): (claim_index,
 /// width, row_off, E*K).  Returns the per-claim P_trace pins on ACCEPT.
-fn wc_verify(wc: &WcSection, s_op: &[u8], s_bind: &[u8],
+fn wc_verify(wc: &WcSection, trusted_identity: &[u8; 32], s_op: &[u8], s_bind: &[u8],
              cmap: &[(usize, usize, usize, usize)], t_cols: usize)
              -> Result<Vec<(usize, Vec<u64>)>, String> {
     use ligero_verifier::field::{add, mul, pow, P};
@@ -260,6 +306,18 @@ fn wc_verify(wc: &WcSection, s_op: &[u8], s_bind: &[u8],
         return Err(format!("q_w = {} below the floor ceil(0.416 * {t_cols}) for \
 {t_cols} opened Ligero columns", g.q_w));
     }
+    // The enrollment this proof names — its root and manifest, read under its
+    // declared geometry and the claim set's own layout — must be the trusted
+    // one. (The geometry is also pinned into every coin below; that stops a
+    // replay under other parameters, not a reinterpretation of the columns.)
+    let root = hex32_try(&wc.root).ok_or("enrollment root is not 32 hex bytes")?;
+    let manifest = hex32_try(&wc.manifest_digest)
+        .ok_or("manifest digest is not 32 hex bytes")?;
+    if wc_enrollment_identity(&root, &manifest, g.B, g.lam, g.N_w, &wc_layout(cmap))
+        != *trusted_identity {
+        return Err("enrollment identity (root, geometry, layout, manifest) is not \
+the trusted identity".into());
+    }
     if wc_c.len() != k_w { return Err("c length != K_w".into()); }
     let mut widths: Vec<usize> =
         wc.group_meta.keys().map(|w| w.parse().unwrap()).collect();
@@ -290,8 +348,6 @@ fn wc_verify(wc: &WcSection, s_op: &[u8], s_bind: &[u8],
     }
     // hosted late coin: s_bind + enrollment identity + geometry + R2 commit
     // (widths iterated SORTED, matching python's _commit_r2)
-    let root = hex32(&wc.root);
-    let manifest = hex32(&wc.manifest_digest);
     let mut geom = b"wc-geom".to_vec();
     for v in [g.B, g.lam, g.N_w, g.q_w] {
         geom.extend_from_slice(&(v as u64).to_le_bytes());
@@ -434,7 +490,7 @@ fn main() {
     let opt_hex = |i: usize| args.get(i).filter(|s| s.as_str() != "-").map(|s| hex32(s));
     let policy_root_w = opt_hex(2);
     let policy_stmt = opt_hex(3);
-    let policy_wc_root = opt_hex(4);
+    let policy_wc_identity = opt_hex(4);
     let f = std::fs::File::open(&path).expect("open proof.json");
     let top: RawTop = serde_json::from_reader(std::io::BufReader::new(f))
         .expect("parse proof.json");
@@ -556,21 +612,18 @@ fn main() {
     // The WC-bridge enrollment is a SECOND trust anchor with its own policy
     // slot (argv[4]). A production proof carries a weight block (the dense
     // weights stay committed rows) AND a wc section (the expert weights), and
-    // each must be bound to a value from outside the proof: the enrollment
-    // root is never accepted in the weight-root slot, and never left
-    // unchecked beside a checked weight block — the bridge would otherwise
-    // authenticate the expert weights against a root of the prover's choosing.
-    match (&top.wc, policy_wc_root) {
-        (Some(wcs), Some(exp)) => policy.push((
-            "wc enrollment root = trusted enrollment root".into(),
-            hex32(&wcs.root) == exp)),
+    // each must be bound to a value from outside the proof. The bridge's slot
+    // carries the enrollment IDENTITY (root, geometry, layout, manifest; see
+    // wc_enrollment_identity), checked inside wc_verify below; without one the
+    // bridge is not run and the proof is refused.
+    match (&top.wc, policy_wc_identity) {
         (Some(_), None) => policy.push((
-            "trusted enrollment root supplied for a wc-bridge proof".into(),
+            "trusted enrollment identity supplied for a wc-bridge proof".into(),
             false)),
         (None, Some(_)) => policy.push((
-            "policy names an enrollment root but the proof has no wc section".into(),
+            "policy names an enrollment identity but the proof has no wc section".into(),
             false)),
-        (None, None) => {}
+        _ => {}
     }
 
     // ---- WC-LCRL-STC bridge (spec 0.4/0.5) -------------------------------
@@ -595,16 +648,18 @@ fn main() {
     }
     let mut wc_pins: Vec<(usize, Vec<u64>)> = Vec::new();
     match (&top.wc, cmap.len(), s_bind_out.as_deref()) {
-        (Some(wcs), n, Some(sb)) if n > 0 => {
-            match wc_verify(wcs, &s_op, sb, &cmap, t_cols) {
+        (Some(wcs), n, Some(sb)) if n > 0 => match policy_wc_identity {
+            // no trusted identity: already a failed policy line above
+            None => {}
+            Some(exp) => match wc_verify(wcs, &exp, &s_op, sb, &cmap, t_cols) {
                 Ok(pins) => {
                     policy.push(("wc bridge: P_trace authenticated against \
-enrollment root".into(), true));
+the trusted enrollment".into(), true));
                     wc_pins = pins;
                 }
                 Err(e) => policy.push((format!("wc bridge REJECT: {e}"), false)),
-            }
-        }
+            },
+        },
         (None, n, _) if n > 0 => policy.push((
             "use_bridge claims but no wc section".into(), false)),
         (Some(_), 0, _) => policy.push((
@@ -761,8 +816,15 @@ mod wc_bridge_tests {
         }
     }
 
+    /// What an auditor certifies for this enrollment: the honest geometry
+    /// (B = 12) and the claim set's layout.
+    fn trusted(e: &Enrolled) -> [u8; 32] {
+        wc_enrollment_identity(&e.levels.last().unwrap()[0], &[3; 32], 12, 4, N,
+                               &wc_layout(&CMAP))
+    }
+
     fn verify(wc: &WcSection) -> Result<Vec<(usize, Vec<u64>)>, String> {
-        wc_verify(wc, &[1; 32], &[2; 32], &CMAP, 54)
+        wc_verify(wc, &trusted(&enrolled()), &[1; 32], &[2; 32], &CMAP, 54)
     }
 
     #[test]
@@ -780,6 +842,45 @@ mod wc_bridge_tests {
         let e = enrolled();
         let err = verify(&section(&e, 12, true)).unwrap_err();
         assert!(err.contains("merkle path fails"), "{err}");
+    }
+
+    #[test]
+    fn a_declared_block_boundary_does_not_reinterpret_the_columns() {
+        // B = 10, lam = 6 keeps K_w, the root, the manifest and the claim map;
+        // under the old check it passed and read weights 11 and 12 as masks
+        let e = enrolled();
+        let err = verify(&section(&e, 10, false)).unwrap_err();
+        assert!(err.contains("enrollment identity"), "{err}");
+    }
+
+    #[test]
+    fn identity_binds_root_manifest_geometry_and_layout() {
+        let e = enrolled();
+        let root = e.levels.last().unwrap()[0];
+        let base = trusted(&e);
+        let other_root = { let mut r = root; r[0] ^= 1; r };
+        assert_ne!(base, wc_enrollment_identity(&other_root, &[3; 32], 12, 4, N, &wc_layout(&CMAP)));
+        assert_ne!(base, wc_enrollment_identity(&root, &[4; 32], 12, 4, N, &wc_layout(&CMAP)));
+        assert_ne!(base, wc_enrollment_identity(&root, &[3; 32], 12, 4, 2 * N, &wc_layout(&CMAP)));
+        // the same rows split into two claims is another layout
+        assert_ne!(base, wc_enrollment_identity(&root, &[3; 32], 12, 4, N,
+                                                &[(1, vec![8, 8])]));
+        // an honest section checked against another identity is refused
+        let err = wc_verify(&section(&e, 12, false), &[9; 32], &[1; 32], &[2; 32], &CMAP, 54)
+            .unwrap_err();
+        assert!(err.contains("enrollment identity"), "{err}");
+    }
+
+    #[test]
+    fn identity_encoding_matches_the_python_twin() {
+        // wc_bridge.enrollment_identity on the same inputs (test_merkle_index.py
+        // pins the same two vectors)
+        let root: [u8; 32] = core::array::from_fn(|i| i as u8);
+        assert_eq!(hex(&wc_enrollment_identity(&root, &[3; 32], 12, 4, 64, &[(1, vec![16])])),
+                   "323f385b048c4c26c0e2f30804117a3a2be715a7b9a47e1bd973d1d59be41697");
+        assert_eq!(hex(&wc_enrollment_identity(&root, &[3; 32], 12, 4, 64,
+                                               &[(4, vec![100, 7]), (6, vec![52])])),
+                   "b85f6e2f8e4b5b3c07e34708982c5c0feaa1cbd4526fb45fce3d615b398bd238");
     }
 
     #[test]

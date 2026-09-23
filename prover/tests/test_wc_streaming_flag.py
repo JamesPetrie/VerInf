@@ -51,6 +51,11 @@ def _enroll(tape, claim):
                                b"flag-manifest", PARAMS)
 
 
+def _layout(tape):
+    """The verifier's own layout: from the claim set, never the proof."""
+    return wc.claim_layout(wc.bridged_claim_map(tape.claims))
+
+
 def _prove_with_flag():
     tape = _build_bridged()
     claim = next(c for c in tape.claims
@@ -71,7 +76,9 @@ def test_flagged_proof_keeps_rust_accept_and_bridge_accepts():
     ok, why = wc.verify_bridge_hosted(sc["root"], sc["manifest_digest"],
                                       sc["group_meta"], sc["bridge"],
                                       proof.seeds["s_bind"], {J: rho},
-                                      sc["params"])
+                                      sc["params"],
+                                      trusted_identity=sc["identity"],
+                                      layout=_layout(tape))
     assert ok, f"hosted bridge REJECT: {why}"
     # and the bridge P_trace is the claim's projection (link invariant)
     assert sc["bridge"].p_trace[J].numel() >= E * K
@@ -91,7 +98,9 @@ def test_hosted_bridge_rejects_foreign_rho():
     ok, why = wc.verify_bridge_hosted(sc["root"], sc["manifest_digest"],
                                       sc["group_meta"], sc["bridge"],
                                       proof.seeds["s_bind"], bad_rho,
-                                      sc["params"])
+                                      sc["params"],
+                                      trusted_identity=sc["identity"],
+                                      layout=_layout(tape))
     assert not ok and "rho" in why, why
 
 
@@ -105,7 +114,9 @@ def test_hosted_bridge_rejects_tampered_p_trace():
     ok, why = wc.verify_bridge_hosted(sc["root"], sc["manifest_digest"],
                                       sc["group_meta"], br,
                                       proof.seeds["s_bind"], {J: rho},
-                                      sc["params"])
+                                      sc["params"],
+                                      trusted_identity=sc["identity"],
+                                      layout=_layout(tape))
     assert not ok, "tampered hosted P_trace accepted"
 
 
@@ -127,7 +138,9 @@ def test_hosted_bridge_rejects_foreign_enrollment():
     ok, why = wc.verify_bridge_hosted(enr_true.root, enr_true.manifest_digest,
                                       sc["group_meta"], sc["bridge"],
                                       proof.seeds["s_bind"], {J: rho},
-                                      sc["params"])
+                                      sc["params"],
+                                      trusted_identity=enr_true.identity(),
+                                      layout=_layout(tape2))
     assert not ok, "bridge against a substituted model accepted"
 
 
@@ -237,6 +250,8 @@ def test_lazy_enrollment_end_to_end():
     # same manifest/mask/weights => same root as the resident build
     enr_res = wc.enroll_tape(tape, b"lazy-mask", b"lazy-manifest", PARAMS)
     assert enr.root == enr_res.root, "lazy root != resident root"
+    # one manifest digest and one layout for both builds: one identity
+    assert enr.identity() == enr_res.identity(), "lazy identity != resident"
     proof = tape.prove(weight_enrollment=enr)
     acc, msg = rust_verify_tape(tape, proof, seed=None)
     assert acc, f"lazy-enrollment proof rejected: {msg}"
