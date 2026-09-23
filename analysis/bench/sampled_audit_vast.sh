@@ -42,7 +42,7 @@ timeout --signal=TERM --kill-after=30s "${PROCESS_TIMEOUT_S}s" \
   --layers 48 --experts 128 --d 5120 --d-ff 8192 --vocab 202048 \
   --weight-commitment "$WCOMMIT" --expected-weight-root "$ROOT" \
   --public-sz "$PUBLIC_SZ" --verifier-secret-file "$VERIFIER_SECRET" \
-  --sampled-audit-out "$OUT/stage_times.json" \
+  --sampled-audit-out "$OUT/stage_times.json" --sampled-audit-prototype \
   --sampled-audit-progress "$OUT/progress.jsonl" \
   --sampled-audit-rs-binding \
   --sampled-audit-rs-ell 16322 --sampled-audit-rs-k-deg 16384 \
@@ -74,10 +74,13 @@ required = {"wall_s", "forward_s", "c0_commit_s", "selected_local_arguments_s",
             "manifest_materialized_local_proofs",
             "selected_proof_family_counts", "materialized_local_proof_counts",
             "materialized_local_proofs", "exact_fallbacks", "local_proof_bytes",
-            "local_proof_digests", "local_receipts", "rs_column_samples"}
+            "local_proof_digests", "local_receipts", "rs_column_samples",
+            "prototype", "verified_inference", "unchecked"}
 missing = sorted(required - set(r))
 assert not missing, f"missing stage fields: {missing}"
 assert r["accepted"] is True, f"sampled verifier rejected: {r.get('failures')}"
+# a prototype's ACCEPT: its local checks passed; not verified model inference
+assert r["prototype"] is True and r["verified_inference"] is False, "unlabeled result"
 assert r["claims"] == 2596, f"expected 2596 blocks, got {r['claims']}"
 assert r["selected"] == 265, f"expected 265 sampled blocks, got {r['selected']}"
 assert abs(r["fraction"] - 265 / 2596) < 1e-12

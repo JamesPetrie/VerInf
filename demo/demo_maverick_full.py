@@ -20,9 +20,12 @@ Modes:
   --witness-only   run_engine_pass(free_intermediates) — no proof; prints the
                    REAL UI number + argmax-vs-continuation agreement and dumps
                    logits for the llama.cpp cross-check. (H100 safety run.)
-  --sampled-audit-out PATH
+  --sampled-audit-out PATH --sampled-audit-prototype
                    one real pass, C0 witness commitment and verifier-secret
                    5-of-49 local audit over all 2,596 Tape claims. (Vast run.)
+                   A PROTOTYPE: weight-to-enrollment binding and cross-window
+                   value consistency are unchecked, so the flag is required
+                   and the result is labeled; it is not verified inference.
   default          full streaming prove + streaming dump.   (Spark run.)
 
 Run:
@@ -351,6 +354,12 @@ def main():
     ap.add_argument("--sampled-audit-out", default=None,
                     help="SAMPLED AUDIT mode: atomically write the one-pass "
                          "5-of-49 audit result JSON to this path")
+    ap.add_argument("--sampled-audit-prototype", action="store_true",
+                    help="required with --sampled-audit-out: acknowledge that "
+                         "the runtime audit is a prototype (weight-to-enrollment "
+                         "binding and cross-window value consistency are "
+                         "unchecked); its result is labeled as such and is not "
+                         "verified model inference")
     ap.add_argument("--sampled-audit-progress", default=None,
                     help="JSONL claim/window timings; defaults to "
                          "<sampled-audit-out>.progress.jsonl")
@@ -393,6 +402,15 @@ def main():
                     help="permit a non-target Ligero config (dev only)")
     a = ap.parse_args()
     sampled_audit = a.sampled_audit_out is not None
+    # First, before any setup: the runtime audit is a prototype, and running
+    # it must be a deliberate choice that its output then states.
+    if sampled_audit and not a.sampled_audit_prototype:
+        from sampled_claim_runtime import PROTOTYPE_UNCHECKED
+        raise SystemExit(
+            "refusing sampled audit: the runtime is a prototype whose result "
+            "is not verified model inference; it does not check "
+            + "; nor ".join(PROTOTYPE_UNCHECKED)
+            + ". Pass --sampled-audit-prototype to run it as a prototype.")
     if sampled_audit and (a.witness_only or a.enroll_weights or a.dump_proof):
         raise SystemExit(
             "--sampled-audit-out is a distinct run mode; do not combine it "
@@ -545,7 +563,10 @@ def main():
                 f"refusing sampled audit: production tape has "
                 f"{manifest['n_claims']} claims, expected {expected_claims}")
 
-        from sampled_claim_runtime import ClaimWindowAudit, load_secret
+        from sampled_claim_runtime import (ClaimWindowAudit, load_secret,
+                                           PROTOTYPE_NOTICE, PROTOTYPE_UNCHECKED)
+        _log(f"{PROTOTYPE_NOTICE}; unchecked: "
+             + "; ".join(u.split(":")[0] for u in PROTOTYPE_UNCHECKED))
         public_doc = {
             "protocol": "sampled-claim-audit-v1",
             "layers": a.layers, "experts": a.experts, "tokens": T,
@@ -566,7 +587,7 @@ def main():
             enable_rs_binding=a.sampled_audit_rs_binding,
             rs_ell=a.sampled_audit_rs_ell,
             rs_k_deg=a.sampled_audit_rs_k_deg,
-            rs_n_lig=a.sampled_audit_rs_n_lig)
+            rs_n_lig=a.sampled_audit_rs_n_lig, prototype=True)
         _log(f"sampled audit progress: {progress_path}")
 
         torch.cuda.synchronize()
@@ -621,7 +642,8 @@ def main():
             f.flush()
             os.fsync(f.fileno())
         os.replace(part, out)
-        _log(f"sampled audit: {'ACCEPT' if result['accepted'] else 'REJECT'}; "
+        _log(f"sampled audit [PROTOTYPE, not verified inference]: local checks "
+             f"{'ACCEPT' if result['accepted'] else 'REJECT'}; "
              f"{result['selected']}/{result['claims']} claims "
              f"({100 * result['fraction']:.3f}%); C0={result['c0_root'][:16]}…; "
              f"wall={wall_s:.1f}s; result={out}")

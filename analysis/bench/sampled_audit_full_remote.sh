@@ -136,7 +136,8 @@ audit = json.loads((out / "stage_times.json").read_text())
 result = {"kind": "real-maverick-sampled-audit", **audit}
 (out / "campaign_results.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
 print(json.dumps({k: result[k] for k in
-                  ("accepted", "claims", "selected", "fraction", "wall_s", "c0_root")},
+                  ("accepted", "prototype", "verified_inference", "claims",
+                   "selected", "fraction", "wall_s", "c0_root")},
                  indent=2))
 PY
 echo DONE

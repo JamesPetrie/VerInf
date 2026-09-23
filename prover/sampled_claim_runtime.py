@@ -187,8 +187,33 @@ class _HashingColumnSink(prover_core.ColumnSink):
         return opened, [bytes(row.tolist()) for row in raw]
 
 
+# This runtime is a PROTOTYPE of the sampled audit: two properties a verified
+# audit of model inference needs are not checked here (review 2026-09-23,
+# findings 5 and 6). Every entrypoint must acknowledge that before it runs,
+# and every result carries these labels, so an ACCEPT is never presented as
+# verified model inference.
+PROTOTYPE_NOTICE = ("PROTOTYPE sampled audit: its result is not verified "
+                    "model inference")
+PROTOTYPE_UNCHECKED = (
+    "weight-to-enrollment binding: persistent and external weights enter the "
+    "selected local checks from the loader, and their wire reference hashes "
+    "only the model root, the variable's name and its length, so no check "
+    "shows that the checked weights are the enrolled model's",
+    "cross-window value consistency: a wire reused after its window is "
+    "released is reloaded and keeps its first digest without a comparison, "
+    "so no check links the values one window saw to the next window's",
+)
+
+
+def prototype_labels() -> dict:
+    """The fields every runtime result carries."""
+    return {"prototype": True, "verified_inference": False,
+            "notice": PROTOTYPE_NOTICE, "unchecked": list(PROTOTYPE_UNCHECKED)}
+
+
 class ClaimWindowAudit:
-    """Observer passed directly to `Tape.run_engine_pass`."""
+    """Observer passed directly to `Tape.run_engine_pass`. A prototype: see
+    PROTOTYPE_UNCHECKED; constructing one requires prototype=True."""
 
     def __init__(self, tape, cfg, verifier_secret: bytes, public_io_digest: bytes,
                  model_root: bytes, *, expected_claims: int = 2596,
@@ -196,7 +221,12 @@ class ClaimWindowAudit:
                  progress_path: str | None = None, heartbeat_every: int = 25,
                  enable_rs_binding: bool = False, rs_columns: int = 61,
                  rs_ell: int | None = None, rs_k_deg: int | None = None,
-                 rs_n_lig: int | None = None):
+                 rs_n_lig: int | None = None, prototype: bool = False):
+        if not prototype:
+            raise ValueError(
+                "ClaimWindowAudit is a prototype and does not check "
+                + "; nor ".join(PROTOTYPE_UNCHECKED)
+                + ". Construct it with prototype=True to run it as one.")
         self.tape = tape
         self.cfg = cfg
         self.params = AuditParams(len(tape.claims), window_size,
@@ -1029,9 +1059,11 @@ class ClaimWindowAudit:
             "cryptographic_local_proof_coverage": (
                 materialized / len(self.selected) if self.selected else 0.0),
             "rs_openings_materialized": self.enable_rs_binding,
+            **prototype_labels(),
         }
         self._progress("audit_complete", accepted=result["accepted"],
-                       selected=result["selected"], failures=len(self.failures))
+                       selected=result["selected"], failures=len(self.failures),
+                       prototype=True)
         if self.progress_file is not None:
             self.progress_file.close()
             self.progress_file = None

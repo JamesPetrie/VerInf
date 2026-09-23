@@ -36,7 +36,7 @@ def _case():
     admission.prepare(tape, CFG)
     audit = ClaimWindowAudit(
         tape, CFG, b"v" * 32, b"public" * 4, b"model" * 6 + b"xx",
-        expected_claims=0, window_size=1, sample_per_window=1)
+        expected_claims=0, window_size=1, sample_per_window=1, prototype=True)
     return tape, dst, audit
 
 
@@ -54,7 +54,7 @@ def _matmul_case(secret=b"v" * 32):
     audit = ClaimWindowAudit(
         tape, CFG, secret, b"public" * 4, b"model" * 6 + b"xx",
         expected_claims=0, window_size=1, sample_per_window=1,
-        heartbeat_every=1000)
+        heartbeat_every=1000, prototype=True)
     return tape, dst, audit
 
 
@@ -78,7 +78,7 @@ def _multihead_matmul_case(*, transpose_b):
     audit = ClaimWindowAudit(
         tape, CFG, b"v" * 32, b"public" * 4, b"model" * 6 + b"xx",
         expected_claims=0, window_size=1, sample_per_window=1,
-        heartbeat_every=1000)
+        heartbeat_every=1000, prototype=True)
     return tape, dst, audit
 
 
@@ -97,7 +97,7 @@ def _relation_case(kind, length=8):
     audit = ClaimWindowAudit(
         tape, CFG, b"v" * 32, b"public" * 4, b"model" * 6 + b"xx",
         expected_claims=0, window_size=1, sample_per_window=1,
-        heartbeat_every=1000)
+        heartbeat_every=1000, prototype=True)
     return tape, dst, audit
 
 
@@ -134,7 +134,7 @@ def test_progress_records_each_local_proof_timing(tmp_path):
     audit = ClaimWindowAudit(
         tape, CFG, b"v" * 32, b"public" * 4, b"model" * 6 + b"xx",
         expected_claims=0, window_size=1, sample_per_window=1,
-        heartbeat_every=1000, progress_path=progress)
+        heartbeat_every=1000, progress_path=progress, prototype=True)
     tape.run_engine_pass(free_intermediates=True, keep={out.var},
                          observer=audit)
     result = audit.finish()
@@ -164,7 +164,7 @@ def test_c0_is_independent_of_window_batching():
     one_window = ClaimWindowAudit(
         tape, CFG, b"v" * 32, b"public" * 4, b"model" * 6 + b"xx",
         expected_claims=0, window_size=len(tape.claims),
-        sample_per_window=len(tape.claims))
+        sample_per_window=len(tape.claims), prototype=True)
     tape.run_engine_pass(free_intermediates=True, keep={dst.var},
                          observer=one_window)
     second = one_window.finish()
@@ -180,7 +180,7 @@ def test_window_rs_commit_opens_and_binds_selected_wire():
         expected_claims=0, window_size=1, sample_per_window=1,
         enable_rs_binding=True, rs_columns=4,
         rs_ell=3, rs_k_deg=8, rs_n_lig=32,
-        heartbeat_every=1000)
+        heartbeat_every=1000, prototype=True)
 
     tape.run_engine_pass(free_intermediates=True, keep={dst.var},
                          observer=audit)
@@ -209,7 +209,7 @@ def test_window_rs_rejects_invalid_merkle_opening(monkeypatch):
         expected_claims=0, window_size=1, sample_per_window=1,
         enable_rs_binding=True, rs_columns=4,
         rs_ell=3, rs_k_deg=8, rs_n_lig=32,
-        heartbeat_every=1000)
+        heartbeat_every=1000, prototype=True)
     monkeypatch.setattr(core, "merkle_verify",
                         lambda _leaf, _path, _root, _index, _n_leaves: False)
 
@@ -363,7 +363,7 @@ def test_lincomb_materializes_sumcheck():
     audit = ClaimWindowAudit(
         tape, CFG, b"v" * 32, b"public" * 4, b"model" * 6 + b"xx",
         expected_claims=0, window_size=1, sample_per_window=1,
-        heartbeat_every=1000)
+        heartbeat_every=1000, prototype=True)
     tape.run_engine_pass(observer=audit)
     result = audit.finish()
 
@@ -384,7 +384,7 @@ def test_word_extraction_sumcheck_with_explicit_lookup_fallbacks():
     audit = ClaimWindowAudit(
         tape, CFG, b"v" * 32, b"public" * 4, b"model" * 6 + b"xx",
         expected_claims=0, window_size=1, sample_per_window=1,
-        heartbeat_every=1000)
+        heartbeat_every=1000, prototype=True)
     tape.run_engine_pass(free_intermediates=True,
                          keep={word.var for word in words}, observer=audit)
     result = audit.finish()
@@ -407,7 +407,7 @@ def test_rescale_materializes_sumcheck_and_range_products():
     audit = ClaimWindowAudit(
         tape, CFG, b"v" * 32, b"public" * 4, b"model" * 6 + b"xx",
         expected_claims=0, window_size=1, sample_per_window=1,
-        heartbeat_every=1000)
+        heartbeat_every=1000, prototype=True)
     tape.run_engine_pass(free_intermediates=True, keep={out.var},
                          observer=audit)
     result = audit.finish()
@@ -439,7 +439,7 @@ def _fused_rounding_case(kind):
     audit = ClaimWindowAudit(
         tape, CFG, b"v" * 32, b"public" * 4, b"model" * 6 + b"xx",
         expected_claims=0, window_size=1, sample_per_window=1,
-        heartbeat_every=1000)
+        heartbeat_every=1000, prototype=True)
     return tape, out, audit
 
 
@@ -500,7 +500,7 @@ def _range_product_case():
     audit = ClaimWindowAudit(
         tape, CFG, b"v" * 32, b"public" * 4, b"model" * 6 + b"xx",
         expected_claims=0, window_size=1, sample_per_window=1,
-        heartbeat_every=1000)
+        heartbeat_every=1000, prototype=True)
     return tape, audit
 
 
@@ -550,7 +550,7 @@ def _embedding_product_case():
     audit = ClaimWindowAudit(
         tape, CFG, b"v" * 32, b"public" * 4, b"model" * 6 + b"xx",
         expected_claims=0, window_size=1, sample_per_window=1,
-        heartbeat_every=1000)
+        heartbeat_every=1000, prototype=True)
     return tape, out, audit
 
 
@@ -600,7 +600,7 @@ def _paired_product_case():
     audit = ClaimWindowAudit(
         tape, CFG, b"v" * 32, b"public" * 4, b"model" * 6 + b"xx",
         expected_claims=0, window_size=1, sample_per_window=1,
-        heartbeat_every=1000)
+        heartbeat_every=1000, prototype=True)
     return tape, y, audit
 
 
@@ -673,7 +673,7 @@ def _freivalds_combine_case():
     audit = ClaimWindowAudit(
         tape, CFG, b"v" * 32, b"public" * 4, b"model" * 6 + b"xx",
         expected_claims=0, window_size=1, sample_per_window=1,
-        heartbeat_every=1000)
+        heartbeat_every=1000, prototype=True)
     return tape, out, audit
 
 
@@ -752,7 +752,7 @@ def _routed_matmul_case():
     audit = ClaimWindowAudit(
         tape, CFG, b"v" * 32, b"public" * 4, b"model" * 6 + b"xx",
         expected_claims=0, window_size=1, sample_per_window=1,
-        heartbeat_every=1000)
+        heartbeat_every=1000, prototype=True)
     return tape, out, audit
 
 
@@ -823,7 +823,7 @@ def _rope_sumcheck_case(heads=1):
     audit = ClaimWindowAudit(
         tape, CFG, b"v" * 32, b"public" * 4, b"model" * 6 + b"xx",
         expected_claims=0, window_size=1, sample_per_window=1,
-        heartbeat_every=1000)
+        heartbeat_every=1000, prototype=True)
     return tape, out, audit
 
 
@@ -919,7 +919,7 @@ def _routing_sumcheck_case():
     audit = ClaimWindowAudit(
         tape, CFG, b"v" * 32, b"public" * 4, b"model" * 6 + b"xx",
         expected_claims=0, window_size=1, sample_per_window=1,
-        heartbeat_every=1000)
+        heartbeat_every=1000, prototype=True)
     return tape, claim, audit
 
 
@@ -966,7 +966,7 @@ def _silu_sumcheck_case():
     audit = ClaimWindowAudit(
         tape, CFG, b"v" * 32, b"public" * 4, b"model" * 6 + b"xx",
         expected_claims=0, window_size=1, sample_per_window=1,
-        heartbeat_every=1000)
+        heartbeat_every=1000, prototype=True)
     return tape, out, audit
 
 
@@ -1018,7 +1018,7 @@ def _rmsnorm_sumcheck_case():
     audit = ClaimWindowAudit(
         tape, CFG, b"v" * 32, b"public" * 4, b"model" * 6 + b"xx",
         expected_claims=0, window_size=1, sample_per_window=1,
-        heartbeat_every=1000)
+        heartbeat_every=1000, prototype=True)
     return tape, out, audit
 
 
@@ -1072,7 +1072,7 @@ def _softmax_sumcheck_case():
     audit = ClaimWindowAudit(
         tape, CFG, b"v" * 32, b"public" * 4, b"model" * 6 + b"xx",
         expected_claims=0, window_size=1, sample_per_window=1,
-        heartbeat_every=1000)
+        heartbeat_every=1000, prototype=True)
     return tape, out, audit
 
 
@@ -1123,7 +1123,7 @@ def _max_sumcheck_case():
     audit = ClaimWindowAudit(
         tape, CFG, b"v" * 32, b"public" * 4, b"model" * 6 + b"xx",
         expected_claims=0, window_size=1, sample_per_window=1,
-        heartbeat_every=1000)
+        heartbeat_every=1000, prototype=True)
     return tape, tape.claims[0], audit
 
 
@@ -1171,7 +1171,7 @@ def _info_sumcheck_case():
     audit = ClaimWindowAudit(
         tape, CFG, b"v" * 32, b"public" * 4, b"model" * 6 + b"xx",
         expected_claims=0, window_size=1, sample_per_window=1,
-        heartbeat_every=1000)
+        heartbeat_every=1000, prototype=True)
     return tape, tape.claims[0], audit
 
 
@@ -1249,7 +1249,7 @@ def test_foldable_boundary_wires_are_retained_without_disabling_fold(
         tape, CFG, b"v" * 32, b"public" * 4, b"model" * 6 + b"xx",
         expected_claims=0, window_size=len(tape.claims),
         sample_per_window=len(tape.claims), progress_path=str(progress),
-        heartbeat_every=1000)
+        heartbeat_every=1000, prototype=True)
 
     live = tape.run_engine_pass(
         free_intermediates=True, keep={out.var}, observer=audit)
@@ -1279,3 +1279,19 @@ def test_striped_wire_digest_matches_portable_cpu_and_detects_tamper():
     tampered = value.clone()
     tampered.view(torch.int64)[917] += 1
     assert finish(tampered) != gpu_digest
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA runtime test")
+def test_result_is_labeled_a_prototype():
+    """Review 2026-09-23 findings 5 and 6: an ACCEPT from the runtime is a
+    prototype's, and its result says which properties were not checked."""
+    tape, dst, _raw = _case()
+    audit = ClaimWindowAudit(
+        tape, CFG, b"v" * 32, b"public" * 4, b"model" * 6 + b"xx",
+        expected_claims=0, window_size=1, sample_per_window=1,
+        heartbeat_every=1000, prototype=True)
+    tape.run_engine_pass(free_intermediates=True, keep={dst.var}, observer=audit)
+    result = audit.finish()
+    assert result["accepted"] is True
+    assert result["prototype"] is True and result["verified_inference"] is False
+    assert len(result["unchecked"]) == 2
