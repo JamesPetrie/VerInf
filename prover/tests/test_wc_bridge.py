@@ -258,3 +258,52 @@ def test_qw_scaling_rule():
     assert wc.WcParams.min_qw_for_tau(54) == 23
     assert wc.WcParams.min_qw_for_tau(96) == 40
     assert wc.WcParams().q_w >= wc.WcParams.min_qw_for_tau(96)
+
+
+def test_relabeled_columns_do_not_authenticate_a_changed_projection():
+    """Review 2026-09-23 finding 1: prove F(-X) under the F(X) enrollment and
+    answer each queried index i with the enrolled column at i + N/2 and that
+    column's valid path. Every bridge equation holds (the negated odd
+    coefficients evaluate F at -omega^i = omega^(i + N/2)); only the path
+    check's binding to the index rejects it."""
+    enr, meta = _toy_enrollment()
+    honest = wc.prove_bridge(enr, S_R1)
+    half = PARAMS.N_w // 2
+
+    def neg_odd(t, first):              # negate coefficients at odd positions
+        import numpy as np              # (uint64 CUDA tensors lack fancy indexing)
+        a = t.cpu().numpy().copy()
+        odd = (np.arange(a.shape[-1]) + first) % 2 == 1
+        sel = a[..., odd]
+        a[..., odd] = np.where(sel == 0, np.uint64(0), np.uint64(P) - sel)
+        return torch.from_numpy(a).to(t.device)
+    p_trace = {n: neg_odd(honest.p_trace[n].view(-1, PARAMS.B), 0).reshape(-1)
+               for n in honest.p_trace}
+    pi = {n: neg_odd(honest.pi[n], PARAMS.B) for n in honest.pi}
+    s_rho = wc.pr.fs_seed("wc/rho", S_R1, enr.root, enr.manifest_digest,
+                          wc._params_bytes(PARAMS))
+    s_late = wc.pr.fs_seed("wc/late", s_rho, wc._commit_r2(p_trace, pi))
+    forged = wc.bridge_r3(enr, honest.rho, p_trace, pi, s_late)
+    all_cw = torch.cat([enr.groups[n].codewords for n in sorted(enr.groups)])
+    for i in forged.eta_idx:
+        at = (i + half) % PARAMS.N_w
+        forged.opened[i] = all_cw[:, at].cpu()
+        forged.paths[i] = wc._path(enr.levels, at)
+
+    # with the index ignored (the old check) the forgery is accepted ...
+    real = wc._verify_path
+    def walk(leaf, path, root, index, n_leaves):
+        h = leaf
+        for sib, is_right in path:
+            h = wc.blake3.blake3((sib + h) if is_right else (h + sib)).digest()
+        return h == root
+    wc._verify_path = walk
+    try:
+        assert wc.verify_bridge(enr.root, enr.manifest_digest, meta, forged,
+                                S_R1, PARAMS)[0]
+    finally:
+        wc._verify_path = real
+    # ... and the index-bound check rejects it at the paths
+    ok, why = wc.verify_bridge(enr.root, enr.manifest_digest, meta, forged,
+                               S_R1, PARAMS)
+    assert not ok and "merkle path fails" in why, why

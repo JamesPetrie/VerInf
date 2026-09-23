@@ -188,14 +188,29 @@ fn wc_leaf(col: &[u64]) -> [u8; 32] {
     *h.finalize().as_bytes()
 }
 
-fn wc_path_ok(leaf: [u8; 32], path: &[(String, u8)], root: [u8; 32]) -> bool {
-    let mut h = leaf;
+/// The enrollment tree's opening check (python twin: wc_bridge._verify_path),
+/// bound like protocol::merkle_verify: the ordering at every level comes from
+/// `index`, the path has exactly the tree's depth, the index is in range and
+/// an odd last node pairs only with itself. The bridge's side bit is its own
+/// convention, the opposite of the main tree's: is_right == 1 ⇔ this node is a
+/// right child (sibling ‖ h). A malformed sibling is a REJECT, not a panic.
+fn wc_path_ok(leaf: [u8; 32], path: &[(String, u8)], root: [u8; 32],
+              index: u64, n_leaves: u64) -> bool {
+    if index >= n_leaves || path.len() != protocol::merkle_depth(n_leaves) {
+        return false;
+    }
+    let (mut h, mut idx, mut width) = (leaf, index, n_leaves);
     for (sib_hex, is_right) in path {
-        let sib = hex32(sib_hex);
+        let right = idx & 1 == 1;
+        if *is_right != right as u8 { return false; }
+        let Some(sib) = hex32_try(sib_hex) else { return false };
+        if !right && idx + 1 >= width && sib != h { return false; }
         let mut hh = blake3::Hasher::new();
-        if *is_right == 1 { hh.update(&sib); hh.update(&h); }
+        if right { hh.update(&sib); hh.update(&h); }
         else { hh.update(&h); hh.update(&sib); }
         h = *hh.finalize().as_bytes();
+        idx >>= 1;
+        width = (width + 1) / 2;
     }
     h == root
 }
@@ -335,7 +350,7 @@ fn wc_verify(wc: &WcSection, s_op: &[u8], s_bind: &[u8],
             .sum();
         if col.len() != total { return Err("column length".into()); }
         let path = wc.paths.get(&ei.to_string()).ok_or("path missing")?;
-        if !wc_path_ok(wc_leaf(col), path, root) {
+        if !wc_path_ok(wc_leaf(col), path, root, ei, g.N_w as u64) {
             return Err(format!("merkle path fails at eta[{l}]"));
         }
         let mut rhs = 0u64;
@@ -370,6 +385,16 @@ fn hex32(s: &str) -> [u8; 32] {
         b[i] = u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap();
     }
     b
+}
+
+fn hex32_try(s: &str) -> Option<[u8; 32]> {
+    let s = s.strip_prefix("0x").unwrap_or(s);
+    if s.len() != 64 { return None; }
+    let mut b = [0u8; 32];
+    for i in 0..32 {
+        b[i] = u8::from_str_radix(s.get(2 * i..2 * i + 2)?, 16).ok()?;
+    }
+    Some(b)
 }
 
 fn hexbytes(s: &str) -> Vec<u8> {
@@ -638,5 +663,142 @@ mod wire_tests {
         assert_eq!(got, vec![1, u64::MAX]);
         assert!(decode_b64("AA=A").is_err());
         assert!(decode_b64("AAAA=AAA").is_err());
+    }
+}
+
+#[cfg(test)]
+mod wc_bridge_tests {
+    // A two-block enrollment small enough to build by hand: sixteen scalar
+    // weights 1..=16 at B=12, lam=4, N_w=64, q_w=40, one width-1 claim of 16
+    // rows. The forgeries keep the enrolled root, the manifest and the claim
+    // map, and change what the bridge would authenticate.
+    use super::*;
+    use ligero_verifier::field::{add, mul, pow, sub, P};
+
+    const N: usize = 64;
+    const KW: usize = 16;
+    const Q: usize = 40;
+    const CMAP: [(usize, usize, usize, usize); 1] = [(0, 1, 0, 16)];
+
+    fn hex(v: &[u8]) -> String { v.iter().map(|b| format!("{b:02x}")).collect() }
+
+    fn evaluate(c: &[u64], x: u64) -> u64 {
+        c.iter().rev().fold(0, |v, &a| add(mul(v, x), a))
+    }
+
+    struct Enrolled { columns: Vec<Vec<u64>>, levels: Vec<Vec<[u8; 32]>>,
+                      coefficients: Vec<Vec<u64>> }
+
+    fn enrolled() -> Enrolled {
+        let mut coefficients = vec![vec![0u64; KW]; 2];
+        for i in 0..16 { coefficients[i / 12][i % 12] = i as u64 + 1; }
+        for a in 0..2 { for h in 0..4 { coefficients[a][12 + h] = 100 + (a * 4 + h) as u64; } }
+        let omega = pow(7, (P - 1) / N as u64);
+        let columns: Vec<Vec<u64>> = (0..N).map(|i| coefficients.iter()
+            .map(|c| evaluate(c, pow(omega, i as u64))).collect()).collect();
+        let mut levels = vec![columns.iter().map(|c| wc_leaf(c)).collect::<Vec<_>>()];
+        while levels.last().unwrap().len() > 1 {
+            let prev = levels.last().unwrap();
+            levels.push(prev.chunks_exact(2).map(|pair| {
+                let mut h = blake3::Hasher::new();
+                h.update(&pair[0]); h.update(&pair[1]);
+                *h.finalize().as_bytes()
+            }).collect());
+        }
+        Enrolled { columns, levels, coefficients }
+    }
+
+    // the bridge's path convention: is_right == 1 when the node is a right child
+    fn path(e: &Enrolled, mut pos: usize) -> Vec<(String, u8)> {
+        let mut out = Vec::new();
+        for level in &e.levels[..e.levels.len() - 1] {
+            out.push((hex(&level[pos ^ 1]), (pos & 1) as u8));
+            pos >>= 1;
+        }
+        out
+    }
+
+    /// A wc section for `declared_b`; `negate_odd` proves F(-X) and answers
+    /// each queried index i with the enrolled column at i + N/2.
+    fn section(e: &Enrolled, declared_b: usize, negate_odd: bool) -> WcSection {
+        let root = e.levels.last().unwrap()[0];
+        let rho = protocol::op_vec(&[1; 32], 0, "rho-w1", 1)[0];
+        let projected: Vec<Vec<u64>> = e.coefficients.iter().map(|c| c.iter().enumerate()
+            .map(|(k, &a)| mul(rho, if negate_odd && k % 2 == 1 { sub(0, a) } else { a }))
+            .collect()).collect();
+        let pt: Vec<u64> = projected.iter().flat_map(|c| c[..declared_b].to_vec()).collect();
+        let pi: Vec<u64> = projected.iter().flat_map(|c| c[declared_b..].to_vec()).collect();
+        let mut geom = b"wc-geom".to_vec();
+        for v in [declared_b, KW - declared_b, N, Q] { geom.extend_from_slice(&(v as u64).to_le_bytes()); }
+        let mut r2 = blake3::Hasher::new();
+        r2.update(b"wc-r2"); r2.update(&wc_u64le(&pt)); r2.update(&wc_u64le(&pi));
+        let r2d = *r2.finalize().as_bytes();
+        let late = fs::fs_seed("wc/hosted-late", &[&[2; 32], &root, &[3; 32], &geom, &r2d]);
+        let eta = protocol::random_columns_n(&fs::fs_seed("wc/eta", &[&late]), Q, N as u64);
+        let mut c = vec![0; KW];
+        for a in 0..2 {
+            let alpha = protocol::challenge(&late, a as u64, "alpha");
+            for k in 0..KW { c[k] = add(c[k], mul(alpha, projected[a][k])); }
+        }
+        let omega = pow(7, (P - 1) / N as u64);
+        let v: Vec<u64> = eta.iter().map(|&i| evaluate(&c, pow(omega, i))).collect();
+        let mut opened = HashMap::new();
+        let mut paths = HashMap::new();
+        for &i in &eta {
+            // F(-X) at index i is the enrolled F at i + N/2
+            let at = (i as usize + if negate_odd { N / 2 } else { 0 }) % N;
+            opened.insert(i.to_string(), WireU64Vec::Legacy(e.columns[at].clone()));
+            paths.insert(i.to_string(), path(e, at));
+        }
+        WcSection {
+            root: hex(&root), manifest_digest: hex(&[3; 32]),
+            params: WcGeom { B: declared_b, lam: KW - declared_b, N_w: N, q_w: Q },
+            claim_index: 0, group_meta: HashMap::from([("1".to_string(), (2, 1))]),
+            p_trace: HashMap::from([("1".to_string(), WireU64Vec::Legacy(pt))]),
+            pi: HashMap::from([("1".to_string(), WireU64Vec::Legacy(pi))]),
+            c: WireU64Vec::Legacy(c), v: WireU64Vec::Legacy(v), eta: WireU64Vec::Legacy(eta),
+            opened, paths,
+        }
+    }
+
+    fn verify(wc: &WcSection) -> Result<Vec<(usize, Vec<u64>)>, String> {
+        wc_verify(wc, &[1; 32], &[2; 32], &CMAP, 54)
+    }
+
+    #[test]
+    fn honest_section_accepts_with_the_enrolled_weights() {
+        let e = enrolled();
+        let pins = verify(&section(&e, 12, false)).unwrap();
+        let rho = protocol::op_vec(&[1; 32], 0, "rho-w1", 1)[0];
+        assert_eq!(pins[0].1, (1..=16).map(|v| mul(v, rho)).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn relabeled_columns_do_not_authenticate_a_changed_projection() {
+        // F(-X) under the F(X) root: every bridge equation holds when index i
+        // is answered by the column at i + N/2 with that column's valid path
+        let e = enrolled();
+        let err = verify(&section(&e, 12, true)).unwrap_err();
+        assert!(err.contains("merkle path fails"), "{err}");
+    }
+
+    #[test]
+    fn path_check_binds_index_depth_and_range() {
+        let e = enrolled();
+        let root = e.levels.last().unwrap()[0];
+        let n = N as u64;
+        assert!(wc_path_ok(e.levels[0][9], &path(&e, 9), root, 9, n));
+        assert!(!wc_path_ok(e.levels[0][9], &path(&e, 9), root, 41, n));
+        let flipped: Vec<_> = path(&e, 9).into_iter().map(|(s, b)| (s, b ^ 1)).collect();
+        assert!(!wc_path_ok(e.levels[0][9], &flipped, root, 9, n));
+        let p = path(&e, 9);
+        assert!(!wc_path_ok(e.levels[0][9], &p[..p.len() - 1], root, 9, n));
+        let mut long = p.clone();
+        long.push((hex(&root), 0));
+        assert!(!wc_path_ok(e.levels[0][9], &long, root, 9, n));
+        assert!(!wc_path_ok(e.levels[0][9], &p, root, n, n));
+        let mut bad = p.clone();
+        bad[0].0 = "zz".repeat(32);
+        assert!(!wc_path_ok(e.levels[0][9], &bad, root, 9, n));
     }
 }

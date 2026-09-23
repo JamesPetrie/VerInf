@@ -232,10 +232,25 @@ def _path(levels: List[List[bytes]], idx: int) -> List[Tuple[bytes, int]]:
     return out
 
 
-def _verify_path(leaf: bytes, path: List[Tuple[bytes, int]], root: bytes) -> bool:
-    h = leaf
+def _verify_path(leaf: bytes, path: List[Tuple[bytes, int]], root: bytes,
+                 index: int, n_leaves: int) -> bool:
+    """The enrollment tree's opening check (Rust twin: wc_path_ok), bound like
+    protocol.merkle_verify: the ordering at every level comes from `index`,
+    the path has exactly the tree's depth, the index is in range and an odd
+    last node pairs only with itself. The side bit is _path's convention, the
+    opposite of the main tree's: is_right == 1 when the node is a right
+    child (sib + h)."""
+    if not 0 <= index < n_leaves or len(path) != pr.merkle_depth(n_leaves):
+        return False
+    h, idx, width = leaf, index, n_leaves
     for sib, is_right in path:
-        h = blake3.blake3((sib + h) if is_right else (h + sib)).digest()
+        right = idx & 1
+        if is_right != right:
+            return False
+        if not right and idx + 1 >= width and sib != h:
+            return False
+        h = blake3.blake3((sib + h) if right else (h + sib)).digest()
+        idx, width = idx >> 1, (width + 1) // 2
     return h == root
 
 
@@ -529,7 +544,7 @@ def _verify_core(root: bytes, group_meta: Dict[int, Tuple[int, int]],
             # value at or above 2^63 (review, 2026-09-20)
             col = (col if col.dtype == torch.uint64 else col.view(torch.uint64)).cpu().tolist()
         if not _verify_path(_leaf(torch.tensor(col, dtype=torch.uint64)),
-                            proof.paths[i], root):
+                            proof.paths[i], root, i, params.N_w):
             return False, f"merkle path fails at eta[{l}]"
         # v_l = c(eta_l)
         x, acc = domain[i], 0

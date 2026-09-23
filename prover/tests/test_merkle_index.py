@@ -84,3 +84,20 @@ def test_rs_commit_openings_are_index_bound():
     values, path = commit.open(7)
     assert commit.check_open(7, values, path)
     assert not commit.check_open(9, values, path)
+
+
+def test_bridge_path_is_index_bound_in_its_own_convention():
+    import wc_bridge as wc
+    leaves = [pr.merkle_leaf([i]) for i in range(16)]
+    levels = wc._tree(leaves)
+    root = levels[-1][0]
+    for i in range(16):
+        assert wc._verify_path(leaves[i], wc._path(levels, i), root, i, 16)
+    # another column's valid path, relabeled
+    assert not wc._verify_path(leaves[13], wc._path(levels, 13), root, 5, 16)
+    # the main tree's side bits are the opposite convention: never accepted
+    assert not wc._verify_path(leaves[5], core.merkle_path(levels, 5), root, 5, 16)
+    path = wc._path(levels, 5)
+    assert not wc._verify_path(leaves[5], path[:-1], root, 5, 16)
+    assert not wc._verify_path(leaves[5], path + [(root, 0)], root, 5, 16)
+    assert not wc._verify_path(leaves[5], path, root, 16, 16)
