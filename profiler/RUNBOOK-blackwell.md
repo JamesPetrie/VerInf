@@ -244,6 +244,17 @@ are rerun only if the tape or the prover's witness changed. Rent with 256
 GB of host RAM at least and set the weight cache's fraction as D3 says;
 512 GB lets the default stand.
 
+## Before the pod — gate: the CPU gate passes at the revision you ship
+
+```sh
+PY=<a python with torch, numpy, blake3, pytest, gguf> tools/cpu_gates.sh
+```
+Every suite that runs without a card and the Rust verifier's tests, at the
+exact revision the tarball is built from. It must end `== CPU GATE PASSED`;
+a missing dependency, a missing suite, a failure or a skip fails it. A
+regression a laptop can catch is not worth pod time (the shard-worker
+preflight test failed on CPU for a week before session 6; no gate ran it).
+
 ## 0. Bootstrap — gate: the record, the verifier build and the primitives test all exit 0
 
 Look at the storage first, because it decides where everything goes.

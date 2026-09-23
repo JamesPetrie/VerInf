@@ -18,6 +18,13 @@ import core
 V = core.Variable
 
 
+def _no_proj(n):
+    """The sweep's counters without a zero projection count (the key exists
+    only when routed_projected has been imported by any test in the process)."""
+    assert n.get('proj', 0) == 0, n
+    return {k: v for k, v in n.items() if k != 'proj'}
+
+
 @contextlib.contextmanager
 def _instrumented(weight_cache=None):
     """Sweep + phase timing on, the spill helpers stubbed to CPU clones (no
@@ -73,7 +80,10 @@ def test_sweep_table_fetch_is_exclusive_and_counts_by_kind():
         core._sweep_end()
         rec = core._SWEEP_RECS[-1]
         assert rec['label'] == "R1"
-        assert rec['n'] == {'loads': 2, 'loads_input': 2, 'load_bytes': 16000, 'cache_wr': 1}, rec['n']
+        # 'proj' (routed projections) appears once routed_projected is imported
+        # anywhere in the process; this sweep makes none
+        assert _no_proj(rec['n']) == {'loads': 2, 'loads_input': 2, 'load_bytes': 16000,
+                                      'cache_wr': 1}, rec['n']
         assert rec['k']['fetch_input'] >= 0.09, rec['k']
         assert 0.09 <= rec['t']['fetch'] <= 0.5 and 0.015 <= rec['t']['witness'] <= 0.1, rec['t']
         assert rec['t']['aux'] < 0.05 and 0.008 <= rec['t']['cache_w'] <= 0.1, rec['t']
@@ -89,7 +99,7 @@ def test_sweep_table_fetch_is_exclusive_and_counts_by_kind():
         core._sweep_end()
         rec = core._SWEEP_RECS[-1]
         assert 'qlin_interp' not in rec['t'] and rec['t']['fetch'] >= 0.045, rec['t']
-        assert rec['n'] == {'loads': 1, 'loads_input': 1, 'load_bytes': 8000}, rec['n']
+        assert _no_proj(rec['n']) == {'loads': 1, 'loads_input': 1, 'load_bytes': 8000}, rec['n']
         core._sweep_report(1.0)
         core._SWEEP_ON = False
         before = dict(core._SWEEP_OUTSIDE)
