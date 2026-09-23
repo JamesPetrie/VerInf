@@ -402,7 +402,8 @@ def prove_terms_gpu(terms, coin, field_p: int, mask=None, mu0: int = 0):
         n_fac = sum(len(fs) for _, fs in cur)
         charge(fold_iter=(deg + 1) * half * n_fac, red_op=(deg + 1) * half * n_fac)
         round_polys.append(samples)
-        r = coin(rnd) % field_p
+        from .sumcheck import draw_coin     # (sumcheck imports this module lazily)
+        r = draw_coin(coin, rnd, samples) % field_p
         challenges.append(r)
         if mask is not None:
             mu = _poly_eval(h, r, field_p)
