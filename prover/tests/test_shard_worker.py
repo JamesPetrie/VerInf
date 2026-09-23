@@ -136,7 +136,9 @@ def _proof_preflight():
     on CPU, including whether validation runs before disk-spill allocation.
     """
     variables = [core.Variable(f"W{i}", CFG.ELL, persistent=True) for i in range(2)]
-    state = dict(weight_vars=variables, n_w_total=2, n_wnew_total=0,
+    # the keys _stream_setup returns that prove_streaming reads before its
+    # first sweep (claims: the weight-kind map walks them)
+    state = dict(claims=[], weight_vars=variables, n_w_total=2, n_wnew_total=0,
                  n_blind_total=3, n_p1_total=1, n_p2_total=0, n_p3_total=0,
                  master_seed_t=None, groups=[], n_ops=0, p1_vars=[],
                  p2_vars=[], p3_vars=[], m_p1_rows=6, m_p2_rows=6,
