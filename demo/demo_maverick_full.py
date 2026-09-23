@@ -708,9 +708,9 @@ def main():
         _led = a.dump_proof + ".wc-ledger.json"
         _prev = []
         if pathlib.Path(_led).exists():
-            _prev = _json.load(open(_led)).get("eta_spent", [])
+            _prev = json.load(open(_led)).get("eta_spent", [])
         _eta = sorted(set(_prev) | set(_sc["bridge"].eta_idx if _sc else []))
-        _json.dump({"eta_spent": _eta, "lam": 1024,
+        json.dump({"eta_spent": _eta, "lam": 1024,
                     "root": _sc["root"].hex() if _sc else None},
                    open(_led, "w"))
         _log(f"wc ledger: {len(_eta)}/1024 mask points spent")
