@@ -635,6 +635,35 @@ u64 wire (the Rust side decodes `u64le:` or decimal alike; pi flat,
 row-major). Expect the pass near 100 s and the wc section about a third
 of its JSON size.
 
+## Session 6: save and check the bridged S=1000 proof
+
+After phase 0, `tools/session2_gates.sh`, and the S=100 bridge arm pass,
+`d6_s1000_remote.sh` runs the S=1000 bridge arm with `--dump-proof
+$VERINF_PROOF`. The driver's preflight needs at least 60 GB free **after**
+the GGUF is present and refuses an existing proof, `.part`, policy sidecar or
+verification receipt.
+The compact proof is expected to be tens of GB; the RunPod container disk
+must hold it beside the roughly 232 GB GGUF. The prove wall excludes dump
+and verification time, which are recorded separately.
+
+Once the prover exits, the script launches `tools/check_dumped_proof.py` as a
+separate job. It passes the saved proof, the same run's dense weight root,
+statement digest and bridge enrollment identity to the Rust verifier. The
+check must print `rust_verify: ACCEPT` and write `<proof>.verify.json` with
+the proof's SHA-256, byte count, revision and verifier wall time. This is a
+**proof mechanics check**: the two enrollment values come from the same
+in-process, throwaway enrollments, not from independently trusted model
+registration. Record that scope when citing the S=1000 result.
+The driver's prompt and continuation IDs are generated from fixed RNG seeds;
+this checks an S=1000 proof on synthetic token IDs and does not measure the
+real-token 0.880 bits/token run.
+
+Keep the pod until the proof, its `.policy.json` and `.verify.json`, the
+verifier log and revision stamp have been copied to durable storage and the
+copied proof's SHA-256 matches the receipt. Run the scratchpad's
+`bash pull6_proof.sh <destination-outside-this-repo>` to do that check. A receipt
+alone does not preserve a proof that can be checked again.
+
 ## D. The S=1000 instrumented prove, cache OFF, proof dumped (~30-60 min, unmeasured)
 
 ```sh

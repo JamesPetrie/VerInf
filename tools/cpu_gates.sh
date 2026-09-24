@@ -47,6 +47,7 @@ SUITES=(
   profiler/test_calibration_tools.py
   profiler/test_hbm_bench.py
   profiler/test_profiler.py
+  profiler/test_saved_proof_check.py
 )
 
 fail() { echo "CPU GATE FAILED: $*"; exit 1; }

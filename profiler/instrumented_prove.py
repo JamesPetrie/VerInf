@@ -15,7 +15,9 @@ the pre-policy demo did, with LIGERO_PHASE_TIMING on, and prints the wall,
 the per-phase breakdown, the enrollment time and the proof size. It is a
 measurement harness, deliberately NOT a production proof:
 
-  * no admission gate, no statement digest, no verifier policy binding;
+  * no admission gate or independently trusted verifier policy: the proof
+    carries a statement digest, but its dump's policy sidecar comes from
+    this same run;
   * the enrollment is made in-process from the same tape (its secret seed is
     fresh, as WeightCommitment.from_tape defaults) and discarded — nothing
     is written to a ledger, so the run is not reusable as an enrollment;
@@ -31,11 +33,14 @@ Do not cite its proof as a production artifact. Cite its timings.
 `--t-queries` is set before any demo import (the demo configs read
 LIGERO_T_QUERIES at import time); the target geometry is 54. `--dump-proof`
 writes the production u64le/base64 wire so the dump rate is a real
-io.proof_dump_compact_MBps data point; omit it to measure the prove alone.
+io.proof_dump_compact_MBps data point and saves a policy sidecar for
+`tools/check_dumped_proof.py` to run after the prover exits; omit it to
+measure the prove alone.
 """
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -43,6 +48,41 @@ from pathlib import Path
 
 _PROFILER = Path(__file__).resolve().parent
 _REPO = _PROFILER.parent
+
+
+def write_dump_policy(proof_path: str, proof) -> str:
+    """Durable same-run policy for a later Rust check of the saved proof."""
+    def hex32(value, label):
+        if not isinstance(value, bytes) or len(value) != 32:
+            raise RuntimeError(f"proof has no 32-byte {label} for Rust policy")
+        return value.hex()
+
+    bridge = getattr(proof, "wc_bridge", None)
+    policy = {
+        "format": "verinf-dump-policy-v1",
+        "policy_source": "same-run prover (mechanism check only)",
+        "proof_file": os.path.basename(proof_path),
+        "proof_bytes": os.path.getsize(proof_path),
+        "weight_root": hex32(getattr(proof, "root_w", None), "weight root"),
+        "statement_digest": hex32(getattr(proof, "statement_digest", None),
+                                  "statement digest"),
+        "wc_identity": (hex32(bridge["identity"], "wc identity")
+                        if bridge is not None else None),
+    }
+    policy_path = proof_path + ".policy.json"
+    part = policy_path + ".part"
+    with open(part, "x") as fh:
+        json.dump(policy, fh, sort_keys=True, indent=2)
+        fh.write("\n")
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(part, policy_path)
+    dfd = os.open(os.path.dirname(os.path.abspath(policy_path)), os.O_RDONLY)
+    try:
+        os.fsync(dfd)
+    finally:
+        os.close(dfd)
+    return policy_path
 
 
 def main(argv=None) -> int:
@@ -61,7 +101,8 @@ def main(argv=None) -> int:
     ap.add_argument("--vocab", type=int, default=202048)
     ap.add_argument("--dump-proof", default=None,
                     help="also write the proof (u64le/base64 wire) here and "
-                         "time the dump")
+                         "time the dump; writes a same-run policy sidecar for "
+                         "a separate Rust mechanism check")
     ap.add_argument("--skip-reveal", action="store_true",
                     help="do not run the reveal engine pass; the UI bound "
                          "stays unpinned (only if the tape has no reveal pin)")
@@ -134,6 +175,11 @@ def main(argv=None) -> int:
         if os.path.exists(a.dump_proof):
             raise SystemExit(f"{a.dump_proof} exists; not overwriting a proof — "
                              "name a new path")
+        for companion in (a.dump_proof + ".policy.json",
+                          a.dump_proof + ".verify.json"):
+            if os.path.exists(companion) or os.path.exists(companion + ".part"):
+                raise SystemExit(f"{companion} or its .part exists; name a new "
+                                 "proof path rather than overwrite its record")
         # The writer creates <path>.part and renames it; prove that a file
         # can be created, written and fsynced there BEFORE the hours of work.
         # Exclusive creation: an existing .part is a dump in progress or an
@@ -266,6 +312,15 @@ def main(argv=None) -> int:
         log(f"proof dumped: {size / 1e9:.2f} GB in {t_dump:.1f}s = "
             f"{size / t_dump / 1e6:.1f} MB/s (u64le/base64 wire) -> "
             f"io.proof_dump_compact_MBps candidate for the machine profile")
+        # Save the three Rust policy arguments while the proof is still in
+        # memory. The large verifier runs in a SEPARATE process after this
+        # driver exits; rereading its roots from a multi-GB JSON dump would
+        # duplicate the proof in memory. These values come from this same
+        # prover run, so ACCEPT checks proof mechanics, not an independently
+        # enrolled model identity.
+        policy_path = write_dump_policy(a.dump_proof, proof)
+        log(f"same-run Rust policy saved to {policy_path} "
+            "(mechanism check only; not an independently trusted enrollment)")
 
     if a.verify:
         # The independent check of a small proof through this very driver:

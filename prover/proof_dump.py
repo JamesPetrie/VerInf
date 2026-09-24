@@ -105,6 +105,15 @@ def estimated_bytes(proof, Q, claims_bytes_len=0, *, u64_encoding="decimal"):
     n_values += sum(getattr(proof, k).numel() for k in ("q_irs", "q_lin", "p_0"))
     n_paths = sum(len(steps) for b in proof_block_order(proof)
                   for steps in getattr(proof, "paths_%s" % b).values())
+    wc = getattr(proof, "wc_bridge", None)
+    if wc is not None:
+        br = wc["bridge"]
+        count = lambda v: v.numel() if isinstance(v, torch.Tensor) else len(v)
+        n_values += sum(count(t) for t in br.p_trace.values())
+        n_values += sum(count(t) for t in br.pi.values())
+        n_values += count(br.c) + count(br.v) + count(br.eta_idx)
+        n_values += sum(count(t) for t in br.opened.values())
+        n_paths += sum(len(steps) for steps in br.paths.values())
     per_value = 21 if u64_encoding == "decimal" else 11
     return int(n_values * per_value + n_paths * 80 + claims_bytes_len + (1 << 20))
 
