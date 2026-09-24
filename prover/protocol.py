@@ -121,10 +121,17 @@ def merkle_verify(leaf: bytes, path: List[Tuple[bytes, int]], root: bytes,
     (sibling, side); the side bit must agree with the index (side==0 ⇔ this
     node is a right child, sibling + h), and a last node with no right
     neighbour must be paired with itself."""
-    if not 0 <= index < n_leaves or len(path) != merkle_depth(n_leaves):
+    if not 0 <= index < n_leaves or not isinstance(path, (list, tuple)) \
+            or len(path) != merkle_depth(n_leaves):
         return False
     h, idx, width = leaf, index, n_leaves
-    for sibling, side in path:
+    for step in path:
+        # each step is (32-byte sibling, side bit); any other form is a REJECT
+        if not (isinstance(step, (list, tuple)) and len(step) == 2
+                and isinstance(step[0], (bytes, bytearray)) and len(step[0]) == 32
+                and isinstance(step[1], int) and not isinstance(step[1], bool)):
+            return False
+        sibling, side = bytes(step[0]), step[1]
         right = idx & 1
         if side != (0 if right else 1):
             return False

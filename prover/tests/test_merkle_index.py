@@ -101,3 +101,16 @@ def test_bridge_path_is_index_bound_in_its_own_convention():
     assert not wc._verify_path(leaves[5], path[:-1], root, 5, 16)
     assert not wc._verify_path(leaves[5], path + [(root, 0)], root, 5, 16)
     assert not wc._verify_path(leaves[5], path, root, 16, 16)
+
+
+def test_a_malformed_path_is_a_reject_not_an_exception():
+    import wc_bridge as wc
+    levels = _tree(8)
+    root = levels[-1][0]
+    good = core.merkle_path(levels, 3)
+    bad_paths = [None, 7, "x", [1] * 3, [None] * 3, [(b"x" * 31, 0)] + good[1:],
+                 [(good[0][0], True)] + good[1:], [(good[0][0],)] + good[1:],
+                 [(good[0][0], 0, 1)] + good[1:], [("s" * 32, 0)] + good[1:]]
+    for path in bad_paths:
+        assert pr.merkle_verify(levels[0][3], path, root, 3, 8) is False, path
+        assert wc._verify_path(levels[0][3], path, root, 3, 8) is False, path

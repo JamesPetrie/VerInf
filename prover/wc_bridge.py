@@ -147,7 +147,8 @@ def enrollment_identity(root: bytes, manifest_digest: bytes, params: WcParams,
     h = blake3.blake3()
     for tag in (IDENTITY_DOMAIN, IDENTITY_RULE):
         h.update(u64(len(tag)) + tag)
-    assert len(root) == 32 and len(manifest_digest) == 32
+    if len(root) != 32 or len(manifest_digest) != 32:
+        raise ValueError("root and manifest digest must be 32 bytes")
     h.update(root + manifest_digest)
     h.update(u64(params.B) + u64(params.lam) + u64(params.N_w))
     h.update(u64(len(layout)))
@@ -289,10 +290,17 @@ def _verify_path(leaf: bytes, path: List[Tuple[bytes, int]], root: bytes,
     last node pairs only with itself. The side bit is _path's convention, the
     opposite of the main tree's: is_right == 1 when the node is a right
     child (sib + h)."""
-    if not 0 <= index < n_leaves or len(path) != pr.merkle_depth(n_leaves):
+    if not 0 <= index < n_leaves or not isinstance(path, (list, tuple)) \
+            or len(path) != pr.merkle_depth(n_leaves):
         return False
     h, idx, width = leaf, index, n_leaves
-    for sib, is_right in path:
+    for step in path:
+        # each step is (32-byte sibling, side bit); any other form is a REJECT
+        if not (isinstance(step, (list, tuple)) and len(step) == 2
+                and isinstance(step[0], (bytes, bytearray)) and len(step[0]) == 32
+                and _is_int(step[1])):
+            return False
+        sib, is_right = bytes(step[0]), step[1]
         right = idx & 1
         if is_right != right:
             return False
@@ -564,13 +572,43 @@ def _group_meta_ok(group_meta, params: WcParams,
     return True, "ok"
 
 
-def _wire_ok(group_meta, proof: BridgeProof, params: WcParams, t_cols: int,
-             layout: Dict[int, List[int]]) -> Tuple[bool, str]:
-    """Everything about the proof's form, before the identity hash or any
-    transcript reads it: the geometry, the group metadata against the
-    verifier's own layout, and every array's exact type and shape (the Rust
-    twin's checks). A malformed proof is a REJECT, never an exception."""
-    for check in (lambda: _geometry_ok(params, t_cols),
+def _named_ok(root, manifest_digest, proof, params) -> Tuple[bool, str]:
+    if not (isinstance(root, (bytes, bytearray)) and len(root) == 32):
+        return False, "enrollment root is not 32 bytes"
+    if not (isinstance(manifest_digest, (bytes, bytearray)) and len(manifest_digest) == 32):
+        return False, "manifest digest is not 32 bytes"
+    if not isinstance(proof, BridgeProof) or not isinstance(params, WcParams):
+        return False, "proof or geometry of the wrong type"
+    return True, "ok"
+
+
+def _policy_ok(trusted_identity, layout, t_cols) -> Tuple[bool, str]:
+    """The verifier's own inputs: a 32-byte identity, a layout of positive
+    widths to non-empty lists of positive row counts, a column count."""
+    if not (isinstance(trusted_identity, (bytes, bytearray)) and len(trusted_identity) == 32):
+        return False, "verifier policy malformed: trusted identity"
+    if not (isinstance(layout, dict) and layout and all(
+            _is_int(n) and 0 < n < 1 << 63 and isinstance(s, (list, tuple)) and s
+            and all(_is_int(r) and 0 < r < 1 << 63 for r in s)
+            for n, s in layout.items())):
+        return False, "verifier policy malformed: layout"
+    if not (_is_int(t_cols) and 0 <= t_cols < 1 << 63):
+        return False, "verifier policy malformed: t_cols"
+    return True, "ok"
+
+
+def _wire_ok(root, manifest_digest, group_meta, proof: BridgeProof,
+             params: WcParams, t_cols: int, layout: Dict[int, List[int]],
+             trusted_identity) -> Tuple[bool, str]:
+    """Everything about the inputs' form, before the identity hash or any
+    transcript reads them: the verifier's policy, the enrollment the proof
+    names, the geometry, the group metadata against the verifier's own
+    layout, and every array's exact type and shape (the Rust twin's checks;
+    its serde types check the rest). A malformed proof is a REJECT, never an
+    exception."""
+    for check in (lambda: _policy_ok(trusted_identity, layout, t_cols),
+                  lambda: _named_ok(root, manifest_digest, proof, params),
+                  lambda: _geometry_ok(params, t_cols),
                   lambda: _group_meta_ok(group_meta, params, layout),
                   lambda: _shapes_ok(group_meta, proof, params)):
         ok, why = check()
@@ -591,7 +629,8 @@ def verify_bridge_hosted(root: bytes, manifest_digest: bytes,
     checks identity against it instead of deriving its own. t_cols is the
     verifier's own count of opened Ligero columns, which q_w is floored
     against (never read off the proof)."""
-    for check in (lambda: _wire_ok(group_meta, proof, params, t_cols, layout),
+    for check in (lambda: _wire_ok(root, manifest_digest, group_meta, proof, params, t_cols,
+                                   layout, trusted_identity),
                   lambda: _identity_ok(root, manifest_digest, group_meta, params,
                                        trusted_identity, layout)):
         ok, why = check()
@@ -611,7 +650,8 @@ def verify_bridge(root: bytes, manifest_digest: bytes,
                   params: WcParams, *, trusted_identity: bytes,
                   layout: Dict[int, List[int]],
                   t_cols: int) -> Tuple[bool, str]:
-    for check in (lambda: _wire_ok(group_meta, proof, params, t_cols, layout),
+    for check in (lambda: _wire_ok(root, manifest_digest, group_meta, proof, params, t_cols,
+                                   layout, trusted_identity),
                   lambda: _identity_ok(root, manifest_digest, group_meta, params,
                                        trusted_identity, layout)):
         ok, why = check()
@@ -635,6 +675,9 @@ def _geometry_ok(params: WcParams, t_cols: int) -> Tuple[bool, str]:
     openings check nothing, and it must be at least as strong as the fresh
     Ligero part, q_w >= ceil(0.416 t) for t opened columns (integer form,
     as in Rust)."""
+    fields = (params.B, params.lam, params.N_w, params.q_w)
+    if not all(_is_int(v) and 0 <= v < 1 << 63 for v in fields):
+        return False, "geometry is not four u64 integers"
     k_w = params.B + params.lam
     if k_w <= 0 or k_w & (k_w - 1):
         return False, f"K_w = B + lam = {k_w} is not a power of two"
@@ -650,12 +693,16 @@ def _geometry_ok(params: WcParams, t_cols: int) -> Tuple[bool, str]:
     return True, "ok"
 
 
+def _is_int(x) -> bool:
+    """An integer (Python or numpy), never a bool."""
+    return isinstance(x, numbers.Integral) and not isinstance(x, bool)
+
+
 def _ints(seq, n: int) -> bool:
-    """A flat sequence of exactly n integers (Python or numpy; never a bool,
-    a float or a nested sequence)."""
+    """A flat sequence of exactly n integers (never a bool, a float or a
+    nested sequence)."""
     return (isinstance(seq, (list, tuple)) and len(seq) == n
-            and all(isinstance(x, numbers.Integral) and not isinstance(x, bool)
-                    for x in seq))
+            and all(_is_int(x) for x in seq))
 
 
 def _shapes_ok(group_meta: Dict[int, Tuple[int, int]], proof: BridgeProof,
@@ -681,7 +728,7 @@ def _shapes_ok(group_meta: Dict[int, Tuple[int, int]], proof: BridgeProof,
         if not (isinstance(pim, torch.Tensor) and pim.dtype == torch.uint64
                 and tuple(pim.shape) == (n_blocks, params.lam)):
             return False, "pi shape"
-        if not _ints(list(proof.rho[n]), n):
+        if not _ints(proof.rho[n], n):
             return False, f"width {n}: rho length"
     return True, "ok"
 
@@ -722,7 +769,7 @@ def _verify_core(root: bytes, group_meta: Dict[int, Tuple[int, int]],
             return False, f"column or path missing at eta[{l}]"
         col = proof.opened[i]
         if isinstance(col, torch.Tensor):       # the CPU twin works in Python ints
-            if col.dim() != 1:
+            if col.dim() != 1 or col.dtype not in (torch.uint64, torch.int64):
                 return False, f"column shape at eta[{l}]"
             # unsigned values as they are: an int64 view would shift every
             # value at or above 2^63 (review, 2026-09-20)
