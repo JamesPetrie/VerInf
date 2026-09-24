@@ -44,18 +44,30 @@ ROOT = LEVELS[-1][0]
 TRUSTED = wc.enrollment_identity(ROOT, MANIFEST, PARAMS, LAYOUT)
 
 
-def _proof(used_width=4, params=PARAMS):
-    """A hosted-mode proof whose projection combines the first used_width
-    outputs (all four is the honest one)."""
-    proj = [sum(RHO[4][j] * COEFFS[j][k] for j in range(used_width)) % P
+S_R1 = b"r" * 32            # the standalone entrypoint's transcript state after R1
+
+
+def _proof(used_width=4, params=PARAMS, mode="hosted"):
+    """A proof whose projection combines the first used_width outputs (all
+    four is the honest one). Hosted: rho is the host's (RHO) and the late seed
+    the hosted one; standalone: both derived from S_R1 as verify_bridge does."""
+    if mode == "hosted":
+        rho = {4: list(RHO[4])}
+    else:
+        s_rho = wc.pr.fs_seed("wc/rho", S_R1, ROOT, MANIFEST, wc._params_bytes(params))
+        rho = {4: wc.pr.op_vec(s_rho, 0, "rho", 4)}
+    proj = [sum(rho[4][j] * COEFFS[j][k] for j in range(used_width)) % P
             for k in range(params.K_w)]
     pt = {4: torch.tensor(proj[:params.B], dtype=torch.uint64)}
     pi = {4: torch.tensor([proj[params.B:]], dtype=torch.uint64)}
-    late = wc.hosted_s_late(S_BIND, ROOT, MANIFEST, pt, pi, params)
+    if mode == "hosted":
+        late = wc.hosted_s_late(S_BIND, ROOT, MANIFEST, pt, pi, params)
+    else:
+        late = wc.pr.fs_seed("wc/late", s_rho, wc._commit_r2(pt, pi))
     alpha = wc.pr.challenge(late, 0, "alpha")
     c = [(alpha * x) % P for x in proj]
     eta = wc.pr.random_columns_n(wc.pr.fs_seed("wc/eta", late), params.q_w, params.N_w)
-    return wc.BridgeProof({n: list(r) for n, r in RHO.items()}, pt, pi, c,
+    return wc.BridgeProof(rho, pt, pi, c,
                           [_eval(c, DOMAIN[i]) for i in eta], eta,
                           {i: COLUMNS[i] for i in eta},
                           {i: wc._path(LEVELS, i) for i in eta})
@@ -133,7 +145,7 @@ def test_malformed_forms_reject_before_identity_or_transcript_work():
     # the standalone entrypoint reads rho before the transcript
     pf = _proof()
     del pf.rho[4]
-    ok, why = wc.verify_bridge(ROOT, MANIFEST, {4: (1, 4)}, pf, b"r" * 32, PARAMS,
+    ok, why = wc.verify_bridge(ROOT, MANIFEST, {4: (1, 4)}, pf, S_R1, PARAMS,
                                trusted_identity=TRUSTED, layout=LAYOUT, t_cols=T_COLS)
     assert (ok, why) == (False, "rho groups are not the enrolled widths")
     # the right element count in the wrong rank reached the aggregation
@@ -160,7 +172,7 @@ def test_malformed_forms_reject_before_identity_or_transcript_work():
 # and a short root still raised. Rather than lock those three, replace each
 # input the verifier reads, whole and element by element, with each of these
 # and require a clean (False, reason) from both entrypoints.
-BAD = [None, 0, 1, -1, 2 ** 70, 1.5, True, "x", b"", b"x" * 31, b"x" * 33,
+BAD = [None, 0, 1, -1, 2 ** 70, 1.5, 1.0, 4.0, True, "x", b"", b"x" * 31, b"x" * 33,
        [], [1], [[1]], (1,), {}, {4: None},
        torch.zeros(0, dtype=torch.uint64), torch.zeros(3, dtype=torch.int64),
        torch.zeros(2, 2, dtype=torch.uint64), torch.zeros(3, dtype=torch.float32)]
@@ -183,7 +195,7 @@ def _standalone(pf, root=ROOT, manifest=MANIFEST, meta=HONEST_META, params=PARAM
     with patch.object(wc, "_rs_domain",
                       return_value=torch.tensor(DOMAIN, dtype=torch.uint64)):
         return wc.verify_bridge(root, manifest, meta,
-                                pf, b"r" * 32, params, trusted_identity=trusted,
+                                pf, S_R1, params, trusted_identity=trusted,
                                 layout=layout, t_cols=t_cols)
 
 
@@ -205,6 +217,14 @@ def _same(a, b) -> bool:
     return a == b
 
 
+def _hashable(x) -> bool:
+    try:
+        hash(x)
+    except TypeError:
+        return False
+    return True
+
+
 def _params_with(**kw):
     """A WcParams carrying arbitrary field values (its own __post_init__
     asserts would stop them; a proof's geometry is not so polite)."""
@@ -214,12 +234,22 @@ def _params_with(**kw):
     return p
 
 
+N_CASES_FLOOR = 1700          # 1,767 today: the loops ran (the count prints with -s)
+
+
+def test_both_honest_baselines_accept():
+    # the fuzz below starts from these: every rejection there is the mutation's
+    assert _hosted(_proof(mode="hosted")) == (True, "ACCEPT")
+    assert _standalone(_proof(mode="standalone")) == (True, "ACCEPT")
+
+
 def test_no_malformed_input_raises():
+    test_both_honest_baselines_accept()
     n_cases = 0
-    for entry in (_hosted, _standalone):
+    for entry, mode in ((_hosted, "hosted"), (_standalone, "standalone")):
         def check(label, mutate=None, **args):
             nonlocal n_cases
-            pf = _proof()
+            pf = _proof(mode=mode)
             if mutate is not None and mutate(pf) is False:
                 return                      # the "bad" value was the honest one
             _rejects(f"{entry.__name__}: {label}", lambda: entry(pf, **args))
@@ -261,6 +291,25 @@ def test_no_malformed_input_raises():
             check(f"manifest = {r}", manifest=bad)
             check(f"group_meta = {r}", meta=bad)
             check(f"group_meta[4] = {r}", meta={4: bad})
+            if not _same(bad, 1):
+                check(f"group_meta[4][0] = {r}", meta={4: (bad, 4)})
+            check(f"group_meta[4][1] = {r}", meta={4: (1, bad)})
+            # a key of the wrong type (4.0 and True compare equal to ints)
+            if _hashable(bad):
+                check(f"group_meta key = {r}", meta={bad: (1, 4)})
+                for field in ("rho", "p_trace", "pi"):
+                    def rekey(pf, f=field):
+                        d = getattr(pf, f)
+                        d[bad] = d.pop(4)
+                    check(f"{field} key = {r}", rekey)
+                for field in ("opened", "paths"):
+                    def rekey_eta(pf, f=field):
+                        d = getattr(pf, f)
+                        i = pf.eta_idx[0]
+                        if _same(bad, i):
+                            return False
+                        d[bad] = d.pop(i)
+                    check(f"{field} key eta0 = {r}", rekey_eta)
             for f in ("B", "lam", "N_w", "q_w"):
                 check(f"params.{f} = {r}", params=_params_with(**{f: bad}))
             # and the verifier's own policy, malformed by a caller
@@ -269,4 +318,5 @@ def test_no_malformed_input_raises():
             check(f"layout[4] = {r}", layout={4: bad})
             if not (type(bad) is int and 0 <= bad < 1 << 63):   # 0 and 1 are valid counts
                 check(f"t_cols = {r}", t_cols=bad)
-    assert n_cases >= 1300, n_cases        # 1,336 today: the loops ran
+    print(f"{n_cases} malformed inputs, each a clean reject")
+    assert n_cases >= N_CASES_FLOOR, n_cases

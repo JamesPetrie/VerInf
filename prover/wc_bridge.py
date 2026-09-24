@@ -563,11 +563,15 @@ def _group_meta_ok(group_meta, params: WcParams,
     """(blocks, width) for each of the layout's widths, exactly: the bridge
     equation combines `width` outputs, so a smaller value there would drop
     the others unchecked. Needs B > 0 (_geometry_ok first)."""
-    if not isinstance(group_meta, dict) or set(group_meta) != set(layout):
+    # keys and values are integers by type, before any comparison: True == 1
+    # and 4.0 == 4 in Python, and a float width reaches range() later
+    if not isinstance(group_meta, dict) or not all(_is_int(k) for k in group_meta) \
+            or set(group_meta) != set(layout):
         return False, "enrolled widths are not the claim set's"
     for n, segs in layout.items():
         v = group_meta[n]
-        if not isinstance(v, (tuple, list)) or tuple(v) != (-(-sum(segs) // params.B), n):
+        if not (isinstance(v, (tuple, list)) and len(v) == 2 and all(_is_int(x) for x in v)
+                and tuple(v) == (-(-sum(segs) // params.B), n)):
             return False, f"width {n}: group metadata is not the layout's (blocks, width)"
     return True, "ok"
 
@@ -716,9 +720,12 @@ def _shapes_ok(group_meta: Dict[int, Tuple[int, int]], proof: BridgeProof,
         return False, "v/eta are not q_w field elements"
     for name in ("p_trace", "pi", "rho"):
         arr = getattr(proof, name)
-        if not isinstance(arr, dict) or set(arr) != set(group_meta):
+        if not isinstance(arr, dict) or not all(_is_int(k) for k in arr) \
+                or set(arr) != set(group_meta):
             return False, f"{name} groups are not the enrolled widths"
-    if not isinstance(proof.opened, dict) or not isinstance(proof.paths, dict):
+    if not (isinstance(proof.opened, dict) and isinstance(proof.paths, dict)
+            and all(_is_int(k) for k in proof.opened)
+            and all(_is_int(k) for k in proof.paths)):
         return False, "openings malformed"
     for n, (n_blocks, _w) in group_meta.items():
         pt, pim = proof.p_trace[n], proof.pi[n]
