@@ -62,10 +62,12 @@ def check(proof: Path, verifier: Path, revision_file: Path | None = None) -> dic
     print(f"Rust check of {proof} ({proof_bytes} bytes)", flush=True)
     print("Policy roots from the same prover run: proof mechanics check only", flush=True)
     t0 = time.monotonic()
-    result = subprocess.run(argv, capture_output=True, text=True, errors="replace")
+    # stdout carries the verdict; stderr (the verifier's per-check progress
+    # marks) passes straight through, so an hours-long check shows it is alive
+    result = subprocess.run(argv, stdout=subprocess.PIPE, stderr=None, text=True,
+                            errors="replace")
     elapsed = time.monotonic() - t0
     sys.stdout.write(result.stdout)
-    sys.stderr.write(result.stderr)
     if result.returncode != 0 or "rust_verify: ACCEPT" not in result.stdout.splitlines():
         raise RuntimeError(f"Rust verifier did not ACCEPT (rc={result.returncode})")
     digest = _sha256_file(proof)
