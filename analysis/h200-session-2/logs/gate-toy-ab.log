@@ -1,0 +1,49 @@
+/workspace/verinf/prover/core.py:642: UserWarning: The given buffer is not writable, and PyTorch does not support non-writable tensors. This means you can write to the underlying (supposedly non-writable) buffer using the tensor. You may want to copy the buffer to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at /pytorch/torch/csrc/utils/tensor_new.cpp:1578.)
+  return torch.frombuffer(bytes(master_seed), dtype=torch.uint8).cuda()
+W0915 19:44:48.493000 3558 torch/utils/cpp_extension.py:2425] TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
+W0915 19:44:48.493000 3558 torch/utils/cpp_extension.py:2425] If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'] to specific architectures.
+
+=== routed-output cache OFF ===
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 256; W-ref True; Wnew rows 0; p3 rows 48; peak 0.00 GB
+  [sweep] per-sweep breakdown (LIGERO_SWEEP_TIMING; cuda-synced seconds, so an instrumented wall; fetch = whole loader calls — storage read, decode and transfer together — taken out of the bucket they ran in; load_GB = decoded field bytes the loaders returned, not packed or disk bytes):
+    sweep          wall   witness     fetch       aux   compile    encode    merkle fold_qirs fold_qlin      cols      quad     loads   load_GB  cache_rd  cache_wr routed_rd routed_wr      proj
+    R1              0.1       0.1       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       128      0.00         0         0         0         0         0
+    R2              0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       128      0.00         0         0         0         0         1
+    R3              0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       128      0.00         0         0         0         0         0
+    fold            0.1       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       256      0.00         0         0         0         0         0
+    open            0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       256      0.00         0         0         0         0         0
+    ALL             0.2       0.1       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       896      0.00         0         0         0         0         1
+    proof wall 0.2s; sweeps 0.2s; outside the sweeps 0.0s with 0 loader calls (0.00 GB); first fill (cache_w in R1) 0.0s
+    shard loads in prove: 896; projections: 1; peak resident shards: 1
+
+=== routed-output cache ON ===
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 256; W-ref True; Wnew rows 0; p3 rows 48; peak 0.00 GB
+  [sweep] per-sweep breakdown (LIGERO_SWEEP_TIMING; cuda-synced seconds, so an instrumented wall; fetch = whole loader calls — storage read, decode and transfer together — taken out of the bucket they ran in; load_GB = decoded field bytes the loaders returned, not packed or disk bytes):
+    sweep          wall   witness     fetch       aux   compile    encode    merkle fold_qirs fold_qlin      cols      quad   cache_r   cache_w     loads   load_GB  cache_rd  cache_wr routed_rd routed_wr      proj
+    R1              0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       128      0.00         0         0         0         1         0
+    R2              0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       128      0.00         0         0         1         0         1
+    R3              0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0         0      0.00         0         0         1         0         0
+    fold            0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       128      0.00         0         0         1         0         0
+    open            0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       128      0.00         0         0         1         0         0
+    ALL             0.1       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       512      0.00         0         0         4         1         1
+    proof wall 0.1s; sweeps 0.1s; outside the sweeps 0.0s with 0 loader calls (0.00 GB); first fill (cache_w in R1) 0.0s
+    shard loads in prove: 512; projections: 1; peak resident shards: 1
+
+shard loads per proof: uncached 896 -> cached 512 (saved 384; three passes of 128 = 384)
+per sweep (label, loads, routed_rd, routed_wr, proj):
+    R1    off (128, 0, 0, 0)  on (128, 0, 1, 0)
+    R2    off (128, 0, 0, 1)  on (128, 1, 0, 1)
+    R3    off (128, 0, 0, 0)  on (0, 1, 0, 0)
+    fold  off (256, 0, 0, 0)  on (128, 1, 0, 0)
+    open  off (256, 0, 0, 0)  on (128, 1, 0, 0)
+ab_routed_cache: counts as expected

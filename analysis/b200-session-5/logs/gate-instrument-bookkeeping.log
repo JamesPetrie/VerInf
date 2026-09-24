@@ -1,0 +1,22 @@
+  PASS test_centered_int32_packing_roundtrip_and_charged_sizes
+  [sweep] per-sweep breakdown (LIGERO_SWEEP_TIMING; cuda-synced seconds, so an instrumented wall; fetch = whole loader calls — storage read, decode and transfer together — taken out of the bucket they ran in; load_GB = decoded field bytes the loaders returned, not packed or disk bytes):
+    sweep          wall   witness     fetch       aux fold_qlin   cache_w     loads   load_GB  cache_rd  cache_wr routed_rd routed_wr      proj
+    R1              0.1       0.0       0.1       0.0       0.0       0.0         2      0.00         0         1         0         0         0
+              loader calls by kind: input 0.1 s / 2
+    fold            0.1       0.0       0.1       0.0       0.0       0.0         1      0.00         0         0         0         0         0
+              loader calls by kind: input 0.1 s / 1
+    ALL             0.2       0.0       0.2       0.0       0.0       0.0         3      0.00         0         1         0         0         0
+              loader calls by kind: input 0.2 s / 3
+    proof wall 1.0s; sweeps 0.2s; outside the sweeps 0.8s with 1 loader calls (0.00 GB); first fill (cache_w in R1) 0.0s
+  PASS test_sweep_table_fetch_is_exclusive_and_counts_by_kind
+  [sweep] per-sweep breakdown (LIGERO_SWEEP_TIMING; cuda-synced seconds, so an instrumented wall; fetch = whole loader calls — storage read, decode and transfer together — taken out of the bucket they ran in; load_GB = decoded field bytes the loaders returned, not packed or disk bytes):
+    sweep          wall     fetch     loads   load_GB  cache_rd  cache_wr routed_rd routed_wr      proj
+    R1              0.1       0.1         6      0.00         0         0         0         0         0
+              loader calls by kind: weight 0.0 s / 1; shard 0.0 s / 2; input 0.0 s / 2; weight-cache hits 1, stores 1
+    R2              0.0       0.0         2      0.00         0         0         0         0         0
+              loader calls by kind: weight 0.0 s / 2
+    ALL             0.1       0.1         8      0.00         0         0         0         0         0
+              loader calls by kind: weight 0.0 s / 3; shard 0.0 s / 2; input 0.0 s / 2; weight-cache hits 1, stores 1
+    proof wall 1.0s; sweeps 0.1s; outside the sweeps 0.9s with 0 loader calls (0.00 GB); first fill (cache_w in R1) 0.0s
+  PASS test_weight_cache_bookkeeping_kinds_budget_and_release
+=== 3 passed, 0 failed (of 3) ===

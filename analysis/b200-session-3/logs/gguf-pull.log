@@ -1,0 +1,5 @@
+LAUNCH 19:56:33 cmd: tools/gguf_pull.sh /workspace/gguf
+== pull: unsloth/Llama-4-Maverick-17B-128E-Instruct-GGUF @ 41032e5471dd6ea5b349062d978626215d6c5bba -> /workspace/gguf
+probe: 2147483648 bytes over 8 streams in 24.4s = 87.9 MB/s aggregate (floor 100)
+probe: 87.9 MB/s is below the 100 MB/s floor
+EXIT=1

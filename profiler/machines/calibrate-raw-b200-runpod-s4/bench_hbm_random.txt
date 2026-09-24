@@ -1,0 +1,10 @@
+device: NVIDIA B200  sm=10.0  SMs=148  L2=133 MB
+buffer: 8.0 GiB (1073741824 cells)
+  gather run 0: 7.4 ms -> 291.22 GB/s
+  gather run 1: 7.4 ms -> 291.30 GB/s
+  gather run 2: 7.4 ms -> 291.12 GB/s
+gather best: 291.30 GB/s (random 8B reads)
+  chase run 0: 36.0 ms (20000 hops x 65536 walkers)
+  chase run 1: 36.0 ms (20000 hops x 65536 walkers)
+  chase run 2: 36.0 ms (20000 hops x 65536 walkers)
+chase best: 1800.94 ns/hop (65536 parallel walkers; per-hop wall across all walkers — a throughput figure, not the single-access latency; rerun with --walkers 1 for latency)

@@ -20,6 +20,12 @@ Modes:
   --witness-only   run_engine_pass(free_intermediates) — no proof; prints the
                    REAL UI number + argmax-vs-continuation agreement and dumps
                    logits for the llama.cpp cross-check. (H100 safety run.)
+  --sampled-audit-out PATH --sampled-audit-prototype
+                   one real pass, C0 witness commitment and verifier-secret
+                   5-of-49 local audit over all 2,596 Tape claims. (Vast run.)
+                   A PROTOTYPE: weight-to-enrollment binding and cross-window
+                   value consistency are unchecked, so the flag is required
+                   and the result is labeled; it is not verified inference.
   default          full streaming prove + streaming dump.   (Spark run.)
 
 Run:
@@ -29,11 +35,13 @@ Run:
       --dump-proof /tmp/maverick_full.json
 """
 import argparse
+import blake3
 import json
 import math
 import os
 import sys
 import pathlib
+import threading
 import time
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -57,7 +65,8 @@ from unexplained_info import prove_unexplained_info, bound_bits
 from demo_maverick_moe import (_to_field, _rand_int, _sigmoid_table, CFG, S,
                                 SCALE_BITS, OUTPUT_WIDTH, SILU_CFG, SIG_SHIFT,
                                 WORD_BITS, HALF_X)
-from demo_maverick_block import (load_attention, build_attn_chain, EPS_INT,
+from demo_maverick_block import (load_attention, memo_group,
+                                 build_attn_chain, EPS_INT,
                                   H, HKV, DH)
 
 SEED = b"maverick-full-demo"
@@ -70,8 +79,16 @@ SEED = b"maverick-full-demo"
 UI = dict(s_c=1 << 28, s_y=1 << 28, s_b=1 << 12, gap_max=1 << 20)
 
 
+_LOG_T0 = None
+
+
 def _log(msg):
-    print(f"[maverick-full] {msg}", flush=True)
+    """Build progress with seconds since the first line, so a slow build (session
+    3's on arm: 303 s against 41.8 s for the same tape) shows WHICH layers."""
+    global _LOG_T0
+    if _LOG_T0 is None:
+        _LOG_T0 = time.time()
+    print(f"[maverick-full +{time.time() - _LOG_T0:.1f}s] {msg}", flush=True)
 
 
 def _field_loader(gguf, name, S_=S, transpose=False):
@@ -93,6 +110,12 @@ def _field_loader(gguf, name, S_=S, transpose=False):
         if transpose:
             w = w.view(torch.int64).T.contiguous().view(torch.uint64)
         return w.reshape(-1)
+    from loader import gguf_provenance
+    load.provenance = gguf_provenance(gguf, name)
+    # Transposed and untransposed uses (the tied head and embedding) share
+    # source bytes only when owned by the same device. Preserve the full
+    # size on both and let the storage model deduplicate by source identity.
+    load.provenance["packed_source"] = json.dumps([str(pathlib.Path(gguf).resolve()), name])
     return load
 
 
@@ -144,12 +167,34 @@ def build_dense_ffn(tape, n2g, gguf, il, *, T, d):
     return tape.matmul(h, Wd, **mm)
 
 
+_MOE_PART_SRC = {           # load_maverick_moe_layer key -> GGUF tensor key
+    "W_router": "router", "W_gate_sh": "gate_sh",
+    "W_up_sh": "up_sh", "W_down_sh": "down_sh",
+}
+
+
 def _moe_part(gguf, il, key, E):
     """Lazy loader for one router/shared tensor (resident only near its use)."""
     def load():
         from loader import load_maverick_moe_layer
-        real = load_maverick_moe_layer(gguf, il, S=S, n_experts=E, skip_experts=True)
+        # the layer's router and three shared tensors are decoded together
+        # (CPU dequantize + field quantize); memoized as one group so the
+        # four keys share a decode (demo_maverick_block.memo_group)
+        real = memo_group(("moe", gguf, il, S, E),
+                          lambda: load_maverick_moe_layer(
+                              gguf, il, S=S, n_experts=E, skip_experts=True))
         return real[key].contiguous().reshape(-1)
+    from loader import MAVERICK_MOE_TENSORS, gguf_provenance
+    pat, _stacked = MAVERICK_MOE_TENSORS[_MOE_PART_SRC[key]]
+    if key == "W_router":
+        # the router is sliced to the first E experts (load_maverick_moe_layer:
+        # raw["router"][:n_experts]); record E rows of the source, not the
+        # full 128-row tensor — exact at E=128, and right in --experts dev runs
+        prov = gguf_provenance(gguf, pat.format(i=il), per_leading_dim=True)
+        prov["packed_bytes"] *= E
+        load.provenance = prov
+    else:
+        load.provenance = gguf_provenance(gguf, pat.format(i=il))
     return load
 
 
@@ -171,6 +216,10 @@ def build_moe_ffn(tape, n2g, gguf, il, sig_tbl, ones_bc, *, T, E, d, d_ff,
 
     def wexp(kind, name, shape, e):
         ld = maverick_lazy_expert(gguf, il, kind, e, S)
+        if WC_BRIDGE:
+            # WC-LCRL-STC: expert weights are prover inputs only — the
+            # enrollment authenticates them, nothing is committed.
+            return tape.external_lazy(name, ld, shape, shape[0] * shape[1])
         return tape.commit_lazy(name, ld, shape, shape[0] * shape[1],
                                 persistent=persistent)
 
@@ -184,7 +233,8 @@ def build_moe_ffn(tape, n2g, gguf, il, sig_tbl, ones_bc, *, T, E, d, d_ff,
 
     def routed(x, kind, tag, K, J):
         shards = [wexp(kind, f"L{il}_W{tag}{e}", (K, J), e) for e in range(E)]
-        raw = routed_projected_matmul(tape, x, m, shards, T=T, K=K, J=J, E=E)
+        raw = routed_projected_matmul(tape, x, m, shards, T=T, K=K, J=J, E=E,
+                                      use_bridge=WC_BRIDGE)
         return rescale(tape, raw, s_in=S * S, s_out=S, output_width=OUTPUT_WIDTH)
 
     g_sum = routed(x_r, "gate_exps", "g", d, d_ff)
@@ -218,9 +268,18 @@ def build_model(tape, gguf, prompt_ids, cont_ids, *, V, d, n_layers, E, d_ff):
     ones_bc = tape.commit("bc_ones", torch.ones(T * d, dtype=torch.uint64,
                                                  device="cuda"), (T, d))
 
+    # attention-group source tensors (load_attention decodes the whole group;
+    # provenance names each key's OWN packed source — W_K/W_V record the
+    # small k/v tensor their 5x-replicated logical variables come from)
+    _attn_src = {"W_Q": "attn_q", "W_K": "attn_k", "W_V": "attn_v",
+                 "W_O": "attn_output", "g_attn": "attn_norm", "g_ffn": "ffn_norm"}
+
     def _attn_part(il, key):
         def load():
             return load_attention(gguf, il)[key].reshape(-1)
+        from loader import gguf_provenance
+        load.provenance = gguf_provenance(
+            gguf, f"blk.{il}.{_attn_src[key]}.weight")
         return load
 
     for il in range(n_layers):
@@ -254,8 +313,8 @@ def build_model(tape, gguf, prompt_ids, cont_ids, *, V, d, n_layers, E, d_ff):
     n_fg = tape.hadamard_broadcast(n_f, g_out, SEQ=T, d=d, s_a=S, s_b=S,
                                     s_out=S, output_width=OUTPUT_WIDTH)
     lm_name = "output.weight" if "output.weight" in by else "token_embd.weight"
-    W_lm = tape.commit_lazy("W_lm", _field_loader(gguf, lm_name, transpose=True),
-                             (d, V), d * V)
+    lm_loader = _field_loader(gguf, lm_name, transpose=True)
+    W_lm = tape.commit_lazy("W_lm", lm_loader, (d, V), d * V)
     logits = tape.matmul(n_fg, W_lm, s_a=S, s_b=S, s_out=S,
                           output_width=OUTPUT_WIDTH)
     _log(f"LM head from {lm_name} ({'tied' if lm_name != 'output.weight' else 'untied'})")
@@ -277,6 +336,9 @@ def build_model(tape, gguf, prompt_ids, cont_ids, *, V, d, n_layers, E, d_ff):
     return logits, Sz, handles, sum_pos
 
 
+WC_BRIDGE = False
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--from-gguf", required=True)
@@ -289,6 +351,31 @@ def main():
     ap.add_argument("--prompt-n", type=int, default=0, help="synthetic prompt len")
     ap.add_argument("--cont-n", type=int, default=0, help="synthetic continuation len")
     ap.add_argument("--witness-only", action="store_true")
+    ap.add_argument("--sampled-audit-out", default=None,
+                    help="SAMPLED AUDIT mode: atomically write the one-pass "
+                         "5-of-49 audit result JSON to this path")
+    ap.add_argument("--sampled-audit-prototype", action="store_true",
+                    help="required with --sampled-audit-out: acknowledge that "
+                         "the runtime audit is a prototype (weight-to-enrollment "
+                         "binding and cross-window value consistency are "
+                         "unchecked); its result is labeled as such and is not "
+                         "verified model inference")
+    ap.add_argument("--sampled-audit-progress", default=None,
+                    help="JSONL claim/window timings; defaults to "
+                         "<sampled-audit-out>.progress.jsonl")
+    ap.add_argument("--sampled-audit-rs-binding", action="store_true",
+                    help="commit each 49-claim window with production RS/Merkle "
+                         "and open verifier-selected columns")
+    ap.add_argument("--sampled-audit-rs-ell", type=int, default=16322,
+                    help="RS message slots; default leaves 62 hiding slots")
+    ap.add_argument("--sampled-audit-rs-k-deg", type=int, default=16384)
+    ap.add_argument("--sampled-audit-rs-n-lig", type=int, default=32768)
+    ap.add_argument("--sampled-audit-timeout-s", type=float, default=0.0,
+                    help="hard watchdog for the timed engine pass only; zero "
+                         "disables it")
+    ap.add_argument("--verifier-secret-file", default=None,
+                    help="persistent verifier secret (raw bytes or hex); "
+                         "required by --sampled-audit-out")
     ap.add_argument("--dump-proof", default=None)
     ap.add_argument("--logits-out", default=None)
     # --- enrollment / policy (demo/4h-production-runbook.md) ---------------
@@ -306,9 +393,34 @@ def main():
     ap.add_argument("--admission-report", default=None,
                     help="admission.json from the production benchmark; the "
                          "run is refused unless every stage is under its cap")
+    ap.add_argument("--wc-bridge", action="store_true",
+                    help="WC-LCRL-STC: prove the routed expert matmuls by the "
+                         "coefficient bridge against a streaming weight "
+                         "enrollment — the expert weights leave the witness "
+                         "(no online fold, no weight commit/open)")
     ap.add_argument("--allow-dev-config", action="store_true",
                     help="permit a non-target Ligero config (dev only)")
     a = ap.parse_args()
+    sampled_audit = a.sampled_audit_out is not None
+    # First, before any setup: the runtime audit is a prototype, and running
+    # it must be a deliberate choice that its output then states.
+    if sampled_audit and not a.sampled_audit_prototype:
+        from sampled_claim_runtime import PROTOTYPE_UNCHECKED
+        raise SystemExit(
+            "refusing sampled audit: the runtime is a prototype whose result "
+            "is not verified model inference; it does not check "
+            + "; nor ".join(PROTOTYPE_UNCHECKED)
+            + ". Pass --sampled-audit-prototype to run it as a prototype.")
+    if sampled_audit and (a.witness_only or a.enroll_weights or a.dump_proof):
+        raise SystemExit(
+            "--sampled-audit-out is a distinct run mode; do not combine it "
+            "with --witness-only, --enroll-weights or --dump-proof")
+    if sampled_audit and a.wc_bridge:
+        raise SystemExit(
+            "sampled audit currently requires --weight-commitment; "
+            "--wc-bridge is not a compatible model binding")
+    global WC_BRIDGE
+    WC_BRIDGE = bool(a.wc_bridge)
     torch.manual_seed(7)
 
     import admission
@@ -317,28 +429,48 @@ def main():
 
     # Policy is checked BEFORE the build: discovering a missing argument after
     # loading a 400B model is a wasted hour.
-    proving = not (a.enroll_weights or a.witness_only)
+    proving = not (a.enroll_weights or a.witness_only or sampled_audit)
+    if sampled_audit:
+        req = (("--weight-commitment", a.weight_commitment),
+               ("--expected-weight-root", a.expected_weight_root),
+               ("--public-sz", a.public_sz),
+               ("--verifier-secret-file", a.verifier_secret_file))
+        missing = [n for n, v in req if v is None]
+        if missing:
+            raise SystemExit(
+                "refusing sampled audit: missing " + ", ".join(missing))
+        for path in (a.weight_commitment, a.verifier_secret_file):
+            if not pathlib.Path(path).is_file():
+                raise SystemExit(f"refusing sampled audit: {path} does not exist")
     if proving:
-        missing = [n for n, v in (("--weight-commitment", a.weight_commitment),
-                                  ("--expected-weight-root", a.expected_weight_root),
-                                  ("--public-sz", a.public_sz),
-                                  ("--admission-report", a.admission_report),
-                                  ("--dump-proof", a.dump_proof))
-                   if v is None]
+        # Under the bridge the expert weights are authenticated by the WC
+        # enrollment, but the dense weights stay persistent rows of the W
+        # block: they still need their enrolled commitment and its trusted
+        # root, or each proof would commit a fresh W root that nothing outside
+        # the proof vouches for. Both anchors, in both modes.
+        req = (("--weight-commitment", a.weight_commitment),
+               ("--expected-weight-root", a.expected_weight_root),
+               ("--public-sz", a.public_sz),
+               ("--admission-report", a.admission_report),
+               ("--dump-proof", a.dump_proof))
+        missing = [n for n, v in req if v is None]
         if missing:
             raise SystemExit(
                 "refusing to prove: missing " + ", ".join(missing) +
                 ".\nA production proof references an enrolled model, states "
                 "the public Sz it was served under, and passes the admission "
                 "gate. See demo/4h-production-runbook.md.")
-        for path in (a.weight_commitment, a.admission_report):
+        for path in filter(None, (a.weight_commitment, a.admission_report)):
             if not pathlib.Path(path).is_file():
                 raise SystemExit(f"refusing to prove: {path} does not exist")
         # Serialize access to the enrollment ledger.  Without the lock, two
         # concurrent provers can both read the same opening set and the last
         # save silently loses the other proof's columns.
         import fcntl
-        a._wc_lock = open(a.weight_commitment + ".lock", "a+b")
+        # under the bridge there is no wcommit file; the ledger lock rides
+        # next to the proof output instead
+        a._wc_lock = open((a.weight_commitment or a.dump_proof) + ".lock",
+                          "a+b")
         try:
             fcntl.flock(a._wc_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
@@ -355,7 +487,8 @@ def main():
         cont_ids = torch.randint(0, a.vocab, (a.cont_n or 4,), generator=g).tolist()
     T = len(prompt_ids) + len(cont_ids)
     _log(f"layers={a.layers} E={a.experts} T={T} V={a.vocab} "
-         f"T_QUERIES={CFG.T_QUERIES} witness_only={a.witness_only}")
+         f"T_QUERIES={CFG.T_QUERIES} witness_only={a.witness_only} "
+         f"sampled_audit={sampled_audit}")
 
     tape = Tape(CFG, silu_config=SILU_CFG, lazy=True)
     t0 = time.time()
@@ -399,6 +532,7 @@ def main():
         return 0
 
     # ---- PROOF: policy first, then the admission gate, then prove ---------
+    # (the dense commitment is required in both modes; see the policy check)
     wc = core.WeightCommitment.load(a.weight_commitment)
     expected_root = bytes.fromhex(a.expected_weight_root.removeprefix("0x"))
     if wc.root != expected_root:
@@ -418,11 +552,126 @@ def main():
          f"{bits/len(sum_pos):.4f} bits/token over {len(sum_pos)} positions "
          f"(no reveal pass)")
 
+    # ---- SAMPLED AUDIT: one semantic pass, no model replay ---------------
+    if sampled_audit:
+        # Layout before serialization is load-bearing: it gives every wire a
+        # stable row identity used by the block descriptors and C0 binding.
+        _claims_bytes, manifest, stmt = admission.prepare(tape, CFG)
+        expected_claims = 0 if a.allow_dev_config else 2596
+        if expected_claims and manifest["n_claims"] != expected_claims:
+            raise SystemExit(
+                f"refusing sampled audit: production tape has "
+                f"{manifest['n_claims']} claims, expected {expected_claims}")
+
+        from sampled_claim_runtime import (ClaimWindowAudit, load_secret,
+                                           PROTOTYPE_NOTICE, PROTOTYPE_UNCHECKED)
+        _log(f"{PROTOTYPE_NOTICE}; unchecked: "
+             + "; ".join(u.split(":")[0] for u in PROTOTYPE_UNCHECKED))
+        public_doc = {
+            "protocol": "sampled-claim-audit-v1",
+            "layers": a.layers, "experts": a.experts, "tokens": T,
+            "vocab": a.vocab, "d": a.d, "d_ff": a.d_ff,
+            "public_sz": a.public_sz,
+            "statement_digest": stmt.hex(),
+        }
+        public_io_digest = blake3.blake3(
+            json.dumps(public_doc, sort_keys=True,
+                       separators=(",", ":")).encode()).digest()
+        progress_path = (a.sampled_audit_progress or
+                         str(a.sampled_audit_out) + ".progress.jsonl")
+        auditor = ClaimWindowAudit(
+            tape, CFG, load_secret(a.verifier_secret_file), public_io_digest,
+            wc.root, expected_claims=expected_claims,
+            window_size=49, sample_per_window=5,
+            progress_path=progress_path,
+            enable_rs_binding=a.sampled_audit_rs_binding,
+            rs_ell=a.sampled_audit_rs_ell,
+            rs_k_deg=a.sampled_audit_rs_k_deg,
+            rs_n_lig=a.sampled_audit_rs_n_lig, prototype=True)
+        _log(f"sampled audit progress: {progress_path}")
+
+        torch.cuda.synchronize()
+        t0 = time.time()
+        watchdog = None
+        if a.sampled_audit_timeout_s > 0:
+            def hard_timeout():
+                auditor._progress(
+                    "audit_timeout", cap_s=a.sampled_audit_timeout_s)
+                print(f"[sampled-audit-progress] HARD TIMEOUT after "
+                      f"{a.sampled_audit_timeout_s:.1f}s",
+                      file=sys.stderr, flush=True)
+                os._exit(124)
+
+            watchdog = threading.Timer(a.sampled_audit_timeout_s, hard_timeout)
+            watchdog.daemon = True
+            watchdog.start()
+        try:
+            keep = {logits.var, Sz.var, handles["surprisal"].var}
+            tape.run_engine_pass(free_intermediates=True, keep=keep,
+                                 observer=auditor)
+            result = auditor.finish()
+            torch.cuda.synchronize()
+            wall_s = time.time() - t0
+        finally:
+            if watchdog is not None:
+                watchdog.cancel()
+
+        result.update({
+            "wall_s": wall_s,
+            "forward_s": max(0.0, wall_s - result["commit_s"]
+                              - result["local_checks_s"]
+                              - result["rs_open_s"]
+                              - result["rs_verify_s"]),
+            "c0_commit_s": result["commit_s"],
+            "selected_local_arguments_s": result["local_checks_s"],
+            # Backward-compatible field for old campaign readers. New runs
+            # report the exact split in materialized_local_proof_counts and
+            # exact_fallback_counts.
+            "selected_exact_local_checks_s": result["local_checks_s"],
+            "rs_open_s": result["rs_open_s"],
+            "verify_s": result["rs_verify_s"],
+            "peak_gpu_gb": torch.cuda.max_memory_allocated() / 2**30,
+            "public_sz": a.public_sz,
+        })
+        out = pathlib.Path(a.sampled_audit_out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        part = pathlib.Path(str(out) + ".part")
+        with open(part, "w") as f:
+            json.dump(result, f, sort_keys=True, indent=2)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(part, out)
+        _log(f"sampled audit [PROTOTYPE, not verified inference]: local checks "
+             f"{'ACCEPT' if result['accepted'] else 'REJECT'}; "
+             f"{result['selected']}/{result['claims']} claims "
+             f"({100 * result['fraction']:.3f}%); C0={result['c0_root'][:16]}…; "
+             f"wall={wall_s:.1f}s; result={out}")
+        return 0 if result["accepted"] else 1
+
     # One call: the layout is assigned first, then the canonical bytes and the
     # digest are taken from the laid-out tape (row_start is -1 before that).
+    wc_enr = None
+    if WC_BRIDGE:
+        import gc
+        import wc_bridge as _wcb
+        gc.collect(); torch.cuda.empty_cache()
+        _log("building streaming weight enrollment (one-time pass)")
+        _t0 = time.time()
+        wc_enr = _wcb.lazy_enroll_tape(
+            tape, b"wc-maverick-mask-v1",
+            f"maverick|{a.from_gguf}|S={1 << 12}".encode(),
+            _wcb.WcParams())
+        # the identity (root, geometry, layout, manifest) is what the
+        # verifier's enrollment policy slot is given, never the bare root
+        _log(f"enrollment_root={wc_enr.root.hex()} "
+             f"enrollment_identity={wc_enr.identity().hex()} "
+             f"({time.time() - _t0:.1f}s)")
     claims_bytes, manifest, stmt = admission.prepare(tape, CFG)
     report = admission.load_report(a.admission_report)
-    admission.check(report, cfg=CFG, model_root=wc.root, statement_digest=stmt,
+    admission.check(report, cfg=CFG,
+                    model_root=(wc_enr.root if wc_enr is not None else wc.root),
+                    statement_digest=stmt,
                     manifest=manifest, output_path=a.dump_proof)
     _log(f"admission: PASSED on {report['machine']['gpu_name']} "
          f"({report['runs']} runs/stage)")
@@ -435,7 +684,8 @@ def main():
 
     t0 = time.time()
     try:
-        proof = tape.prove(weight_commitment=wc, claims_bytes=claims_bytes)
+        proof = tape.prove(weight_commitment=wc, claims_bytes=claims_bytes,
+                           weight_enrollment=wc_enr)
     except BaseException:
         try: pathlib.Path(reserved_part).unlink()
         except FileNotFoundError: pass
@@ -449,6 +699,21 @@ def main():
     # their ledger update.
     wc.record_openings(proof.Q_cols)
     wc.save(a.weight_commitment)
+    if wc_enr is not None:
+        # bridge mode: the mask-point ledger is the enrollment's budget
+        # (40 eta points per proof of lam=1024). A RECORD next to the proof,
+        # not an enforced budget: it follows the proof's filename and nothing
+        # refuses a proof over it (rotation is unfinished)
+        _sc = getattr(proof, "wc_bridge", None)
+        _led = a.dump_proof + ".wc-ledger.json"
+        _prev = []
+        if pathlib.Path(_led).exists():
+            _prev = json.load(open(_led)).get("eta_spent", [])
+        _eta = sorted(set(_prev) | set(_sc["bridge"].eta_idx if _sc else []))
+        json.dump({"eta_spent": _eta, "lam": 1024,
+                    "root": _sc["root"].hex() if _sc else None},
+                   open(_led, "w"))
+        _log(f"wc ledger: {len(_eta)}/1024 mask points spent")
     from proof_dump import dump_proof
     t0 = time.time()
     try:
@@ -462,7 +727,7 @@ def main():
          "u64le-base64 wire)")
 
     spent, budget = len(wc.opened_columns), wc.opening_budget(CFG)
-    _log(f"opening ledger: {spent}/{budget} columns of the enrollment spent"
+    _log(f"opening ledger: {spent}/{budget} columns of the dense enrollment spent"
          + ("" if spent < budget else " — REFRESH the enrollment before the "
             "next proof"))
     return 0

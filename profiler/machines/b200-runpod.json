@@ -9,7 +9,12 @@
     "blake3_compress_Gps": 11.36,
     "blake3_bulk_GBps": 727.32,
     "blake3_reg_compress_Gps": 14.78,
-    "ntt_ns_per_elem": 0.27130126953125
+    "ntt_ns_per_elem": 0.27130126953125,
+    "ntt_batched_ns_per_elem": null,
+    "hbm_random_GBps": null,
+    "hbm_chase_ns": null,
+    "launch_us_sync": null,
+    "launch_us_stream": null
   },
   "prove_constants": {
     "A_ns_per_slot": 0.308,
@@ -24,7 +29,8 @@
   "io": {
     "disk_read_GBps": 0.3,
     "h2d_GBps": 55.1,
-    "proof_dump_MBps": 33.8
+    "proof_dump_MBps": 33.8,
+    "proof_dump_compact_MBps": null
   },
   "interconnect": null,
   "provenance": {
@@ -37,11 +43,14 @@
     "blake3_reg_compress_Gps": "bench_blake3_reg register-resident chained compress, 2026-08-19 \u2014 the ALU-bound rate; B's proper scaling basis",
     "mem_bandwidth_GBps": "torch d2d copy, read+write counted (2x bytes), 2026-08-19",
     "h2d_GBps": "torch pinned-host->device copy, 2026-08-19",
-    "disk_read_GBps": "python sequential read of a 8 GB probe after fsync + posix_fadvise(DONTNEED) eviction, 2026-08-19 \u2014 device-served but not O_DIRECT-cold",
-    "proof_dump_MBps": "PROXY: json string-build+write of u64 arrays, 2026-08-19 \u2014 replace with a real proof_dump measurement",
+    "disk_read_GBps": "python sequential read of a 8 GB probe after fsync + posix_fadvise(DONTNEED) eviction, 2026-08-19 \u2014 device-served but not O_DIRECT-cold \u2014 CAVEAT: measured on the RunPod NETWORK VOLUME (MooseFS), not local NVMe; not a property of the B200 class. Streaming models on this profile are I/O-bound by this number; session 2 re-measures on container disk (analysis/blackwell-session-1-archive.md).",
+    "proof_dump_MBps": "PROXY: json string-build+write of u64 arrays, 2026-08-19 \u2014 replace with a real proof_dump measurement \u2014 CAVEAT: written to the network volume; legacy-JSON proxy only.",
     "A_ns_per_slot": "DERIVED from gb10-spark x bandwidth ratio (223/6523 GB/s) \u2014 replace via validation-mode recalibration",
     "C_ns_per_product": "DERIVED from gb10-spark x bandwidth ratio (223/6523 GB/s) \u2014 replace via validation-mode recalibration",
     "B_ns_per_cid": "DIRECT: one challenge compress per cid at the measured register-resident rate (14.8 Gc/s); no cross-machine baseline yet \u2014 run bench_blake3_reg on gb10-spark to upgrade to a ratioed value. Leans floor-ward structurally: raw ALU compress only, no launch/orchestration margin \u2014 replace via validation-mode recalibration",
-    "aggregate_ns_per_slot": "left null: bakes in code-level overhead that does not transfer; needs a measured run on this box"
+    "aggregate_ns_per_slot": "left null: bakes in code-level overhead that does not transfer; needs a measured run on this box",
+    "mem_GB": "GiB as torch reports total_memory / 2**30 (calibrate.detect_gpu): 178 GiB = 191.1e9 bytes; consumers convert with 2**30 (weightsplit.MEM_GB_BYTES)",
+    "proof_dump_compact_MBps": "null: not measured in session 1 (the compact bench post-dates it); predict falls back to the A100 final-run egress reference (245 MB/s) until session 2 measures it on local disk",
+    "_missing_fields": "ntt_batched_ns_per_elem, hbm_random_GBps, hbm_chase_ns, launch_us_sync, launch_us_stream, proof_dump_compact_MBps: null \u2014 the session-2 benches were authored after this profile; explicit nulls so consumers degrade visibly (template convention)"
   }
 }

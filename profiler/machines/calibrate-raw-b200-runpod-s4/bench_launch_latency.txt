@@ -1,0 +1,3 @@
+device: NVIDIA B200  sm=10.0
+sync: 8.17 us/launch (launch + device sync round trip)
+stream: 1.902 us/launch (back-to-back enqueue, one sync)

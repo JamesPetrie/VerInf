@@ -1,0 +1,53 @@
+nohup: ignoring input
+=== [22:35:45] 0. network probe ===
+probe: 58 MB/s aggregate; projected ~243 GB pull: 69 min
+=== [22:36:20] 1. download 5 shards ===
+/workspace/VerInf/.venv/lib/python3.11/site-packages/huggingface_hub/constants.py:298: FutureWarning: The `HF_HUB_ENABLE_HF_TRANSFER` environment variable is deprecated as 'hf_transfer' is not used anymore. Please use `HF_XET_HIGH_PERFORMANCE` instead to enable high performance transfer with Xet. Visit https://huggingface.co/docs/huggingface_hub/package_reference/environment_variables#hfxethighperformance for more details.
+  warnings.warn(
+got /workspace/gguf/UD-Q4_K_XL/Llama-4-Maverick-17B-128E-Instruct-UD-Q4_K_XL-00001-of-00005.gguf 49.807659968 GB
+got /workspace/gguf/UD-Q4_K_XL/Llama-4-Maverick-17B-128E-Instruct-UD-Q4_K_XL-00002-of-00005.gguf 49.830263808 GB
+got /workspace/gguf/UD-Q4_K_XL/Llama-4-Maverick-17B-128E-Instruct-UD-Q4_K_XL-00003-of-00005.gguf 49.832905856 GB
+got /workspace/gguf/UD-Q4_K_XL/Llama-4-Maverick-17B-128E-Instruct-UD-Q4_K_XL-00004-of-00005.gguf 49.50864576 GB
+got /workspace/gguf/UD-Q4_K_XL/Llama-4-Maverick-17B-128E-Instruct-UD-Q4_K_XL-00005-of-00005.gguf 33.155199296 GB
+217G	/workspace/gguf
+=== [23:18:02] 2. shakedown: 1 layer, 2 experts (real Q4_K path) ===
+units=7  weights=314,572,800  widths=[1024, 5120, 16384]
+  unit: ('blk.0.attn_k.weight', None, 1024, 5120)
+  unit: ('blk.0.attn_output.weight', None, 5120, 5120)
+  unit: ('blk.0.attn_q.weight', None, 5120, 5120)
+  unit: ('blk.0.attn_v.weight', None, 1024, 5120)
+  unit: ('blk.0.ffn_down.weight', None, 5120, 16384)
+  unit: ('blk.0.ffn_gate.weight', None, 16384, 5120)
+  unit: ('blk.0.ffn_up.weight', None, 16384, 5120)
+blocks=4  polys=27,648  opened columns will be 0.01 GB
+/workspace/VerInf/analysis/bench/wc_maverick.py:110: UserWarning: The given NumPy array is not writable, and PyTorch does not support non-writable tensors. This means writing to this tensor will result in undefined behavior. You may want to copy the array to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at /__w/pytorch/pytorch/torch/csrc/utils/tensor_numpy.cpp:213.)
+  w = kquant_to_field(torch.from_numpy(raw).cuda(), qt, SCALE)
+pass A (enroll): 106.3 s  root=5fbe580fee862e39…  stages: {'dequant': 47.4, 'pack_ntt': 0.2, 'merkle_gather': 0.0}
+pass B (bridge): 0.4 s  blocks=4
+pass C (columns): 0.5 s  drift=False
+verify: 0.2 s  ACCEPT=True
+H_40 = 8.859e-13; ledger spend: 40/1024 mask points
+=== [23:20:08] 3. FULL maverick: all layers, all experts, lm-head ===
+units=9578  weights=400,711,352,320  widths=[128, 1024, 5120, 8192, 16384, 202048]
+  unit: ('blk.0.attn_k.weight', None, 1024, 5120)
+  unit: ('blk.0.attn_output.weight', None, 5120, 5120)
+  unit: ('blk.0.attn_q.weight', None, 5120, 5120)
+  unit: ('blk.0.attn_v.weight', None, 1024, 5120)
+  unit: ('blk.0.ffn_down.weight', None, 5120, 16384)
+  unit: ('blk.0.ffn_gate.weight', None, 16384, 5120)
+  unit: ('blk.0.ffn_up.weight', None, 16384, 5120)
+  unit: ('blk.1.attn_k.weight', None, 1024, 5120)
+  unit: ('blk.1.attn_output.weight', None, 5120, 5120)
+  unit: ('blk.1.attn_q.weight', None, 5120, 5120)
+  unit: ('blk.1.attn_v.weight', None, 1024, 5120)
+  unit: ('blk.1.ffn_down_exps.weight', 0, 5120, 8192)
+blocks=3830  polys=26,156,352  opened columns will be 8.37 GB
+/workspace/VerInf/analysis/bench/wc_maverick.py:117: UserWarning: The given NumPy array is not writable, and PyTorch does not support non-writable tensors. This means writing to this tensor will result in undefined behavior. You may want to copy the array to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at /__w/pytorch/pytorch/torch/csrc/utils/tensor_numpy.cpp:213.)
+  w = torch.from_numpy(np.ascontiguousarray(arr)).cuda()
+pass A (enroll): 648.8 s  root=5607ebd0eb1f5dcf…  stages: {'dequant': 140.5, 'pack_ntt': 189.8, 'merkle_gather': 0.0}
+pass B (bridge): 470.9 s  blocks=3830
+pass C (columns): 580.0 s  drift=False
+verify: 6.1 s  ACCEPT=True
+H_40 = 8.859e-13; ledger spend: 40/1024 mask points
+wrote analysis/bench/remote_results/5aa5dffea811/campaign_results.json
+DONE

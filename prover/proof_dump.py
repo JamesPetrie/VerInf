@@ -7,6 +7,7 @@ memory is one CHUNK of ints — so dump cost is I/O, not RAM.
 """
 import json
 import base64
+import torch
 import os
 import shutil
 
@@ -66,6 +67,16 @@ def _w_u64_b64(f, t):
     f.write('"')
 
 
+def _u64_of(vals):
+    """A CPU uint64 tensor from a tensor (any device, uint64 or int64 view) or
+    a list of Python ints in [0, 2^64)."""
+    import numpy as _np
+    if isinstance(vals, torch.Tensor):
+        v = vals.detach().cpu()
+        return v if v.dtype == torch.uint64 else v.view(torch.uint64)
+    return torch.from_numpy(_np.asarray(list(vals), dtype=_np.uint64))
+
+
 def _write_u64(f, t, encoding):
     if encoding == "decimal":
         return _w_u64_list(f, t)
@@ -94,6 +105,15 @@ def estimated_bytes(proof, Q, claims_bytes_len=0, *, u64_encoding="decimal"):
     n_values += sum(getattr(proof, k).numel() for k in ("q_irs", "q_lin", "p_0"))
     n_paths = sum(len(steps) for b in proof_block_order(proof)
                   for steps in getattr(proof, "paths_%s" % b).values())
+    wc = getattr(proof, "wc_bridge", None)
+    if wc is not None:
+        br = wc["bridge"]
+        count = lambda v: v.numel() if isinstance(v, torch.Tensor) else len(v)
+        n_values += sum(count(t) for t in br.p_trace.values())
+        n_values += sum(count(t) for t in br.pi.values())
+        n_values += count(br.c) + count(br.v) + count(br.eta_idx)
+        n_values += sum(count(t) for t in br.opened.values())
+        n_paths += sum(len(steps) for steps in br.paths.values())
     per_value = 21 if u64_encoding == "decimal" else 11
     return int(n_values * per_value + n_paths * 80 + claims_bytes_len + (1 << 20))
 
@@ -189,6 +209,48 @@ def dump_proof(path, claims_json, seeds, proof, Q, python_accept, *,
         if getattr(proof, "statement_digest", None) is not None:
             f.write(', "statement_digest": %s'
                     % json.dumps(proof.statement_digest.hex()))
+        wc = getattr(proof, "wc_bridge", None)
+        if wc is not None:
+            # WC-LCRL-STC bridge materials (spec 0.4): everything the Rust
+            # twin needs to recompute the hosted coins and check the bridge
+            # equation against the enrollment root. u64 values as decimal
+            # strings-free ints (same convention as the rest of the file).
+            br = wc["bridge"]
+            prm = wc["params"]
+            head = {
+                "root": wc["root"].hex(),
+                "manifest_digest": wc["manifest_digest"].hex(),
+                "params": {"B": prm.B, "lam": prm.lam,
+                           "N_w": prm.N_w, "q_w": prm.q_w},
+                "claim_index": wc["claim_index"],
+                "group_meta": {str(n): list(v)
+                               for n, v in wc["group_meta"].items()},
+                "paths": {str(i): [[sib.hex(), int(side)]
+                                   for sib, side in br.paths[i]]
+                          for i in br.eta_idx},
+            }
+            # The arrays go on the proof's own u64 encoding, not as JSON
+            # decimals: the 40 opened columns are one value per polynomial
+            # (about a billion at Maverick scale), and pi is written flat,
+            # row-major (n_blocks x lam), which the Rust side reshapes.
+            f.write(', "wc": ')
+            f.write(json.dumps(head, separators=(",", ":"))[:-1])
+            f.write(', "p_trace": {')
+            for k, (n, tt) in enumerate(sorted(br.p_trace.items())):
+                f.write(("," if k else "") + json.dumps(str(n)) + ": ")
+                _write_u64(f, tt.reshape(-1), u64_encoding)
+            f.write('}, "pi": {')
+            for k, (n, tt) in enumerate(sorted(br.pi.items())):
+                f.write(("," if k else "") + json.dumps(str(n)) + ": ")
+                _write_u64(f, tt.reshape(-1), u64_encoding)
+            f.write('}, "c": '); _write_u64(f, _u64_of(br.c), u64_encoding)
+            f.write(', "v": '); _write_u64(f, _u64_of(br.v), u64_encoding)
+            f.write(', "eta": '); _write_u64(f, _u64_of(br.eta_idx), u64_encoding)
+            f.write(', "opened": {')
+            for k, i in enumerate(br.eta_idx):
+                f.write(("," if k else "") + json.dumps(str(i)) + ": ")
+                _write_u64(f, _u64_of(br.opened[i]), u64_encoding)
+            f.write('}}')
         f.write(', "proof": {')
         f.write('"blocks": %s, ' % json.dumps(blocks))
         for b in blocks:

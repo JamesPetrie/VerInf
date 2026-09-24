@@ -8,9 +8,24 @@ builder three ways:
      LogUp settlements — those are known-unmodeled and labeled, not flagged);
   2. cost totals — W/cids/Q per type and overall, persistent (weight) slots
      compared EXACTLY;
-  3. with --layout: the prover's own LIGERO_LAYOUT_BREAKDOWN table, captured
-     from a subprocess run of the demo, against the same aggregation
-     recomputed from the extracted manifest — row for row.
+  3. with --layout: the prover's own LIGERO_LAYOUT_BREAKDOWN table against
+     the same aggregation recomputed from the extracted manifest — row for
+     row. For maverick the table comes from core.layout_breakdown on the
+     in-process tape (the demo's main() is fail-closed on current main: it
+     refuses to reach prove without an enrollment, an admission report and
+     the target T_QUERIES, so it can no longer serve as a subprocess probe;
+     the in-process layout is the same _layout the prover runs and needs no
+     engine pass, so --layout is cheap at ANY context, S=1000 included). For
+     llama7b the probe still runs demo_llama7b.py as a subprocess, because
+     build_llama7b is a hand mirror of that demo's main() and the subprocess
+     is what validates the mirror.
+
+The synth builder to diff against is chosen from the TAPE: a tape carrying
+RoutedProjectedMatmulClaim is the routed-projected protocol and diffs
+against `maverick-projected`; the legacy all-E fan diffs against
+`maverick`. Diffing a projected tape against the legacy builder flags by
+construction (expert matmuls 458 vs 9,674, two "unknown" types, combines
+24 vs 96) — that is a builder mismatch, not a finding.
 
 Divergence = stale formula; trust the tape (synth.py docstring). A FLAG in
 the output is a finding, not necessarily a bug here.
@@ -21,8 +36,9 @@ maverick needs a GGUF on disk (metadata is read eagerly; payloads stay lazy).
 
     python3 profiler/crosscheck.py llama7b  --seq 100 --layout
     python3 profiler/crosscheck.py maverick --from-gguf ~/maverick-gguf/UD-Q4_K_XL \
-        --prompt-n 2 --cont-n 2 --layout
-    python3 profiler/crosscheck.py maverick --from-gguf ... --seq 1000   # big-S extract only
+        --t-queries 54 --prompt-n 2 --cont-n 2 --layout
+    python3 profiler/crosscheck.py maverick --from-gguf ... --t-queries 54 \
+        --seq 1000 --layout                      # big-S extract + in-process layout
 
 Exit 0: no FLAG lines. Exit 1: at least one FLAG — eyeball before trusting
 extracted manifests (README roadmap 1 is the gate).
@@ -96,7 +112,8 @@ def persistent_slots(man: Manifest) -> int:
 
 def rows_total(man: Manifest) -> int:
     ell = man.run["ligero"]["ELL"]
-    return sum((v.length + ell - 1) // ell for v in man.variables)
+    return sum((v.length + ell - 1) // ell for v in man.variables
+               if not getattr(v, "external", False))   # bridge-held: never laid out
 
 
 def _fmt(x: float) -> str:
@@ -119,26 +136,29 @@ def _fmt(x: float) -> str:
 # `routing` claim is one bundled record where a real tape emits the pieces
 # (core + word-extract + n_words range words = 2+n_words records, cost-sum
 # identical by the claimcosts bundle identity), so each bundle contributes
-# 1+n_words extra records to the group count. diff_report derives that
-# exactly from synth's own bundles (24 x 4 = 96 for standard Maverick) —
-# second-pass review finding: with only the input-route cap, real Maverick
-# flags by construction. Cross-check vs the measured archive delta:
+# 1+n_words extra records to the group count. Normalize both manifests to
+# that expanded count BEFORE applying UI allowances, so representation
+# changes still require matching costs. Standard Maverick expands 24 x 4
+# = 96 records. Cross-check vs the measured archive delta:
 # 96 + 4 routing + UI's fixed handful matches the ~107 intercept, and the
 # slope (1149-207)/450 = 2.09/position matches embed+add = 2/position.
-def _ui_expected_extra(positions: int, synth_man: Manifest) -> dict:
-    bundle_extra = sum(
-        1 + int(c.params.get("n_words", 3)) for c in synth_man.claims
+def _routing_bundle_extra(man: Manifest) -> int:
+    return sum(
+        1 + int(c.params.get("n_words", 3)) for c in man.claims
         if claimcosts.canonical(c.type) == "routing")
+
+
+def _ui_expected_extra(positions: int) -> dict:
     return {
         "hadamard": 1,
         "ptlookup": 2,
         "embed_lookup": positions,
         "add": positions,               # (C-1) chain adds + 1 reveal pin
-        "routing[+aux]": bundle_extra + 6,
+        "routing[+aux]": 6,
     }
 
 
-_REL_TOL = 0.001          # per-type W/cids/Q at equal claim counts
+_REL_TOL = 0.001          # per-type W/cids/Q matches or lower bounds
 _UI_TOTAL_TOL = 0.02      # shared-type totals backstop when UI is present
 
 
@@ -147,15 +167,18 @@ def diff_report(sy: Manifest, ex: Manifest, ui_positions=None) -> list:
 
     ui_positions: continuation-position count when the extracted tape
     carries a UI chain (maverick build_model always does) — each modeled
-    type then tolerates at most _ui_expected_extra() additional claims,
-    with shared-type W/cids/Q totals still bounded at _UI_TOTAL_TOL as a
-    backstop (excess-count types can't be W-checked per claim). None =
-    strict: every modeled type must match synth's count exactly, and all
-    of W, cids, and Q per type within _REL_TOL."""
+    type then tolerates at most _ui_expected_extra() additional claims.
+    Extra UI work cannot reduce a type's W/cids/Q below synth; shared-type
+    totals are also bounded at _UI_TOTAL_TOL. Routing bundles are counted
+    in their expanded representation on both sides: a representation-only
+    difference still requires matching costs. None = strict: every modeled
+    type must match synth's equivalent count and all of W, cids, and Q per
+    type within _REL_TOL."""
     flags = []
     a, b = per_type(sy), per_type(ex)
-    ui_caps = _ui_expected_extra(ui_positions, sy) \
+    ui_caps = _ui_expected_extra(ui_positions) \
         if ui_positions is not None else {}
+    routing_expansion = _routing_bundle_extra(sy) - _routing_bundle_extra(ex)
     print(f"\n{'type':24s} {'synth n':>8s} {'extr n':>8s} "
           f"{'synth W':>16s} {'extr W':>16s}  note")
     for t in sorted(set(a) | set(b), key=lambda t: -(b.get(t) or a[t])[1]):
@@ -167,11 +190,13 @@ def diff_report(sy: Manifest, ex: Manifest, ui_positions=None) -> list:
             continue
         if sa and sb:
             note = ""
-            if sb[0] < sa[0]:
+            representation_extra = routing_expansion if t == "routing[+aux]" else 0
+            extra = sb[0] - sa[0] - representation_extra
+            if extra < 0:
                 note = "FLAG extracted has FEWER than synth models"
-                flags.append(f"{t}: extracted count {sb[0]} < synth {sa[0]}")
-            elif sb[0] > sa[0]:
-                extra = sb[0] - sa[0]
+                flags.append(f"{t}: extracted has {-extra} fewer claims than "
+                             "synth after routing-bundle expansion")
+            elif extra > 0:
                 cap = ui_caps.get(t, 0)
                 if 0 < extra <= cap:
                     note = f"+{extra} extracted (UI chain, expected <= {cap})"
@@ -185,15 +210,24 @@ def diff_report(sy: Manifest, ex: Manifest, ui_positions=None) -> list:
                     flags.append(
                         f"{t}: {extra} extracted claim(s) beyond synth with "
                         f"no UI chain to attribute them to")
-            else:
+            if representation_extra:
+                note += ("; " if note else "") + (
+                    f"{representation_extra:+d} routing-bundle records")
+            if extra >= 0:
+                # Equivalent representations must match; true extra claims
+                # can only add nonnegative work. Never hide a missing cost
+                # behind an allowed count increase and the global 2% cap.
                 drift = [(nm, sa[i], sb[i])
                          for i, nm in ((1, "W"), (2, "cids"), (3, "Q"))
-                         if abs(sb[i] - sa[i]) > _REL_TOL * max(abs(sa[i]), 1.0)]
+                         if (abs(sb[i] - sa[i]) if extra == 0 else sa[i] - sb[i])
+                         > _REL_TOL * max(abs(sa[i]), 1.0)]
                 if drift:
-                    note = "FLAG " + ", ".join(
+                    note += ("; " if note else "") + "FLAG " + ", ".join(
                         f"{nm} {_fmt(x)}->{_fmt(y)}" for nm, x, y in drift)
+                    reason = ("cost drift at equivalent claim count" if extra == 0
+                              else "cost below synth despite extra claims")
                     flags.append(
-                        f"{t}: cost drift at equal claim count — " + ", ".join(
+                        f"{t}: {reason} — " + ", ".join(
                             f"{nm} synth {_fmt(x)} vs tape {_fmt(y)}"
                             for nm, x, y in drift))
             print(f"{t:24s} {sa[0]:>8,d} {sb[0]:>8,d} "
@@ -334,6 +368,14 @@ def build_maverick(gguf: str, prompt_n: int, cont_n: int, *, layers: int,
     return tape, model
 
 
+def synth_builder_for(tape) -> str:
+    """Which synth builder models this Maverick tape: the routed-projected
+    protocol (RoutedProjectedMatmulClaim present) or the legacy all-E fan."""
+    names = {type(c).__name__ for c in tape.claims}
+    return "maverick-projected" if "RoutedProjectedMatmulClaim" in names \
+        else "maverick"
+
+
 # ------------------------------------------------- layout breakdown probe
 
 _LAYOUT_HEAD = re.compile(
@@ -382,6 +424,8 @@ def layout_from_manifest(man: Manifest) -> dict:
     agg: dict = {}
     for name, t in owner.items():
         v = by_name.get(name)
+        if v is not None and getattr(v, "external", False):
+            continue                  # bridge-held: the prover's layout skips it too
         if v is None:
             continue
         row = agg.setdefault(t, [0, 0])
@@ -425,6 +469,20 @@ def diff_layout(probe_m_total, probe: dict, man: Manifest) -> list:
     return flags
 
 
+def layout_probe_in_process(tape) -> str:
+    """The prover's LIGERO_LAYOUT_BREAKDOWN table computed on THIS tape via
+    core.layout_breakdown (challenge-independent, value-free: no engine
+    pass, no weight resolution — placeholder loaders never fire). Returned
+    in the exact printed form parse_layout reads, so the archived probe
+    files and the in-process path share one parser."""
+    import core
+    m_total, table = core.layout_breakdown(tape, tape.cfg)
+    text = core.format_layout_breakdown(m_total, table, tape.cfg) + "\n"
+    print("\n[layout probe] in-process core.layout_breakdown "
+          f"(m_total={m_total:,})")
+    return text
+
+
 def run_layout_probe(cmd: list, timeout: int) -> str:
     env = dict(os.environ, LIGERO_LAYOUT_BREAKDOWN="1",
                PYTHONPATH=os.pathsep.join(
@@ -450,8 +508,11 @@ def main(argv=None) -> int:
                     help="llama7b context length (default 100)")
     ap.add_argument("--layers", type=int, default=None)
     ap.add_argument("--from-gguf", default=None, help="maverick GGUF path")
-    ap.add_argument("--prompt-n", type=int, default=2)
-    ap.add_argument("--cont-n", type=int, default=2)
+    ap.add_argument("--prompt-n", type=int, default=None,
+                    help="prompt tokens (default 2); with --cont-n it is THE "
+                         "split, and --seq may not accompany it")
+    ap.add_argument("--cont-n", type=int, default=None,
+                    help="continuation tokens (default 2)")
     ap.add_argument("--experts", type=int, default=128)
     ap.add_argument("--d", type=int, default=5120)
     ap.add_argument("--d-ff", type=int, default=8192)
@@ -459,9 +520,10 @@ def main(argv=None) -> int:
     ap.add_argument("--t-queries", type=int, default=None,
                     help="sets LIGERO_T_QUERIES before the demo imports read it")
     ap.add_argument("--layout", action="store_true",
-                    help="also run the prover's LIGERO_LAYOUT_BREAKDOWN probe "
-                         "(subprocess; runs the demo's pre-prove passes, so "
-                         "keep the context small) and diff row layouts")
+                    help="also diff the prover's LIGERO_LAYOUT_BREAKDOWN row "
+                         "layout: in-process for maverick (cheap at any S); "
+                         "a demo subprocess for llama7b (validates the hand "
+                         "mirror; keep --seq small)")
     ap.add_argument("--layout-timeout", type=int, default=3600)
     ap.add_argument("--skip-selftest", action="store_true")
     ap.add_argument("-o", "--out-dir", default="crosscheck-out")
@@ -497,7 +559,17 @@ def main(argv=None) -> int:
         if not a.from_gguf:
             ap.error("maverick needs --from-gguf (metadata is read eagerly)")
         if a.seq is not None:
+            if a.prompt_n is not None or a.cont_n is not None:
+                # The split changes the tape (one embedding selection and an
+                # addition per continuation position), so a keeper meant to
+                # match a timed prove must name the same split, not a total.
+                ap.error(f"--seq {a.seq} conflicts with --prompt-n/--cont-n; "
+                         "give the split the timed run uses, without --seq")
             a.prompt_n, a.cont_n = 2, a.seq - 2
+        if a.prompt_n is None:
+            a.prompt_n = 2
+        if a.cont_n is None:
+            a.cont_n = 2
         seq = a.prompt_n + a.cont_n
         layers = a.layers if a.layers is not None else 48
         tape, model = build_maverick(a.from_gguf, a.prompt_n, a.cont_n,
@@ -505,19 +577,15 @@ def main(argv=None) -> int:
                                      d=a.d, d_ff=a.d_ff, vocab=a.vocab)
         sy = None
         if layers == 48 and a.experts == 128 and a.d == 5120:
-            sy = synth.BUILDERS["maverick"](seq,
-                                            t_queries=tape.cfg.T_QUERIES)
+            builder = synth_builder_for(tape)
+            print(f"    protocol on the tape: {builder} "
+                  f"(synth builder chosen from the claim types)")
+            sy = synth.BUILDERS[builder](seq, t_queries=tape.cfg.T_QUERIES)
         else:
             print("note: non-standard shape — synth models the full 48x128 "
                   "Maverick only; skipping the synth diff (layout diff "
                   "still runs)")
-        probe_cmd = [sys.executable,
-                     str(_REPO / "demo" / "demo_maverick_full.py"),
-                     "--from-gguf", a.from_gguf,
-                     "--prompt-n", str(a.prompt_n), "--cont-n", str(a.cont_n),
-                     "--layers", str(layers), "--experts", str(a.experts),
-                     "--d", str(a.d), "--d-ff", str(a.d_ff),
-                     "--vocab", str(a.vocab)]
+        probe_cmd = None      # maverick's layout probe runs in-process
 
     print(f"    built: {len(tape.claims):,} claims")
     print("[3] extracting manifest")
@@ -534,13 +602,27 @@ def main(argv=None) -> int:
         flags += diff_report(sy, man, ui_positions=ui_positions)
 
     if a.layout:
-        print("[5] prover layout probe (this runs the demo up to the start "
-              "of prove, including any engine pass — minutes at small "
-              "context)")
-        text = run_layout_probe(probe_cmd, a.layout_timeout)
+        if probe_cmd is not None:
+            print("[5] prover layout probe (subprocess: runs the demo up to "
+                  "the start of prove, including any engine pass — minutes "
+                  "at small context)")
+            text = run_layout_probe(probe_cmd, a.layout_timeout)
+        else:
+            print("[5] prover layout probe (in-process core.layout_breakdown "
+                  "on the built tape — no engine pass)")
+            text = layout_probe_in_process(tape)
         (out / f"{a.model}-s{seq}-layout.txt").write_text(text)
         m_total, table = parse_layout(text)
         flags += diff_layout(m_total, table, man)
+        # The witness by phase and origin on the same built tape: the
+        # measurement behind the witness-regeneration note's estimate of
+        # what a cache could hold (value-free, so cheap at any context).
+        import core
+        ctext = core.format_witness_composition(
+            core.witness_composition(tape, tape.cfg)) + "\n"
+        (out / f"{a.model}-s{seq}-composition.txt").write_text(ctext)
+        print("[6] witness composition (in-process, value-free)")
+        print(ctext)
 
     print("\n" + "=" * 70)
     if flags:

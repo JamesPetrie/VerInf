@@ -29,6 +29,8 @@ both paths on the same instance to show they accept and reject together.
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional, Sequence, Tuple
 
+import blake3
+
 from prover.protocol import P as FIELD_P, inv
 
 from .counters import charge
@@ -41,6 +43,20 @@ def mle_eval(values: Sequence[int], point: Sequence[int]) -> int:
     """Evaluate the multilinear extension of `values` (2^n hypercube evals, the
     variable order is most-significant-first) at `point`."""
     charge(mul=max(len(values) - 1, 0), add=2 * max(len(values) - 1, 0))
+    # Production sampled-local proofs keep the authenticated wire vectors on
+    # device.  Folding them through Python scalar iteration would synchronize
+    # once per element, so use the bit-exact CUDA fold already shared by the
+    # prover whenever a CUDA tensor reaches the verifier.
+    if getattr(values, "is_cuda", False):
+        import torch
+
+        from . import gpu
+        cur = values.detach().contiguous().view(-1).to(torch.uint64)
+        for r in point:
+            rt = torch.tensor([int(r) % FIELD_P], dtype=torch.uint64,
+                              device=cur.device)
+            cur = gpu.fold_t(cur, rt)
+        return int(cur[0].item()) % FIELD_P
     cur = list(values)
     for r in point:
         half = len(cur) // 2
@@ -124,6 +140,54 @@ class SumcheckProof:
 
 
 Term = Tuple[int, Sequence[Sequence[int]]]     # (coefficient, factor list)
+
+
+class RoundTranscript:
+    """Fiat-Shamir coins for ONE sumcheck, a coin per round: round r's
+    challenge is drawn from a running digest that has absorbed the binding
+    context (the committed block, the relation, whatever the caller names)
+    and every round polynomial up to and including round r's. A prover who
+    knows a round's challenge before sending its polynomial can steer an
+    incorrect claim onto the true terminal value; with this coin the
+    polynomial is fixed first. Pass one to prove_terms/verify_terms in place
+    of a coin function; the verifier builds its own from the same context.
+    Drawing a coin before its round is absorbed raises."""
+
+    DOMAIN = b"verinf/sumcheck-rounds/v1"
+
+    def __init__(self, *context: bytes):
+        h = blake3.blake3()
+        for part in (self.DOMAIN, *context):
+            h.update(len(part).to_bytes(8, "little") + bytes(part))
+        self._state = h.digest()
+        self._absorbed = 0
+
+    def absorb(self, rnd: int, samples: Sequence[Tuple[int, int]]) -> None:
+        if rnd != self._absorbed:
+            raise ValueError(f"round {rnd} absorbed out of order "
+                             f"(next is {self._absorbed})")
+        h = blake3.blake3(self._state)
+        h.update(rnd.to_bytes(8, "little") + len(samples).to_bytes(8, "little"))
+        for x, y in samples:
+            h.update((int(x) % FIELD_P).to_bytes(8, "little")
+                     + (int(y) % FIELD_P).to_bytes(8, "little"))
+        self._state = h.digest()
+        self._absorbed += 1
+
+    def __call__(self, rnd: int) -> int:
+        if rnd != self._absorbed - 1:
+            raise ValueError(f"round {rnd}'s coin drawn before its polynomial")
+        d = blake3.blake3(self._state + b"coin").digest()
+        return int.from_bytes(d[:16], "little") % FIELD_P
+
+
+def draw_coin(coin, rnd: int, samples: Sequence[Tuple[int, int]]) -> int:
+    """Round rnd's challenge, after its (transmitted) polynomial: a
+    RoundTranscript absorbs the samples first; a plain function of the round
+    index (the layergkr prototypes' pre-drawn coins) is called as before."""
+    if isinstance(coin, RoundTranscript):
+        coin.absorb(rnd, samples)
+    return coin(rnd) % FIELD_P
 
 GPU_MIN_SUMCHECK_WORK = 1 << 16     # size * total factors
 _SC_GPU: dict = {}
@@ -214,7 +278,7 @@ def prove_terms(terms: Sequence[Term], coin: Callable[[int], int],
             h = mask_poly_coeffs(mu, tape.take(deg))
             samples = [(x, (y + poly_eval_coeffs(h, x)) % FIELD_P) for x, y in samples]
         proof.round_polys.append(samples)
-        r = coin(rnd) % FIELD_P
+        r = draw_coin(coin, rnd, samples)
         proof.challenges.append(r)
         if tape is not None:
             mu = poly_eval_coeffs(h, r)
@@ -232,12 +296,38 @@ def prove(factors: Sequence[Sequence[int]], coin: Callable[[int], int],
     return prove_terms([(1, list(factors))], coin, tape, mu0)
 
 
+def _expected_rounds(size: int) -> int:
+    """log2 of the hypercube size; the transcript MUST carry exactly this many
+    rounds. Without the check a proof with fewer rounds folds fewer variables
+    and the terminal is evaluated at a short point (mle_eval folds only over
+    the point it is given), so a zero-round transcript is accepted whenever
+    the sum of products at index 0 alone matches the claim."""
+    if size <= 0 or size & (size - 1):
+        raise ValueError(f"sumcheck domain size {size} is not a power of two")
+    return size.bit_length() - 1
+
+
+def _rounds_ok(proof: SumcheckProof, n: int):
+    if len(proof.round_polys) != n or len(proof.challenges) != n \
+            or len(proof.final_point) != n:
+        return False, (f"expected {n} rounds, transcript has "
+                       f"{len(proof.round_polys)} polys / {len(proof.challenges)} "
+                       f"challenges / {len(proof.final_point)} point coordinates")
+    return True, "ok"
+
+
 def verify_terms(proof: SumcheckProof, terms: Sequence[Term],
                  coin: Callable[[int], int]) -> Tuple[bool, str]:
     """Check the round chain and the terminal evaluation of a sum-of-products
     sumcheck. For a masked proof the terminal check subtracts the carried mask --
     that subtraction is the 'authenticated masks' step of the ZK argument."""
     claim = proof.claim % FIELD_P
+    sizes = {len(f) for _, fs in terms for f in fs}
+    if len(sizes) != 1:
+        return False, f"factors of unequal size {sorted(sizes)}"
+    ok, why = _rounds_ok(proof, _expected_rounds(sizes.pop()))
+    if not ok:
+        return False, why
     deg = max(len(f) for _, f in terms)
     for rnd, samples in enumerate(proof.round_polys):
         if len(samples) != deg + 1:
@@ -246,10 +336,14 @@ def verify_terms(proof: SumcheckProof, terms: Sequence[Term],
         g1 = _lagrange_interpolate(samples, 1)
         if (g0 + g1) % FIELD_P != claim:
             return False, f"round {rnd}: g(0)+g(1) != claim"
-        r = coin(rnd) % FIELD_P
+        r = draw_coin(coin, rnd, samples)
         if r != proof.challenges[rnd]:
             return False, f"round {rnd}: challenge mismatch"
         claim = _lagrange_interpolate(samples, r)
+    # the terminal is evaluated at the round challenges and nowhere else: a
+    # proof-chosen point could sit where the relation happens to hold
+    if list(proof.final_point) != list(proof.challenges):
+        return False, "terminal point is not the round challenges"
     terminal = 0
     for c, fs in terms:
         prod = c % FIELD_P
@@ -266,6 +360,12 @@ def verify(proof: SumcheckProof, factors: Sequence[Sequence[int]],
            coin: Callable[[int], int]) -> Tuple[bool, str]:
     """Single-product convenience wrapper over `verify_terms`."""
     claim = proof.claim % FIELD_P
+    sizes = {len(f) for f in factors}
+    if len(sizes) != 1:
+        return False, f"factors of unequal size {sorted(sizes)}"
+    ok, why = _rounds_ok(proof, _expected_rounds(sizes.pop()))
+    if not ok:
+        return False, why
     deg = len(factors)
     for rnd, samples in enumerate(proof.round_polys):
         if len(samples) != deg + 1:
@@ -274,10 +374,14 @@ def verify(proof: SumcheckProof, factors: Sequence[Sequence[int]],
         g1 = _lagrange_interpolate(samples, 1)
         if (g0 + g1) % FIELD_P != claim:
             return False, f"round {rnd}: g(0)+g(1) != claim"
-        r = coin(rnd) % FIELD_P
+        r = draw_coin(coin, rnd, samples)
         if r != proof.challenges[rnd]:
             return False, f"round {rnd}: challenge mismatch"
         claim = _lagrange_interpolate(samples, r)
+    # the terminal is evaluated at the round challenges and nowhere else: a
+    # proof-chosen point could sit where the relation happens to hold
+    if list(proof.final_point) != list(proof.challenges):
+        return False, "terminal point is not the round challenges"
     terminal = 1
     for f in factors:
         terminal = terminal * mle_eval(f, proof.final_point) % FIELD_P

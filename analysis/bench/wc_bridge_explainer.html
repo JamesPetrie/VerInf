@@ -1,0 +1,732 @@
+<title>A bridge instead of the weights</title>
+<style>
+  :root{
+    --ground:#F4F7FA; --panel:#FFFFFF; --ink:#131820; --muted:#5A6472;
+    --hair:#E0E6ED; --hair2:#EDF1F6; --cyan:#1591AC; --lever:#8C52D6;
+    --caution:#C24E12; --good:#00745A;
+    --wit:#E69F00; --str:#2E7FB8; --qd:#009E73; --lin:#8A9099; --ovh:#B07AA1;
+    --wit-b:#FBE7C6; --str-b:#DCE7F6; --qd-b:#CFEEE2; --lin-b:#E7E9EC;
+    --wit-t:#9A6A00; --str-t:#215D89; --qd-t:#00745A; --lin-t:#6B7178;
+    --dead:#C24E12; --dead-b:#F8E3D8;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --shadow:0 1px 2px rgba(20,30,45,.06),0 6px 20px rgba(20,30,45,.05);
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --ground:#0E131A; --panel:#161C25; --ink:#E8EDF3; --muted:#96A1AF;
+      --hair:#242C38; --hair2:#1C232E; --cyan:#3BC1DB; --lever:#B18BEA;
+      --caution:#F0813C; --good:#2FC79E;
+      --wit-b:#3a2f18; --str-b:#16304a; --qd-b:#0e3a2d; --lin-b:#2a2f38;
+      --wit-t:#E6A93A; --str-t:#5FA6E0; --qd-t:#2FC79E; --lin-t:#9AA4B0;
+      --dead:#F0813C; --dead-b:#3a2417; --ovh:#C58FB6;
+    }
+  }
+  :root[data-theme="dark"]{
+    --ground:#0E131A; --panel:#161C25; --ink:#E8EDF3; --muted:#96A1AF;
+    --hair:#242C38; --hair2:#1C232E; --cyan:#3BC1DB; --lever:#B18BEA;
+    --caution:#F0813C; --good:#2FC79E;
+    --wit-b:#3a2f18; --str-b:#16304a; --qd-b:#0e3a2d; --lin-b:#2a2f38;
+    --wit-t:#E6A93A; --str-t:#5FA6E0; --qd-t:#2FC79E; --lin-t:#9AA4B0;
+    --dead:#F0813C; --dead-b:#3a2417; --ovh:#C58FB6;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--sans);
+    line-height:1.55;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1080px;margin:0 auto;padding:40px 24px 72px}
+  .mono{font-family:var(--mono)}
+  a{color:var(--cyan)}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--cyan);margin:0 0 10px}
+  h1{font-size:clamp(28px,4.4vw,44px);line-height:1.08;margin:0 0 12px;text-wrap:balance;
+    letter-spacing:-.015em;font-weight:680}
+  .thesis{font-size:17px;color:var(--muted);max-width:64ch;margin:0 0 22px}
+  .thesis b{color:var(--ink)}
+  section{margin-top:44px}
+  h2{font-size:13px;font-family:var(--mono);letter-spacing:.1em;text-transform:uppercase;
+    color:var(--muted);margin:0 0 16px;display:flex;align-items:center;gap:10px}
+  h2::after{content:"";flex:1;height:1px;background:var(--hair)}
+  .prose{max-width:72ch}
+  .prose p{margin:0 0 14px;font-size:15px;color:var(--muted);line-height:1.62}
+  .prose p b,.prose li b{color:var(--ink)}
+  .prose ul,.prose ol{margin:8px 0 14px;padding-left:22px}
+  .prose li{font-size:14.5px;color:var(--muted);margin-bottom:8px;line-height:1.55}
+  .prose code,.mf code{background:var(--hair2);border-radius:4px;padding:1px 5px;
+    font-family:var(--mono);font-size:.9em;color:var(--ink)}
+
+  /* fact strip */
+  .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin:18px 0 6px}
+  .fact{background:var(--panel);border:1px solid var(--hair);border-radius:12px;
+    padding:14px 16px;box-shadow:var(--shadow)}
+  .fact .n{font-family:var(--mono);font-size:24px;font-weight:700;letter-spacing:-.02em;
+    font-variant-numeric:tabular-nums}
+  .fact .l{font-size:12px;color:var(--muted);margin-top:2px;line-height:1.4}
+  .fact.good .n{color:var(--good)} .fact.dead .n{color:var(--dead)}
+
+  /* before/after bars */
+  .ba{background:var(--panel);border:1px solid var(--hair);border-radius:14px;
+    padding:18px;box-shadow:var(--shadow)}
+  .ba .row{display:grid;grid-template-columns:92px 1fr;gap:12px;align-items:center;margin:10px 0}
+  .ba .tag{font-family:var(--mono);font-size:12px;font-weight:700}
+  .ba .bar{display:flex;height:30px;border-radius:7px;overflow:hidden;min-width:320px}
+  .ba .bar span{display:flex;align-items:center;justify-content:center;color:#fff;
+    font-family:var(--mono);font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden}
+  .ba .b-wit{background:var(--wit)} .ba .b-str{background:var(--str)} .ba .b-qd{background:var(--qd)}
+  .ba .b-dead{background:var(--dead)} .ba .b-br{background:var(--lever)} .ba .b-lin{background:var(--lin)}
+  .ba .cap{font-family:var(--mono);font-size:11.5px;color:var(--muted);margin-top:10px;line-height:1.6}
+  .barwrap{overflow-x:auto}
+
+  /* step cards (real sequence) */
+  .steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+  .step{background:var(--panel);border:1px solid var(--hair);border-radius:12px;
+    padding:16px;box-shadow:var(--shadow)}
+  .step h3{margin:0 0 8px;font-family:var(--mono);font-size:13px;color:var(--cyan)}
+  .step p{margin:0;font-size:13.5px;color:var(--muted);line-height:1.55}
+  .step p b{color:var(--ink)}
+  .step .f{font-family:var(--mono);font-size:12px;background:var(--hair2);border-radius:7px;
+    padding:8px 10px;margin-top:9px;color:var(--ink);overflow-x:auto;white-space:nowrap}
+
+  /* soundness table */
+  table{border-collapse:collapse;width:100%;font-size:14px}
+  .tblwrap{overflow-x:auto;background:var(--panel);border:1px solid var(--hair);
+    border-radius:12px;box-shadow:var(--shadow);padding:6px 14px 10px}
+  th{font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.06em;
+    color:var(--muted);text-align:left;padding:10px 12px 6px;border-bottom:2px solid var(--hair)}
+  td{padding:8px 12px;border-bottom:1px solid var(--hair2);font-variant-numeric:tabular-nums}
+  tr:last-child td{border-bottom:none}
+  td.num{font-family:var(--mono);font-size:13px;text-align:right}
+  td.good{color:var(--good);font-weight:600}
+  td.dead{color:var(--dead)}
+
+  /* master formula (as in the graph page) */
+  .mf{background:var(--panel);border:1px solid var(--hair);border-radius:14px;
+    padding:22px 22px 18px;box-shadow:var(--shadow)}
+  .mf .eq{font-family:var(--mono);font-size:13.5px;line-height:1.5;overflow-x:auto;
+    white-space:nowrap;padding-bottom:6px}
+  .mf .eq .row{display:block;padding:3px 0}
+  .mf .eq .op{color:var(--muted)}
+  .mf .eq .lhs{color:var(--ink);font-weight:680}
+  .mf .eq .tag{color:var(--muted);font-size:11px;padding-left:12px}
+  .t-wit{color:var(--wit-t);font-weight:600} .t-str{color:var(--str-t);font-weight:600}
+  .t-qd{color:var(--qd-t);font-weight:600} .t-lin{color:var(--lin-t);font-weight:600}
+  .t-br{color:var(--lever);font-weight:600} .t-dead{color:var(--dead);font-weight:600;text-decoration:line-through}
+  .mf .eta{margin-top:12px;font-size:12.5px;color:var(--muted);line-height:1.65}
+  .mf .eta b{color:var(--ink)}
+
+  /* knob v2 */
+  .calc{display:grid;grid-template-columns:minmax(260px,340px) 1fr;gap:18px;align-items:start}
+  .cpanel{background:var(--panel);border:1px solid var(--hair);border-radius:14px;padding:18px;
+    box-shadow:var(--shadow)}
+  .cctrls{display:flex;flex-direction:column;gap:13px}
+  .ctrl{display:flex;flex-direction:column;gap:5px}
+  .ctrl .lab{display:flex;justify-content:space-between;align-items:baseline;
+    font-family:var(--mono);font-size:12px}
+  .ctrl .lab .nm{color:var(--ink);font-weight:600}
+  .ctrl .lab .vl{color:var(--cyan);font-weight:700;font-variant-numeric:tabular-nums}
+  .ctrl .dsc{font-size:10.5px;color:var(--muted);font-family:var(--mono);line-height:1.45}
+  input[type=range]{width:100%;accent-color:var(--cyan);height:20px;cursor:pointer}
+  select{font-family:var(--mono);font-size:13px;background:var(--hair2);color:var(--ink);
+    border:1px solid var(--hair);border-radius:7px;padding:6px 8px;cursor:pointer;width:100%}
+  .chk{display:flex;align-items:flex-start;gap:8px;font-family:var(--mono);font-size:12px;
+    color:var(--ink);cursor:pointer;line-height:1.4}
+  .chk input{accent-color:var(--lever);width:16px;height:16px;cursor:pointer;flex:none;margin-top:1px}
+  input:focus-visible,select:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  .verdict{font-family:var(--mono);border-radius:11px;padding:14px 16px;margin-bottom:14px}
+  .verdict .big{font-size:clamp(26px,4vw,38px);font-weight:700;letter-spacing:-.02em;
+    font-variant-numeric:tabular-nums;line-height:1.1}
+  .verdict .sub{font-size:12.5px;margin-top:4px}
+  .verdict.ok{background:var(--qd-b);color:var(--qd-t)}
+  .verdict.no{background:var(--dead-b);color:var(--dead)}
+  .oterms{display:flex;flex-direction:column;gap:8px;margin:6px 0 2px}
+  .oterm{display:grid;grid-template-columns:13px 172px 1fr 92px;gap:10px;align-items:center;
+    font-family:var(--mono);font-size:12px}
+  .oterm .chip{width:12px;height:12px;border-radius:3px}
+  .oterm .nm{color:var(--muted)}
+  .oterm .sec{color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums;text-align:right}
+  .oterm .bw{background:var(--hair2);border-radius:4px;height:10px;overflow:hidden}
+  .oterm .bar2{display:block;height:100%;width:0;border-radius:4px;transition:width .18s ease}
+  @media (prefers-reduced-motion:reduce){.oterm .bar2{transition:none}}
+  .c-wit{background:var(--wit)} .c-str{background:var(--str)} .c-qd{background:var(--qd)}
+  .c-br{background:var(--lever)} .c-lin{background:var(--lin)} .c-ovh{background:var(--ovh)}
+  .anchors{font-family:var(--mono);font-size:11px;color:var(--muted);border-top:1px dashed var(--hair);
+    margin-top:14px;padding-top:10px;line-height:1.7}
+  .pill{font-size:10px;font-weight:700;padding:1px 7px;border-radius:999px;border:1px solid;
+    font-family:var(--mono);white-space:nowrap}
+  .pill.meas{color:var(--qd-t);border-color:var(--qd)}
+  .pill.ind{color:var(--str-t);border-color:var(--str)}
+  .pill.model{color:var(--caution);border-color:var(--caution)}
+  .foot{margin-top:52px;padding-top:18px;border-top:1px solid var(--hair);
+    font-family:var(--mono);font-size:11.5px;color:var(--muted);line-height:1.7}
+  .cbr{background:var(--lever)} .creg{background:var(--caution)}
+  .cw{background:var(--wit)} .cs{background:var(--str)} .cq{background:var(--qd)}
+  .cl2{background:var(--lin)} .co{background:var(--ovh)}
+  .crow{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .optblock{margin-top:12px;padding:11px 12px;border:1px solid var(--hair);border-radius:8px;background:var(--hair2)}
+  .optlab{font-family:var(--mono);font-size:12px;color:var(--ink);margin-bottom:8px;font-weight:600}
+  .optnote{font-family:var(--mono);font-size:10.5px;color:var(--muted);line-height:1.45;margin-top:8px}
+  .creset{font-family:var(--mono);font-size:11px;color:var(--cyan);background:none;border:1px solid var(--hair);
+    border-radius:7px;padding:6px 10px;cursor:pointer;align-self:flex-start}
+  .creset:hover{border-color:var(--cyan)}
+  .bbstat{font-family:var(--mono);font-size:11px;line-height:1.4;margin:6px 0 2px;min-height:15px}
+  .bbstat.on{color:var(--qd-t)} .bbstat.off{color:var(--caution)} .bbstat.idle{color:var(--muted)}
+  .oterms-head{font-family:var(--mono);font-size:11px;color:var(--muted);margin:14px 0 2px}
+  .snd{background:var(--hair2);border-radius:11px;padding:12px 14px;margin:16px 0 4px}
+  .snd-head{font-family:var(--mono);font-size:13px;color:var(--ink);font-weight:600;margin-bottom:9px}
+  .snd-head b{font-size:19px}
+  .snd-bind{font-size:11px;color:var(--muted);font-weight:400}
+  .snd-terms{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+  .sterm{background:var(--panel);border:1px solid var(--hair);border-radius:8px;padding:8px 6px;
+    font-family:var(--mono);text-align:center}
+  .sterm .snm{color:var(--muted);display:block;margin-bottom:4px;font-size:9.5px;line-height:1.3}
+  .sterm .sval{color:var(--ink);font-weight:700;font-size:15px;font-variant-numeric:tabular-nums}
+  .sterm.binding{border-color:var(--qd);background:color-mix(in oklab,var(--qd) 12%,var(--panel))}
+  .sterm.binding .sval{color:var(--qd-t)} .sterm.bad .sval{color:var(--caution)}
+  .oderived{display:grid;grid-template-columns:1fr 1fr;gap:6px 18px;font-family:var(--mono);font-size:11.5px;
+    color:var(--muted);border-top:1px dashed var(--hair);padding-top:12px;margin-top:12px}
+  .oderived b{color:var(--ink)}
+  .cwarn{font-family:var(--mono);font-size:11.5px;color:var(--caution);margin-top:10px;line-height:1.6}
+  .oterm .bar{display:block;height:100%;width:0;border-radius:4px;transition:width .18s ease}
+  @media (prefers-reduced-motion:reduce){.oterm .bar{transition:none}}
+  @media (max-width:760px){.calc{grid-template-columns:1fr}.oterm{grid-template-columns:13px 150px 1fr 78px}}
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">VerInf · what changed</p>
+  <h1>A bridge instead of the weights</h1>
+  <p class="thesis">The prover shows that it ran the permitted model and nothing else. Until now
+    every proof reprocessed all 400.7 billion weights from scratch, which took 42 minutes, even
+    though the weights are the same from one run to the next. Now the weights are fixed once by a
+    separate checkable structure, called the model registration. Each proof checks against it at
+    40 random points, and that check takes 10 minutes. Forging the weights and passing the check
+    has a probability of 2 to the power minus 40, about one chance in a trillion.</p>
+
+  <div class="facts">
+    <div class="fact good"><div class="n">−42 min</div><div class="l">of weight work removed from every proof</div></div>
+    <div class="fact"><div class="n">+10 min</div><div class="l">is what the check that replaced it costs</div></div>
+    <div class="fact"><div class="n">11 min</div><div class="l">to register the model, paid once, not per proof</div></div>
+    <div class="fact dead"><div class="n">60 min</div><div class="l">the new bottleneck, the model runs five times over</div></div>
+  </div>
+
+  <section>
+    <h2>What changed</h2>
+    <div class="ba">
+      <div class="row"><span class="tag" style="color:var(--dead)">BEFORE</span>
+        <div class="barwrap"><div class="bar">
+          <span class="b-wit" style="flex:30">model runs 30%</span>
+          <span class="b-dead" style="flex:36">weight work 36%</span>
+          <span class="b-str" style="flex:9">packing 9%</span>
+          <span class="b-qd" style="flex:10">checks 10%</span>
+          <span class="b-lin" style="flex:15">other 15%</span>
+        </div></div></div>
+      <div class="row"><span class="tag" style="color:var(--good)">NOW</span>
+        <div class="barwrap"><div class="bar">
+          <span class="b-wit" style="flex:42">model runs 42%</span>
+          <span class="b-br" style="flex:11">the check 11%</span>
+          <span class="b-str" style="flex:12">packing 12%</span>
+          <span class="b-qd" style="flex:13">checks 13%</span>
+          <span class="b-lin" style="flex:22">other 22%</span>
+        </div></div></div>
+      <div class="cap">117 minutes → 85 minutes</div>
+    </div>
+    <div class="prose" style="margin-top:16px">
+      <p>The weights do not change from proof to proof, yet each proof paid for them again, 42
+        minutes for 400 billion numbers. That price is now paid once, when the model is registered,
+        and each proof gets away with a 40 point check that takes 10 minutes.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>How it works</h2>
+    <div class="ba" style="padding:20px 14px 14px">
+      <div style="overflow-x:auto">
+      <svg viewBox="0 0 900 300" width="900" style="max-width:100%;display:block;margin:0 auto" role="img"
+           aria-label="Diagram: before, every proof reprocessed all the weights; now the model is registered once and each proof checks 40 points">
+        <defs>
+          <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+        </defs>
+        <g fill="none" stroke="currentColor" color="var(--muted)" stroke-width="1.4" marker-end="url(#ar)">
+          <line x1="150" y1="62" x2="205" y2="62"/><line x1="345" y1="62" x2="400" y2="62"/>
+          <line x1="600" y1="62" x2="655" y2="62"/>
+          <line x1="150" y1="196" x2="205" y2="196"/>
+          <line x1="150" y1="252" x2="205" y2="252"/><line x1="345" y1="252" x2="400" y2="252"/>
+          <line x1="600" y1="252" x2="655" y2="252"/>
+          <path d="M275 218 L275 236"/>
+        </g>
+        <!-- BEFORE -->
+        <text x="14" y="30" font-family="var(--mono)" font-size="12" font-weight="700" fill="var(--dead)">BEFORE, every proof</text>
+        <rect x="14" y="42" width="136" height="40" rx="8" fill="var(--hair2)" stroke="var(--hair)"/>
+        <text x="82" y="60" text-anchor="middle" font-size="12" fill="var(--ink)">request</text>
+        <text x="82" y="74" text-anchor="middle" font-size="10" fill="var(--muted)">1000 tokens</text>
+        <rect x="205" y="38" width="140" height="48" rx="8" fill="var(--dead-b)" stroke="var(--dead)"/>
+        <text x="275" y="57" text-anchor="middle" font-size="12" font-weight="700" fill="var(--dead)">all 400.7 billion weights</text>
+        <text x="275" y="73" text-anchor="middle" font-size="10" fill="var(--dead)">reprocess and open, 42 min</text>
+        <rect x="400" y="42" width="200" height="40" rx="8" fill="var(--hair2)" stroke="var(--hair)"/>
+        <text x="500" y="66" text-anchor="middle" font-size="12" fill="var(--ink)">model runs and checks</text>
+        <rect x="655" y="42" width="120" height="40" rx="8" fill="var(--qd-b)" stroke="var(--qd)"/>
+        <text x="715" y="66" text-anchor="middle" font-size="12" font-weight="700" fill="var(--qd-t)">proof</text>
+        <line x1="14" y1="112" x2="886" y2="112" stroke="var(--hair)" stroke-width="1"/>
+        <!-- AFTER -->
+        <text x="14" y="140" font-family="var(--mono)" font-size="12" font-weight="700" fill="var(--good)">NOW, register once, then only check</text>
+        <rect x="14" y="176" width="136" height="40" rx="8" fill="var(--hair2)" stroke="var(--hair)"/>
+        <text x="82" y="194" text-anchor="middle" font-size="12" fill="var(--ink)">model weights</text>
+        <text x="82" y="208" text-anchor="middle" font-size="10" fill="var(--muted)">400.7 billion</text>
+        <rect x="205" y="172" width="140" height="48" rx="8" fill="var(--str-b)" stroke="var(--str)"/>
+        <text x="275" y="191" text-anchor="middle" font-size="12" font-weight="700" fill="var(--str-t)">model registration</text>
+        <text x="275" y="207" text-anchor="middle" font-size="10" fill="var(--str-t)">11 min, lasts 25 proofs</text>
+        <rect x="14" y="232" width="136" height="40" rx="8" fill="var(--hair2)" stroke="var(--hair)"/>
+        <text x="82" y="250" text-anchor="middle" font-size="12" fill="var(--ink)">request</text>
+        <text x="82" y="264" text-anchor="middle" font-size="10" fill="var(--muted)">1000 tokens</text>
+        <rect x="205" y="232" width="140" height="40" rx="8" fill="var(--panel)" stroke="var(--lever)"/>
+        <text x="275" y="250" text-anchor="middle" font-size="12" font-weight="700" fill="var(--lever)">check at 40 points</text>
+        <text x="275" y="264" text-anchor="middle" font-size="10" fill="var(--lever)">10 min</text>
+        <rect x="400" y="232" width="200" height="40" rx="8" fill="var(--hair2)" stroke="var(--hair)"/>
+        <text x="500" y="250" text-anchor="middle" font-size="12" fill="var(--ink)">model runs and checks</text>
+        <text x="500" y="264" text-anchor="middle" font-size="10" fill="var(--muted)">unchanged</text>
+        <rect x="655" y="232" width="120" height="40" rx="8" fill="var(--qd-b)" stroke="var(--qd)"/>
+        <text x="715" y="256" text-anchor="middle" font-size="12" font-weight="700" fill="var(--qd-t)">proof</text>
+        <text x="795" y="250" font-size="11" font-weight="700" fill="var(--good)">−32 min</text>
+        <text x="795" y="264" font-size="10" fill="var(--muted)">per proof</text>
+      </svg>
+      </div>
+      <div class="cap">The check ties the numbers the proof actually uses to what was registered,
+        so one cannot be swapped while the other stays.</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>A worked example</h2>
+    <div class="prose">
+      <p>Take a model of three weights, 3, 1 and 4. Real sizes are not needed, the whole mechanism is visible on three numbers.</p>
+    </div>
+    <div class="steps">
+      <div class="step"><h3>Registration</h3>
+        <p>The weights become coefficients of a polynomial, and its fingerprint is published. The fingerprint does not reveal the weights, and it does not let them be swapped quietly.</p>
+        <div class="f">F(x) = 3 + 1·x + 4·x²</div></div>
+      <div class="step"><h3>An honest proof</h3>
+        <p>The verifier names a random point, say x = 2, after the prover has committed to everything. Both sides evaluate, and the values agree.</p>
+        <div class="f">F(2) = 3 + 2 + 16 = 21 ✓</div></div>
+      <div class="step"><h3>An attempted forgery</h3>
+        <p>The prover quietly changes the last weight from 4 to 5, to pass a different model off as the registered one. At the point 2 the values disagree and the check fails.</p>
+        <div class="f">3 + 2 + 20 = 25 ≠ 21 ✗</div></div>
+      <div class="step"><h3>Why it cannot be guessed</h3>
+        <p>The difference between the real and the forged model is itself a polynomial, and it is zero at only a handful of points. A forgery passes only by landing exactly on one.</p>
+        <div class="f">difference = 1·x², zero only at x = 0</div></div>
+      <div class="step"><h3>At real sizes</h3>
+        <p>The polynomial has degree up to 16 384, there are 32 768 points to choose from, and 40 are drawn after everything is committed. A forgery has to match at all 40 at once.</p>
+        <div class="f">about 1 in 1 128 000 000 000</div></div>
+      <div class="step"><h3>Why the weights stay secret</h3>
+        <p>1024 random numbers are added on top of the real coefficients. Each checked point reveals one equation about them, and while there are fewer than 1024 equations the weights cannot be recovered.</p>
+        <div class="f">40 points per proof, enough for 25</div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>The order of events in one proof</h2>
+    <div class="steps">
+      <div class="step"><h3>1 · Register the model, once</h3>
+        <p>All the weights are cut into blocks and turned into polynomials, the weights themselves plus 1024 random masks on top, and the masks are what stop the checks from revealing the weights. All of it is expanded to 32768 points and reduced to one fingerprint, which becomes the public name of the model.</p>
+        <div class="f">400.7 billion weights → one fingerprint</div></div>
+      <div class="step"><h3>2 · A random number</h3>
+        <p>The prover first publishes all the results of the run. Only then does a random number appear, which could not have been known in advance, so the results cannot be fitted to the future check. One such number serves all 72 matrix multiplications at once.</p>
+        <div class="f">random number = hash of everything published</div></div>
+      <div class="step"><h3>3 · Squeeze the weights into one column</h3>
+        <p>The prover publishes the weights folded by that random number, one value where a whole row used to be. This is exactly the quantity the rest of the proof uses, not a separate copy made for the check, and a substitution is caught at build time. It costs nothing extra, because it rides along with a pass that already reads every weight.</p>
+        <div class="f">folded weights and folded masks</div></div>
+      <div class="step"><h3>4 · Draw the 40 check points</h3>
+        <p>More random numbers appear now, one per block of weights so that all blocks mix into one, and 40 distinct points where the check will happen. The prover hands over the values of its mixture at those points. There are 40 of them because each point buys about one bit of assurance and 40 give one chance in a trillion. More is possible, but every point spends part of the registration, and at 64 points one registration lasts 16 proofs instead of 25.</p>
+        <div class="f">40 points out of 32768</div></div>
+      <div class="step"><h3>5 · The check</h3>
+        <p>The verifier takes the same 40 points from the registration and sees whether the values agree. Lying about the weights works only if the lie happens to match at all 40 points at once, and the points were drawn after the prover had committed to everything.</p>
+        <div class="f">about 1 in 1 128 000 000 000</div></div>
+      <div class="step"><h3>What one registration is worth</h3>
+        <p>Each proof spends 40 points out of 1024, and that is true whatever the request length, a thousand tokens and a million cost the same. While fewer than 1024 are spent the weights cannot be recovered. So one registration lasts 25 proofs, after which the model is registered again with fresh masks. The prover tracks the remainder itself and refuses to work when it runs out.</p>
+        <div class="f">1024 ÷ 40 = 25 proofs of any length</div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>What was traded for what</h2>
+    <div class="tblwrap"><table>
+      <tr><th>Claim</th><th>Before</th><th>Now</th><th>Failure odds</th></tr>
+      <tr><td>the weights are the registered ones</td><td class="dead">reprocess every weight in every proof</td>
+        <td class="good">check the registration at 40 points</td><td class="num">2⁻⁴⁰</td></tr>
+      <tr><td>the expert was chosen honestly</td><td>random checks in place</td>
+        <td>unchanged</td><td class="num">2⁻⁶³</td></tr>
+      <tr><td>everything else, the run itself</td><td>spot check of 54 columns</td>
+        <td>unchanged</td><td class="num">2⁻¹⁶·⁸</td></tr>
+      <tr><td>the route stays secret</td><td>all experts opened alike</td>
+        <td>unchanged</td><td class="num">—</td></tr>
+    </table></div>
+    <div class="prose" style="margin-top:12px"><p>The odds of a forgery slipping through fell from 2⁻¹⁶·⁸ to 2⁻⁴⁰ thanks to the new check.</p></div>
+  </section>
+
+  <section>
+    <h2>Where the time goes, measured</h2>
+    <div class="mf">
+      <div class="eq">
+        <span class="row"><span class="lhs">Time per proof</span> <span class="op">=</span> <span class="t-wit">5 model runs: 2 145 s by the model, 3 612 s observed</span> <span class="tag">← the protocol needs five passes, the largest single cost</span></span>
+        <span class="row"><span class="op">+</span> <span class="t-br">check against the registration: 580 s</span> <span class="tag">← reading 40 points, the folding rides along and costs nothing</span></span>
+        <span class="row"><span class="op">+</span> <span class="t-qd">correctness checks: 677 + 93 + 23 + 18 s</span> <span class="tag">← unchanged</span></span>
+        <span class="row"><span class="op">+</span> <span class="t-str">packing, loading the model, writing the file: 602 + 59 + 207 s</span> <span class="tag">← plus 700 s of fixed protocol allowances</span></span>
+        <span class="row"><span class="op">+</span> <span class="t-dead">weight reprocessing 2 423 + weight opening 74 s</span> <span class="tag">← gone</span></span>
+        <span class="row"><span class="op">(registering the model 633 s once, the next 25 proofs pay nothing for it)</span></span>
+      </div>
+      <div class="eta">85 minutes against 117 before the change. In the real run the model runs took
+        longer than the model predicts, 60 minutes instead of 36, and they now set the pace rather
+        than the weights. The structural change is that only the check scales with the size of the
+        model, everything else scales with the length of the request.</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>What a model run costs here</h2>
+    <div class="prose">
+      <p>A proving run is the same forward pass the model would do anyway, with two differences.
+        Every number is an exact 64-bit integer instead of a low precision float, because a proof
+        cannot round. And every intermediate value is written down, since that is what gets proved,
+        which is about 7 recorded numbers per operation output at these shapes.</p>
+      <p>The protocol needs five such runs, one per stage of the exchange, and the run cannot be
+        stored between stages because at this size it is around 760 GB. On our card one run took
+        960 seconds cold and 564 seconds afterwards, so five runs are 60 minutes. Plain inference
+        on the same card was not measured, so the honest split is this. The 60 minutes are the
+        proving runs, not the model doing ordinary work, and the part the protocol adds is the
+        exact arithmetic, the recording, and the repetition.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>The bottlenecks and what fixes them</h2>
+    <div class="tblwrap"><table>
+      <tr><th>#</th><th>Component</th><th>Now</th><th>Fix</th><th>Effect</th></tr>
+      <tr><td>1</td><td>The model runs five times</td><td class="num">60 min</td>
+        <td>save the first run to disk and read it back instead of repeating</td>
+        <td class="num good">−~45 min</td></tr>
+      <tr><td>2</td><td>Packing, loading, writing</td><td class="num">15 min</td>
+        <td>partly goes away with row 1, less rebuilding</td>
+        <td class="num">−5…10 min</td></tr>
+      <tr><td>3</td><td>The check against the registration</td><td class="num">~10 min</td>
+        <td>keep the registration on disk, 6.4 TB, and read only the 40 points needed, 8 GB</td>
+        <td class="num">−~9 min</td></tr>
+      <tr><td>4</td><td>Correctness checks</td><td class="num">14 min</td>
+        <td>a faster card, nothing else</td><td class="num">in proportion</td></tr>
+      <tr><td>—</td><td class="dead" style="text-decoration:line-through">Weight work</td><td class="num dead">0 min</td>
+        <td class="good">already removed</td><td class="num good">−42 min</td></tr>
+    </table></div>
+  </section>
+
+  <section>
+    <h2>The knob</h2>
+    <div class="calc">
+      <div class="cpanel cctrls">
+        <div class="dsc" style="margin-bottom:4px;color:var(--ink);font-weight:600">which model are we proving:</div>
+        <div class="crow" style="grid-template-columns:1fr 1fr 1fr;gap:6px">
+          <button class="creset" id="pQwen">Qwen-0.5B</button>
+          <button class="creset" id="pLlama">Llama-1B</button>
+          <button class="creset" id="pMav">Maverick-400B</button>
+        </div>
+        <div class="crow">
+          <div class="ctrl"><div class="lab"><span class="nm">layer width</span><span class="vl" id="vD">5120</span></div><input type="range" id="cD" min="256" max="16384" step="128" value="5120"></div>
+          <div class="ctrl"><div class="lab"><span class="nm">request length</span><span class="vl" id="vSeq">1093</span></div><input type="range" id="cSeq" min="16" max="65536" step="16" value="1093"></div>
+        </div>
+        <div class="crow">
+          <div class="ctrl"><div class="lab"><span class="nm">layers</span><span class="vl" id="vL">48</span></div><input type="range" id="cL" min="1" max="200" step="1" value="48"></div>
+          <div class="ctrl"><div class="lab"><span class="nm">MLP size</span><span class="vl" id="vFF">8192</span></div><input type="range" id="cFF" min="256" max="53248" step="256" value="8192"></div>
+        </div>
+        <div class="crow">
+          <div class="ctrl"><div class="lab"><span class="nm">attention heads</span><span class="vl" id="vH">40</span></div><input type="range" id="cH" min="1" max="128" step="1" value="40"></div>
+          <div class="ctrl"><div class="lab"><span class="nm">vocabulary</span><span class="vl" id="vV">202k</span></div><input type="range" id="cV" min="1024" max="262144" step="1024" value="202048"></div>
+        </div>
+        <div class="crow">
+          <div class="ctrl"><div class="lab"><span class="nm">experts</span><span class="vl" id="vE">128</span></div><input type="range" id="cE" min="1" max="256" step="1" value="128"></div>
+          <div class="ctrl"><div class="lab"><span class="nm">share of MoE layers</span><span class="vl" id="vMoe">0.5</span></div><input type="range" id="cMoe" min="0" max="1" step="0.05" value="0.5"></div>
+        </div>
+        <div class="dsc">the workload follows from the shape, weights exactly, intermediate values by measured coefficients</div>
+        <div class="crow">
+          <div class="ctrl"><div class="lab"><span class="nm">code block length</span></div>
+            <select id="cK"><option>2048</option><option>4096</option><option>8192</option><option selected>16384</option><option>32768</option><option>65536</option><option>131072</option><option>262144</option><option>524288</option><option>1048576</option></select></div>
+          <div class="ctrl"><div class="lab"><span class="nm">redundancy factor</span></div>
+            <select id="cRho"><option>2</option><option selected>4</option><option>8</option></select></div>
+        </div>
+        <div class="crow">
+          <div class="ctrl"><div class="lab"><span class="nm">numbers per row</span><span class="vl" id="vELL">8192</span></div><input type="range" id="cELL" min="9" max="20" step="1" value="13"></div>
+          <div class="ctrl"><div class="lab"><span class="nm">columns spot checked</span><span class="vl" id="vT">40</span></div><input type="range" id="cT" min="8" max="128" step="1" value="40"></div>
+        </div>
+        <div class="crow">
+          <div class="ctrl"><div class="lab"><span class="nm">number precision</span><span class="vl" id="vSc">2¹²</span></div><input type="range" id="cScale" min="2" max="14" step="1" value="12"></div>
+          <div class="ctrl"><div class="lab"><span class="nm">value bounds</span><span class="vl" id="vR">32</span></div><input type="range" id="cR" min="1" max="256" step="1" value="32"></div>
+        </div>
+        <div class="crow">
+          <div class="ctrl"><div class="lab"><span class="nm">model runs</span><span class="vl" id="vP">4</span></div><input type="range" id="cP" min="1" max="4" step="1" value="4"></div>
+          <div class="ctrl"><div class="lab"><span class="nm">estimation mode</span></div>
+            <select id="cWmode"><option value="notebook">notebook</option><option value="measured">measured</option></select></div>
+        </div>
+        <label class="chk"><input type="checkbox" id="cBB"> smaller field <span class="dsc" style="font-size:10.5px">(half the cost, usually fails on assurance)</span></label>
+        <div class="bbstat" id="bbStat"></div>
+
+        <div class="optblock">
+          <div class="optlab">what is switched on</div>
+          <label class="chk"><input type="checkbox" id="cSpill"> <b>do not run the model five times</b> <span class="dsc" style="font-size:10.5px">(save the first run to disk and read it back)</span></label>
+          <div class="ctrl" style="margin-top:6px"><div class="lab"><span class="nm">disk speed</span></div>
+            <select id="cBw"><option value="3.5">NVMe 3.5 GB/s</option><option value="7">NVMe fast 7 GB/s</option><option value="11" selected>RAID/PCIe 11 GB/s</option></select></div>
+          <label class="chk" style="margin-top:8px"><input type="checkbox" id="cCoset"> faster encoding <span class="dsc" style="font-size:10.5px">(only helps on large blocks)</span></label>
+          <label class="chk" style="margin-top:8px"><input type="checkbox" id="cProj" checked> project the expert multiplications <span class="dsc" style="font-size:10.5px">(only the chosen expert, folded by a random number)</span></label>
+          <label class="chk" style="margin-top:8px"><input type="checkbox" id="cWc" checked> <b>register the model instead of reprocessing the weights</b> <span class="dsc" style="font-size:10.5px">(what this page is about)</span></label>
+          <label class="chk" style="margin-top:8px"><input type="checkbox" id="cWcDisk"> keep the registration on disk and read only the points needed</label>
+          <div class="ctrl" style="margin-top:8px"><div class="lab"><span class="nm">check points</span><span class="vl" id="vQw">40</span></div>
+            <input type="range" id="cQw" min="16" max="128" step="4" value="40">
+            <div class="dsc">each point buys about one bit and spends part of the registration</div></div>
+          <div class="optnote">The switches start in the state the code is in today. Model runs are
+            computed from the measured pass, everything else from a model that is deliberately
+            conservative and comes out above the observed run.</div>
+        </div>
+
+      </div>
+
+      <div class="cpanel out">
+        <div class="verdict ok" id="oVerdict">
+          <div class="big" id="oTotal">—</div>
+          <div class="sub" id="oVerdictTxt"></div>
+          <div class="sub" id="oFirst" style="opacity:.85"></div>
+          <div class="sub" id="oTotalH" style="opacity:.75"></div>
+        </div>
+        <div class="oterms-head">where the time goes, everything included</div>
+        <div class="oterms">
+          <div class="oterm"><span class="chip cw"></span><span class="nm">model runs</span><span class="bw"><span class="bar cw" id="bWit"></span></span><span class="sec" id="sWit"></span></div>
+          <div class="oterm"><span class="chip cs"></span><span class="nm">packing</span><span class="bw"><span class="bar cs" id="bStr"></span></span><span class="sec" id="sStr"></span></div>
+          <div class="oterm"><span class="chip cq"></span><span class="nm">multiplication checks</span><span class="bw"><span class="bar cq" id="bQd"></span></span><span class="sec" id="sQd"></span></div>
+          <div class="oterm"><span class="chip cl2"></span><span class="nm">linear checks</span><span class="bw"><span class="bar cl2" id="bLn"></span></span><span class="sec" id="sLn"></span></div>
+          <div class="oterm"><span class="chip co"></span><span class="nm">overheads</span><span class="bw"><span class="bar co" id="bOvh"></span></span><span class="sec" id="sOvh"></span></div>
+          <div class="oterm"><span class="chip cbr"></span><span class="nm">check against registration</span><span class="bw"><span class="bar cbr" id="bChk"></span></span><span class="sec" id="sChk"></span></div>
+          <div class="oterm"><span class="chip creg"></span><span class="nm">registering the model</span><span class="bw"><span class="bar creg" id="bReg"></span></span><span class="sec" id="sReg"></span></div>
+        </div>
+        <div class="snd">
+          <div class="snd-head">Assurance <b id="oSoundBits">—</b> bits<span class="snd-bind" id="oSoundBind"></span></div>
+          <div class="snd-terms">
+            <div class="sterm" id="stIRS"><span class="snm">IRS (¾)ᵀ<br>← T, ρ</span><span class="sval" id="vIRS"></span></div>
+            <div class="sterm" id="stFld"><span class="snm">field N/|F|<br>← ρ,K, field</span><span class="sval" id="vFld"></span></div>
+            <div class="sterm" id="stLog"><span class="snm">LogUp (M+T)/|F|<br>← M~W, field</span><span class="sval" id="vLog"></span></div>
+          </div>
+        </div>
+        <div class="oderived">
+          <span>rows <b id="dM">—</b></span>
+          <span>W <b id="dW">—</b></span>
+          <span>Q <b id="dQ">—</b></span>
+          <span>L_lin <b id="dL">—</b></span>
+          <span>N=ρK <b id="dN">—</b></span>
+          <span>ELL <b id="dELL">—</b></span>
+          <span>accumulator bits <b id="dB">—</b></span>
+          <span>field <b id="dField">—</b></span>
+          <span>check assurance <b id="dWcBits">—</b></span>
+          <span>proofs per registration <b id="dWcBudget">—</b></span>
+          <span>M (lookup) <b id="dMq">—</b></span>
+          <span>proof size <b id="dProof">—</b></span>
+          <span>verification <b id="dVerify">—</b></span>
+        </div>
+        <div class="cwarn" id="cWarn"></div>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+(function(){
+    var C={12:.112,13:.127,14:.149,15:.170,16:.142,17:.214,18:.234,19:.273,20:.381,21:.523,22:.643,23:.754,24:.889};
+    var SCALE=0.42/0.170,E=0.045,HASH=0.5,QT=8.9,BNS=0.6,TWIT=3888.8,WW=4.00e11,FB=8;
+    var VNS=14.0*3600*1e9/(30*115235029);
+    var cl=function(x,a,b){return Math.max(a,Math.min(b,x));};
+    function c(n){return SCALE*C[cl(Math.round(Math.log2(n)),12,24)];}
+    function W_of(S){return 4.00e11+4.48e8*S+40320*S*S;}
+    function Q_of(S){return 5.93e7+1.54e8*S+19200*S*S;}
+    function L_of(S){return 1.19e8+1.50e8*S+12480*S*S;}
+    var $=function(id){return document.getElementById(id);};
+    function fmtS(x){return x>=1000?Math.round(x).toLocaleString('en-US'):x.toFixed(1);}
+    function fmtBig(x){return x.toLocaleString('en-US',{maximumFractionDigits:0});}
+
+    function sup(n){var m={'0':'⁰','1':'¹','2':'²','3':'³','4':'⁴','5':'⁵','6':'⁶','7':'⁷','8':'⁸','9':'⁹'};return (''+n).split('').map(function(ch){return m[ch]||ch;}).join('');}
+    function eng(x){if(x>=1e12)return (x/1e12).toFixed(2)+'e12';if(x>=1e9)return (x/1e9).toFixed(1)+'e9';if(x>=1e6)return (x/1e6).toFixed(1)+'e6';return Math.round(x).toLocaleString('en-US');}
+
+    function compute(){
+      // ── ONE world model: architecture -> (W,Q,L). No modes. ──────────────────
+      var d=+$('cD').value, seq=+$('cSeq').value, L=+$('cL').value, dff=+$('cFF').value,
+          H=+$('cH').value, vocab=+$('cV').value, Ex=+$('cE').value, moe=+$('cMoe').value;
+      $('vD').textContent=d; $('vSeq').textContent=seq; $('vL').textContent=L; $('vFF').textContent=dff;
+      $('vH').textContent=H; $('vV').textContent=(vocab/1000).toFixed(0)+'k'; $('vE').textContent=Ex; $('vMoe').textContent=moe.toFixed(2);
+      // Committed witness DERIVED PER OP TYPE from the real tape — each coefficient
+      // is a specific gadget's measured footprint (witness_elems/primary on the Qwen
+      // tape), NOT a single fudge factor. Per-op shares on Qwen: matmul 37%, SiLU 22%,
+      // RmsNorm 21%, softmax 12%, rope/had/add/emb 8%.
+      //   matmul   : C + rescale(high+low) + Freivalds aux  ≈ 3.1 × outputs
+      //   SiLU     : decomposition a0..a4 + tables          ≈ 23.0 × (seq·d_ff)
+      //   RmsNorm  : isqrt y-search + word decomps          ≈ 55.6 × (seq·d)
+      //   softmax  : causal aux                             ≈ 16.6 × (H·seq²)
+      // Dense models reproduce their tape EXACTLY (Qwen: 1.00). MoE routing / expert
+      // Freivalds-combine is the ONE term we can't derive without a MoE tape — pinned
+      // to the 400B anchor (×8.1·Lm·E·seq·d_ff), closing 400B's 24% MoE residual.
+      var Lm=Math.round(L*moe), Ld=L-Lm;
+      var Ww = L*4*d*d + Ld*3*d*dff + Lm*Ex*3*d*dff + 2*vocab*d;   // weights (exact params)
+      var mm_out = L*(5*seq*d + H*seq*seq) + Ld*(2*seq*dff+seq*d) + Lm*Ex*(2*seq*dff+seq*d) + seq*vocab;
+      var acts = 3.1*mm_out + 23.0*(L*seq*dff) + 55.6*((2*L+1)*seq*d) + 16.6*(L*H*seq*seq)
+               + 4.0*(L*2*seq*d) + 4.0*(L*(seq*dff+2*seq*d)) + 1.0*(L*2*seq*d) + 2.0*((2*L+1)*seq*d)
+               + 8.1*(Lm*Ex*seq*dff);   // MoE-combine (anchor-pinned; the one un-derived term)
+      var W = Ww + acts, Q = 0.204*W, Llin = 0.190*W;
+      var K=+$('cK').value,rho=+$('cRho').value,T=+$('cT').value,P=+$('cP').value,wmode=$('cWmode').value;
+      var sExp=+$('cScale').value,s=Math.pow(2,sExp),R=+$('cR').value;
+      $('vT').textContent=T; $('vP').textContent=P; $('vSc').textContent='2'+sup(sExp); $('vR').textContent=R;
+      // routed projection (RoutedProjected-MoE): ledger multipliers anchored on the
+      // 400B S=1000 ledger (routed_projected_4h_model.py): W 10.72%, Q 24.49%,
+      // L 19.15%. Weights leave the witness (Ww→0): instead of flat commit/stream
+      // they cost a persistent q_lin fold + openings, 5437 s at the 400B anchor,
+      // linear in weight count. Witness term becomes 5 ACTIVE sweeps (5-round
+      // transcript with phase 3): 0.1773·TWIT each, so 5 sweeps = 3609 s at anchor.
+      var projOn=$('cProj').checked, proj=projOn&&wmode==='notebook', persistS=0;
+      if(proj){ persistS=5437*(Ww/4.00e11); W=0.1072*W; Q=0.2449*Q; Llin=0.1915*Llin; Ww=0; }
+      // Регистрация модели вместо работы с весами (замеры A100 15.08):
+      // сверка 580 s и регистрация 633 s на 400.7 млрд весов, линейно по числу весов.
+      // Регистрация модели: веса выходят из witness, их пересчёт и раскрытие исчезают,
+      // вместо них — сверка в 40 точках (замер 580 s на 400.7 млрд весов) и доля
+      // регистрации (633 s). Работает независимо от проекции.
+      var qw=+$('cQw').value; $('vQw').textContent=qw;
+      var wcOn=$('cWc').checked, regS=0, checkS=0,
+          WwOrig=(L*4*d*d+Ld*3*d*dff+Lm*Ex*3*d*dff+2*vocab*d), scaleW=WwOrig/4.00e11,
+          diskBw=+$('cBw').value;
+      if(wcOn){
+        if(Ww>0){ W=Math.max(W-Ww,0); Q=0.204*W; Llin=0.190*W; Ww=0; }
+        persistS=0;
+        var proofsPerReg=Math.max(1,Math.floor(1024/qw));
+        checkS=$('cWcDisk').checked ? (8*scaleW*(qw/40))/diskBw+30*scaleW
+                                    : 580*scaleW*(0.8+0.2*qw/40);
+        regS=633*scaleW;                      // разовая, не размазывается по доказательствам
+      }
+      var ELLexp=+$('cELL').value, maxELL=K-8, ELLcap=Math.pow(2,ELLexp)>maxELL, ELL=cl(Math.pow(2,ELLexp),512,maxELL);
+      $('vELL').textContent='2'+sup(ELLexp)+(ELLcap?' → '+eng(ELL)+' (cap K−8)':' = '+eng(ELL));
+      var N=rho*K,pad=K-ELL,ELLw=ELL,ELLp=ELL,Wp2=Math.max(W-Ww,0);
+      var rowsW=Ww/ELLw,rowsP=Wp2/ELLp,rows=rowsW+rowsP,mtot=rows;
+      var enc=K*c(K)+N*c(N),fold=4*K*c(2*K),hsh=(N/8)*HASH;
+      // coset-NTT: ρ length-K NTTs instead of one length-N — modeled ~1.2× on the
+      // encode, and only at K≥2¹⁸ (below that the microbench showed no in-prove win).
+      var cosetOn=$('cCoset').checked, cosetGain=(cosetOn&&K>=262144)?1.2:1, encC=enc/cosetGain;
+      var wl=Math.max(1,Math.floor(pad/T));
+      var streaming_ns =rowsP*(encC+encC+fold+hsh)+rowsW*(encC+fold+hsh+encC/wl);
+      var streaming0_ns=rowsP*(enc +enc +fold+hsh)+rowsW*(enc +fold+hsh+enc /wl);
+      var quad_ns=(Q/ELLp)*QT*2*K*c(2*K), lin_ns=BNS*Llin;
+      var toS=function(ns){return ns/1e9/(1-E);};
+      var strS=toS(streaming_ns)+persistS,strS0=toS(streaming0_ns)+persistS,qdS=toS(quad_ns),lnS=toS(lin_ns);
+      // Время одного прогона модели растёт вместе с её собственной работой:
+      // замер TWIT снят на форме 400B при 1093 токенах (MM0 операций), поэтому
+      // масштабируем по отношению числа операций. Раньше здесь стояла константа,
+      // и на длинном контексте прогоны переставали расти вместе с моделью.
+      var MM0=76625630656, workRatio=mm_out/MM0;
+      var witS0 = wmode==='notebook' ? (proj?5*0.1773:P)*TWIT*workRatio/(1-E)
+                                     : Math.max(0,74.57e-6*mtot-42.13);
+      var witS=witS0;
+      // witness spill: 1 recompute + 1 write + (P-1) reads of the 7.5TB witness,
+      // instead of P recomputes. Read/write capped by PCIe ~11 GB/s. Only in the
+      // notebook (prod) regime. Matches analysis/bench/spill_costmodel_prod.py.
+      // At P=1 there is no reuse to spill (nothing to re-read), so it degrades to a
+      // single recompute — no write, no reads. Only P>=2 pays 1 write + (P-1) reads.
+      var spillOn=$('cSpill').checked;
+      if(spillOn&&wmode==='notebook'){
+        var one=TWIT*(proj?0.1773:1)/(1-E);
+        var tio=(W*8)/(Math.min(diskBw,11)*1e9);
+        witS=one+(P>=2?(P-1)*tio:0);
+      }
+      var k=d, b=Math.log2(k)+2*Math.log2(s)+2*Math.log2(R)+1, bbAccOK=b<31;
+      var M=W*1.06e-2;   // lookup queries (est: ~1e10 at 400B W=9.4e11)
+      function snd(fb){var irs=T*Math.log2(rho/(rho-1)),fld=fb-Math.log2(N),lg=fb-Math.log2(M+T+1),mn=Math.min(irs,fld,lg);
+        return {irs:irs,fld:fld,lg:lg,min:mn,bind:(mn===irs?'IRS (T,ρ)':(mn===lg?'LogUp (M)':'field (N)'))};}
+      var sGold=snd(64), sBB=snd(31), bbSoundOK=sBB.min>0;
+      var wantBB=$('cBB').checked, useBB=wantBB&&bbAccOK&&bbSoundOK, SND=useBB?sBB:sGold;
+      if(useBB){strS*=0.5; qdS*=0.5; witS*=0.5; strS0*=0.5; witS0*=0.5;}
+      // per-row OVERHEAD (Python dispatch + kernel launch per committed row) — the
+      // term the asymptotic c(n)·size floor omits. ~22 µs/row, saturating once the
+      // GPU fills (5M rows): DOMINATES the floor at toy scale, negligible at 400B.
+      // Fit to 39 saved runs; floor+overhead lands within ±30% of measured. NOT
+      // byte-dependent, so BabyBear does not halve it.
+      var ovhS=22e-6*Math.min(mtot,5e6);
+      var proofS=witS+strS+qdS+lnS+ovhS+checkS;  // одно доказательство
+      var total=proofS+regS;                     // ВСЁ: регистрация целиком + доказательство
+      var total0=witS0+strS0+qdS+lnS+ovhS;           // baseline (opts off) for the delta
+
+      var sum=total;                                 // formula sum (for the bars/breakdown)
+      $('oTotal').textContent=(total>=3600? (total/3600).toFixed(2)+' ч' : Math.round(total/60)+' мин');
+      var vd=$('oVerdict'); vd.className='verdict '+(total<3600?'ok':'no');
+      $('oVerdictTxt').textContent='everything: registration '+fmtS(regS)
+        +' s + proof '+fmtS(proofS)+' s';
+      $('sChk').textContent=fmtS(checkS)+' s'; $('sReg').textContent=fmtS(regS)+' s';
+      $('bChk').style.width=(100*checkS/(sum||1)).toFixed(1)+'%';
+      $('bReg').style.width=(100*regS/(sum||1)).toFixed(1)+'%';
+      $('oFirst').textContent = wcOn
+        ? ('each further proof '+fmtS(proofS)+' s, the registration lasts '
+           + Math.max(1,Math.floor(1024/qw))+' of them')
+        : '';
+      var saved=total0-total, hdr='≈ '+(total/3600).toFixed(2)+' h';
+      if(saved>1) hdr+='  ·  −'+fmtS(saved)+' s (−'+(100*saved/total0).toFixed(0)+'%) vs base '+fmtS(total0)+' s';
+      $('oTotalH').textContent=hdr;
+      function set(sid,bid,v){ $(sid).textContent=fmtS(v)+' s ('+(100*v/(sum||1e-9)).toFixed(0)+'%)';
+        $(bid).style.width=(100*v/(sum||1e-9)).toFixed(1)+'%'; }
+      set('sWit','bWit',witS); set('sStr','bStr',strS); set('sQd','bQd',qdS); set('sLn','bLn',lnS); set('sOvh','bOvh',ovhS);
+
+      // soundness — headline min + all three terms, binding highlighted (responsive)
+      $('oSoundBits').textContent=SND.min.toFixed(1);
+      $('oSoundBits').style.color=SND.min>=16?'var(--qd)':'var(--caution)';
+      $('oSoundBind').textContent=' (ε ≈ 2^-'+SND.min.toFixed(1)+' · binding: '+SND.bind+')';
+      function sset(rid,vid,val,isB){ $(vid).textContent=val.toFixed(1);
+        $(rid).className='sterm'+(isB?' binding':'')+(val<=0?' bad':''); }
+      sset('stIRS','vIRS',SND.irs,SND.bind.indexOf('IRS')===0);
+      sset('stFld','vFld',SND.fld,SND.bind.indexOf('field')===0);
+      sset('stLog','vLog',SND.lg,SND.bind.indexOf('LogUp')===0);
+
+      var proof_b=T*rows*FB+(4*K+ELLp)*FB, verify_s=T*rows*VNS/1e9;
+      $('dM').textContent=eng(mtot); $('dW').textContent=eng(W); $('dQ').textContent=eng(Q); $('dL').textContent=eng(Llin);
+      $('dN').textContent=eng(N); $('dELL').textContent=ELL; $('dB').textContent=b.toFixed(1);
+      $('dField').textContent = useBB ? 'BabyBear ✓ (×0.5)'
+        : !wantBB ? (bbAccOK&&bbSoundOK ? 'Goldilocks (BB possible)' : 'Goldilocks')
+        : !bbSoundOK ? 'Goldilocks (BB impossible: scale)'
+        : 'Goldilocks (BB: lower s/R)';
+      // live status right at the checkbox — why the toggle changes the time or not.
+      // Order matters: soundness does NOT depend on s/R (it is about model scale,
+      // not precision), so it is the first, hard barrier. Only when it passes and
+      // just the accumulator blocks do we give the fixable s/R hint.
+      var bbEl=$('bbStat');
+      if(!wantBB){ bbEl.className='bbstat idle';
+        bbEl.textContent='off · Goldilocks field (2⁶⁴)'; }
+      else if(useBB){ bbEl.className='bbstat on';
+        bbEl.textContent='✓ ×0.5 applied to witness/streaming/quad'; }
+      else if(!bbSoundOK){ bbEl.className='bbstat off';
+        bbEl.textContent='To enable BabyBear: lower d, L or seq until W drops below 2.0·10¹¹ (now W='+eng(W)+'). Then the lookup-query count M fits the 2³¹ field. s/R are irrelevant here — they are about the accumulator, not soundness.'; }
+      else { bbEl.className='bbstat off';
+        bbEl.textContent='To enable BabyBear: lower s (now 2'+sup(sExp)+') or R (now '+R+') until the accumulator b is < 31 (now b='+b.toFixed(1)+'). Soundness already passes.'; }
+      $('dMq').textContent=eng(M);
+      $('dWcBits').textContent = wcOn ? ('2^-'+qw.toFixed(0)) : '—';
+      $('dWcBudget').textContent = wcOn ? Math.max(1,Math.floor(1024/qw)) : '—';
+      $('dProof').textContent=(proof_b/1e9).toFixed(1)+' GB'; $('dVerify').textContent=(verify_s/3600).toFixed(1)+' h';
+
+      var w=[];
+      if(Math.round(Math.log2(2*K))>24||Math.round(Math.log2(N))>24||Math.round(Math.log2(K))<12) w.push('⚠ block length outside the calibrated range, value clamped.');
+      if(ELL<d) w.push(ELLcap
+        ? '⚠ the row is shorter than the layer and cannot grow, raise the block length.'
+        : '⚠ the row is shorter than the layer, raise the numbers per row.');
+      if(wmode==='measured'&&!(604267<=mtot&&mtot<=2747117)) w.push('⚠ the measured mode was not calibrated for this size, this is extrapolation.');
+      if(spillOn&&wmode!=='notebook') w.push('⚠ skipping repeat runs is only modelled in notebook mode.');
+      if(cosetOn&&K<262144) w.push('⚠ faster encoding does nothing below block size 2¹⁸.');
+      if(projOn&&wmode!=='notebook') w.push('⚠ projection is only modelled in notebook mode.');
+      if($('cWcDisk').checked&&!wcOn) w.push('⚠ keeping the registration on disk needs the registration switched on.');
+      // The BabyBear status lives under its own checkbox (#bbStat) — why the time
+      // changes or not; not duplicated here.
+      $('cWarn').innerHTML=w.join('<br>');
+    }
+    function preset(o){ for(var kk in o){ var el=$(kk); if(el){ if(el.type==='checkbox') el.checked=o[kk]; else el.value=o[kk]; } } compute(); }
+    ['cD','cSeq','cL','cFF','cH','cV','cE','cMoe','cK','cRho','cELL','cT','cScale','cR','cP',
+     'cWmode','cBB','cSpill','cBw','cCoset','cProj','cWc','cWcDisk','cQw'].forEach(function(id){
+      var el=$(id);
+      if(!el) throw new Error('missing control '+id);
+      el.addEventListener('input',compute); el.addEventListener('change',compute);
+    });
+    $('pQwen').addEventListener('click',function(){preset({cD:896,cSeq:256,cL:24,cFF:4864,cH:14,cV:151936,cE:1,cMoe:0,cK:'2048',cELL:10,cT:16,cWmode:'measured',cScale:12,cR:32,cP:4,cRho:'4'});});
+    $('pLlama').addEventListener('click',function(){preset({cD:2048,cSeq:256,cL:16,cFF:8192,cH:32,cV:128256,cE:1,cMoe:0,cK:'4096',cELL:11,cT:16,cWmode:'measured',cScale:12,cR:32,cP:4,cRho:'4'});});
+    $('pMav').addEventListener('click',function(){preset({cD:5120,cSeq:1093,cL:48,cFF:8192,cH:40,cV:202048,cE:128,cMoe:0.5,cK:'16384',cELL:13,cT:40,cWmode:'notebook',cScale:12,cR:32,cP:4,cRho:'4'});});
+    compute();
+})();
+</script>

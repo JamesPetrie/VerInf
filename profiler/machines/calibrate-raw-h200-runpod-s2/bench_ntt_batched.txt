@@ -1,0 +1,6 @@
+device: NVIDIA H200  sm=9.0  SMs=132
+n= 65536 m=    1  fwd+inv x 5  total=    0.141 ms  ->   14.138 us/NTT  0.2157 ns/elem
+n= 65536 m=    8  fwd+inv x 5  total=    0.442 ms  ->    5.530 us/NTT  0.0844 ns/elem
+n= 65536 m=   64  fwd+inv x 5  total=    2.727 ms  ->    4.261 us/NTT  0.0650 ns/elem
+n= 65536 m=  512  fwd+inv x 5  total=   20.985 ms  ->    4.099 us/NTT  0.0625 ns/elem
+n= 65536 m= 2048  fwd+inv x 5  total=   83.496 ms  ->    4.077 us/NTT  0.0622 ns/elem

@@ -101,6 +101,19 @@ def batch_domain(gates: Sequence[Gate]) -> int:
     return p
 
 
+def _batch_transcript(label: str, z: Sequence[int],
+                      lambdas: Sequence[int]) -> sc.RoundTranscript:
+    """The batch sumcheck's round coins, each after its polynomial, bound to
+    the batch's label and to z and the lambdas (drawn from the layer
+    transcript after every gate witness is committed). The verifier builds
+    the same transcript and recomputes every coin; it never reads them from
+    the proof."""
+    def ints(vals):
+        return b"".join((int(v) % FIELD_P).to_bytes(8, "little") for v in vals)
+    return sc.RoundTranscript(b"layergkr/relations/batch/v1", label.encode(),
+                              ints(z), ints(lambdas))
+
+
 def prove_batch(gates: Sequence[Gate], tr: Transcript, label: str = "gates",
                 tape=None) -> Tuple[sc.SumcheckProof, List[int], List[int]]:
     """One eq-weighted sumcheck for every gate in the layer.
@@ -119,14 +132,13 @@ def prove_batch(gates: Sequence[Gate], tr: Transcript, label: str = "gates",
         for coeff, factors in g.terms:
             terms.append(((lam * coeff) % FIELD_P,
                           [eq_z] + [_pad(f, size) for f in factors]))
-    coins = tr.coin(f"{label}_sc", n_vars)
-    proof = sc.prove_terms(terms, lambda i: coins[i], tape=tape)
+    proof = sc.prove_terms(terms, _batch_transcript(label, z, lambdas), tape=tape)
     return proof, z, lambdas
 
 
 def verify_batch(proof: sc.SumcheckProof, gates: Sequence[Gate],
                  z: Sequence[int], lambdas: Sequence[int],
-                 mu0: int = 0) -> Tuple[bool, str]:
+                 mu0: int = 0, label: str = "gates") -> Tuple[bool, str]:
     """Recheck the batch. The claim must equal the CARRIED-IN mask mu0 (zero for
     an unmasked proof): the relations sum to zero, so anything else means some
     gate does not vanish. mu0 is authenticated elsewhere -- it is the previous
@@ -140,7 +152,7 @@ def verify_batch(proof: sc.SumcheckProof, gates: Sequence[Gate],
                           [eq_z] + [_pad(f, size) for f in factors]))
     if proof.claim % FIELD_P != mu0 % FIELD_P:
         return False, "batched gate claim is not zero -- some relation does not vanish"
-    ok, why = sc.verify_terms(proof, terms, lambda i: proof.challenges[i])
+    ok, why = sc.verify_terms(proof, terms, _batch_transcript(label, z, lambdas))
     if not ok:
         return False, why
     return True, "ok"

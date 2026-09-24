@@ -1,0 +1,67 @@
+sweep  col               off         on     on-off   ratio
+R1     wall            203.5      203.7        0.2   1.001
+R1     witness          11.2       11.3        0.1   1.009
+R1     fetch           173.8      174.0        0.2   1.001
+R1     encode           16.7       16.7        0.0   1.000
+R1     loads          2702.0     2702.0        0.0   1.000
+R1     load_GB         914.6      914.6        0.0   1.000
+R1     routed_wr         0.0       72.0       72.0    n/a
+
+R2     wall            411.0      403.7       -7.3   0.982
+R2     witness          32.4       27.2       -5.2   0.840
+R2     fetch           363.3      361.2       -2.1   0.994
+R2     aux               2.2        2.2        0.0   1.000
+R2     encode           11.8       11.8        0.0   1.000
+R2     loads          9940.0     9940.0        0.0   1.000
+R2     load_GB        3351.2     3351.2        0.0   1.000
+R2     cache_rd        120.0      120.0        0.0   1.000
+R2     routed_rd         0.0       72.0       72.0    n/a
+R2     proj             72.0       72.0        0.0   1.000
+
+R3     wall            354.7      344.8       -9.9   0.972
+R3     witness          11.0        5.9       -5.1   0.536
+R3     fetch           340.3      335.6       -4.7   0.986
+R3     aux               2.2        2.2        0.0   1.000
+R3     encode            0.6        0.6        0.0   1.000
+R3     loads          3064.0      724.0    -2340.0   0.236
+R3     load_GB        1044.0      258.8     -785.2   0.248
+R3     cache_rd        120.0      120.0        0.0   1.000
+R3     routed_rd         0.0       72.0       72.0    n/a
+
+fold   wall           1469.2     1456.2      -13.0   0.991
+fold   witness          11.1        6.0       -5.1   0.541
+fold   fetch           540.3      532.7       -7.6   0.986
+fold   aux               2.3        2.3        0.0   1.000
+fold   encode          473.9      473.2       -0.7   0.999
+fold   fold_qlin       365.1      365.5        0.4   1.001
+fold   loads         12642.0    10302.0    -2340.0   0.815
+fold   load_GB        4265.8     3480.6     -785.2   0.816
+fold   cache_rd        120.0      120.0        0.0   1.000
+fold   routed_rd         0.0       72.0       72.0    n/a
+
+open   wall           1289.2     1277.7      -11.5   0.991
+open   witness          11.1        6.0       -5.1   0.541
+open   fetch           549.6      543.6       -6.0   0.989
+open   aux               2.3        2.3        0.0   1.000
+open   encode          688.2      687.7       -0.5   0.999
+open   loads         12642.0    10302.0    -2340.0   0.815
+open   load_GB        4265.8     3480.6     -785.2   0.816
+open   cache_rd        120.0      120.0        0.0   1.000
+open   routed_rd         0.0       72.0       72.0    n/a
+
+ALL    wall           3727.6     3686.2      -41.4   0.989
+ALL    witness          76.8       56.3      -20.5   0.733
+ALL    fetch          1967.3     1947.0      -20.3   0.990
+ALL    aux               9.0        9.0        0.0   1.000
+ALL    encode         1191.1     1190.0       -1.1   0.999
+ALL    fold_qlin       365.1      365.5        0.4   1.001
+ALL    loads         40990.0    33970.0    -7020.0   0.829
+ALL    load_GB       13841.5    11485.9    -2355.5   0.830
+ALL    cache_rd        480.0      480.0        0.0   1.000
+ALL    routed_rd         0.0      288.0      288.0    n/a
+ALL    routed_wr         0.0       72.0       72.0    n/a
+ALL    proj             72.0       72.0        0.0   1.000
+
+fixed (s): {'build_s': (35.4, 35.6), 'enroll_s': (950.7, 923.1), 'reveal_s': (184.8, 184.4), 'prove_s': (3833.3, 3788.9), 'peak_GiB': (47.1, 47.51)}
+arm total (enroll+reveal+prove): off 4969s, on 4896s, saving 72s = 1.5%
+prove only: off 3833s, on 3789s, saving 1.2%

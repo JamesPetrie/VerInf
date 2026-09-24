@@ -15,7 +15,7 @@ One contract, two producers, several consumers:
                     ┌─ extract.py  (tape walker; runs where the prover runs; EXACT,
                     │              model-agnostic — anything that builds a Tape)
   manifest.json  ◄──┤
-                    └─ synth.py    (closed-form builders: maverick, llama7b;
+                    └─ synth.py    (closed-form builders: maverick, maverick-projected, llama7b;
                                    pure Python — runs anywhere, cross-checks extract)
         │
         ├─► predict.py   × machines/<name>.json  →  cost report
@@ -57,6 +57,21 @@ python3 profiler/cli.py predict man.json --machine gb10-spark --gpus 8      # id
 python3 profiler/cli.py dag     man.json -o dag.json
 python3 profiler/cli.py partition man.json --shards 8 --weight-bytes-per-param 0.7   # compare strategies
 python3 profiler/cli.py partition man.json --shards 8 --strategy experts             # one in detail
+python3 profiler/crosscheck.py maverick --from-gguf <gguf> --t-queries 54 --seq 1000 --layout
+python3 profiler/calibrate.py --name <sku> --tmpdir /local/disk
+python3 profiler/instrumented_prove.py --from-gguf <gguf> --t-queries 54 --prompt-n 500 --cont-n 500
+#   the hardware-session tools (GPU box): extraction cross-check against
+#   synth + the prover's own layout, machine-profile calibration, and the
+#   research timing prove (the demo's proof path is fail-closed on main) —
+#   RUNBOOK-blackwell.md is the session script.
+python3 profiler/cli.py weightsplit man.json --machine b200-runpod --resident --intervals 2
+#   stage-aware wall for the weight-split prover (coordinator + enrolled-block
+#   workers) from executable whole-variable plans with exact cuts: commit +
+#   max(fold) + max(open) across the s_col barrier; physical (row-padded) slots;
+#   resident (union hold vs HBM; capped tied plans exact at N=2, labelled
+#   -heuristic at N>=3) or streaming lower bound with --disk-mode
+#   shared|per-device and --io-overlap none|perfect; reports the kernel-floor
+#   ratio and the same-mode speedup (n/a when N=1 is not executable). Enrolled only.
 ```
 
 First findings from the evaluator (Maverick, 8 shards, floor model):
@@ -85,6 +100,56 @@ extractor semantics (including property-backed mode flags), cost identities
 and mode rejection, partition traffic, and CLI/manifest validation — on
 any box.
 
+## Regression commands
+
+Run all three profiler suites from the repository root:
+
+```sh
+python3 profiler/test_profiler.py
+python3 profiler/test_calibration_tools.py
+python3 -m unittest -v profiler/test_hbm_bench.py
+```
+
+The kernel-indexing test compiles the actual `k_chase` body with CPU index
+globals and checks walker counts around CUDA block boundaries. It requires
+`c++` on `PATH`; without it, unittest reports a **skip**, which does not
+validate the kernel bounds. It requires neither torch nor CUDA and does not
+measure GPU timing.
+
+CPU prover regressions (with torch, NumPy, GGUF and safetensors installed):
+
+```sh
+python3 prover/tests/run_tests.py test_shard_plan
+python3 prover/tests/run_tests.py test_shard_worker
+python3 prover/tests/run_tests.py test_weight_provenance
+python3 prover/tests/run_tests.py test_layout_breakdown
+python3 prover/tests/run_tests.py test_gguf_loader
+```
+
+After changes to worker execution, rerun the weight-split gate on a CUDA
+machine before committing. From the repository root:
+
+```sh
+cargo build --release --manifest-path verifier/Cargo.toml --bin verify_proof
+python3 prover/tests/run_tests.py test_weight_split
+```
+
+All six test functions must pass, including proof-byte identity across cuts,
+fold modes and chunk boundaries, plus Rust acceptance of the sharded proofs.
+Run against the complete updated tree, including the new test files; earlier
+A40 results do not validate later prover changes.
+
+The complete review-fix tree passed the gate on an A100 SXM; the
+[gate record](../analysis/weight-split-review-gate.md) lists the environment,
+suite results, and run details.
+
+Linking manifests keep refreshed `w_new` slots in fresh commitment, fold and
+opening work. `predict.totals` retains `W_weights` as the full persistent
+share and exposes `W_enrolled` and `W_new` separately. `partition` distributes
+fresh Wnew with run-input rows; `weightsplit` keeps that work on its
+coordinator. Their single-device floors agree for aligned enrolled rows;
+`weightsplit` additionally prices enrolled row padding.
+
 ## Validation (synthetic Maverick S=1000 T=40 vs the archived hidden run)
 
 | quantity | predicted | measured (`analysis/full-model-hidden-run-archive.md`) |
@@ -93,7 +158,7 @@ any box.
 | proof size | 93.1 GB | 93.6 GB |
 | opened-column GPU payload | 34.8 GB | ~35 GB (derived) |
 | verifier peak RSS | 76.1 GB | 75.7 GB |
-| proof dump time | 751 s | 756 s |
+| proof dump time (legacy decimal JSON) | 751 s | 756 s |
 | prove wall-clock | 3.0 h floor / 9.9 h aggregate | 14.26 h |
 
 Prove time is reported as a **bracket**, per `analysis/maverick-cost-model.md`:

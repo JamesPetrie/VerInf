@@ -31,10 +31,23 @@ Traffic model (deliberately explicit about its approximations):
   traffic recurs x4 — x5 when the tape has a phase-3 commitment sweep
   (routed-projected claims; see n_sweeps) — unless the scheduler caches;
   the per-sweep number is the honest unit and the total is also shown.
-- Weight-commit work (dependency-free) is split evenly across shards;
-  weight *streaming* for witness compute is charged to each shard that
-  consumes the weight (per sweep), and rides disk/host lanes, not the
-  interconnect.
+- Weight-commit work (dependency-free) is split evenly across shards in
+  legacy mode; under --enrolled-weights there is no per-proof commit and
+  each shard instead pays the qlin+open passes over the enrolled slots
+  its claims consume. Weight *streaming* for witness compute is charged
+  to each shard that consumes the weight (per sweep), and rides
+  disk/host lanes, not the interconnect. The serial reference prices one
+  device: each consumed weight's enrolled passes are paid once there,
+  even when multiple parallel shards repeat them. Opening memory follows
+  the same per-shard weight ownership as the enrolled pass costs.
+  Refreshed Wnew is fresh work: its commitment, fold and openings are
+  evenly split with run-input rows, including in the diagnostic skip mode.
+- The linear fold is additive over rows: each shard folds its own rows
+  into q_irs/q_lin partials and ships them ONCE per proof (3*K_DEG field
+  elements per remote shard — `fold_merge_bytes`), which is what makes
+  LogUp settlement z inputs free of traffic (their balance is a linear
+  constraint on rows the owning shard folds); only the table
+  multiplicities, re-accumulated every sweep, cross as partials.
 - NOT modeled yet: dependency-chain serialization within a shard schedule
   (needs the discrete-event scheduler sim — roadmap), Merkle column-stream
   chaining across row-shard boundaries (protocol-adjacent, costed
@@ -47,7 +60,7 @@ from collections import defaultdict
 from typing import Callable, Dict, List, Optional
 
 import claimcosts
-from manifest import Manifest
+from manifest import Manifest, bridged_note
 from machine import MachineProfile
 from predict import (_fmt_s, _gb, BYTES_PER_SLOT,
                      ENROLLED_QLIN_RATIO, ENROLLED_OPEN_RATIO)
@@ -206,6 +219,7 @@ def evaluate(m: Manifest, assignment: List[int], n: int,
 
     # Weight streaming: each shard loads the weights its claims consume.
     shard_weight_slots = [0.0] * n
+    shard_enrolled_slots = [0.0] * n
     seen = set()
     for v in m.variables:
         if not v.persistent:
@@ -215,6 +229,8 @@ def evaluate(m: Manifest, assignment: List[int], n: int,
             if (v.name, s) not in seen:
                 seen.add((v.name, s))
                 shard_weight_slots[s] += v.length
+                if v.phase == 1 and not v.w_new:
+                    shard_enrolled_slots[s] += v.length
 
     # Cross-shard activation traffic (reduction-aware).
     act_bytes = 0.0
@@ -245,26 +261,45 @@ def evaluate(m: Manifest, assignment: List[int], n: int,
         red_bytes += len(producers) * out_len * BYTES_PER_SLOT
     # LogUp settlement reduction. mult (the producer-less non-persistent
     # input): every remote shard holding lookups that increment it sends one
-    # summed partial of the full table length. z inputs (each produced by
-    # its own lookup/rescale claim): the settlement's global balance needs
-    # only Σz per shard, so each remote producing shard sends ONE summed
-    # field element per settlement — never the z vectors themselves (they
-    # are excluded from the activation loop above; shipping them whole was
-    # the ~1000x traffic artifact found on the first extracted-manifest
-    # scorecard, 2026-08-19).
+    # summed partial of the full table length per sweep (mult is re-zeroed
+    # and re-accumulated by side effects in every sweep, core._stream_sweep).
+    # z inputs (each produced by its own lookup/rescale claim) cost NOTHING
+    # per settlement: the settlement's aux reads only mult, and the balance
+    # identity is a linear constraint over the z rows, which whichever
+    # shard holds them folds into q_lin — so the z vectors are excluded from
+    # the activation loop above (shipping them whole was the ~1000x traffic
+    # artifact found on the first extracted-manifest scorecard, 2026-08-19)
+    # and the only cross-shard object they imply is the q_irs/q_lin partial
+    # merge, priced once per proof below (fold_merge_bytes).
     mult_bytes = 0.0
     for c, s in settle_claims:
-        z_shards = set()
         for name in c.inputs:
             v = by_name.get(name)
-            if v is None or v.persistent:
+            if v is None or v.persistent or v.producer is not None \
+                    or getattr(v, "external", False):
                 continue
-            if v.producer is None:
-                senders = {assignment[ci] for ci in v.consumers} - {s}
-                mult_bytes += len(senders) * v.length * BYTES_PER_SLOT
-            else:
-                z_shards.add(assignment[v.producer])
-        mult_bytes += len(z_shards - {s}) * BYTES_PER_SLOT
+            senders = {assignment[ci] for ci in v.consumers} - {s}
+            mult_bytes += len(senders) * v.length * BYTES_PER_SLOT
+    # Separate the old reusable block from fresh committed inputs. Wnew is
+    # persistent for loading, but its R1 commitment is rebuilt every proof.
+    total_enrolled_slots = sum(v.length for v in m.variables
+                               if v.producer is None and v.persistent
+                               and v.phase == 1 and not v.w_new)
+    total_fresh_inputs = sum(v.length for v in m.variables
+                            if v.producer is None
+                            and not getattr(v, "external", False)   # bridge-held: never committed
+                            and not (v.persistent and v.phase == 1 and not v.w_new))
+    # Fold merge: each remote shard ships its q_irs (K_DEG) and q_lin
+    # (2*K_DEG-1, or the n_eval buffer when fused) partials once per proof —
+    # exact field sums (core.QIrsAccumulator.merge / QLinAccumulator.merge).
+    k_deg = m.run.get("ligero", {}).get("K_DEG", 16384)
+    # Fresh input/Wnew rows and legacy weight rows are split evenly, so even a
+    # shard with no claims can own rows and contribute a fold partial.
+    shared_rows = (total_fresh_inputs > 0 or
+                   (not enrolled_weights and total_enrolled_slots > 0))
+    fold_shards = n if shared_rows else len(set(assignment))
+    remote_shards = fold_shards - 1
+    fold_merge_bytes = max(0, remote_shards) * 3 * k_deg * BYTES_PER_SLOT
 
     # Compute time per shard (whole-proof floor constants) + even split of
     # the dependency-free commit work: weights and producer-less run inputs
@@ -273,17 +308,14 @@ def evaluate(m: Manifest, assignment: List[int], n: int,
     A = mp.get("prove_constants", "A_ns_per_slot")
     B = mp.get("prove_constants", "B_ns_per_cid")
     C = mp.get("prove_constants", "C_ns_per_product")
-    total_weight_slots = sum(v.length for v in m.variables if v.persistent)
-    total_input_slots = sum(v.length for v in m.variables
-                            if v.producer is None and not v.persistent)
-    shard_t = None
+    shard_t = serial = None
     if None not in (A, B, C):
         # Enrolled weights: no per-proof encode; each shard instead pays
         # the qlin+open passes over the enrolled slots it owns (ratios
         # per predict.ENROLLED_*_RATIO / routed_projected_4h_model.py).
         wcommit = 0.0 if (skip_weight_commit or enrolled_weights) \
-            else A * total_weight_slots / n
-        icommit = A * total_input_slots / n
+            else A * total_enrolled_slots / n
+        icommit = A * total_fresh_inputs / n
         enr = (ENROLLED_QLIN_RATIO + ENROLLED_OPEN_RATIO) * A \
             if enrolled_weights else 0.0
         # Enrolled mode also prices the fresh-row opening pass (Ed's
@@ -291,33 +323,50 @@ def evaluate(m: Manifest, assignment: List[int], n: int,
         # the legacy floor never priced openings, stated in predict.
         fro = ENROLLED_OPEN_RATIO * A if enrolled_weights else 0.0
         # Fresh openings cover ALL fresh rows: claim witness AND the
-        # producer-less input commitments (matching predict's
-        # W_fresh = W - W_weights, which includes inputs).
-        iopen = fro * total_input_slots / n
+        # producer-less input/Wnew commitments (matching predict's
+        # W_fresh = W - W_enrolled).
+        iopen = fro * total_fresh_inputs / n
         shard_t = [(A * shard_W[s] + B * shard_cids[s] + C * shard_Q[s]
                     + wcommit + icommit + fro * shard_W[s] + iopen
-                    + enr * shard_weight_slots[s]) * 1e-9
+                    + enr * shard_enrolled_slots[s]) * 1e-9
                    for s in range(n)]
+        # Serial is the N=1 run in the same mode, not the sum of parallel
+        # work: multiple shards can consume (and pay to fold/open) the same
+        # enrolled variable, while one device pays for it just once.
+        serial_weight_slots = sum(v.length for v in m.variables
+                                  if v.persistent and v.phase == 1
+                                  and not v.w_new and v.consumers)
+        serial_wcommit = 0.0 if (skip_weight_commit or enrolled_weights) \
+            else A * total_enrolled_slots
+        serial = ((A + fro) * (sum(shard_W) + total_fresh_inputs)
+                  + B * sum(shard_cids) + C * sum(shard_Q)
+                  + serial_wcommit + enr * serial_weight_slots) * 1e-9
     # Opened-column payload per shard: T_QUERIES x that shard's rows x 8B —
     # today's single-GPU 35 GB term, and how sharding shrinks it.
     lig = m.run.get("ligero", {})
     ELL, T_Q = lig.get("ELL", 8192), lig.get("T_QUERIES", 40)
-    per_shard_committed = (total_weight_slots + total_input_slots) / n
-    rows_max = max((shard_W[s] + per_shard_committed) / ELL for s in range(n))
+    # Legacy commits remain evenly split. Enrolled passes operate on the
+    # weights each shard consumes, including shared weights on every owner.
+    opening_weights = (shard_enrolled_slots if enrolled_weights else
+                       [total_enrolled_slots / n] * n)
+    rows_max = max((shard_W[s] + opening_weights[s] + total_fresh_inputs / n) / ELL
+                   for s in range(n))
     opened_max = T_Q * rows_max * BYTES_PER_SLOT
 
     return dict(
         n=n, sweeps=sweeps, opened_bytes_max=opened_max,
         shard_W=shard_W, shard_cids=shard_cids, shard_Q=shard_Q,
         shard_weight_slots=shard_weight_slots,
+        shard_enrolled_slots=shard_enrolled_slots,
         weight_stream_bytes_max=max(shard_weight_slots) * weight_bytes_per_param * sweeps,
         act_bytes_per_sweep=act_bytes, red_bytes_per_sweep=red_bytes,
         mult_bytes_per_sweep=mult_bytes,
+        fold_merge_bytes=fold_merge_bytes,          # once per proof, not per sweep
         traffic_per_sweep=act_bytes + red_bytes + mult_bytes,
-        traffic_total=(act_bytes + red_bytes + mult_bytes) * sweeps,
+        traffic_total=(act_bytes + red_bytes + mult_bytes) * sweeps + fold_merge_bytes,
         shard_t=shard_t,
         wall=max(shard_t) if shard_t else None,
-        serial=sum(shard_t) if shard_t else None,
+        serial=serial,
         imbalance=(max(shard_t) * n / sum(shard_t)) if shard_t and sum(shard_t) else None,
     )
 
@@ -344,12 +393,12 @@ def _verdict(frac: Optional[float]) -> str:
 def _check_modes(enrolled_weights: bool, skip_weight_commit: bool) -> None:
     """One validator for every public entry point: the two modes are
     contradictory (enrollment PRICES the reused commitment, skip DROPS
-    all weight cost), and silently letting one win mislabels output."""
+    old weight cost), and silently letting one win mislabels output."""
     if enrolled_weights and skip_weight_commit:
         raise ValueError(
             "enrolled_weights and skip_weight_commit are mutually "
             "exclusive: enrollment prices the reused commitment "
-            "(qlin+open passes); skip_weight_commit drops all weight "
+            "(qlin+open passes); skip_weight_commit drops old weight "
             "cost (diagnostic only)")
 
 
@@ -360,13 +409,18 @@ def _mode_suffix(m: Manifest, enrolled_weights: bool,
     dropped; the enrollment assumption (refresh budget, matching
     predict's lifecycle line) when enrolled."""
     if skip_weight_commit:
-        return " — DIAGNOSTIC: weight commitment omitted (not a protocol mode)"
+        return " — DIAGNOSTIC: old weight commitment omitted (Wnew stays fresh; not a protocol mode)"
     if enrolled_weights:
         lig = m.run.get("ligero", {})
         ell = lig.get("ELL", 8192)
         kd = lig.get("K_DEG", 16384)
         tq = lig.get("T_QUERIES", 40)
         budget = max(0, (kd - ell) // 2)
+        if budget < tq:
+            return (f" — ENROLLED weights (qlin+open passes; one-time enroll "
+                    f"unpriced; NO refresh budget at this geometry: "
+                    f"(K_DEG-ELL)/2 = {budget} < T={tq}, every proof "
+                    f"needs a fresh enrollment)")
         return (f" — ENROLLED weights (qlin+open passes; one-time enroll "
                 f"unpriced; refresh after {budget:,} distinct opened "
                 f"columns >= {budget // max(tq, 1)} proofs at T={tq})")
@@ -393,12 +447,14 @@ def report(m: Manifest, strategy: str, n: int, mp: MachineProfile, *,
     L = [f"== partition scorecard: {strategy} x{n} on {mp.name} "
          f"({m.model.get('name', '?')} S={m.run.get('seq', '?')})"
          + _mode_suffix(m, enrolled_weights, skip_weight_commit) + " =="]
+    if bridged_note(m):
+        L.append(bridged_note(m))
     if strategy == "experts" and _no_expert_labels(m):
         L.append("NOTE: no expert labels ('.eN.' or '_Wg|u|dN') in this "
                  "manifest — assignment is identical to the layers backbone.")
     if ev["shard_t"]:
         L.append(f"wall (max shard, floor model): {_fmt_s(ev['wall'])}   "
-                 f"serial: {_fmt_s(ev['serial'])}   "
+                 f"serial (N=1): {_fmt_s(ev['serial'])}   "
                  f"speedup {ev['serial'] / ev['wall']:.2f}x of {n}   "
                  f"imbalance {ev['imbalance']:.2f}")
     for s in range(n):
@@ -410,11 +466,14 @@ def report(m: Manifest, strategy: str, n: int, mp: MachineProfile, *,
           f"reduction partials {_gb(ev['red_bytes_per_sweep'])}")
     if ev["mult_bytes_per_sweep"]:
         tr += f" + logup mult partials {_gb(ev['mult_bytes_per_sweep'])}"
-    L.append(tr + f"   (x{ev['sweeps']} sweeps = {_gb(ev['traffic_total'])})")
+    L.append(tr + f"   (x{ev['sweeps']} sweeps = "
+             f"{_gb(ev['traffic_per_sweep'] * ev['sweeps'])})")
+    L.append(f"fold merge once/proof: {ev['fold_merge_bytes']:,} B; "
+             f"total cross-shard traffic: {_gb(ev['traffic_total'])}")
     L.append(f"max shard weight stream (x{ev['sweeps']} sweeps, "
              f"{weight_bytes_per_param} B/param, disk/host lanes): "
              f"{_gb(ev['weight_stream_bytes_max'])}")
-    L.append(f"max shard opened-column payload (GPU-resident): "
+    L.append(f"max shard opened-column payload (HOST-resident, ColumnSink): "
              f"{_gb(ev['opened_bytes_max'])}")
     L.append("interconnect sweep (topology unknown):")
     for bw, t_comms, frac in _comms_row(ev, bandwidths):
@@ -436,8 +495,11 @@ def compare(m: Manifest, n: int, mp: MachineProfile, *,
          f"floor model, {n_sweeps(m)} sweeps)"
          + _mode_suffix(m, enrolled_weights, skip_weight_commit)
          + " ==", ""]
+    if bridged_note(m):
+        L.append(bridged_note(m))
     header = (f"{'strategy':10s} {'wall':>12s} {'speedup':>8s} {'imbal':>6s} "
-              f"{'traffic/sweep':>14s} {'wstream max':>12s} {'opened max':>11s}")
+              f"{'traffic/sweep':>14s} {'fold/proof(B)':>13s} "
+              f"{'wstream max':>12s} {'opened max':>11s}")
     header += "".join(f"{f'@{int(bw)}GB/s':>12s}" for bw in bandwidths)
     L.append(header)
     for name in STRATEGIES:
@@ -456,14 +518,16 @@ def compare(m: Manifest, n: int, mp: MachineProfile, *,
         row = (f"{name:10s} {_fmt_s(ev['wall']).split(' (')[0]:>12s} "
                f"{ev['serial'] / ev['wall']:>7.2f}x {ev['imbalance']:>6.2f} "
                f"{_gb(ev['traffic_per_sweep']):>14s} "
+               f"{ev['fold_merge_bytes']:>13,d} "
                f"{_gb(ev['weight_stream_bytes_max']):>12s} "
                f"{_gb(ev['opened_bytes_max']):>10s}")
         for _, _, frac in _comms_row(ev, bandwidths):
             row += f"{_verdict(frac):>12s}"
         L.append(row)
     L.append("")
-    L.append("wall = max-shard compute (floor constants); comms verdict = "
-             "total cross-shard traffic vs wall at that bandwidth.")
+    L.append("wall = max-shard compute (floor constants); speedup = N=1 wall "
+             "in the same mode / wall; comms verdict = total cross-shard "
+             "traffic (all sweeps + one fold merge) vs wall at that bandwidth.")
     if _no_expert_labels(m):
         L.append("note: no expert labels ('.eN.' or '_Wg|u|dN') — the "
                  "experts row is identical to layers.")

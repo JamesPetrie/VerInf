@@ -1,0 +1,95 @@
+/workspace/verinf/prover/core.py:647: UserWarning: The given buffer is not writable, and PyTorch does not support non-writable tensors. This means you can write to the underlying (supposedly non-writable) buffer using the tensor. You may want to copy the buffer to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at /pytorch/torch/csrc/utils/tensor_new.cpp:1578.)
+  return torch.frombuffer(bytes(master_seed), dtype=torch.uint8).cuda()
+W0919 20:06:41.356000 5487 torch/utils/cpp_extension.py:2425] TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
+W0919 20:06:41.356000 5487 torch/utils/cpp_extension.py:2425] If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'] to specific architectures.
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 0; W-ref False; Wnew rows 0; p3 rows 48; peak 0.00 GB
+    sweeps=5 projections=1 cache_hits=4 -> ACCEPT
+  PASS test_five_semantic_sweeps_and_one_projection
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 0; W-ref False; Wnew rows 0; p3 rows 48; peak 0.00 GB
+    128 lazy shards, 520 resolutions, peak resident = 1
+  PASS test_one_expert_shard_resident_at_a_time
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 256; W-ref True; Wnew rows 0; p3 rows 48; peak 0.00 GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 256; W-ref True; Wnew rows 0; p3 rows 48; peak 0.00 GB
+    shard loads: unfused 1024 -> fused 896 (one full weight pass saved)
+  PASS test_projection_adds_no_second_read_of_the_weights
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 256; W-ref False; Wnew rows 0; p3 rows 48; peak 0.00 GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 256; W-ref True; Wnew rows 0; p3 rows 48; peak 0.00 GB
+    encoded rows: rebuild 1216 -> referenced 960 (saved 256 = the whole weight block), ACCEPT
+  PASS test_referenced_commitment_saves_the_r1_weight_encode
+[sweep] op 1/3 (33%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/3 (67%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 3/3 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/3 (33%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/3 (67%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 3/3 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/3 (33%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/3 (67%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 3/3 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/3 (33%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/3 (67%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 3/3 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/3 (33%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/3 (67%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 3/3 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 256; W-ref True; Wnew rows 0; p3 rows 48; peak 0.00 GB
+    cached Y freed after its consumer in all 4 sweeps that loaded it; Rust ACCEPT
+  PASS test_routed_output_cache_frees_y_after_its_consumer
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 256; W-ref True; Wnew rows 0; p3 rows 48; peak 0.00 GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 256; W-ref True; Wnew rows 0; p3 rows 48; peak 0.00 GB
+    cache off/on: 90443 proof bytes identical; Rust ACCEPT
+  PASS test_routed_output_cache_is_byte_identical_and_accepts
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 256; W-ref True; Wnew rows 0; p3 rows 48; peak 0.00 GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 256; W-ref True; Wnew rows 0; p3 rows 48; peak 0.00 GB
+    shard loads per proof: uncached 896 -> cached 512 (three passes of 128 saved; projection still computed once)
+  PASS test_routed_output_cache_skips_three_of_five_shard_passes
+=== 7 passed, 0 failed (of 7) ===

@@ -1,0 +1,155 @@
+LAUNCH 19:57:08 cmd: python3 profiler/crosscheck.py maverick --from-gguf /workspace/gguf/UD-Q4_K_XL/Llama-4-Maverick-17B-128E-Instruct-UD-Q4_K_XL-00001-of-00005.gguf --t-queries 54 --prompt-n 2 --cont-n 2 --layout -o /workspace/crosscheck-out
+selftest OK: 2 claims, 10 variables
+  MatmulClaim params={'m': 8, 'k': 16, 'n': 4, 'transpose_b': False, 'heads': 1, 'head_dim': 16, 'rescale_bits': 0, 'output_width': 24, 'rescale': False} in=['a', 'w'] out=['a@w#1', 'a@w#1_y', 'a@w#1_u', 'a@w#1_p'] W=80.0
+  MatmulClaim params={'m': 8, 'k': 4, 'n': 8, 'transpose_b': True, 'heads': 1, 'head_dim': 4, 'rescale_bits': 0, 'output_width': 24, 'rescale': False} in=['a@w#1', 'a@w#1'] out=['a@w#1@a@w#1^T#2', 'a@w#1@a@w#1^T#2_y', 'a@w#1@a@w#1^T#2_u', 'a@w#1@a@w#1^T#2_p'] W=76.0
+[1] extract.py --selftest
+[2] building lazy tape (claim recording only — no witness compute, no weights load beyond metadata)
+[maverick-full] input bound: all 4 tokens hidden (2 prompt + 2 continuation)
+W0915 19:57:25.105000 4267 torch/utils/cpp_extension.py:2425] TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
+W0915 19:57:25.105000 4267 torch/utils/cpp_extension.py:2425] If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'] to specific architectures.
+/workspace/verinf/demo/demo_maverick_block.py:88: UserWarning: The given NumPy array is not writable, and PyTorch does not support non-writable tensors. This means writing to this tensor will result in undefined behavior. You may want to copy the array to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at /pytorch/torch/csrc/utils/tensor_numpy.cpp:203.)
+  w = kquant_to_field(torch.from_numpy(
+W0915 19:57:25.141000 4267 torch/utils/cpp_extension.py:2425] TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
+W0915 19:57:25.141000 4267 torch/utils/cpp_extension.py:2425] If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'] to specific architectures.
+[maverick-full] layer 0 built (dense, rope=True) — 28 claims so far
+[maverick-full] layer 1 built (moe E=128, rope=True) — 68 claims so far
+[maverick-full] layer 2 built (dense, rope=True) — 90 claims so far
+[maverick-full] layer 3 built (moe E=128, rope=False) — 128 claims so far
+[maverick-full] layer 4 built (dense, rope=True) — 150 claims so far
+[maverick-full] layer 5 built (moe E=128, rope=True) — 190 claims so far
+[maverick-full] layer 6 built (dense, rope=True) — 212 claims so far
+[maverick-full] layer 7 built (moe E=128, rope=False) — 250 claims so far
+[maverick-full] layer 8 built (dense, rope=True) — 272 claims so far
+[maverick-full] layer 9 built (moe E=128, rope=True) — 312 claims so far
+[maverick-full] layer 10 built (dense, rope=True) — 334 claims so far
+[maverick-full] layer 11 built (moe E=128, rope=False) — 372 claims so far
+[maverick-full] layer 12 built (dense, rope=True) — 394 claims so far
+[maverick-full] layer 13 built (moe E=128, rope=True) — 434 claims so far
+[maverick-full] layer 14 built (dense, rope=True) — 456 claims so far
+[maverick-full] layer 15 built (moe E=128, rope=False) — 494 claims so far
+[maverick-full] layer 16 built (dense, rope=True) — 516 claims so far
+[maverick-full] layer 17 built (moe E=128, rope=True) — 556 claims so far
+[maverick-full] layer 18 built (dense, rope=True) — 578 claims so far
+[maverick-full] layer 19 built (moe E=128, rope=False) — 616 claims so far
+[maverick-full] layer 20 built (dense, rope=True) — 638 claims so far
+[maverick-full] layer 21 built (moe E=128, rope=True) — 678 claims so far
+[maverick-full] layer 22 built (dense, rope=True) — 700 claims so far
+[maverick-full] layer 23 built (moe E=128, rope=False) — 738 claims so far
+[maverick-full] layer 24 built (dense, rope=True) — 760 claims so far
+[maverick-full] layer 25 built (moe E=128, rope=True) — 800 claims so far
+[maverick-full] layer 26 built (dense, rope=True) — 822 claims so far
+[maverick-full] layer 27 built (moe E=128, rope=False) — 860 claims so far
+[maverick-full] layer 28 built (dense, rope=True) — 882 claims so far
+[maverick-full] layer 29 built (moe E=128, rope=True) — 922 claims so far
+[maverick-full] layer 30 built (dense, rope=True) — 944 claims so far
+[maverick-full] layer 31 built (moe E=128, rope=False) — 982 claims so far
+[maverick-full] layer 32 built (dense, rope=True) — 1004 claims so far
+[maverick-full] layer 33 built (moe E=128, rope=True) — 1044 claims so far
+[maverick-full] layer 34 built (dense, rope=True) — 1066 claims so far
+[maverick-full] layer 35 built (moe E=128, rope=False) — 1104 claims so far
+[maverick-full] layer 36 built (dense, rope=True) — 1126 claims so far
+[maverick-full] layer 37 built (moe E=128, rope=True) — 1166 claims so far
+[maverick-full] layer 38 built (dense, rope=True) — 1188 claims so far
+[maverick-full] layer 39 built (moe E=128, rope=False) — 1226 claims so far
+[maverick-full] layer 40 built (dense, rope=True) — 1248 claims so far
+[maverick-full] layer 41 built (moe E=128, rope=True) — 1288 claims so far
+[maverick-full] layer 42 built (dense, rope=True) — 1310 claims so far
+[maverick-full] layer 43 built (moe E=128, rope=False) — 1348 claims so far
+[maverick-full] layer 44 built (dense, rope=True) — 1370 claims so far
+[maverick-full] layer 45 built (moe E=128, rope=True) — 1410 claims so far
+[maverick-full] layer 46 built (dense, rope=True) — 1432 claims so far
+[maverick-full] layer 47 built (moe E=128, rope=False) — 1470 claims so far
+[maverick-full] LM head from output.weight (untied)
+[maverick-full] UI claim over 2 continuation positions; 1484 claims total
+[claimcosts] no formula for claim type 'ConcatClaim'; using fallback (W_hint, W_hint, 0)
+[claimcosts] no formula for claim type 'MaxClaim'; using fallback (W_hint, W_hint, 0)
+[claimcosts] no formula for claim type 'InfoFinalizeClaim'; using fallback (W_hint, W_hint, 0)
+    protocol on the tape: maverick-projected (synth builder chosen from the claim types)
+    built: 1,484 claims
+[3] extracting manifest
+    saved /workspace/crosscheck-out/maverick-s4-extracted.json (1,531 claims, 28,624 variables)
+[4] diff vs synth
+
+type                      synth n   extr n          synth W           extr W  note
+table_settle                    -       47                -       87,354,014  extract-only: LogUp settlement — synth doesn't model tables
+matmul                        458      458       76,772,288       76,772,288  
+silu                           72       72       72,351,744       72,351,744  
+routed_projected               72       72       62,254,368       62,254,368  
+hadamard                      193      194       33,742,848       33,742,852  +1 extracted (UI chain, expected <= 1)
+rmsnorm                        97       97       13,937,736       13,937,736  
+rescale_claim                  72       72       10,321,920       10,321,920  
+rope                           72       72        8,847,360        8,847,360  
+routing[+aux]                  24      124          123,072        6,588,616  +4 extracted (UI chain, expected <= 6); +96 routing-bundle records
+MaxClaim                        -        1                -        4,849,164  extract-only: UI chain — synth omits it (README caveat)
+add                           120      122        2,457,600        2,457,602  +2 extracted (UI chain, expected <= 2)
+ptlookup                       24       26              288        2,424,872  +2 extracted (UI chain, expected <= 2)
+embed_lookup                   97       99        1,986,560        1,986,562  +2 extracted (UI chain, expected <= 2)
+ConcatClaim                     -        2                -        1,616,384  extract-only: UI chain — synth omits it (README caveat)
+softmax                        48       48          529,920          529,920  
+freivalds_combine              24       24          492,000          492,000  
+InfoFinalizeClaim               -        1                -               64  extract-only: UI chain — synth omits it (README caveat)
+
+persistent (weight) slots: synth 402,724,618,240  tape 402,724,618,240  [exact match]
+claims                   synth          1,373   tape          1,531   delta +158
+rows (per-var ceil)      synth     49,165,419   tape     49,231,637   delta +66,218
+W (shared types)         synth    283,817,704   tape    292,707,840   delta +3.132%  FLAG
+cids (shared types)      synth    135,340,438   tape    138,573,226   delta +2.389%  FLAG
+Q (shared types)         synth     95,367,080   tape     99,408,048   delta +4.237%  FLAG
+[5] prover layout probe (in-process core.layout_breakdown on the built tape — no engine pass)
+
+[layout probe] in-process core.layout_breakdown (m_total=49,231,640)
+
+type                      prover rows  manifest rows     prover elems   manifest elems
+RoutedProjectedMatmulClaim   47,193,864     47,193,864  386,609,311,008  386,609,311,008  
+MatmulClaim                 1,985,987      1,985,987   16,254,333,888   16,254,333,888  
+TableSettlement                21,378         21,378      174,708,028      174,708,028  
+SiluClaim                       8,832          8,832       72,351,744       72,351,744  
+HadamardClaim                   4,483          4,483       33,742,852       33,742,852  
+RmsNormClaim                    9,991          9,991       13,937,736       13,937,736  
+RescaleClaim                    1,320          1,320       10,321,920       10,321,920  
+RoPEClaim                       1,296          1,296        8,847,360        8,847,360  
+MaxClaim                          597            597        4,849,164        4,849,164  
+RoutingClaim                      542            542        3,282,120        3,282,120  
+ConcatClaim                       322            322        2,626,624        2,626,624  
+EmbeddingLookupClaim              390            390        2,483,202        2,483,202  
+AddClaim                          361            361        2,457,601        2,457,601  
+PairedTlookupClaim                371            371        2,424,872        2,424,872  
+RangeWordClaim                    270            270        1,653,248        1,653,248  
+WordExtractionClaim               270            270        1,653,248        1,653,248  
+SoftmaxClaim                    1,152          1,152          529,920          529,920  
+FreivaldsCombineClaim             195            195          512,480          512,480  
+InfoFinalizeClaim                  16             16               64               64  
+
+prover m_total 49,231,640 vs manifest rows 49,231,637 (gap +3 = blinding/protocol rows — small and T_QUERIES-shaped is expected; negative is a FLAG)
+[6] witness composition (in-process, value-free)
+[composition] witness elements by claim type and origin (p1_out = produced each sweep, p1_in = committed, w = persistent weights, p2/p3 = aux):
+claim type                           p1_out          p1_in              w             p2             p3
+SiluClaim                        53,477,376              0              0     18,874,368              0
+MatmulClaim                      45,892,608              0 16,177,561,600     30,879,680              0
+HadamardClaim                    22,495,236              0              0     11,247,616              0
+RmsNormClaim                      9,951,036              0              0      3,986,700              0
+RescaleClaim                      6,193,152              0              0      4,128,768              0
+RoPEClaim                         5,898,240              0              0      2,949,120              0
+MaxClaim                          4,040,968              4              0        808,192              0
+RoutingClaim                      3,282,120              0              0              0              0
+AddClaim                          2,457,601              0              0              0              0
+RoutedProjectedMatmulClaim        2,064,384              0386,547,056,640     60,162,336         27,648
+EmbeddingLookupClaim              1,986,562        496,640              0              0              0
+WordExtractionClaim               1,653,248              0              0              0              0
+ConcatClaim                       1,616,384      1,010,240              0              0              0
+PairedTlookupClaim                  808,288              0              0      1,616,584              0
+FreivaldsCombineClaim               491,616         20,480              0            384              0
+SoftmaxClaim                        353,280              0              0        176,640              0
+InfoFinalizeClaim                        44              0              0             20              0
+RangeWordClaim                            0              0              0      1,653,248              0
+TableSettlement                           0     87,354,014              0     87,354,014              0
+TOTAL elements                  162,662,143     88,881,378402,724,618,240    223,837,670         27,648
+TOTAL GB                                1.3            0.7         3221.8            1.8            0.0
+
+
+======================================================================
+RESULT: 3 FLAG(s) — eyeball before trusting extracted manifests:
+  - total W over shared types drifts +3.13% (tolerance 2.0%)
+  - total cids over shared types drifts +2.39% (tolerance 2.0%)
+  - total Q over shared types drifts +4.24% (tolerance 2.0%)
+EXIT=1

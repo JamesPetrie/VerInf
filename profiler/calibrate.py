@@ -113,13 +113,21 @@ def parse_blake3_reg(out: str):
     return float(m.group(1)) if m else None
 
 
-def parse_ntt_batched(out: str, n: int = 65536):
-    """Best (min) ns/elem across the batch sweep at transform size n —
-    the prover-path number; single-transform bench_ntt stays as the
-    launch-overhead probe."""
-    rows = [float(ns) for nn, m, ns in _NTTB_RE.findall(out)
+def parse_ntt_batched_rows(out: str, n: int = 65536):
+    """[(batch m, ns/elem)] at transform size n, in bench order."""
+    return [(int(m), float(ns)) for nn, m, ns in _NTTB_RE.findall(out)
             if int(nn) == n]
-    return min(rows) if rows else None
+
+
+def parse_ntt_batched(out: str, n: int = 65536):
+    """ns/elem of the LARGEST batch in the sweep at transform size n — the
+    prover's working set (it encodes thousands of rows per chunk), which is
+    what the A-constant's bandwidth-scaling verdict is about. The minimum
+    across the sweep would let a cache-resident m=1 transform stand in for
+    it (review finding, 2026-09-13); the single-transform bench_ntt stays
+    as the launch-overhead probe."""
+    rows = parse_ntt_batched_rows(out, n)
+    return max(rows)[1] if rows else None
 
 
 def parse_hbm_random(out: str):
@@ -161,14 +169,17 @@ def parse_blake3(out: str):
 # ------------------------------------------------------- gpu detection
 
 def detect_gpu():
-    """-> dict(name, count, mem_GB, arch) via torch, else nvidia-smi."""
+    """-> dict(name, count, mem_GB, arch, sms) via torch, else nvidia-smi
+    (sms is None there). mem_GB is GiB (total_memory / 2**30, MiB / 1024) —
+    the profile convention every consumer converts with 2**30."""
     try:
         import torch
         if torch.cuda.is_available():
             p = torch.cuda.get_device_properties(0)
             return dict(name=p.name, count=torch.cuda.device_count(),
                         mem_GB=round(p.total_memory / 2**30),
-                        arch=f"sm_{p.major}{p.minor}")
+                        arch=f"sm_{p.major}{p.minor}",
+                        sms=int(getattr(p, "multi_processor_count", 0)) or None)
     except Exception:
         pass
     smi = shutil.which("nvidia-smi")
@@ -181,8 +192,21 @@ def detect_gpu():
             name, cap, mem = [x.strip() for x in lines[0].split(",")]
             return dict(name=name, count=len(lines),
                         mem_GB=round(float(mem) / 1024),
-                        arch="sm_" + cap.replace(".", ""))
+                        arch="sm_" + cap.replace(".", ""), sms=None)
     return None
+
+
+def bench_grid(sms, threads: int = 256, max_threads_per_sm: int = 2048):
+    """Blocks for the chained-ALU benches (bench_field_mul, bench_blake3_reg)
+    so the grid FILLS the part: their built-in default of 256 blocks x 256
+    threads is 13.8 warps/SM on a 148-SM B200 (42.7 on the 48-SM GB10) —
+    under-occupied, and the session-1 archive misread the resulting low
+    per-SM rates as "launch-bound". Full occupancy is max_threads_per_sm /
+    threads blocks per SM; None when the SM count is unknown (keep the
+    bench default)."""
+    if not sms:
+        return None
+    return int(sms) * (max_threads_per_sm // threads)
 
 
 # ------------------------------------------------------- cuda benches
@@ -437,12 +461,41 @@ def main(argv=None) -> int:
                     help="where probe files land — must be a REAL disk, not "
                          "tmpfs, or the disk/dump numbers measure RAM")
     ap.add_argument("--skip-cuda", action="store_true")
-    ap.add_argument("--skip-disk", action="store_true")
+    ap.add_argument("--skip-disk", action="store_true",
+                    help="skip the sequential-read probe only")
+    ap.add_argument("--skip-io", action="store_true",
+                    help="skip all three storage probes (read, compact dump, "
+                         "dump proxy); pair with a later --io-only run on "
+                         "idle storage")
+    ap.add_argument("--io-only", action="store_true",
+                    help="run only the storage probes and merge them into "
+                         "the EXISTING profile at --out / machines/<name>.json")
     ap.add_argument("--no-derive", action="store_true")
     ap.add_argument("--force", action="store_true")
     a = ap.parse_args(argv)
 
     out_path = Path(a.out) if a.out else Path(MACHINES_DIR) / f"{a.name}.json"
+    if a.io_only:
+        if not out_path.exists():
+            ap.error(f"--io-only updates an existing profile; {out_path} "
+                     "does not exist")
+        today = datetime.date.today().isoformat()
+        profile = json.loads(out_path.read_text())
+        io = profile.setdefault("io", {})
+        prov = profile.setdefault("provenance", {})
+        failed = _run_io_probes(a, io, prov, today)
+        profile["description"] = (profile.get("description", "")
+                                  + f" — storage probes re-measured {today} "
+                                  f"(--io-only{', ' + ', '.join(failed) + ' FAILED' if failed else ''})")
+        out_path.write_text(json.dumps(profile, indent=2) + "\n")
+        print(f"\nupdated io fields in {out_path}: "
+              + ", ".join(f"{k}={v}" for k, v in io.items()))
+        if failed:
+            print(f"calibrate --io-only: {len(failed)} probe(s) FAILED "
+                  f"({', '.join(failed)}); their fields are null with the failure "
+                  "in the provenance", file=sys.stderr)
+            return 1
+        return 0
     if out_path.exists() and not a.force:
         ap.error(f"{out_path} exists — pass --force to overwrite")
     raw_dir = out_path.parent / f"calibrate-raw-{a.name}"
@@ -460,7 +513,7 @@ def main(argv=None) -> int:
     arch = a.arch or (gpu_info or {}).get("arch")
 
     gpu = dict(count=(gpu_info or {}).get("count"),
-               mem_GB=(gpu_info or {}).get("mem_GB"),
+               mem_GB=(gpu_info or {}).get("mem_GB"),          # GiB (see detect_gpu)
                mem_bandwidth_GBps=None, field_mul_Gps=None,
                blake3_compress_Gps=None, blake3_bulk_GBps=None,
                blake3_reg_compress_Gps=None, ntt_ns_per_elem=None,
@@ -470,79 +523,176 @@ def main(argv=None) -> int:
     io = dict(disk_read_GBps=None, h2d_GBps=None, proof_dump_MBps=None,
               proof_dump_compact_MBps=None)
 
+    constants = dict(A_ns_per_slot=None, B_ns_per_cid=None,
+                     C_ns_per_product=None, aggregate_ns_per_slot=None)
+
+    def write_profile(partial: bool = False):
+        """Write whatever has been measured so far. Called once at the end
+        and — so a rented session never loses an hour of CUDA numbers to a
+        late MemoryError, Ctrl-C or a disk probe crash — from the failure
+        path with partial=True, which marks the profile as incomplete."""
+        try:
+            cores = len(os.sched_getaffinity(0))      # the container's share
+        except (AttributeError, OSError):
+            cores = os.cpu_count()
+        profile = {
+            "name": a.name,
+            "description": (f"{(gpu_info or {}).get('name', 'unknown GPU')} — "
+                            f"calibrated by profiler/calibrate.py {today}"
+                            + (" — PARTIAL: the run failed before every probe "
+                               "completed; null fields were never measured"
+                               if partial else "")),
+            "gpu": gpu,
+            "prove_constants": constants,
+            "verify": {"bytes_per_row": 700, "cores": cores},
+            "io": io,
+            "interconnect": None,
+            "provenance": dict(prov, **{
+                "mem_GB": "GiB as the driver reports it (total_memory / 2**30); "
+                          "consumers convert with 2**30",
+                "verify.bytes_per_row": "700: gb10-spark estimate carried over, "
+                                        "not measured here",
+                "verify.cores": "os.sched_getaffinity(0) — the container's CPU "
+                                "share, not the host's",
+            }),
+        }
+        out_path.write_text(json.dumps(profile, indent=2) + "\n")
+        print(f"\nwrote {out_path}{' (PARTIAL)' if partial else ''}")
+
+    try:
+        _run_probes(a, arch, gpu_info, gpu, io, prov, constants, today, raw_dir)
+    except BaseException:
+        print("\ncalibrate: a probe failed — writing the PARTIAL profile "
+              "before re-raising", flush=True)
+        write_profile(partial=True)
+        raise
+    write_profile()
+
+    base = MachineProfile.load("gb10-spark")
+    print(f"\nratios vs gb10-spark (the floor scales A/C by bandwidth, "
+          f"B by compute):")
+    for label, path in [("mem bandwidth", ("gpu", "mem_bandwidth_GBps")),
+                        ("field mul", ("gpu", "field_mul_Gps")),
+                        ("blake3 compress", ("gpu", "blake3_compress_Gps")),
+                        ("blake3 reg", ("gpu", "blake3_reg_compress_Gps")),
+                        ("blake3 bulk", ("gpu", "blake3_bulk_GBps"))]:
+        new = gpu.get(path[1])
+        old = base.get(*path)
+        if new and old:
+            print(f"  {label:16s} {new:>10.1f} / {old:<8g} = {new / old:5.2f}x")
+    nt, ot = gpu.get("ntt_ns_per_elem"), base.get("gpu", "ntt_ns_per_elem")
+    if nt and ot:
+        print(f"  {'ntt ns/elem':16s} {nt:>10.3f} / {ot:<8g} = "
+              f"{ot / nt:5.2f}x faster")
+    # The A-constant sanity check the runbook asks for, done on the spot:
+    # A is bandwidth-ratioed from gb10, so if encode really scales with
+    # bandwidth the BATCHED NTT (the prover path) should land near gb10's
+    # single-transform number divided by the bandwidth ratio.
+    ntb, bw, bw0 = (gpu.get("ntt_batched_ns_per_elem"),
+                    gpu.get("mem_bandwidth_GBps"), base.get("gpu", "mem_bandwidth_GBps"))
+    if ntb and ot and bw and bw0:
+        exp = ot / (bw / bw0)
+        print(f"  {'ntt BATCHED':16s} {ntb:>10.4f} ns/elem vs {exp:.4f} expected "
+              f"if encode scaled with bandwidth ({ntb / exp:.2f}x of that): "
+              + ("A's bandwidth-ratio story holds" if ntb <= 1.5 * exp else
+                 "encode is NOT bandwidth-scaled here — A is optimistic; "
+                 "treat the floor accordingly"))
+    elif ntb is None and not a.skip_cuda:
+        print("  ntt BATCHED: not measured (bench_ntt_batched produced nothing) "
+              "— the A-constant check is open")
+    return 0
+
+
+def _run_probes(a, arch, gpu_info, gpu, io, prov, constants, today, raw_dir):
+    """Every measurement, in order; fills gpu/io/prov/constants in place so
+    main() can write a partial profile if any step raises."""
     nvcc = a.nvcc or shutil.which("nvcc") or "/usr/local/cuda/bin/nvcc"
     if not a.skip_cuda and arch and Path(nvcc).exists():
         build = raw_dir / "build"
         build.mkdir(exist_ok=True)
         print(f"[cuda benches] nvcc={nvcc}")
+        blocks = bench_grid((gpu_info or {}).get("sms"))
+        grid_args = ["--blocks", str(blocks)] if blocks else []
+        grid_note = (f"grid {blocks}x256 (full occupancy on "
+                     f"{gpu_info['sms']} SMs)" if blocks else
+                     "grid = bench default 256x256 (SM count unknown — "
+                     "under-occupied on large parts)")
+        print(f"  ALU benches: {grid_note}")
         specs = [   # each isolated: one failure skips one bench, not the rest
-            ("bench_field_mul", BENCH_DIR, ["--runs", str(a.runs)]),
+            ("bench_field_mul", BENCH_DIR, ["--runs", str(a.runs)] + grid_args),
             ("bench_ntt", BENCH_DIR, []),
             ("bench_blake3_columns", BENCH_DIR, ["--runs", str(a.runs)]),
             ("bench_goldilocks_matmul", BENCH_DIR, []),
-            ("bench_blake3_reg", PROF_BENCH_DIR, ["--runs", str(a.runs)]),
+            ("bench_blake3_reg", PROF_BENCH_DIR, ["--runs", str(a.runs)] + grid_args),
             ("bench_ntt_batched", PROF_BENCH_DIR, []),
             ("bench_hbm_random", PROF_BENCH_DIR, []),
             ("bench_launch_latency", PROF_BENCH_DIR, []),
         ]
-        outs = {}
         for nm, src_dir, args_ in specs:
             try:
                 exe = compile_bench(src_dir / f"{nm}.cu", build, arch, nvcc)
-                outs[nm] = run_bench(exe, args_, raw_dir)
+                out = run_bench(exe, args_, raw_dir)
             except (RuntimeError, subprocess.TimeoutExpired) as e:
                 print(f"  {nm} failed, continuing: {e}")
-        if "bench_field_mul" in outs:
-            gpu["field_mul_Gps"] = parse_field_mul(outs["bench_field_mul"])
-            prov["field_mul_Gps"] = f"bench_field_mul best-of-{a.runs}, {today}"
-        if "bench_ntt" in outs:
-            gpu["ntt_ns_per_elem"] = parse_ntt(outs["bench_ntt"])
-            prov["ntt_ns_per_elem"] = ("bench_ntt best variant at n=65536 "
-                                       f"(us/NTT * 1000 / 65536), {today}")
-        if "bench_blake3_columns" in outs:
-            c, bulk = parse_blake3(outs["bench_blake3_columns"])
-            gpu["blake3_compress_Gps"], gpu["blake3_bulk_GBps"] = c, bulk
-            prov["blake3_compress_Gps"] = (
-                f"bench_blake3_columns best over m sweep, {today} — "
-                f"memory-bandwidth-limited at large m; NOT a basis for B")
-            prov["blake3_bulk_GBps"] = \
-                f"bench_blake3_columns best GB/s absorbed, {today}"
-        if "bench_goldilocks_matmul" in outs:
-            mm = parse_matmul(outs["bench_goldilocks_matmul"])
-            if mm:
-                prov["matmul_Gmul_s"] = (
-                    f"bench_goldilocks_matmul best {mm:g} Gmul/s across the "
-                    f"n sweep, {today} — informational (no profile field; "
-                    f"its printed 'peak floor' line is GB10's 312, ignore)")
-        if "bench_blake3_reg" in outs:
-            gpu["blake3_reg_compress_Gps"] = \
-                parse_blake3_reg(outs["bench_blake3_reg"])
-            prov["blake3_reg_compress_Gps"] = (
-                f"bench_blake3_reg register-resident chained compress, "
-                f"{today} — the ALU-bound rate; B's proper scaling basis")
-        if "bench_ntt_batched" in outs:
-            gpu["ntt_batched_ns_per_elem"] = \
-                parse_ntt_batched(outs["bench_ntt_batched"])
-            prov["ntt_batched_ns_per_elem"] = (
-                f"bench_ntt_batched best over batch sweep at n=65536, "
-                f"{today} — the prover-path number; the single-transform "
-                f"bench is launch-bound on large-L2 parts")
-        if "bench_hbm_random" in outs:
-            g, ch = parse_hbm_random(outs["bench_hbm_random"])
-            gpu["hbm_random_GBps"], gpu["hbm_chase_ns"] = g, ch
-            prov["hbm_random_GBps"] = (
-                f"bench_hbm_random gather over an L2-exceeding buffer, "
-                f"{today} — random 8B-read throughput")
-            prov["hbm_chase_ns"] = (
-                f"bench_hbm_random dependent pointer chase, {today} — "
-                f"per-hop wall with parallel walkers")
-        if "bench_launch_latency" in outs:
-            ls, lt = parse_launch(outs["bench_launch_latency"])
-            gpu["launch_us_sync"], gpu["launch_us_stream"] = ls, lt
-            prov["launch_us_sync"] = (
-                f"bench_launch_latency synced round trip, {today}")
-            prov["launch_us_stream"] = (
-                f"bench_launch_latency back-to-back enqueue, {today}")
+                continue
+            # Publish each completed measurement before starting the next
+            # benchmark. main's interruption handler serializes this state.
+            if nm == "bench_field_mul":
+                gpu["field_mul_Gps"] = parse_field_mul(out)
+                prov["field_mul_Gps"] = (f"bench_field_mul best-of-{a.runs}, "
+                                         f"{grid_note}, {today}")
+            elif nm == "bench_ntt":
+                gpu["ntt_ns_per_elem"] = parse_ntt(out)
+                prov["ntt_ns_per_elem"] = ("bench_ntt best variant at n=65536 "
+                                           f"(us/NTT * 1000 / 65536), {today}")
+            elif nm == "bench_blake3_columns":
+                c, bulk = parse_blake3(out)
+                gpu["blake3_compress_Gps"], gpu["blake3_bulk_GBps"] = c, bulk
+                prov["blake3_compress_Gps"] = (
+                    f"bench_blake3_columns best over m sweep, {today} — "
+                    f"memory-bandwidth-limited at large m; NOT a basis for B")
+                prov["blake3_bulk_GBps"] = \
+                    f"bench_blake3_columns best GB/s absorbed, {today}"
+            elif nm == "bench_goldilocks_matmul":
+                mm = parse_matmul(out)
+                if mm:
+                    prov["matmul_Gmul_s"] = (
+                        f"bench_goldilocks_matmul best {mm:g} Gmul/s across the "
+                        f"n sweep, {today} — informational (no profile field; "
+                        f"its printed 'peak floor' line is GB10's 312, ignore)")
+            elif nm == "bench_blake3_reg":
+                gpu["blake3_reg_compress_Gps"] = parse_blake3_reg(out)
+                prov["blake3_reg_compress_Gps"] = (
+                    f"bench_blake3_reg register-resident chained compress, "
+                    f"{grid_note}, {today} — the ALU-bound rate; B's proper "
+                    f"scaling basis")
+            elif nm == "bench_ntt_batched":
+                gpu["ntt_batched_ns_per_elem"] = parse_ntt_batched(out)
+                _rows = parse_ntt_batched_rows(out)
+                _per = ", ".join(f"m={m} {ns:.4f}" for m, ns in _rows)
+                prov["ntt_batched_ns_per_elem"] = (
+                    f"bench_ntt_batched at n=65536, the LARGEST batch of the "
+                    f"sweep (m={max(_rows)[0] if _rows else '?'}), {today} — "
+                    f"the prover's working set; per batch: {_per}; the "
+                    f"single-transform bench is launch-bound on large-L2 parts")
+            elif nm == "bench_hbm_random":
+                g, ch = parse_hbm_random(out)
+                gpu["hbm_random_GBps"], gpu["hbm_chase_ns"] = g, ch
+                prov["hbm_random_GBps"] = (
+                    f"bench_hbm_random gather over an L2-exceeding buffer, "
+                    f"{today} — random 8B-read throughput")
+                prov["hbm_chase_ns"] = (
+                    f"bench_hbm_random dependent pointer chase, {today} — "
+                    f"per-hop WALL across the default 65536 walkers: a "
+                    f"throughput figure, NOT the single-access HBM latency "
+                    f"(rerun with --walkers 1 for that)")
+            elif nm == "bench_launch_latency":
+                ls, lt = parse_launch(out)
+                gpu["launch_us_sync"], gpu["launch_us_stream"] = ls, lt
+                prov["launch_us_sync"] = (
+                    f"bench_launch_latency synced round trip, {today}")
+                prov["launch_us_stream"] = (
+                    f"bench_launch_latency back-to-back enqueue, {today}")
     elif not a.skip_cuda:
         print(f"[cuda benches] skipped (nvcc at {nvcc}: "
               f"{Path(nvcc).exists()}, arch: {arch})")
@@ -571,8 +721,68 @@ def main(argv=None) -> int:
             except Exception as e:            # isolate per measurement
                 print(f"  {key} failed, continuing: {e}")
 
+    if a.skip_io:
+        print("[io probes] skipped (--skip-io): rerun with --io-only once the "
+              "storage is idle")
+    else:
+        _run_io_probes(a, io, prov, today)
+
+    if not a.no_derive:
+        base = MachineProfile.load("gb10-spark")
+        derived, dprov = derive_prove_constants(
+            base, gpu["mem_bandwidth_GBps"], gpu["blake3_reg_compress_Gps"])
+        constants.update(derived)
+        prov.update(dprov)
+
+
+def _mount_of(path: Path):
+    """(source, fstype, mountpoint) of the filesystem holding `path`, from
+    /proc/mounts — the longest mountpoint that is a prefix of the resolved
+    path. None when it cannot be read."""
+    try:
+        target = str(Path(path).resolve())
+        best = None
+        for line in Path("/proc/mounts").read_text().splitlines():
+            parts = line.split()
+            if len(parts) < 3:
+                continue
+            src, mnt, fstype = parts[0], parts[1], parts[2]
+            mnt = mnt.replace("\\040", " ")
+            if target == mnt or target.startswith(mnt.rstrip("/") + "/"):
+                if best is None or len(mnt) > len(best[2]):
+                    best = (src, fstype, mnt)
+        return best
+    except OSError:
+        return None
+
+
+def _run_io_probes(a, io, prov, today):
+    """The three storage probes (sequential read, compact proof dump, dump
+    proxy) on --tmpdir, with the resolved directory and its filesystem
+    recorded in the provenance: the numbers describe THAT mount, and a
+    network volume, an overlay root and a local NVMe are different objects.
+    Run these on idle storage — never while a download is writing to it."""
     tmp = Path(a.tmpdir)
-    if not a.skip_disk:
+    tmp.mkdir(parents=True, exist_ok=True)
+    mount = _mount_of(tmp)
+    try:
+        free_gb = shutil.disk_usage(tmp).free / 1e9
+    except OSError:
+        free_gb = float("nan")
+    where = (f"{tmp.resolve()} on {mount[0]} ({mount[1]}) mounted at {mount[2]}"
+             if mount else f"{tmp.resolve()} (mount unknown)")
+    prov["io_tmpdir"] = f"{where}; {free_gb:.0f} GB free at probe time, {today}"
+    print(f"[io probes] {where}; {free_gb:.0f} GB free")
+    # Every field this run attempts is cleared FIRST, so a probe that fails
+    # leaves null with a FAILED provenance rather than a rate measured on
+    # some earlier filesystem under this run's mount description (review
+    # finding, 2026-09-13). A skipped probe keeps its value and says so.
+    failed = []
+    if a.skip_disk:
+        prov["disk_read_GBps"] = (f"{prov.get('disk_read_GBps', 'unmeasured')} "
+                                  f"[read probe SKIPPED {today}: value not from this mount]")
+    else:
+        io["disk_read_GBps"] = None
         print(f"[disk] write + cache-evict + read over {a.disk_gb} GB")
         try:
             io["disk_read_GBps"] = round(
@@ -582,7 +792,10 @@ def main(argv=None) -> int:
                 f"fsync + posix_fadvise(DONTNEED) eviction, {today} — "
                 f"device-served but not O_DIRECT-cold")
         except (RuntimeError, OSError) as e:
-            print(f"  disk probe failed/skipped: {e}")
+            print(f"  disk probe FAILED: {e}")
+            prov["disk_read_GBps"] = f"FAILED {today}: {e}"
+            failed.append("disk_read_GBps")
+    io["proof_dump_compact_MBps"] = None
     print("[compact dump] u64le/base64 production transport")
     try:
         io["proof_dump_compact_MBps"] = round(
@@ -592,7 +805,10 @@ def main(argv=None) -> int:
             f"--tmpdir, {today} — the production transport; supersedes "
             f"the A100 reference in predict when present")
     except (RuntimeError, OSError) as e:
-        print(f"  compact dump failed/skipped: {e}")
+        print(f"  compact dump FAILED: {e}")
+        prov["proof_dump_compact_MBps"] = f"FAILED {today}: {e}"
+        failed.append("proof_dump_compact_MBps")
+    io["proof_dump_MBps"] = None
     print("[dump proxy]")
     try:
         io["proof_dump_MBps"] = round(
@@ -601,49 +817,11 @@ def main(argv=None) -> int:
                                    f"arrays, {today} — replace with a real "
                                    "proof_dump measurement")
     except (RuntimeError, OSError) as e:
-        print(f"  dump proxy failed/skipped: {e}")
+        print(f"  dump proxy FAILED: {e}")
+        prov["proof_dump_MBps"] = f"FAILED {today}: {e}"
+        failed.append("proof_dump_MBps")
+    return failed
 
-    constants = dict(A_ns_per_slot=None, B_ns_per_cid=None,
-                     C_ns_per_product=None, aggregate_ns_per_slot=None)
-    if not a.no_derive:
-        base = MachineProfile.load("gb10-spark")
-        derived, dprov = derive_prove_constants(
-            base, gpu["mem_bandwidth_GBps"], gpu["blake3_reg_compress_Gps"])
-        constants.update(derived)
-        prov.update(dprov)
-
-    profile = {
-        "name": a.name,
-        "description": (f"{(gpu_info or {}).get('name', 'unknown GPU')} — "
-                        f"calibrated by profiler/calibrate.py {today}"),
-        "gpu": gpu,
-        "prove_constants": constants,
-        "verify": {"bytes_per_row": 700, "cores": os.cpu_count()},
-        "io": io,
-        "interconnect": None,
-        "provenance": prov,
-    }
-    out_path.write_text(json.dumps(profile, indent=2) + "\n")
-    print(f"\nwrote {out_path}")
-
-    base = MachineProfile.load("gb10-spark")
-    print(f"\nratios vs gb10-spark (the floor scales A/C by bandwidth, "
-          f"B by compute):")
-    for label, path in [("mem bandwidth", ("gpu", "mem_bandwidth_GBps")),
-                        ("field mul", ("gpu", "field_mul_Gps")),
-                        ("blake3 compress", ("gpu", "blake3_compress_Gps")),
-                        ("blake3 reg", ("gpu", "blake3_reg_compress_Gps")),
-                        ("blake3 bulk", ("gpu", "blake3_bulk_GBps"))]:
-        new = profile["gpu"].get(path[1])
-        old = base.get(*path)
-        if new and old:
-            print(f"  {label:16s} {new:>10.1f} / {old:<8g} = {new / old:5.2f}x")
-    nt, ot = profile["gpu"].get("ntt_ns_per_elem"), \
-        base.get("gpu", "ntt_ns_per_elem")
-    if nt and ot:
-        print(f"  {'ntt ns/elem':16s} {nt:>10.3f} / {ot:<8g} = "
-              f"{ot / nt:5.2f}x faster")
-    return 0
 
 
 if __name__ == "__main__":

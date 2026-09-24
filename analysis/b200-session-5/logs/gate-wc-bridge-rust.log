@@ -1,0 +1,66 @@
+W0919 23:12:43.851000 6968 torch/utils/cpp_extension.py:2425] TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
+W0919 23:12:43.851000 6968 torch/utils/cpp_extension.py:2425] If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'] to specific architectures.
+/workspace/verinf/prover/tests/../core.py:647: UserWarning: The given buffer is not writable, and PyTorch does not support non-writable tensors. This means you can write to the underlying (supposedly non-writable) buffer using the tensor. You may want to copy the buffer to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at /pytorch/torch/csrc/utils/tensor_new.cpp:1578.)
+  return torch.frombuffer(bytes(master_seed), dtype=torch.uint8).cuda()
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [wc-bridge] the bridge's per-proof pass took 0.0 s outside the sweeps; stages: eval v 0.0 s/1; aggregate c 0.0 s/1
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 0; W-ref False; Wnew rows 0; p3 rows 3; peak 0.00 GB
+/workspace/verinf/prover/tests/../protocol.py:282: UserWarning: The use of `x.T` on tensors of dimension other than 2 to reverse their shape is deprecated and it will throw an error in a future release. Consider `x.mT` to transpose batches of matrices or `x.permute(*torch.arange(x.ndim - 1, -1, -1))` to reverse the dimensions of a tensor. (Triggered internally at /pytorch/aten/src/ATen/native/TensorShape.cpp:4421.)
+  if hasattr(v, "T") and hasattr(v, "mult_var") and id(v) not in seen:
+    enrollment root: matching ACCEPT / wrong, missing, misplaced REJECT
+  PASS test_bridged_proof_accepts_with_its_enrollment_root_and_rejects_without
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [wc-bridge] the bridge's per-proof pass took 0.0 s outside the sweeps; stages: eval v 0.0 s/1; aggregate c 0.0 s/1
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 0; W-ref False; Wnew rows 0; p3 rows 3; peak 0.00 GB
+    legacy seeds: bridge refused
+  PASS test_legacy_seed_path_never_feeds_the_bridge
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [wc-bridge] the bridge's per-proof pass took 0.0 s outside the sweeps; stages: eval v 0.0 s/1; aggregate c 0.0 s/1
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 0; W-ref False; Wnew rows 0; p3 rows 3; peak 0.00 GB
+    q_w = 1: REJECT (floor)
+  PASS test_opening_count_below_the_floor_rejects
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [wc-bridge] the bridge's per-proof pass took 0.0 s outside the sweeps; stages: eval v 0.0 s/1; aggregate c 0.0 s/1
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 1; W-ref True; Wnew rows 0; p3 rows 3; peak 0.00 GB
+    production shape: both anchors bound
+  PASS test_production_shape_binds_both_anchors
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [wc-bridge] the bridge's per-proof pass took 0.0 s outside the sweeps; stages: eval v 0.0 s/1; aggregate c 0.0 s/1
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 0; W-ref False; Wnew rows 0; p3 rows 3; peak 0.00 GB
+    stripped wc section: REJECT
+  PASS test_stripped_wc_section_rejects
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [wc-bridge] the bridge's per-proof pass took 0.0 s outside the sweeps; stages: eval v 0.0 s/1; aggregate c 0.0 s/1
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 0; W-ref False; Wnew rows 0; p3 rows 3; peak 0.00 GB
+    tampered P_trace: REJECT in Rust
+  PASS test_tampered_fold_rejects_in_rust
+=== 6 passed, 0 failed (of 6) ===

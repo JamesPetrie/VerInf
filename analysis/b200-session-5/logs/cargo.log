@@ -1,0 +1,96 @@
+    Updating crates.io index
+ Downloading crates ...
+  Downloaded cfg-if v1.0.4
+  Downloaded arrayref v0.3.9
+  Downloaded arrayvec v0.7.6
+  Downloaded constant_time_eq v0.4.2
+  Downloaded either v1.16.0
+  Downloaded quote v1.0.45
+  Downloaded shlex v2.0.1
+  Downloaded cc v1.2.63
+  Downloaded cpufeatures v0.3.0
+  Downloaded itoa v1.0.18
+  Downloaded zmij v1.0.21
+  Downloaded find-msvc-tools v0.1.9
+  Downloaded crossbeam-deque v0.8.6
+  Downloaded crossbeam-utils v0.8.21
+  Downloaded serde_derive v1.0.228
+  Downloaded unicode-ident v1.0.24
+  Downloaded crossbeam-epoch v0.9.18
+  Downloaded proc-macro2 v1.0.106
+  Downloaded rayon-core v1.13.0
+  Downloaded serde v1.0.228
+  Downloaded serde_core v1.0.228
+  Downloaded memchr v2.8.1
+  Downloaded rayon v1.12.0
+  Downloaded serde_json v1.0.150
+  Downloaded blake3 v1.8.5
+  Downloaded syn v2.0.117
+   Compiling proc-macro2 v1.0.106
+   Compiling crossbeam-utils v0.8.21
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.45
+   Compiling serde_core v1.0.228
+   Compiling find-msvc-tools v0.1.9
+   Compiling shlex v2.0.1
+   Compiling zmij v1.0.21
+   Compiling rayon-core v1.13.0
+   Compiling serde_json v1.0.150
+   Compiling serde v1.0.228
+   Compiling arrayvec v0.7.6
+   Compiling either v1.16.0
+   Compiling cpufeatures v0.3.0
+   Compiling memchr v2.8.1
+   Compiling itoa v1.0.18
+   Compiling constant_time_eq v0.4.2
+   Compiling cfg-if v1.0.4
+   Compiling arrayref v0.3.9
+   Compiling cc v1.2.63
+   Compiling crossbeam-epoch v0.9.18
+   Compiling syn v2.0.117
+   Compiling crossbeam-deque v0.8.6
+   Compiling blake3 v1.8.5
+   Compiling rayon v1.12.0
+   Compiling serde_derive v1.0.228
+   Compiling ligero-verifier v0.1.0 (/workspace/verinf/verifier)
+warning: unused import: `compile_claims_bound`
+  --> src/verify.rs:18:23
+   |
+18 | use crate::handlers::{compile_claims_bound, compile_claims_bound_pinned};
+   |                       ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `ligero-verifier` (lib) generated 1 warning (run `cargo fix --lib -p ligero-verifier` to apply 1 suggestion)
+warning: unused import: `verify_bound`
+  --> src/bin/verify_proof.rs:17:47
+   |
+17 | use ligero_verifier::verify::{Round3, Round4, verify_bound, verify_bound_pinned};
+   |                                               ^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `s_bind_out` is never read
+   --> src/bin/verify_proof.rs:439:43
+    |
+439 |     let mut s_bind_out: Option<Vec<u8>> = None;
+    |                                           ^^^^ this value is reassigned later and never used
+...
+463 |             s_bind_out = Some(s_bind.to_vec());
+    |             ---------- `s_bind_out` is overwritten here before the previous value is read
+    |
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `claim_index` is never read
+   --> src/bin/verify_proof.rs:154:5
+    |
+150 | struct WcSection {
+    |        --------- field in this struct
+...
+154 |     claim_index: usize,
+    |     ^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `ligero-verifier` (bin "verify_proof") generated 3 warnings (run `cargo fix --bin "verify_proof" -p ligero-verifier` to apply 1 suggestion)
+    Finished `release` profile [optimized] target(s) in 11.60s

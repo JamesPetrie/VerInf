@@ -1,6 +1,6 @@
 """Per-claim cost accounting: (W, cids, Q) from claim type + shape params.
 
-W    = committed witness slots (phase-1 + phase-2)
+W    = committed witness slots (phase-1 + phase-2 + phase-3 late aux)
 cids = distinct linear constraint ids
 Q    = quadratic products (slot-products)
 
@@ -191,11 +191,22 @@ def _rescale_claim(p):
     rescale that follows every routed raw output. Own witness: x, x_low,
     x_shifted, z_low, z_shifted (5L); two linears (2L cids); two per-slot
     LogUp-inverse quad families (2L)."""
-    L = p["length"]
+    L = _length(p)
     return (5.0 * L, 2.0 * L, 2.0 * L)
 
 
+def _lincomb(p):
+    """LinCombClaim (prover/claims.py lincomb_compile): a public linear
+    combination over existing variables — no own witness, one
+    L2_IdentityScalar cid per slot ([base, base+L)), no quads. Emitted by
+    the token-binding path only (prover/token_binding.py), never by the
+    Maverick/Llama demos."""
+    L = _length(p)
+    return (0.0, float(L), 0.0)
+
+
 _FORMULAS = {
+    "lincomb": _lincomb,
     "matmul": _matmul,
     "routed_projected": _routed_projected,
     "rescale_claim": _rescale_claim,
@@ -232,6 +243,7 @@ _ALIASES = {
     "FreivaldsCombineClaim": "freivalds_combine",
     "RoutedProjectedMatmulClaim": "routed_projected",
     "RescaleClaim": "rescale_claim",
+    "LinCombClaim": "lincomb",
 }
 
 _warned: set = set()

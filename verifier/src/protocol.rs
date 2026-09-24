@@ -59,12 +59,32 @@ pub fn merkle_leaf(col: &[u64]) -> [u8; 32] {
     *blake3::hash(&pack_column(col)).as_bytes()
 }
 
-/// path: list of (sibling, side); side==0 ⇒ sibling is the LEFT child (sib‖h).
-pub fn merkle_verify(leaf: [u8; 32], path: &[([u8; 32], u8)], root: [u8; 32]) -> bool {
-    let mut h = leaf;
+/// Levels above the leaves of a tree over `n_leaves` whose odd last node is
+/// paired with itself (core.merkle_path's rule): ceil(log2(n_leaves)).
+pub fn merkle_depth(n_leaves: u64) -> usize {
+    let (mut n, mut d) = (n_leaves, 0usize);
+    while n > 1 { n = (n + 1) / 2; d += 1; }
+    d
+}
+
+/// Verify that `leaf` sits at position `index` of a tree over `n_leaves`
+/// committing to `root`. The ordering at every level comes from `index`, never
+/// from the proof: a valid path for another column is a REJECT, as are an
+/// index out of range and a path shorter or longer than the tree. The side bit
+/// must agree with the index (side==0 ⇔ this node is a right child, sibling
+/// ‖ h), and a last node with no right neighbour must be paired with itself.
+pub fn merkle_verify(leaf: [u8; 32], path: &[([u8; 32], u8)], root: [u8; 32],
+                     index: u64, n_leaves: u64) -> bool {
+    if index >= n_leaves || path.len() != merkle_depth(n_leaves) {
+        return false;
+    }
+    let (mut h, mut idx, mut width) = (leaf, index, n_leaves);
     for (sibling, side) in path {
+        let right = idx & 1 == 1;
+        if *side != if right { 0 } else { 1 } { return false; }
+        if !right && idx + 1 >= width && *sibling != h { return false; }
         let mut buf = [0u8; 64];
-        if *side == 0 {
+        if right {
             buf[..32].copy_from_slice(sibling);
             buf[32..].copy_from_slice(&h);
         } else {
@@ -72,6 +92,8 @@ pub fn merkle_verify(leaf: [u8; 32], path: &[([u8; 32], u8)], root: [u8; 32]) ->
             buf[32..].copy_from_slice(sibling);
         }
         h = *blake3::hash(&buf).as_bytes();
+        idx >>= 1;
+        width = (width + 1) / 2;
     }
     h == root
 }
@@ -147,6 +169,88 @@ pub fn random_columns(seed: &[u8], cfg: &Config) -> Vec<u64> {
 pub fn op_vec(s_op: &[u8], claim_index: usize, label: &str, n: usize) -> Vec<u64> {
     let lab = format!("op{}:{}", claim_index, label);
     (0..n as u64).map(|i| challenge(s_op, i, &lab)).collect()
+}
+
+#[cfg(test)]
+mod merkle_tests {
+    use super::*;
+
+    fn h2(a: &[u8; 32], b: &[u8; 32]) -> [u8; 32] {
+        *blake3::hash(&[a.as_slice(), b.as_slice()].concat()).as_bytes()
+    }
+
+    // levels[0] = leaves; the odd last node pairs with itself (core.build rule)
+    fn tree(n: u64) -> Vec<Vec<[u8; 32]>> {
+        let mut levels = vec![(0..n).map(|i| merkle_leaf(&[i, 100 + i])).collect::<Vec<_>>()];
+        while levels.last().unwrap().len() > 1 {
+            let cur = levels.last().unwrap();
+            let nxt = (0..cur.len()).step_by(2)
+                .map(|i| h2(&cur[i], if i + 1 < cur.len() { &cur[i + 1] } else { &cur[i] }))
+                .collect();
+            levels.push(nxt);
+        }
+        levels
+    }
+
+    // core.merkle_path: side 1 when the node is a left child
+    fn path(levels: &[Vec<[u8; 32]>], mut idx: usize) -> Vec<([u8; 32], u8)> {
+        let mut out = Vec::new();
+        for lvl in &levels[..levels.len() - 1] {
+            let sib = if idx ^ 1 < lvl.len() { idx ^ 1 } else { idx };
+            out.push((lvl[sib], if idx & 1 == 0 { 1 } else { 0 }));
+            idx >>= 1;
+        }
+        out
+    }
+
+    #[test]
+    fn valid_openings_accept_at_their_index() {
+        for n in [1u64, 2, 5, 8] {
+            let t = tree(n);
+            let root = t.last().unwrap()[0];
+            for i in 0..n as usize {
+                assert!(merkle_verify(t[0][i], &path(&t, i), root, i as u64, n), "n={n} i={i}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_valid_path_for_another_column_rejects() {
+        let t = tree(8);
+        let root = t.last().unwrap()[0];
+        // column 5 with its own valid path, presented as the answer for index 1
+        assert!(!merkle_verify(t[0][5], &path(&t, 5), root, 1, 8));
+        // the side bits alone do not decide the ordering
+        let mut flipped = path(&t, 5);
+        for step in flipped.iter_mut() { step.1 ^= 1; }
+        assert!(!merkle_verify(t[0][5], &flipped, root, 5, 8));
+    }
+
+    #[test]
+    fn truncated_overlong_and_out_of_range_reject() {
+        let t = tree(8);
+        let root = t.last().unwrap()[0];
+        let p = path(&t, 3);
+        assert!(!merkle_verify(t[0][3], &p[..2], root, 3, 8));
+        // an interior node offered as a leaf, its path one level short
+        assert!(!merkle_verify(t[1][1], &p[1..], root, 3, 8));
+        // one level too many, even where the extra step would hash through
+        let mut long = p.clone();
+        long.push((root, 1));
+        assert!(!merkle_verify(t[0][3], &long, h2(&root, &root), 3, 8));
+        assert!(!merkle_verify(t[0][3], &p, root, 8, 8));
+    }
+
+    #[test]
+    fn a_self_paired_node_takes_no_other_sibling() {
+        // n = 5: leaf 4 pairs with itself at the first two levels
+        let t = tree(5);
+        let root = t.last().unwrap()[0];
+        let mut p = path(&t, 4);
+        assert!(merkle_verify(t[0][4], &p, root, 4, 5));
+        p[0].0 = t[0][3];
+        assert!(!merkle_verify(t[0][4], &p, root, 4, 5));
+    }
 }
 
 #[cfg(test)]

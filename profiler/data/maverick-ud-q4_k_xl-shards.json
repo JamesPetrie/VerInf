@@ -1,0 +1,35 @@
+{
+  "repo": "unsloth/Llama-4-Maverick-17B-128E-Instruct-GGUF",
+  "quant": "UD-Q4_K_XL",
+  "revision": "41032e5471dd6ea5b349062d978626215d6c5bba",
+  "fetched": "2026-09-13",
+  "note": "the five shards the prover reads, pinned by revision, size and sha256 (the LFS object id) so a pull is checked against what was measured, not against whatever main holds later",
+  "files": [
+    {
+      "path": "UD-Q4_K_XL/Llama-4-Maverick-17B-128E-Instruct-UD-Q4_K_XL-00001-of-00005.gguf",
+      "size": 49807659968,
+      "sha256": "6e2b84934ae72ce77611e0612f7b3cccaf75b363c630f45a8faafccea999562a"
+    },
+    {
+      "path": "UD-Q4_K_XL/Llama-4-Maverick-17B-128E-Instruct-UD-Q4_K_XL-00002-of-00005.gguf",
+      "size": 49830263808,
+      "sha256": "d8e9f010b88c8cea88753d90467431da241f997ff3cf2cc7d958cfd9e0c9f8ca"
+    },
+    {
+      "path": "UD-Q4_K_XL/Llama-4-Maverick-17B-128E-Instruct-UD-Q4_K_XL-00003-of-00005.gguf",
+      "size": 49832905856,
+      "sha256": "2f74972e1b1ea1fc28f370e87533a8e509a34febab7fa6afb0923118d50930df"
+    },
+    {
+      "path": "UD-Q4_K_XL/Llama-4-Maverick-17B-128E-Instruct-UD-Q4_K_XL-00004-of-00005.gguf",
+      "size": 49508645760,
+      "sha256": "5dbe3bdc6c29830655f7c71e9b05766cc161307eff405dc9875d8becaff21aa0"
+    },
+    {
+      "path": "UD-Q4_K_XL/Llama-4-Maverick-17B-128E-Instruct-UD-Q4_K_XL-00005-of-00005.gguf",
+      "size": 33155199296,
+      "sha256": "a7dc3e15efbd08d0c6fedbf7be73cecabeb4b8120cde5af1b8abc46c9852cb72"
+    }
+  ],
+  "total_bytes": 232134674688
+}

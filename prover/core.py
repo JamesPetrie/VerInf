@@ -34,6 +34,7 @@ from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple, Type,
 
 import numpy as np
 import os
+import sys
 import torch
 import blake3 as _blake3
 
@@ -88,6 +89,11 @@ class Variable:
     w_new: bool = False        # linking proofs (P5): persistent var belongs to
                                # the SECOND weight block "wnew" (the refreshed
                                # commitment's tree) instead of "w"
+    external: bool = False     # WC-LCRL-STC: a prover INPUT that is NOT a
+                               # committed witness row — the enrollment holds
+                               # it (weights under the bridge). Never laid
+                               # out, never streamed into a tree; any family
+                               # emitted over it crashes on row_start=-1.
 
     def __post_init__(self):
         # Variables derived by chaining tape ops (e.g. residual x + proj across
@@ -317,12 +323,9 @@ def merkle_path(levels: List[List[bytes]], idx: int) -> List[Tuple[bytes, int]]:
     return path
 
 
-def merkle_verify(leaf: bytes, path: List[Tuple[bytes, int]],
-                  claimed_root: bytes) -> bool:
-    h = leaf
-    for sibling, side in path:
-        h = _b3(sibling, h) if side == 0 else _b3(h, sibling)
-    return h == claimed_root
+# One index-bound check for every caller (protocol.merkle_verify): the
+# ordering comes from the queried index, with the exact depth of the tree.
+merkle_verify = pr.merkle_verify
 
 
 @dataclass
@@ -359,7 +362,7 @@ def _fetch(inputs: Dict[Variable, InputVal], v: Variable):
     accept either eagerly-committed tensors or LazyHFLoader callables
     without per-call dispatch logic."""
     val = inputs[v]
-    return val() if callable(val) else val
+    return _resolve_loader(val, v) if callable(val) else val
 
 
 class _LazyResolvingDict:
@@ -378,7 +381,7 @@ class _LazyResolvingDict:
             return self._cache[k]
         v = self._base[k]
         if callable(v):
-            v = v()
+            v = _resolve_loader(v, k)
         self._cache[k] = v
         return v
 
@@ -1113,23 +1116,357 @@ def _opened_columns_match_leaves(opened: Dict[int, torch.Tensor],
 # diagnostic: a no-op when off (zero overhead, no behavior change). The syncs
 # serialize the GPU pipeline, so the bucket SUM slightly overstates wall-clock —
 # read the SHARES, not the absolute total.
-from contextlib import contextmanager as _contextmanager
-_PHASE_ON = bool(os.environ.get("LIGERO_PHASE_TIMING"))
+#
+# LIGERO_SWEEP_TIMING=1 answers what the aggregate cannot: what each of the
+# semantic sweeps costs on its own. Per sweep it records the top-level buckets
+# (witness, aux, encode, ...), a `fetch` bucket around every lazy-loader
+# resolution — the sweep's input fetch, the routed claims' shard reads, the
+# aux's lazy reads and the encode path's weight reads — taken OUT of whichever
+# bucket it ran inside, the loader calls and bytes, the witness-cache reads and
+# writes, and the routed projections computed. One table per proof
+# (_sweep_report). Same syncs as the phase timer, same caveat; the plain
+# phase report is unchanged (its buckets stay inclusive).
+from contextlib import contextmanager as _contextmanager, nullcontext as _nullcontext
+def _env_on(name: str) -> bool:
+    """An environment switch: unset, empty, 0, false, no and off are OFF.
+    bool(os.environ.get(...)) took "0" for on (review finding, 2026-09-13)."""
+    return os.environ.get(name, "").strip().lower() not in ("", "0", "false", "no", "off")
+
+
+_PHASE_ON = _env_on("LIGERO_PHASE_TIMING")
+_SWEEP_ON = _env_on("LIGERO_SWEEP_TIMING")
 _PHASE_TIMES: Dict[str, float] = {}
+_PHASE_STACK: list = []            # [name, t0, fetch_seconds_inside] per open bucket
+_SWEEP_RECS: list = []             # one record per sweep of the current proof
+_SWEEP_CUR: Optional[dict] = None  # the sweep being recorded, or None
+_SWEEP_OUTSIDE: dict = {}          # loader counts outside any sweep (setup, enrollment)
 
 
 @_contextmanager
 def _phase(name):
-    if not _PHASE_ON:
+    if not (_PHASE_ON or _SWEEP_ON):
         yield
         return
     torch.cuda.synchronize()
-    _t0 = time.time()
+    _PHASE_STACK.append([name, time.time(), 0.0])
     try:
         yield
     finally:
         torch.cuda.synchronize()
-        _PHASE_TIMES[name] = _PHASE_TIMES.get(name, 0.0) + (time.time() - _t0)
+        _n, _t0, _fetch_in = _PHASE_STACK.pop()
+        _tot = time.time() - _t0
+        if _PHASE_ON:
+            # Aggregate report: as before, except that loader time nested in a
+            # bucket is booked to `fetch` alone whenever that bucket exists
+            # (LIGERO_SWEEP_TIMING), so the two flags together do not count
+            # it twice. Other nested buckets (the qlin_* family inside
+            # fold_qlin) stay inclusive, as they always were.
+            _PHASE_TIMES[name] = _PHASE_TIMES.get(name, 0.0) + (
+                _tot if name == 'fetch' else _tot - _fetch_in)
+        if name == 'fetch':
+            if _PHASE_STACK:
+                _PHASE_STACK[-1][2] += _tot
+            if _SWEEP_CUR is not None:
+                _SWEEP_CUR['t']['fetch'] = _SWEEP_CUR['t'].get('fetch', 0.0) + _tot
+        elif _PHASE_STACK:               # nested bucket: folds into its parent
+            _PHASE_STACK[-1][2] += _fetch_in
+        elif _SWEEP_CUR is not None:     # top level: exclusive of the fetches inside
+            _SWEEP_CUR['t'][name] = _SWEEP_CUR['t'].get(name, 0.0) + (_tot - _fetch_in)
+
+
+def _sphase(name):
+    """A bucket that exists only for the per-sweep table (fetch, cache reads
+    and writes). It adds a sync at every loader resolution, so it stays out
+    of the plain LIGERO_PHASE_TIMING report."""
+    return _phase(name) if _SWEEP_ON else _nullcontext()
+
+
+def _sweep_count(key, n=1):
+    """Per-sweep counter; a no-op unless LIGERO_SWEEP_TIMING=1."""
+    if _SWEEP_CUR is not None:
+        _SWEEP_CUR['n'][key] = _SWEEP_CUR['n'].get(key, 0) + n
+    elif _SWEEP_ON:
+        _SWEEP_OUTSIDE[key] = _SWEEP_OUTSIDE.get(key, 0) + n
+
+
+# --- Decoded-weight cache (LIGERO_WEIGHT_CACHE=1, opt-in). Session 2 (H200,
+# 2026-09-15/16) measured the loader column at half the prove and traced it
+# to the DENSE weights, not the expert shards: each dense weight is resolved
+# twice per aux sweep (the compute fetch, then the aux's lazy dict) and once
+# more in each encode pass, 4,344 resolutions per proof, and the demo's
+# attention-group loader decodes a layer's whole six-tensor group per call
+# with the query projection on the CPU — about 0.45 s each, 1,970 s of the
+# 5,333 s prove. This cache decodes each dense weight ONCE per proof and
+# hands back a fresh device copy of the pinned host copy on every later
+# resolution (a few ms for a 210 MB matrix over PCIe; stored as centered
+# int32, see _weight_pack, so Maverick's dense set is about 65 GB). Routed expert
+# shards are excluded: 9,216 of them at 336 MB decoded, and each resolves in
+# about 2 ms from a 23 MB packed slice on the GPU. The values are the
+# loader's own, so the proof is byte-identical (gated in
+# tests/test_weight_cache.py). Its budget is a fraction of available host
+# RAM, separate from the witness spill's and the routed cache's; over
+# budget it degrades to the loader, never to a wrong value.
+_WEIGHT_CACHE_ON = _env_on("LIGERO_WEIGHT_CACHE")
+_WEIGHT_CACHE_HOST_FRACTION = float(os.environ.get("LIGERO_WEIGHT_CACHE_HOST_FRACTION", "0.25"))
+_WEIGHT_CACHE_GPU_FRACTION = float(os.environ.get("LIGERO_WEIGHT_CACHE_GPU_FRACTION", "0.4"))
+_WEIGHT_CACHE: Optional[dict] = None      # the proof's cache while a prove runs
+_WEIGHT_KIND: Dict[int, str] = {}         # id(Variable) -> 'shard' | 'weight' | 'input'
+
+
+def _weight_cache_new():
+    """Two tiers: the GPU first (LIGERO_WEIGHT_CACHE_GPU_FRACTION of the free
+    HBM at prove start — session 3 on a B200: the 65 GB packed dense set
+    beside a 48 GiB peak), then pinned host (LIGERO_WEIGHT_CACHE_HOST_FRACTION
+    of MemAvailable). Session 3 measured the host tier as a LOSS on a
+    container whose cgroup was full of GGUF page cache: each pinned block
+    forced reclaim, R1's stores cost 1.9 s each and the evicted shards came
+    back from disk in every later sweep. A GPU store costs 0.2 ms and never
+    touches the cgroup."""
+    gpu = 0
+    try:
+        free, _ = torch.cuda.mem_get_info()
+        gpu = int(free * _WEIGHT_CACHE_GPU_FRACTION)
+    except Exception:
+        pass
+    return {'_budget': _host_spill_budget_bytes(_WEIGHT_CACHE_HOST_FRACTION),
+            '_gpu_budget': gpu, '_gpu_bytes': 0,
+            '_bytes': 0, '_packed': 0, '_hits': 0, '_misses': 0, '_refused': 0}
+
+
+_C32 = (1 << 32) - 1     # 2^64 - P: the bits of P - w, read as int64, are -w - _C32
+
+
+def _pinned_empty(shape, dtype):
+    return torch.empty(shape, dtype=dtype, pin_memory=True)
+
+
+def _pinned_bytes(nb):
+    """What the caching host allocator LOCKS for a pinned block of nb bytes:
+    it rounds every allocation up to a power of two (PowerOf2Ceil in ATen's
+    CachingHostAllocator), so a 105 MB matrix pins 128 MB and a 168 MB one
+    256 MB. The budget is charged the rounded size."""
+    return 1 << (nb - 1).bit_length() if nb > 0 else 0
+
+
+def _weight_pack(t, budget_left, gpu_left=0):
+    """A copy of a decoded weight as (tag, entry, charged bytes, device) —
+    packed int32 ON THE GPU when it fits `gpu_left`, else a pinned host copy
+    when it fits `budget_left` — or None when neither fits. A field tensor whose
+    every element is w or P - w with 0 <= w < 2^31 — every quantized weight —
+    is stored CENTERED as int32, half the bytes of the int64 spill entry
+    (Maverick's 16.2 G dense slots: 65 GB packed instead of 130, about 90 GB
+    pinned after the allocator's rounding); anything else (a non-canonical
+    value, P itself, a large one, a non-field tensor) takes the int64 spill
+    entry. Both are exact: _weight_unpack returns the same bits. The size
+    check comes first, so a refused weight pays no transform; the transform
+    touches only its own temporaries (`t` is the live weight) and holds at
+    most two full-size int64 ones at once."""
+    n = t.numel()
+    if n and t.dtype == torch.uint64:
+        nb = _pinned_bytes(n * 4)
+        if nb > budget_left and n * 4 > gpu_left:   # the int32 form is the smaller one: neither tier fits
+            return None
+        x = t.contiguous().view(torch.int64)
+        m = x >> 63                       # -1 where the value is P - w, else 0
+        m.bitwise_and_(_C32)
+        c = x + m                         # bits of P - w (= -w - 2^32 + 1) -> -w ; w -> w
+        del m
+        lim = 1 << 31
+        # every element inside (-lim, lim), and c negative exactly where x is
+        # (v in [2^63, P) -> c < 0; v >= P, P itself included, fails the sign test)
+        if (int(c.max()) < lim and int(c.min()) > -lim
+                and int((x ^ c).min()) >= 0):
+            if t.is_cuda and n * 4 <= gpu_left:          # GPU tier: no transfer at all
+                return ('g32', c.to(torch.int32), n * 4, t.device)
+            host = _pinned_empty(x.shape, torch.int32)
+            host.copy_(c.to(torch.int32))
+            return ('i32', host, nb, t.device)
+    nb = _pinned_bytes(n * t.element_size())
+    if nb > budget_left:
+        return None
+    return ('i64', _spill_store(t), nb, t.device)
+
+
+def _weight_unpack(entry):
+    """A fresh device tensor with the packed weight's bits (see _weight_pack),
+    built in place: the int32 copy, the int64 widening and one mask, no
+    torch.where temporaries (the 1 G-slot embedding would otherwise carry
+    about 25 GB of transients on every resolution)."""
+    tag, e, _, dev = entry
+    if tag == 'i64':
+        return _spill_load(e)
+    g = e.to(torch.int64) if tag == 'g32' else e.to(dev, non_blocking=True).to(torch.int64)
+    m = g >> 63                           # -1 where the stored value is -w
+    m.bitwise_and_(_C32)
+    g.sub_(m)                             # -w -> bits of P - w
+    return g.view(torch.uint64)
+
+
+def _host_pinned_reserved_gb():
+    """Bytes the caching host allocator holds (its own count, rounding
+    included), or None where the allocator has no stats."""
+    try:
+        st = torch.cuda.host_memory_stats()      # keys differ across torch versions
+        for k in ("reserved_bytes.current", "reserved_bytes.all.current"):
+            if k in st:
+                return st[k] / 1e9
+    except Exception:
+        pass
+    return None
+
+
+def _loader_kind(var) -> str:
+    """'shard' for a streaming claim's expert shard, 'weight' for any other
+    persistent variable, 'input' for a lazily supplied activation."""
+    if var is None:
+        return 'input'
+    k = _WEIGHT_KIND.get(id(var))
+    if k is None:
+        k = 'weight' if getattr(var, 'persistent', False) else 'input'
+        _WEIGHT_KIND[id(var)] = k
+    return k
+
+
+def _resolve_loader(val, var=None):
+    """Call a lazy loader. The one choke point for loader instrumentation and
+    for the decoded-weight cache: every resolution — the sweep's input
+    fetch, the routed claims' shard reads, the aux's lazy dict, the fold
+    runner, the encode path — comes through here. `var` is the Variable
+    being resolved when the caller has it; without it the call is timed as
+    an input and never cached."""
+    kind = _loader_kind(var)
+    wc = _WEIGHT_CACHE if kind == 'weight' else None
+    if wc is not None:
+        entry = wc.get(id(var))
+        if entry is not None:
+            wc['_hits'] += 1
+            if _SWEEP_ON:
+                with _phase('fetch'):
+                    t = _weight_unpack(entry)
+                _sweep_count('loads'); _sweep_count('weight_hits')
+                _sweep_count('load_bytes', t.numel() * t.element_size())
+            else:
+                t = _weight_unpack(entry)
+            return t
+    if not _SWEEP_ON:
+        t = val()
+    else:
+        _t0 = time.time()
+        with _phase('fetch'):
+            t = val()
+        _sweep_count('loads'); _sweep_count(f'loads_{kind}')
+        _sweep_time(f'fetch_{kind}', time.time() - _t0)
+        if isinstance(t, torch.Tensor):
+            _sweep_count('load_bytes', t.numel() * t.element_size())
+    if wc is not None and isinstance(t, torch.Tensor):
+        entry = _weight_pack(t, wc['_budget'] - wc['_bytes'],
+                             wc['_gpu_budget'] - wc['_gpu_bytes'])
+        if entry is not None:
+            wc[id(var)] = entry
+            wc['_gpu_bytes' if entry[0] == 'g32' else '_bytes'] += entry[2]
+            wc['_misses'] += 1
+            wc['_packed'] += entry[1].numel() * entry[1].element_size() if entry[0] != 'i64' \
+                else entry[1][0].numel() * entry[1][0].element_size()
+            if _SWEEP_ON:
+                _sweep_count('weight_stores')
+        else:
+            wc['_refused'] += 1
+    return t
+
+
+def _sweep_time(key, seconds):
+    """Per-sweep seconds by loader kind; a no-op unless LIGERO_SWEEP_TIMING=1."""
+    if _SWEEP_CUR is not None:
+        _SWEEP_CUR['k'][key] = _SWEEP_CUR['k'].get(key, 0.0) + seconds
+
+
+def _sweep_begin(label):
+    global _SWEEP_CUR
+    if not _SWEEP_ON:
+        return
+    _SWEEP_CUR = {'label': label, 't0': time.time(), 't': {}, 'n': {}, 'k': {}}
+    _rp = sys.modules.get('routed_projected')
+    if _rp is not None:
+        _SWEEP_CUR['_p_misses0'] = _rp.P_CACHE_STATS['misses']
+
+
+def _sweep_end():
+    global _SWEEP_CUR
+    if _SWEEP_CUR is None:
+        return
+    rec = _SWEEP_CUR
+    rec['wall'] = time.time() - rec['t0']
+    _rp = sys.modules.get('routed_projected')
+    if _rp is not None and '_p_misses0' in rec:
+        rec['n']['proj'] = _rp.P_CACHE_STATS['misses'] - rec.pop('_p_misses0')
+    _SWEEP_RECS.append(rec)
+    _SWEEP_CUR = None
+
+
+_SWEEP_BUCKETS = ('witness', 'fetch', 'aux', 'compile', 'encode', 'merkle',
+                  'fold_qirs', 'fold_qlin', 'cols', 'quad', 'cache_r', 'cache_w')
+
+
+def _sweep_report(proof_wall):
+    """One table per proof: a row per sweep, seconds per top-level bucket,
+    then the counts (loader calls and GB, witness-cache reads and writes,
+    routed-output-cache reads and writes, routed projections computed), a
+    total row, and the time outside the sweeps."""
+    if not (_SWEEP_ON and _SWEEP_RECS):
+        return
+    W = 9
+    seen = [b for b in _SWEEP_BUCKETS if any(b in r['t'] for r in _SWEEP_RECS)]
+    seen += sorted({b for r in _SWEEP_RECS for b in r['t']} - set(seen))
+    head = ["sweep", "wall"] + seen + ["loads", "load_GB", "cache_rd", "cache_wr",
+                                       "routed_rd", "routed_wr", "proj"]
+
+    def _row(label, t, n, wall):
+        cells = [f"{label:{W}s}", f"{wall:{W}.1f}"]
+        cells += [f"{t.get(b, 0.0):{W}.1f}" for b in seen]
+        cells += [f"{n.get('loads', 0):{W}d}", f"{n.get('load_bytes', 0) / 1e9:{W}.2f}",
+                  f"{n.get('cache_rd', 0):{W}d}", f"{n.get('cache_wr', 0):{W}d}",
+                  f"{n.get('routed_rd', 0):{W}d}", f"{n.get('routed_wr', 0):{W}d}",
+                  f"{n.get('proj', 0):{W}d}"]
+        return "    " + " ".join(cells)
+
+    print("  [sweep] per-sweep breakdown (LIGERO_SWEEP_TIMING; cuda-synced seconds, "
+          "so an instrumented wall; fetch = whole loader calls — storage read, "
+          "decode and transfer together — taken out of the bucket they ran in; "
+          "load_GB = decoded field bytes the loaders returned, not packed or "
+          "disk bytes):", flush=True)
+    print("    " + " ".join(f"{h:{W}s}" if i == 0 else f"{h:>{W}s}"
+                            for i, h in enumerate(head)), flush=True)
+    def _kinds(n, k):
+        parts = []
+        for kind in ('weight', 'shard', 'input'):
+            c = n.get(f'loads_{kind}', 0)
+            if c:
+                parts.append(f"{kind} {k.get(f'fetch_{kind}', 0.0):.1f} s / {c:,d}")
+        if n.get('weight_hits'):
+            parts.append(f"weight-cache hits {n['weight_hits']:,d}"
+                         + (f", stores {n['weight_stores']:,d}" if n.get('weight_stores') else ""))
+        return "; ".join(parts)
+
+    tot_t, tot_n, tot_w, tot_k = {}, {}, 0.0, {}
+    for r in _SWEEP_RECS:
+        print(_row(r['label'], r['t'], r['n'], r['wall']), flush=True)
+        if r.get('k') or r['n'].get('weight_hits'):
+            print(f"    {'':{W}s} loader calls by kind: {_kinds(r['n'], r.get('k', {}))}", flush=True)
+        for kk, v in r.get('k', {}).items():
+            tot_k[kk] = tot_k.get(kk, 0.0) + v
+        tot_w += r['wall']
+        for k, v in r['t'].items():
+            tot_t[k] = tot_t.get(k, 0.0) + v
+        for k, v in r['n'].items():
+            tot_n[k] = tot_n.get(k, 0) + v
+    print(_row('ALL', tot_t, tot_n, tot_w), flush=True)
+    if tot_k or tot_n.get('weight_hits'):
+        print(f"    {'':{W}s} loader calls by kind: {_kinds(tot_n, tot_k)}", flush=True)
+    first = _SWEEP_RECS[0]
+    print(f"    proof wall {proof_wall:.1f}s; sweeps {tot_w:.1f}s; outside the sweeps "
+          f"{proof_wall - tot_w:.1f}s with {_SWEEP_OUTSIDE.get('loads', 0)} loader calls "
+          f"({_SWEEP_OUTSIDE.get('load_bytes', 0) / 1e9:.2f} GB); first fill "
+          f"(cache_w in {first['label']}) {first['t'].get('cache_w', 0.0):.1f}s", flush=True)
 
 
 # Precise GPU-kernel timing (env LIGERO_EPHASE=1): async CUDA events summed with a
@@ -1176,7 +1513,7 @@ class ColumnSink:
     copied into its own slice, so there is no accumulation and no join.
     """
 
-    __slots__ = ("cols", "n_rows", "row_base", "_filled")
+    __slots__ = ("cols", "n_rows", "row_base", "_filled", "_ranges")
 
     def __init__(self, n_rows: int, columns: List[int], row_base: int = 0):
         self.n_rows = n_rows
@@ -1184,6 +1521,7 @@ class ColumnSink:
         self.cols = {j: torch.empty(n_rows, dtype=torch.uint64, device="cpu")
                      for j in columns}
         self._filled = 0
+        self._ranges: List[Tuple[int, int]] = []   # block-local [lo, hi) written
 
     def write(self, abs_row: int, chunk: torch.Tensor, columns: List[int]):
         """chunk: (rows, len(columns)) device slice of this chunk's codewords,
@@ -1196,10 +1534,39 @@ class ColumnSink:
         for k, j in enumerate(columns):
             self.cols[j][lo:lo + n] = host[:, k]
         self._filled += n
+        self._ranges.append((lo, lo + n))
+
+    def write_host(self, abs_row: int, cols: Dict[int, torch.Tensor]):
+        """Scatter a finished piece of this block produced elsewhere (a
+        weight-split worker's run): {column: (rows,) HOST tensor}, all the
+        same length, starting at ABSOLUTE row `abs_row`. Every column of the
+        sink must be supplied."""
+        lo = abs_row - self.row_base
+        n = None
+        for j in self.cols:
+            t = cols[j]
+            if n is None:
+                n = int(t.numel())
+            assert int(t.numel()) == n, "ragged column piece"
+        n = n or 0
+        assert 0 <= lo and lo + n <= self.n_rows, (
+            f"column sink overflow: [{lo}, {lo + n}) outside [0, {self.n_rows})")
+        for j in self.cols:
+            self.cols[j][lo:lo + n] = cols[j].to("cpu", torch.uint64)
+        self._filled += n
+        self._ranges.append((lo, lo + n))
 
     def finish(self) -> Dict[int, torch.Tensor]:
         assert self._filled == self.n_rows, (
             f"column sink filled {self._filled} of {self.n_rows} rows")
+        # Exact coverage, not just the count: a duplicated piece and a
+        # missing one would cancel in _filled but not here.
+        pos = 0
+        for lo, hi in sorted(self._ranges):
+            assert lo == pos, (f"column sink coverage gap/overlap at block row "
+                               f"{pos}: next piece starts at {lo}")
+            pos = hi
+        assert pos == self.n_rows, f"column sink coverage ends at {pos}, not {self.n_rows}"
         return self.cols
 
 
@@ -1374,6 +1741,13 @@ class QIrsAccumulator:
         r_slice = self.r_irs[lo:lo + n]
         contrib = gl_matmul(r_slice.unsqueeze(0), witness_polys_chunk).squeeze(0)
         self.q = gl_add(self.q, contrib)
+
+    def merge(self, q_partial: torch.Tensor) -> None:
+        """Add another accumulator's partial sum (a weight-split worker's fold
+        over its rows). Exact field addition, so the merged result equals
+        one accumulator having seen every row, in any order."""
+        assert q_partial.shape == self.q.shape
+        self.q = gl_add(self.q, q_partial.to(self.q.device))
 
     def finalize(self) -> torch.Tensor:
         return self.q
@@ -1622,6 +1996,28 @@ class QLinAccumulator:
                     abs_lo, abs_hi, inner_polys,
                     self.seed_u8, self.label_u8, self.band_index, self.cfg,
                     chal_src=self.chal_src, return_eval=False))
+
+    def partials(self) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
+        """(q_eval, q_coeff) as accumulated so far, whichever this mode keeps
+        — the un-finalised state a weight-split worker hands back."""
+        return self.q_eval, self.q_coeff
+
+    def merge(self, q_eval: Optional[torch.Tensor] = None,
+              q_coeff: Optional[torch.Tensor] = None) -> None:
+        """Add a worker's partials before finalize. Both representations are
+        plain field sums over rows (the eval-domain one is summed BEFORE its
+        single inverse NTT, which is linear), so the merged fold is
+        bit-identical to one accumulator having seen every row. The worker
+        must run in the same fuse mode: every representation this
+        accumulator keeps must be supplied."""
+        if self.q_eval is not None:
+            assert q_eval is not None, "fused q_lin merge needs the worker's q_eval"
+            assert q_eval.shape == self.q_eval.shape
+            self.q_eval = gl_add(self.q_eval, q_eval.to(self.q_eval.device))
+        if self.q_coeff is not None:
+            assert q_coeff is not None, "coeff-domain q_lin merge needs the worker's q_coeff"
+            assert q_coeff.shape == self.q_coeff.shape
+            self.q_coeff = gl_add(self.q_coeff, q_coeff.to(self.q_coeff.device))
 
     def finalize(self) -> torch.Tensor:
         if self.q_eval is not None:
@@ -2656,6 +3052,7 @@ def _layout(claims: List, cfg: LigeroConfig):
     # Each block's vars are assigned row_starts in all_vars (op) order, so the
     # streaming sweep feeds each block's tree in row order even though weights
     # and activations interleave in op order.
+    all_vars = [v for v in all_vars if not v.external]   # bridge-held weights
     weight_vars = [v for v in all_vars if v.phase == 1 and v.persistent and not v.w_new]
     wnew_vars   = [v for v in all_vars if v.phase == 1 and v.persistent and v.w_new]
     p1_vars     = [v for v in all_vars if v.phase == 1 and not v.persistent]
@@ -2694,7 +3091,7 @@ def _claim_var_groups(claims, cfg):
     seen = set()
     groups = []
     def collect(v, buckets):
-        if isinstance(v, Variable) and id(v) not in seen:
+        if isinstance(v, Variable) and id(v) not in seen and not v.external:
             seen.add(id(v))
             buckets[min(v.phase, 3) - 1].append(v)
     for c in claims:
@@ -2787,16 +3184,19 @@ _WITNESS_SPILL_DIR = os.environ.get("LIGERO_WITNESS_SPILL_DIR", "/tmp")
 _SPILL_FADVISE = os.environ.get("LIGERO_SPILL_FADVISE", "0") != "0"
 
 
-def _host_spill_budget_bytes():
+def _host_spill_budget_bytes(fraction=None):
     """Bytes the host spill may use: a fraction of available host RAM (from
-    /proc/meminfo MemAvailable). Returns 0 if unqueryable -> spill degrades to
-    recompute (safe)."""
+    /proc/meminfo MemAvailable), the witness spill's fraction unless a caller
+    passes its own. Returns 0 if unqueryable -> spill degrades to recompute
+    (safe)."""
+    if fraction is None:
+        fraction = _WITNESS_SPILL_MEM_FRACTION
     try:
         with open("/proc/meminfo") as f:
             for line in f:
                 if line.startswith("MemAvailable:"):
                     avail = int(line.split()[1]) * 1024
-                    return int(avail * _WITNESS_SPILL_MEM_FRACTION)
+                    return int(avail * fraction)
     except Exception:
         pass
     return 0
@@ -2819,6 +3219,59 @@ def _spill_load(entry):
     host, dt = entry
     dev = host.to("cuda", non_blocking=True)
     return dev.view(dt) if dt == torch.uint64 else dev
+
+
+# --- Routed-output cache (LIGERO_ROUTED_Y_CACHE=1, opt-in). The routed claims
+# bypass the witness cache — _stream_sweep hands them the raw live map so they
+# can stream one expert shard at a time — and so recompute their output Y on
+# every sweep, re-reading and decoding every active expert shard each time. Y
+# is a deterministic function of committed inputs, so the witness cache's
+# soundness argument carries over unchanged: only the challenge-independent
+# output is reused, never P (keyed by rho in routed_projected._P_CACHE) and
+# never an aux. What a cached Y does NOT skip is the projection pass: P = W*rho
+# is fused into the first post-R1 pass over each shard (the R2 sweep), so that
+# sweep still walks the shards for P and only the Y matmul is dropped; from R3
+# on no shard is touched. It has its own budget because the witness cache's is
+# filled by softmax/silu outputs within the first layers at S=1000 and would
+# refuse the few GB of Y: GPU first, pinned host beyond it, recompute beyond
+# that. The host tier takes a tenth of available RAM, not the half the
+# witness spill takes, so the two ceilings cannot together reach the whole
+# of memory when both are on. Timing only — the proof is byte-identical
+# either way (gated in tests/test_shard_streaming.py).
+_ROUTED_Y_CACHE_ON = os.environ.get("LIGERO_ROUTED_Y_CACHE", "0") != "0"
+_ROUTED_Y_MEM_FRACTION = float(os.environ.get("LIGERO_ROUTED_Y_MEM_FRACTION", "0.25"))
+_ROUTED_Y_HOST_FRACTION = float(os.environ.get("LIGERO_ROUTED_Y_HOST_FRACTION", "0.1"))
+
+
+def _routed_cache_new():
+    """Per-proof routed-output cache: {claim index: {var: entry}} plus its two
+    budgets. An entry is ('gpu', tensor) or ('host', pinned spill)."""
+    try:
+        free, _total = torch.cuda.mem_get_info()
+    except Exception:
+        free = 0
+    return {'_gpu_budget': int(free * _ROUTED_Y_MEM_FRACTION), '_gpu_bytes': 0,
+            '_host_budget': _host_spill_budget_bytes(_ROUTED_Y_HOST_FRACTION),
+            '_host_bytes': 0}
+
+
+def _routed_store(outs, rc):
+    """Store a claim's outputs once: GPU within budget, else pinned host, else
+    None (the claim stays uncached and recomputes; timing, never the proof)."""
+    nb = sum(t.numel() * t.element_size() for t in outs.values())
+    if rc['_gpu_bytes'] + nb <= rc['_gpu_budget']:
+        rc['_gpu_bytes'] += nb
+        return {v: ('gpu', t.clone()) for v, t in outs.items()}
+    if rc['_host_bytes'] + nb <= rc['_host_budget']:
+        rc['_host_bytes'] += nb
+        return {v: ('host', _spill_store(t)) for v, t in outs.items()}
+    return None
+
+
+def _routed_load(entry):
+    """A fresh device tensor either way, so a consumer cannot touch the copy."""
+    kind, payload = entry
+    return payload.clone() if kind == 'gpu' else _spill_load(payload)
 
 
 def _disk_spill_open(wc):
@@ -2888,7 +3341,7 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
                   col_w=None, col_wnew=None, col_blind=None, p_0=None,
                   w_pad=None, wnew_pad=None,
                   stream_pk=None, r_quad=None, p_maps=None, Q_cols=None, p1_prefix=None,
-                  witness_cache=None):
+                  witness_cache=None, w_owned=None, routed_cache=None):
     """One op-order streaming pass: regenerate the witness, encode each op's rows
     into whichever accumulators are non-None, fire its quads into p_0 (if given)
     from `live`, freeing per op. want_aux=False does phase-1 only (the commit
@@ -2905,7 +3358,13 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
     pads as if its first row sat at logical_offset, under pad_seed, regardless
     of physical placement (a group starting at physical row r pads at
     logical_offset + (r - block_phys_start)). None → master seed at physical
-    rows (identical padding, the standard case)."""
+    rows (identical padding, the standard case).
+
+    w_owned (weight-split, shard_plan.py): a set of id(Variable) for the W
+    variables THIS device folds/opens in this sweep; the others are left to
+    the workers, whose partials the caller merges. None → all of them. Only
+    the W emit is filtered — the witness, aux and quads are untouched, so the
+    semantic sweep is exactly the single-device one."""
     import compute_fns as _cf
     import os as _os
     import resource as _res
@@ -2963,7 +3422,7 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
         stream_pk.reset()
     def fetch(v):
         val = live[v]
-        return val() if callable(val) else val
+        return _resolve_loader(val, v) if callable(val) else val
     def emit(vg, merkle, abs0, colbuf, pad=None):
         if not vg:
             return
@@ -3001,10 +3460,32 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
                 # Shard-streaming claim: hand it the raw live map (loaders
                 # unresolved) and the round's op challenge, so one pass over a
                 # shard can serve both the semantic output and the projection.
+                # Under the routed-output cache its first-sweep outputs ride
+                # along as `cached`: the compute function returns them and
+                # decides for itself whether they let it skip the pass (not
+                # while the projection still needs the shards).
                 input_data = {}
+                cached = None
+                if routed_cache is not None and i in routed_cache:
+                    with _sphase('cache_r'):
+                        cached = {v: _routed_load(e) for v, e in routed_cache[i].items()}
+                    _sweep_count('routed_rd')      # its own counter: cache_rd is the witness cache's
+                _kw = {'cached': cached} if routed_cache is not None else {}
                 with _phase('witness'):
                     outs = _cf.COMPUTE_FNS[type(claim)](
-                        claim, live, ch0[i] if (want_aux and ch0) else None)
+                        claim, live, ch0[i] if (want_aux and ch0) else None, **_kw)
+                # The loaded copy now lives in `outs` (and so in `live`) and must
+                # have exactly that lifetime: these two loop-scope temporaries
+                # would otherwise keep a Y alive past its last consumer until the
+                # next streaming claim, across the whole attention block between
+                # two MoE layers at production.
+                cached = _kw = None
+                if routed_cache is not None and i not in routed_cache:
+                    with _sphase('cache_w'):
+                        _entries = _routed_store(outs, routed_cache)
+                    if _entries is not None:
+                        routed_cache[i] = _entries
+                        _sweep_count('routed_wr')
             else:
                 input_data = {v: fetch(v) for v in input_vars}
                 _spill = witness_cache.get('_spill') if witness_cache else False
@@ -3018,12 +3499,14 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
                     # GPU cache: clone so consumers can't mutate the cached copy.
                     # Spill: _spill_load returns a fresh device tensor (from the
                     # host copy) each time -> already independent, no clone.
-                    if _disk:
-                        outs = {v: _disk_spill_load(e, witness_cache) for v, e in witness_cache[i].items()}
-                    elif _spill:
-                        outs = {v: _spill_load(e) for v, e in witness_cache[i].items()}
-                    else:
-                        outs = {v: t.clone() for v, t in witness_cache[i].items()}
+                    with _sphase('cache_r'):
+                        if _disk:
+                            outs = {v: _disk_spill_load(e, witness_cache) for v, e in witness_cache[i].items()}
+                        elif _spill:
+                            outs = {v: _spill_load(e) for v, e in witness_cache[i].items()}
+                        else:
+                            outs = {v: t.clone() for v, t in witness_cache[i].items()}
+                    _sweep_count('cache_rd')
                 else:
                     with _phase('witness'):
                         outs = _cf.COMPUTE_FNS[type(claim)](claim, input_data)
@@ -3036,12 +3519,14 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
                                         or witness_cache.get('_elems', 0) + _ne
                                         <= _WITNESS_CACHE_MAX_ELEMS)
                         if _under_bytes and _under_elems:
-                            if _disk:
-                                witness_cache[i] = {v: _disk_spill_store(t, witness_cache) for v, t in outs.items()}
-                            elif _spill:
-                                witness_cache[i] = {v: _spill_store(t) for v, t in outs.items()}
-                            else:
-                                witness_cache[i] = {v: t.clone() for v, t in outs.items()}
+                            with _sphase('cache_w'):
+                                if _disk:
+                                    witness_cache[i] = {v: _disk_spill_store(t, witness_cache) for v, t in outs.items()}
+                                elif _spill:
+                                    witness_cache[i] = {v: _spill_store(t) for v, t in outs.items()}
+                                else:
+                                    witness_cache[i] = {v: t.clone() for v, t in outs.items()}
+                            _sweep_count('cache_wr')
                             witness_cache['_bytes'] = witness_cache.get('_bytes', 0) + _nb
                             witness_cache['_elems'] = witness_cache.get('_elems', 0) + _ne
             for v, t in outs.items():
@@ -3079,13 +3564,19 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
             p1g_wn = [v for v in p1g if v.persistent and v.w_new]
             if p1g_a:
                 emit(p1g_a, merkle_p1, p1g_a[0].row_start, col_p1)
-            if p1g_w:
-                # Pad translation: under w_pad this group's rows pad at the
+            if p1g_w and w_owned is not None:
+                # Weight-split: keep only this device's W variables. An
+                # ownership cut can fall inside a claim's weight group, so
+                # the kept subset is emitted as row-contiguous runs, each at
+                # its own absolute row (never compacted across a gap).
+                p1g_w = [v for v in p1g_w if id(v) in w_owned]
+            for run_w in _row_contiguous_runs(p1g_w, cfg):
+                # Pad translation: under w_pad this run's rows pad at the
                 # block-local position shifted to the commitment's logical
                 # offset, under the commitment's seed.
                 wp = None if w_pad is None else (
-                    w_pad[0], w_pad[1] + (p1g_w[0].row_start - w_pad[2]))
-                emit(p1g_w, merkle_w, p1g_w[0].row_start, col_w, pad=wp)
+                    w_pad[0], w_pad[1] + (run_w[0].row_start - w_pad[2]))
+                emit(run_w, merkle_w, run_w[0].row_start, col_w, pad=wp)
             if p1g_wn:
                 wp = None if wnew_pad is None else (
                     wnew_pad[0], wnew_pad[1] + (p1g_wn[0].row_start - wnew_pad[2]))
@@ -3154,6 +3645,137 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
     return p_0
 
 
+def _row_contiguous_runs(vars_list, cfg):
+    """Split a row-ordered variable list into maximal runs whose rows are
+    physically adjacent (v.row_start == prev.row_start + prev.n_rows). One
+    _stream_phase call per run keeps every row at its true absolute index;
+    _iter_message_chunks packs its list as ONE contiguous sequence, so a
+    list with a gap would be compacted and every later row misplaced."""
+    runs = []
+    cur = []
+    for v in vars_list:
+        if cur and v.row_start != cur[-1].row_start + cur[-1].n_rows(cfg.ELL):
+            runs.append(cur)
+            cur = []
+        cur.append(v)
+    if cur:
+        runs.append(cur)
+    return runs
+
+
+def layout_breakdown(tape, cfg: LigeroConfig):
+    """Witness layout by claim type: (m_total, {claim type name: (rows,
+    elements)}) — every Variable attributed to the FIRST claim that touches
+    it in claim order, with a table's mult/w/z booked under its
+    TableSettlement (the only claim that reaches them). This is the
+    LIGERO_LAYOUT_BREAKDOWN table (`_stream_setup`), exposed as a function so
+    the profiler's crosscheck can probe a tape in-process: it is
+    challenge-independent and VALUE-FREE (Variable lengths only), so a lazy
+    tape whose weight loaders were never resolved can be laid out."""
+    claims = _with_synthesized_settlements(tape.claims)
+    (_all, _p1, _p2, _p3, _m1, _m2, m_total,
+     _wv, _mw, _wn, _mwn) = _layout(claims, cfg)
+    agg: Dict[str, List[int]] = {}
+    for _tn, _v in _walk_claim_vars(claims):
+        if getattr(_v, 'external', False):
+            continue            # not laid out (the layout skips it); the composition counts it under ext
+        row = agg.setdefault(_tn, [0, 0])
+        row[0] += _v.n_rows(cfg.ELL)
+        row[1] += _v.length
+    return m_total, {t: (r, e) for t, (r, e) in agg.items()}
+
+
+def _walk_claim_vars(claims):
+    """Every Variable a claim touches, once, attributed to the FIRST claim
+    that touches it in claim order: the fields, a settlement's table
+    mult/w/z, and Variables inside list fields (the routed claims' shards).
+    The single walk behind layout_breakdown and witness_composition."""
+    seen = set()
+    for _c in claims:
+        _tn = type(_c).__name__
+        _settle = isinstance(_c, TableSettlement)
+        for _f in fields(_c):
+            _v = getattr(_c, _f.name)
+            if isinstance(_v, Variable):
+                cands = (_v,)
+            elif isinstance(_v, Table) and _settle:
+                cands = (_v.mult_var, _v.w_var, *_v.z_vars)
+            elif isinstance(_v, list):
+                cands = tuple(_it for _it in _v if isinstance(_it, Variable))
+            else:
+                continue
+            for _cv in cands:
+                if isinstance(_cv, Variable) and id(_cv) not in seen:
+                    seen.add(id(_cv))
+                    yield _tn, _cv
+
+
+_COMPOSITION_KEYS = ('p1_out', 'p1_in', 'ext', 'w', 'p2', 'p3')
+
+
+def witness_composition(tape, cfg) -> Dict[str, Dict[str, int]]:
+    """What the witness is made of, by claim type, in elements: phase-1
+    variables the sweep PRODUCES (compute-function outputs, regenerated in
+    every sweep and the part a witness cache could hold), phase-1 variables
+    that were COMMITTED (keys of tape.inputs: activations fed in, table
+    data), the persistent weight block, and the phase-2 and phase-3 aux.
+    Same walk and attribution as layout_breakdown, value-free, so it runs
+    on a lazy tape with no weight resolved. Turns the estimate in the
+    witness-regeneration note (517 GB of outputs, 243 GB of aux at S=1000,
+    from the synth's per-claim counts) into a measurement of a real tape."""
+    claims = _with_synthesized_settlements(tape.claims)
+    comp: Dict[str, Dict[str, int]] = {}
+    for tn, v in _walk_claim_vars(claims):
+        if getattr(v, 'external', False):
+            key = 'ext'        # bridge-held weight: a prover input, never a witness row
+        elif v.persistent:
+            key = 'w'
+        elif v.phase == 1:
+            key = 'p1_in' if v in tape.inputs else 'p1_out'
+        elif v.phase == 2:
+            key = 'p2'
+        else:
+            key = 'p3'
+        row = comp.setdefault(tn, {k: 0 for k in _COMPOSITION_KEYS})
+        row[key] += v.length
+    return comp
+
+
+def format_witness_composition(comp: Dict[str, Dict[str, int]],
+                               bytes_per_slot: int = 8) -> str:
+    """One row per claim type, elements per column, sorted by produced
+    phase-1 elements; a total row; and the same totals in GB at 8 bytes a
+    slot, the figure the regeneration note is stated in."""
+    W = 15
+    head = f"{'claim type':28s}" + "".join(f"{k:>{W}s}" for k in _COMPOSITION_KEYS)
+    lines = ["[composition] witness elements by claim type and origin "
+             "(p1_out = produced each sweep, p1_in = committed, ext = weights the "
+             "bridge holds outside the witness, w = persistent weights, p2/p3 = aux):", head]
+    tot = {k: 0 for k in _COMPOSITION_KEYS}
+    for tn, row in sorted(comp.items(), key=lambda kv: -kv[1]['p1_out']):
+        lines.append(f"{tn:28s}" + "".join(f"{row[k]:>{W},d}" for k in _COMPOSITION_KEYS))
+        for k in _COMPOSITION_KEYS:
+            tot[k] += row[k]
+    lines.append(f"{'TOTAL elements':28s}" + "".join(f"{tot[k]:>{W},d}" for k in _COMPOSITION_KEYS))
+    lines.append(f"{'TOTAL GB':28s}"
+                 + "".join(f"{tot[k] * bytes_per_slot / 1e9:>{W}.1f}" for k in _COMPOSITION_KEYS))
+    return "\n".join(lines)
+
+
+def format_layout_breakdown(m_total: int, table: Dict[str, Tuple[int, int]],
+                            cfg: LigeroConfig) -> str:
+    """The printed form of layout_breakdown — the exact text the crosscheck
+    parser (profiler/crosscheck.parse_layout) and the archived layout
+    probes use; do not reformat."""
+    W = m_total * cfg.ELL
+    lines = [f"=== witness layout by claim type (m_total={m_total:,}, "
+             f"W={W:,} elements) ==="]
+    for _t, (_r, _e) in sorted(table.items(), key=lambda kv: -kv[1][1]):
+        lines.append(f"  {_t:22s} rows={_r:>11,}  elements={_e:>15,}  "
+                     f"{100 * _e / W:5.1f}%")
+    return "\n".join(lines)
+
+
 def _stream_setup(tape, cfg, zk_seed=None):
     """Shared setup for the streaming provers: layout, quad grouping, row-maps
     and blinding — everything that is CHALLENGE-INDEPENDENT.
@@ -3179,29 +3801,8 @@ def _stream_setup(tape, cfg, zk_seed=None):
      weight_vars, m_w_rows, wnew_vars, m_wnew_rows) = _layout(claims, cfg)
     if _os.environ.get("LIGERO_LAYOUT_BREAKDOWN"):
         import sys
-        from collections import defaultdict
-        agg = defaultdict(lambda: [0, 0])          # claim type -> [rows, elements]
-        seen_b = set()
-        def _acct(v, tn):
-            if isinstance(v, Variable) and id(v) not in seen_b:
-                seen_b.add(id(v)); agg[tn][0] += v.n_rows(cfg.ELL); agg[tn][1] += v.length
-        for _c in claims:
-            _tn = type(_c).__name__
-            _settle = isinstance(_c, TableSettlement)
-            for _f in fields(_c):
-                _v = getattr(_c, _f.name)
-                if isinstance(_v, Variable):
-                    _acct(_v, _tn)
-                elif isinstance(_v, Table) and _settle:
-                    _acct(_v.mult_var, _tn); _acct(_v.w_var, _tn)
-                    for _z in _v.z_vars: _acct(_z, _tn)
-                elif isinstance(_v, list):
-                    for _it in _v:
-                        if isinstance(_it, Variable): _acct(_it, _tn)
-        W = m_total * cfg.ELL
-        print(f"=== witness layout by claim type (m_total={m_total:,}, W={W:,} elements) ===", flush=True)
-        for _t, (_r, _e) in sorted(agg.items(), key=lambda kv: -kv[1][1]):
-            print(f"  {_t:22s} rows={_r:>11,}  elements={_e:>15,}  {100*_e/W:5.1f}%", flush=True)
+        _mt, _table = layout_breakdown(tape, cfg)
+        print(format_layout_breakdown(_mt, _table, cfg), flush=True)
         sys.exit(0)
     groups = _claim_var_groups(claims, cfg)
     n_ops = len(tape.claims)
@@ -3276,8 +3877,35 @@ def new_zk_seed() -> bytes:
 
 
 def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None,
-                    claims_bytes=None, zk_seed=None):
+                    claims_bytes=None, zk_seed=None, shard_plan=None,
+                    weight_enrollment=None):
+    """The streaming prover (_prove_streaming_body holds it). This wrapper
+    only guarantees that the proof's decoded-weight cache — pinned host
+    memory — is released however the prove ends, a raise included."""
+    global _WEIGHT_CACHE
+    try:
+        return _prove_streaming_body(tape, cfg, seed, weight_commitment, wnew_seed,
+                                     claims_bytes, zk_seed, shard_plan,
+                                     weight_enrollment=weight_enrollment)
+    finally:
+        _WEIGHT_CACHE = None
+
+
+def _prove_streaming_body(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None,
+                          claims_bytes=None, zk_seed=None, shard_plan=None,
+                          weight_enrollment=None):
     """Streaming prover — the single production path (the sound four-round protocol).
+
+    `shard_plan` (a shard_plan.ShardPlan, weight-split M1): split the ENROLLED
+    W block's two per-proof passes — the test-polynomial fold and the column
+    opening — across devices. This process is the coordinator (device 0): it
+    runs every sweep as usual but folds/opens only its own runs of weight
+    variables; the plan's workers fold/open theirs (shard_worker.py) and the
+    partials are merged here — exact field sums before the single inverse NTT,
+    and column pieces scattered by absolute row — so the proof is
+    BYTE-IDENTICAL to the unsharded one and the verifier is unchanged.
+    Requires `weight_commitment` (the split is defined on the enrolled block,
+    which does no commitment work in R1-R3).
 
     `weight_commitment` (a WeightCommitment, P3): reference a pre-committed W
     tree instead of committing it here. The R1 weight commit and R4 weight
@@ -3292,9 +3920,11 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
     (wnew_seed, logical NUM_BLINDING_ROWS) so its root reproduces the
     refreshed commitment R_W′ = commit_weights(seed=wnew_seed).
 
-    FOUR streaming sweeps, the witness regenerated each round, as the staged
-    interactive protocol requires (commit before the challenges that determine
-    what is revealed).
+    FOUR streaming sweeps — FIVE when the tape has phase-3 late aux (the
+    routed-projected claims), whose commitment is a conditional R3 sweep
+    after the R2 coin — the witness regenerated each round, as the staged
+    interactive protocol requires (commit before the challenges that
+    determine what is revealed).
 
     Each coin is SEQUENTIAL Fiat-Shamir over the transcript so far
     (analysis/routed-projected-protocol.md):
@@ -3316,11 +3946,36 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
     torch.cuda.reset_peak_memory_stats()
     if _PHASE_ON:
         _PHASE_TIMES.clear()
+    del _PHASE_STACK[:]
+    _SWEEP_RECS.clear()
+    _SWEEP_OUTSIDE.clear()
+    _t_prove0 = time.time()
     for _hook in PROVE_START_HOOKS:
         _hook()
     # Fresh secret padding/blinding entropy per proof unless a caller pins it
     # (diff-tests that compare two proofs byte-for-byte do pin it).
     s = _stream_setup(tape, cfg, zk_seed=(zk_seed or new_zk_seed()))
+    has_w = bool(s['n_w_total'])
+    # P3: reference a persisted W commitment. The row-count/codeword guard
+    # below checks that it is for this model's W block.
+    wc = weight_commitment if has_w else None
+    # Validate the enrolled split and every active worker's device before
+    # any sweep or witness-cache allocation. An open-only worker must also
+    # fail here, rather than after the preceding commitment and fold work.
+    plan = None
+    if shard_plan is not None:
+        import shard_plan as _sp
+        import shard_worker as _sw
+        assert has_w, (
+            "shard_plan on a tape with no persistent weights: there is no "
+            "enrolled W block to split")
+        assert wc is not None, (
+            "shard_plan needs weight_commitment: the split is defined on the "
+            "enrolled W block")
+        plan = _sp.as_plan(shard_plan, len(s['weight_vars']))
+        for stage in ("fold", "open"):
+            for dev, _, _ in plan.worker_runs(stage):
+                _sw.validate_device(plan.device_of(dev))
     if claims_bytes is None:
         claims_bytes = pr.claims_canonical_bytes(tape.claims, cfg)
     # The row-block layout is part of the statement, not something the proof
@@ -3359,13 +4014,37 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
         witness_cache = {'_budget_bytes': _witness_cache_budget_bytes()}
     else:
         witness_cache = None
+    # Routed-output cache (opt-in, LIGERO_ROUTED_Y_CACHE=1): the streaming
+    # claims' first-sweep outputs, under their own budget. None when off or
+    # when nothing on the tape streams.
+    # Decoded-weight cache (opt-in, LIGERO_WEIGHT_CACHE=1): every persistent
+    # variable except the streaming claims' expert shards, decoded once per
+    # proof. The shard set is fixed here so the choke point can tell the
+    # kinds apart without a name convention.
+    global _WEIGHT_CACHE
+    _WEIGHT_KIND.clear()
+    for _c in s['claims']:
+        if type(_c) in STREAMING_INPUT_CLAIMS:
+            for _w in getattr(_c, 'W', ()):
+                _WEIGHT_KIND[id(_w)] = 'shard'
+    _WEIGHT_CACHE = _weight_cache_new() if _WEIGHT_CACHE_ON else None
+    routed_cache = (_routed_cache_new()
+                    if _ROUTED_Y_CACHE_ON and any(type(c) in STREAMING_INPUT_CLAIMS
+                                                  for c in s['claims'])
+                    else None)
 
-    def sweep(**kw):
-        return _stream_sweep(tape, cfg, s['master_seed_t'], s['groups'], s['n_ops'],
-                             s['p1_vars'], s['p2_vars'], s['m_p1_rows'], s['tables'],
-                             ch0, ch1=ch1, p3_vars=s['p3_vars'],
-                             m_p2_rows=s['m_p2_rows'], w_pad=w_pad, wnew_pad=wnew_pad,
-                             witness_cache=witness_cache, **kw)
+    def sweep(label, **kw):
+        # `label` names the sweep in the per-sweep table (LIGERO_SWEEP_TIMING).
+        _sweep_begin(label)
+        try:
+            return _stream_sweep(tape, cfg, s['master_seed_t'], s['groups'], s['n_ops'],
+                                 s['p1_vars'], s['p2_vars'], s['m_p1_rows'], s['tables'],
+                                 ch0, ch1=ch1, p3_vars=s['p3_vars'],
+                                 m_p2_rows=s['m_p2_rows'], w_pad=w_pad, wnew_pad=wnew_pad,
+                                 witness_cache=witness_cache,
+                                 routed_cache=routed_cache, **kw)
+        finally:
+            _sweep_end()
 
     def _p0_zero():
         return torch.zeros(2 * cfg.K_DEG - 1, dtype=torch.uint64, device="cuda")
@@ -3378,12 +4057,6 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
     # identity is not known until the round-3 column challenge. R_W is
     # context-independent (W at the fixed offset), so it matches
     # commit_weights.
-    has_w = bool(s['n_w_total'])
-    # P3: reference a persisted W commitment — skip the R1 weight commit + R4
-    # weight rebuild, take root_w and the opening paths from it. Guard that it
-    # is for THIS model's W block (same row count and codeword length).
-    wc = weight_commitment if has_w else None
-
     # The quad-placement guards below need the compiled quad families, which
     # exist only after s_op (the R1 coin) — so they are QUEUED here and run the
     # moment the compile lands, still before any work that depends on them.
@@ -3445,7 +4118,7 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
     merkle_w = None if wc is not None else _acc(s['n_w_total'])          #   (W referenced → skip)
     merkle_wnew = _acc(s['n_wnew_total'])                                #   (linking proofs)
     merkle_p1 = _acc(s['n_p1_total'])
-    sweep(want_aux=False, merkle_blind=merkle_blind, merkle_w=merkle_w,
+    sweep("R1", want_aux=False, merkle_blind=merkle_blind, merkle_w=merkle_w,
           merkle_wnew=merkle_wnew, merkle_p1=merkle_p1,
           p1_prefix=s['p1_prefix'])
     art_blind = _finalize_merkle_artifact(merkle_blind)
@@ -3464,15 +4137,91 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
     s_op = pr.fs_s_op(stmt_digest, blocks_r1, roots_r1)
     ch0 = _sample_chs(s['claims'], s_op)
     merkle_p2 = _make_merkle_acc(cfg.N_LIG, s['n_p2_total'])              # R2: commit phase-2
-    sweep(want_aux=True, merkle_p2=merkle_p2)
+    sweep("R2", want_aux=True, merkle_p2=merkle_p2)
     art_p2 = _finalize_merkle_artifact(merkle_p2)
     # ---- coin after R2: the late (phase-3) challenges --------------------
     s_bind = pr.fs_s_bind(s_op, art_p2.root)
     has_p3 = bool(s['n_p3_total'])
     ch1 = _sample_late_chs(s['claims'], s_bind)
+    # ---- WC-LCRL-STC bridge (hosted mode, spec 0.3/0.4) ------------------
+    # rho is the routed claim's OWN R1 coin (ch0), so P_trace here is the
+    # same projection the terminal constraints consume (test_wc_tape_link);
+    # the low half (Pj) is already committed via the p2 rows whose root fed
+    # s_bind, and pi is bound through the bridge's hosted late coin until it
+    # becomes committed R2 rows proved by fresh qLin (interim, status doc).
+    wc_sidecar = None
+    from routed_projected import RoutedProjectedMatmulClaim as _RPC
+    _bridged = [(ci, c) for ci, c in enumerate(s['claims'])
+                if isinstance(c, _RPC) and c.use_bridge]
+    if _bridged and weight_enrollment is None:
+        raise RuntimeError(
+            "tape has use_bridge claims but no weight_enrollment — refusing "
+            "to prove (spec 0.8: every persistent map in exactly one chain)")
+    if weight_enrollment is not None:
+        import wc_bridge as _wcb
+        _wcb.wc_times_reset()
+        _t_wc0 = time.time()
+        cmap = _wcb.bridged_claim_map(s['claims'])
+        assert cmap, "weight_enrollment given but no use_bridge claims"
+        # shared per-width rho (spec 0.2): every bridged claim of one width
+        # sampled the SAME coin — assert it, then hand one rho per width.
+        _rho = {}
+        for ci, width, off, ek in cmap:
+            r = list(ch0[ci])
+            assert _rho.setdefault(width, r) == r, \
+                "bridged claims of one width disagree on rho"
+        # fail-closed: the enrollment must cover exactly the tape's weights
+        for width in _rho:
+            want = sum(ek for _, w, _, ek in cmap if w == width)
+            got = weight_enrollment.groups[width].n_rows
+            assert got == want, (
+                f"enrollment width {width} has {got} rows, tape needs {want}")
+        # ... in the claim set's order: the verifier reads the enrollment's
+        # identity under the claim map's layout, never the enrollment's own
+        assert weight_enrollment.layout == _wcb.claim_layout(cmap), \
+            "the enrollment's row layout is not the tape's claim layout"
+        if isinstance(weight_enrollment, _wcb.LazyEnrollment):
+            # production path: P_trace comes from the SAME fused projections
+            # the R2 sweep already computed (byte-equal to W rho — the link
+            # test), so no extra weight pass; pi from the mask PRG.
+            from routed_projected import _P_CACHE, _rho_key
+            _pt = {n: torch.zeros(b * weight_enrollment.params.B,
+                                  dtype=torch.uint64, device="cuda")
+                   for n, b in weight_enrollment.blocks_per_width.items()}
+            for ci, width, off, ek in cmap:
+                _c = s['claims'][ci]
+                _P = _P_CACHE.get(_rho_key(_c, _rho[width]))
+                assert _P is not None, (
+                    "fused projection missing from _P_CACHE — the R2 sweep "
+                    "must run before the bridge block")
+                _pt[width][off:off + ek] = _P.reshape(-1)
+            _pi = weight_enrollment.pi(_rho)
+        else:
+            _pt, _pi = _wcb.bridge_r2(weight_enrollment, _rho)
+        # the 0.8 chain: the SAME tensor slices the terminal pins consume
+        for ci, width, off, ek in cmap:
+            s['claims'][ci]._bridge_pin = _pt[width][off:off + ek]
+        _s_late = _wcb.hosted_s_late(s_bind, weight_enrollment.root,
+                                     weight_enrollment.manifest_digest,
+                                     _pt, _pi, weight_enrollment.params)
+        wc_sidecar = {
+            "bridge": _wcb.bridge_r3(weight_enrollment, _rho, _pt, _pi,
+                                     _s_late),
+            "root": weight_enrollment.root,
+            "manifest_digest": weight_enrollment.manifest_digest,
+            # what the verifier's policy slot is given (an auditor's
+            # certificate in production; the prover's own value in tests)
+            "identity": weight_enrollment.identity(),
+            "group_meta": {n: (g.n_blocks, n)
+                           for n, g in weight_enrollment.groups.items()},
+            "params": weight_enrollment.params,
+            "claim_index": cmap[0][0],
+        }
+        print(f"  [wc-bridge] the bridge's per-proof pass took {time.time() - _t_wc0:.1f} s "
+              f"outside the sweeps; {_wcb.wc_times_line()[12:]}", flush=True)
     if has_p3:                                                            # R3: commit phase-3
         merkle_p3 = _acc(s['n_p3_total'])
-        sweep(want_aux=True, merkle_p3=merkle_p3)
+        sweep("R3", want_aux=True, merkle_p3=merkle_p3)
         art_p3 = _finalize_merkle_artifact(merkle_p3)
         root_p3 = art_p3.root
     else:
@@ -3488,9 +4237,20 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
         s_comb, s['m_total'], stream_pk.total_quads)
     q_irs_acc = QIrsAccumulator(r_irs_t, cfg)
     q_lin_acc = QLinAccumulator(r_lin_seed, stream_pk, cfg)
-    p_0 = sweep(want_aux=True, q_irs=q_irs_acc, q_lin=q_lin_acc,          # R3: q-polys + p_0
+    # Weight-split (M1): the coordinator folds only its own run of W
+    # variables in this sweep; the workers' partial folds are merged below.
+    w_owned = None if plan is None else plan.owned_ids(0, "fold", s['weight_vars'])
+    p_0 = sweep("fold", want_aux=True, q_irs=q_irs_acc, q_lin=q_lin_acc,  # test polys + p_0
                 p_0=_p0_zero(), stream_pk=stream_pk,
-                r_quad=r_quad_t, p_maps=s['p_maps'])
+                r_quad=r_quad_t, p_maps=s['p_maps'], w_owned=w_owned)
+    if plan is not None:
+        for dev, lo, hi in plan.worker_runs("fold"):
+            part = _sw.fold_run(s['weight_vars'], tape.inputs, cfg,
+                                s['master_seed_t'], w_pad, lo, hi,
+                                r_irs_t, r_lin_seed, stream_pk,
+                                device=plan.device_of(dev))
+            q_irs_acc.merge(part["q_irs"])
+            q_lin_acc.merge(q_eval=part["q_eval"], q_coeff=part["q_coeff"])
     # ---- coin after the test polynomials: the opened columns -------------
     # Mixed with the blinding rows FIRST: s_col must hash the polynomials the
     # verifier actually receives, not the pre-blinding accumulators.
@@ -3519,9 +4279,18 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
     # from the R1/R2/R3 commits (the trees are a few MB and are kept); this
     # sweep only re-extracts the challenged columns, whose identity is not
     # known until s_col.
-    sweep(want_aux=True, col_blind=col_blind, col_w=col_w,
+    w_owned = None if plan is None else plan.owned_ids(0, "open", s['weight_vars'])
+    sweep("open", want_aux=True, col_blind=col_blind, col_w=col_w,
           col_wnew=col_wnew, col_p1=col_p1, col_p2=col_p2, col_p3=col_p3,
-          Q_cols=Q_cols, p1_prefix=s['p1_prefix'])
+          Q_cols=Q_cols, p1_prefix=s['p1_prefix'], w_owned=w_owned)
+    if plan is not None:
+        # In-process workers write each encode chunk directly into the W
+        # sink at its absolute row, with no second full-run host buffer.
+        # finish() asserts exact, non-overlapping coverage of the block.
+        for dev, lo, hi in plan.worker_runs("open"):
+            _sw.open_run(s['weight_vars'], tape.inputs, cfg,
+                         s['master_seed_t'], w_pad, lo, hi, Q_cols,
+                         column_sink=col_w, device=plan.device_of(dev))
 
     def _opened(colbuf):
         if isinstance(colbuf, ColumnSink):
@@ -3568,6 +4337,20 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
           f"match committed leaves: {repro}; W-block rows {s['n_w_total']}; "
           f"W-ref {wc is not None}; Wnew rows {s['n_wnew_total']}; "
           f"p3 rows {s['n_p3_total']}; peak {peak:.2f} GB", flush=True)
+    # Fail closed on every path: a proof whose re-extracted columns do not
+    # hash to the leaves it committed is one the verifier will reject, and a
+    # timing taken from it would be a number about nothing. Under a
+    # weight-split plan the usual cause is a worker's opening piece landing
+    # at the wrong absolute rows; single-device, it is witness drift between
+    # sweeps (a cache handing back the wrong bytes, a non-deterministic
+    # compute function).
+    assert repro, (
+        ("weight-split: re-extracted opened columns do not hash to the "
+         "committed leaves — a worker piece landed at the wrong rows")
+        if plan is not None else
+        ("re-extracted opened columns do not hash to the committed leaves — "
+         "the witness differed between sweeps (cache or compute drift); the "
+         "proof would be rejected, so no result is reported"))
     if _PHASE_ON and _PHASE_TIMES:
         _tot = sum(_PHASE_TIMES.values())
         print("  [phase] prove-time breakdown (cuda-synced buckets; shares, not "
@@ -3577,6 +4360,18 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
         print(f"    {'BUCKETED':10s} {_tot:8.1f}s  (vs total prove wall-clock; "
               f"remainder = setup + un-bucketed)", flush=True)
     _ephase_report()
+    _sweep_report(time.time() - _t_prove0)
+    if _WEIGHT_CACHE is not None:
+        _res = _host_pinned_reserved_gb()
+        print(f"  [weight-cache] {_WEIGHT_CACHE['_misses']} weights decoded once "
+              f"({_WEIGHT_CACHE['_packed'] / 1e9:.1f} GB packed: "
+              f"{_WEIGHT_CACHE['_gpu_bytes'] / 1e9:.1f} GB on the GPU, "
+              f"{_WEIGHT_CACHE['_bytes'] / 1e9:.1f} GB pinned host after the allocator's "
+              f"power-of-two rounding; host allocator reserved "
+              f"{'n/a' if _res is None else f'{_res:.1f}'} GB), "
+              f"{_WEIGHT_CACHE['_hits']} resolutions served from the cache, "
+              f"{_WEIGHT_CACHE['_refused']} resolutions refused by the budget", flush=True)
+        _WEIGHT_CACHE = None
     # Reset the sweep's b_chunk skip so a subsequent in-process verify() (which
     # DOES need the public RHS — e.g. the reveal pin) recompiles it. Leaking
     # True here silently zeroed every nonzero-RHS constraint in verify.
@@ -3586,7 +4381,7 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
                       + (["wnew"] if has_wnew else []) + ["p1", "p2"]
                       + (["p3"] if has_p3 else [])), (
         "row-block layout diverged from the one the statement digest fixed")
-    return Proof(
+    proof_out = Proof(
         q_irs=q_irs, q_lin=q_lin, p_0=p_0, blocks=blocks,
         seeds={"s_op": s_op, "s_bind": s_bind, "s_comb": s_comb, "s_col": s_col},
         statement_digest=stmt_digest, claims_bytes=claims_bytes, Q_cols=Q_cols,
@@ -3601,6 +4396,11 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
         root_p3=(root_p3 if has_p3 else None),
         opened_p3=(opened_p3 if has_p3 else {}),
         paths_p3=(_paths(art_p3) if has_p3 else {}))
+    if wc_sidecar is not None:
+        # python-side sidecar; the Rust wire format is untouched until the
+        # verifier twin lands (integration brick 4)
+        proof_out.wc_bridge = wc_sidecar
+    return proof_out
 
 
 class _PhaseLogger:

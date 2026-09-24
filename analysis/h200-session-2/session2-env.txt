@@ -1,0 +1,43 @@
+== 2026-09-15T19:30:23Z on 251ef785c4c6
+== paths
+VERINF_GGUF=/workspace/gguf/UD-Q4_K_XL/Llama-4-Maverick-17B-128E-Instruct-UD-Q4_K_XL-00001-of-00005.gguf
+VERINF_GGUF_DIR=/workspace/gguf
+VERINF_LOGS=/workspace/logs
+VERINF_OUT=/workspace/crosscheck-out
+VERINF_PROOF=/workspace/proofs/mavp-s1000.bin
+VERINF_ROOT=/workspace
+== python / torch
+torch 2.8.0+cu128 cuda 12.8 NVIDIA H200 capability (9, 0)
+== nvcc
+Build cuda_12.8.r12.8/compiler.35583870_0
+== gpu
+name, memory.total [MiB], driver_version
+NVIDIA H200, 143771 MiB, 570.124.06
+== host
+               total        used        free      shared  buff/cache   available
+Mem:            2013          76         129           1        1830        1936
+Swap:              0           0           0
+cgroup memory.max: n/a
+192
+== filesystems
+SOURCE  FSTYPE  TARGET  SIZE  AVAIL
+overlay overlay /       400G 399.2G
+SOURCE  FSTYPE  TARGET  SIZE  AVAIL
+overlay overlay /       400G 399.2G
+SOURCE  FSTYPE  TARGET  SIZE  AVAIL
+overlay overlay /       400G 399.2G
+Filesystem      Size  Used Avail Use% Mounted on
+overlay         400G  812M  400G   1% /
+overlay         400G  812M  400G   1% /
+== revision
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+== packages
+blake3                    1.0.9
+gguf                      0.19.0
+hf_transfer               0.1.9
+ninja                     1.13.2
+numpy                     2.1.2
+safetensors               0.8.0
+torch                     2.8.0+cu128
+transformers              5.17.0

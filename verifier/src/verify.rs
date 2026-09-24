@@ -15,7 +15,7 @@ use rayon::prelude::*;
 use crate::field::{add, mul, sub};
 use crate::claim::ClaimSet;
 use crate::compile::{CoefSrc, Constraints, Expander, Run};
-use crate::handlers::compile_claims_bound;
+use crate::handlers::{compile_claims_bound, compile_claims_bound_pinned};
 use crate::prover::Prover;
 use crate::protocol::{challenge, lagrange, merkle_leaf, merkle_verify, poly_eval,
                       random_columns, Chal, Config, BLIND_IRS, BLIND_LIN, BLIND_QUAD,
@@ -181,8 +181,18 @@ pub fn verify_bound(cs: &mut ClaimSet,
               roots: &[[u8; 32]], r3: &Round3, r4: Round4,
               s_op: &[u8], s_bind: Option<&[u8]>,
               s_comb: &[u8], s_col: &[u8]) -> (bool, Vec<(&'static str, bool)>) {
+    verify_bound_pinned(cs, roots, r3, r4, s_op, s_bind, s_comb, s_col, Vec::new())
+}
+
+/// verify_bound with the WC-LCRL-STC bridge pin (claim_index, P_trace) —
+/// already authenticated against the enrollment root by the caller.
+pub fn verify_bound_pinned(cs: &mut ClaimSet,
+              roots: &[[u8; 32]], r3: &Round3, r4: Round4,
+              s_op: &[u8], s_bind: Option<&[u8]>,
+              s_comb: &[u8], s_col: &[u8],
+              wc_pins: Vec<(usize, Vec<u64>)>) -> (bool, Vec<(&'static str, bool)>) {
     let cfg: Config = cs.cfg;
-    let cons = compile_claims_bound(cs, s_op, s_bind);
+    let cons = compile_claims_bound_pinned(cs, s_op, s_bind, wc_pins);
     let q = random_columns(s_col, &cfg);
     let cols = match opened_columns(r4, &q) {
         Some(c) => c,
@@ -193,7 +203,7 @@ pub fn verify_bound(cs: &mut ClaimSet,
     let t0 = std::time::Instant::now();
     let mark = |name: &str| eprintln!("[verify] {name} @ {:.1} min", t0.elapsed().as_secs_f64() / 60.0);
     let mut r = Vec::new();
-    mark("merkle");    r.push(("merkle",    merkle_test(&cols, roots)));
+    mark("merkle");    r.push(("merkle",    merkle_test(&cols, roots, &q, cfg.n_lig)));
     // Only merkle needs the raw per-commit subcolumns. Join them into one set once
     // (freeing the raw form as it goes), then irs/lin/quad share this single cj —
     // built once instead of three times, and never held alongside the raw columns.
@@ -273,8 +283,10 @@ fn lagrange_table(cfg: &Config, etas: &[u64], ncols: usize) -> Vec<u64> {
     lag
 }
 
-// 1. Merkle: every opened sub-column hashes to its commit's root.
-fn merkle_test(cols: &OpenedColumns, roots: &[[u8; 32]]) -> bool {
+// 1. Merkle: every opened sub-column hashes to its commit's root AT the queried
+// index q[qi] of a tree over n_lig columns (a valid path for another column is
+// not an answer).
+fn merkle_test(cols: &OpenedColumns, roots: &[[u8; 32]], q: &[u64], n_lig: u64) -> bool {
     for (ci, rt) in roots.iter().enumerate() {
         if *rt == EMPTY_COMMIT_ROOT {
             // The all-zeros root is the prover's sentinel for a ZERO-ROW block
@@ -288,7 +300,8 @@ fn merkle_test(cols: &OpenedColumns, roots: &[[u8; 32]]) -> bool {
             return false;
         }
         for qi in 0..cols.subcols[ci].len() {
-            if !merkle_verify(merkle_leaf(&cols.subcols[ci][qi]), &cols.paths[ci][qi], *rt) {
+            if !merkle_verify(merkle_leaf(&cols.subcols[ci][qi]), &cols.paths[ci][qi], *rt,
+                              q[qi], n_lig) {
                 return false;
             }
         }

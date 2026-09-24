@@ -1,0 +1,3 @@
+D5 (bridge, masks on the card) START 23:29:21
+launched pgid 9595 job 9598 (log ~/mavp-s100-bridge5.log; kill -- -$(cat ~/mavp-s100-bridge5.pid))
+D5 (bridge, masks on the card) status 0 23:58:21

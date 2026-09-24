@@ -1,0 +1,42 @@
+warning: unused import: `compile_claims_bound`
+  --> src/verify.rs:18:23
+   |
+18 | use crate::handlers::{compile_claims_bound, compile_claims_bound_pinned};
+   |                       ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `ligero-verifier` (lib) generated 1 warning (run `cargo fix --lib -p ligero-verifier` to apply 1 suggestion)
+   Compiling ligero-verifier v0.1.0 (/workspace/verinf/verifier)
+warning: unused import: `verify_bound`
+  --> src/bin/verify_proof.rs:17:47
+   |
+17 | use ligero_verifier::verify::{Round3, Round4, verify_bound, verify_bound_pinned};
+   |                                               ^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `s_bind_out` is never read
+   --> src/bin/verify_proof.rs:439:43
+    |
+439 |     let mut s_bind_out: Option<Vec<u8>> = None;
+    |                                           ^^^^ this value is reassigned later and never used
+...
+463 |             s_bind_out = Some(s_bind.to_vec());
+    |             ---------- `s_bind_out` is overwritten here before the previous value is read
+    |
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `claim_index` is never read
+   --> src/bin/verify_proof.rs:154:5
+    |
+150 | struct WcSection {
+    |        --------- field in this struct
+...
+154 |     claim_index: usize,
+    |     ^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `ligero-verifier` (bin "verify_proof") generated 3 warnings (run `cargo fix --bin "verify_proof" -p ligero-verifier` to apply 1 suggestion)
+    Finished `release` profile [optimized] target(s) in 6.22s
