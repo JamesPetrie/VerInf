@@ -22,6 +22,8 @@ verifier/target/
 /spark-bench/bench_goldilocks_matmul
 
 # Generated artifacts (proofs, logits)
+*.tar.gz
+*.tgz
 *.npy
 proof*.json
 logits*.npy
