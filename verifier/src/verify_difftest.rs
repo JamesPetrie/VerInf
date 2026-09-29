@@ -174,6 +174,7 @@
             (Expander::TransposeO2m { cid_base: 3, rows: 1, cols: 1, fan: 5, coef: 4 }, 23),  // ex-StrideO2m
             (Expander::TransposeO2m { cid_base: 3, rows: 4, cols: 3, fan: 5, coef: 4 }, 12),
             (Expander::CausalId { cid_base: 20, m: 4, h: 2, coef: 6 }, 32),
+            (Expander::CausalMaskedId { cid_base: 20, m: 4, h: 2, coef: 6 }, 32),
             (Expander::CausalC2 { cid_base: 20, h: 2, coef: 6 }, 8),
             (Expander::Embed { cid_base: 10, d: 4, token_ids: vec![3, 1, 3, 0, 4],
                                vocab_lo: 2, rows_per_w: 3 }, 12),

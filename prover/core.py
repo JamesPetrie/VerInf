@@ -45,7 +45,7 @@ from cuda_primitives import (
     rs_encode_rows,
     poly_mul, poly_add, poly_mul_batched, poly_eval,
     gl_matmul, gl_matvec, gl_spmv, challenge_vec, challenge_at,
-    interp_band, interp_band_causal_id, interp_band_causal_c2,
+    interp_band, interp_band_causal_id, interp_band_causal_c2, interp_band_causal_masked_id,
     interp_band_embed, interp_band_rope_x,
     hash_columns_streamed, merkle_build_blake3,
     MerkleColumnAccumulator, row_prg, row_prg_indexed,
@@ -2207,6 +2207,11 @@ def _lower_band(pkt, chal_src, ell):
                 "launch": lambda out, oo, fl, ns, sd, lb, p=pkt:
                     interp_band_causal_c2(out, oo, fl, ns, p.base, p.H,
                                           p.coef % P, sd, lb)}
+    elif kname == "L2_CausalMaskedIdScalar":
+        pack = {"L": pkt.L, "var_rs": pkt.var_row_start,
+                "launch": lambda out, oo, fl, ns, sd, lb, p=pkt:
+                    interp_band_causal_masked_id(out, oo, fl, ns, p.base, p.M, p.H,
+                                                 p.coef % P, sd, lb)}
     elif kname == "L2_EmbedE":
         # No stored length: the per-slot vocab-row guard in the kernel makes
         # window overshoot a no-op, so the clip bound is effectively infinite.

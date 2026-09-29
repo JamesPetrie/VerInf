@@ -90,6 +90,32 @@ fn causal_id() {
 }
 
 #[test]
+fn causal_masked_id() {
+    // the complement of causal_id on the same geometry: unmasked heads j ≤ i_qry skipped
+    check(&Expander::CausalMaskedId { cid_base: 20, m: 4, h: 2, coef: 6 }, 32);
+    check(&Expander::CausalMaskedId { cid_base: 5, m: 3, h: 1, coef: 2 }, 9);
+}
+
+#[test]
+fn causal_masked_id_is_the_complement_of_causal_id() {
+    // seq = m = 4, h = 2: every cell is in exactly one of the two families, and
+    // the masked ranks are a permutation of [0, L_m) with L_m = h·m(m−1)/2.
+    let (m, h, len) = (4usize, 2usize, 32usize);
+    let masked = emit_triples(&Expander::CausalMaskedId { cid_base: 0, m, h, coef: 1 }, 0, len);
+    let unmasked = emit_triples(&Expander::CausalId { cid_base: 0, m, h, coef: 1 }, 0, len);
+    assert_eq!(masked.len() + unmasked.len(), len);
+    let mut cols: Vec<usize> = masked.iter().chain(unmasked.iter()).map(|t| t.0).collect();
+    cols.sort_unstable(); cols.dedup();
+    assert_eq!(cols.len(), len);
+    let mut cids: Vec<usize> = masked.iter().map(|t| t.1).collect();
+    cids.sort_unstable();
+    assert_eq!(cids, (0..h * m * (m - 1) / 2).collect::<Vec<_>>());
+    for &(col, _, _) in &masked {
+        let (b, j) = (col / m, col % m);
+        assert!(j > b / h, "cell {col} is unmasked");
+    }
+}
+#[test]
 fn causal_c2() { check(&Expander::CausalC2 { cid_base: 20, h: 2, coef: 6 }, 8); }
 
 #[test]

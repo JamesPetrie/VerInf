@@ -37,6 +37,15 @@ import compute_fns as _cf
 from cuda_primitives import gl_mul, gl_sub, gl_add, gl_inv_batched, lookup_multiplicities_into
 
 
+# The ceiling quotient z_o = ceil(gap_o^2 / k) is ranged to [0, 2^Z_O_BITS) so
+# that k·z_o ≡ gap_o^2 + rem lifts from the field to the integers (both sides
+# below P), which forces the honest ceiling; without it every remainder admits
+# a field solution and the cross-position sum can wrap (protocol review
+# F05/F06). At the demonstrated parameters (gap_max = 2^20, k = 2^16) the
+# honest maximum is 16,777,185 < 2^24.
+Z_O_BITS = 24
+
+
 @dataclass
 class InfoFinalizeClaim:
     e: Variable            # EXP lookups (T*V), input
@@ -51,6 +60,8 @@ class InfoFinalizeClaim:
     surprisal: Variable    # z_o + b (T), derived  (nats * s_b)
     z_dw: List[Variable]   # phase-2 range-LogUp aux for each dw (N each T)
     z_rem: Variable        # phase-2 range-LogUp aux for rem (T)
+    zw: List[Variable]     # word-decomposition of z_o (Z_O_WORDS words of wb bits): z_o < 2^24
+    z_zw: List[Variable]   # phase-2 range-LogUp aux for each zw
     range_wd: object       # range Table [0, 2^wb)  for the dw words
     range_k: object        # range Table [0, k)      for rem
     T: int
@@ -98,11 +109,15 @@ def info_compute(c: InfoFinalizeClaim, live):
     z_o = ((g2 + (k - 1)) // k).contiguous().view(torch.uint64)
     z_o_i = z_o.view(torch.int64)
     rem = (k * z_o_i - g2).contiguous().view(torch.uint64)
+    # z_o words (wb bits each): the range check that lifts the ceiling
+    zw = {c.zw[j]: ((z_o_i >> (c.wb * j)) & mask).contiguous().view(torch.uint64)
+          for j in range(len(c.zw))}
     # surprisal = z_o + b   (nats * s_b)
     surprisal = gl_add(z_o, b)
     out = {c.b: b, c.pw: pw, c.a: a, c.d: d, c.z_o: z_o, c.rem: rem,
            c.surprisal: surprisal}
     out.update(dw)
+    out.update(zw)
     return out
 
 
@@ -116,6 +131,8 @@ def info_aux(c: InfoFinalizeClaim, witness, _ch):
         return gl_inv_batched(gl_sub(alpha, x))
     out = {c.z_dw[j]: inv_against(c.dw[j], c.range_wd) for j in range(len(c.dw))}
     out[c.z_rem] = inv_against(c.rem, c.range_k)
+    for j in range(len(c.zw)):
+        out[c.z_zw[j]] = inv_against(c.zw[j], c.range_wd)
     return out
 
 
@@ -161,6 +178,17 @@ def info_compile(c: InfoFinalizeClaim, _ch, cfg: LigeroConfig, base: int):
                 base=cur, var_row_start=var.row_start, L=T, coef=coef)))
     cur += T
 
+    # z_o - Sum_j 2^(wb*j) zw_j = 0   (z_o < 2^(wb*n_zw); F05/F06)
+    for ro in range(_nr(c.z_o, ell)):
+        row_pkts.append((c.z_o.row_start + ro, L2_IdentityScalar(
+            base=cur, var_row_start=c.z_o.row_start, L=T, coef=1)))
+    for j, zwj in enumerate(c.zw):
+        coef = (P - ((1 << (c.wb * j)) % P)) % P                       # -2^(wb*j)
+        for ro in range(_nr(zwj, ell)):
+            row_pkts.append((zwj.row_start + ro, L2_IdentityScalar(
+                base=cur, var_row_start=zwj.row_start, L=T, coef=coef)))
+    cur += T
+
     # surprisal - z_o - b = 0
     for var, coef in [(c.surprisal, 1), (c.z_o, neg1), (c.b, neg1)]:
         for ro in range(_nr(var, ell)):
@@ -180,6 +208,10 @@ def info_compile(c: InfoFinalizeClaim, _ch, cfg: LigeroConfig, base: int):
     quads.append(QuadFamily(
         name="Info.rem", x_row=c.rem.row_start, y_row=c.z_rem.row_start,
         z_row=c.z_rem.row_start, L=T, ell=ell, a=neg_alpha_k, b=neg1))
+    for j, (zwj, zj) in enumerate(zip(c.zw, c.z_zw)):
+        quads.append(QuadFamily(
+            name=f"Info.zw{j}", x_row=zwj.row_start, y_row=zj.row_start,
+            z_row=zj.row_start, L=T, ell=ell, a=neg_alpha_wd, b=neg1))
 
     n_added = cur - base
     return row_pkts, quads, n_added, None     # b = 0 throughout
@@ -206,6 +238,11 @@ def info_finalize(tape, e, gap_o2, *, T, V, k, d_max, s_y, s_b, K):
     pfx = f"ui{_BUILD[0]}_"
     wb = 12
     n_words = max(1, (d_max.bit_length() + wb - 1) // wb)
+    n_zw = (Z_O_BITS + wb - 1) // wb
+    # The public size bound (verifier policy too, handlers.rs compile_info):
+    # with z_o < 2^(wb·n_zw) and b < K the scored sum cannot wrap.
+    assert T * ((1 << (wb * n_zw)) + K) < P, \
+        f"surprisal sum over T={T} positions could wrap the field (K={K})"
     range_wd = tape.register_table(f"{pfx}wd", T_data=list(range(1 << wb)))
     range_k = tape.register_table(f"{pfx}rem", T_data=list(range(k)))
 
@@ -219,13 +256,18 @@ def info_finalize(tape, e, gap_o2, *, T, V, k, d_max, s_y, s_b, K):
     surprisal = tape._alloc(f"{pfx}surprisal", T)
     z_dw = [Variable(f"{pfx}z_dw{j}", length=T, phase=2) for j in range(n_words)]
     z_rem = Variable(f"{pfx}z_rem", length=T, phase=2)
+    zw = [tape._alloc(f"{pfx}zw{j}", T) for j in range(n_zw)]
+    z_zw = [Variable(f"{pfx}z_zw{j}", length=T, phase=2) for j in range(n_zw)]
     for zj in z_dw:
         range_wd.z_vars.append(zj)
     range_k.z_vars.append(z_rem)
+    for zj in z_zw:
+        range_wd.z_vars.append(zj)
 
     claim = InfoFinalizeClaim(
         e=e.var, pw=pw, gap_o2=gap_o2.var, b=b, a=a, d=d, dw=dw,
         z_o=z_o, rem=rem, surprisal=surprisal, z_dw=z_dw, z_rem=z_rem,
+        zw=zw, z_zw=z_zw,
         range_wd=range_wd, range_k=range_k, T=T, V=V, k=k, wb=wb,
         s_y=s_y, s_b=s_b, K=K)
 
@@ -235,6 +277,9 @@ def info_finalize(tape, e, gap_o2, *, T, V, k, d_max, s_y, s_b, K):
                                         tape.inputs[range_wd.mult_var])
         lookup_multiplicities_into(values[rem], range_k.T,
                                     tape.inputs[range_k.mult_var])
+        for zwj in zw:
+            lookup_multiplicities_into(values[zwj], range_wd.T,
+                                        tape.inputs[range_wd.mult_var])
 
     outs = tape._process_claim(claim, [e.var, gap_o2.var], side_effects)
     tape.claims.append(claim)

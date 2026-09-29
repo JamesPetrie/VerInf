@@ -319,6 +319,7 @@ def silu_compute(claim: SiluClaim, live):
         g_d, key_d, is_high_d = _t(g_np), _t(key_np), _t(is_high_np)
     C_d = gl_mul(sign_d, x_data)
     inv_g_d = gl_inv(g_d)
+    inv_x_d = gl_inv(x_data)          # 0 at x = 0 (0^(P−2)); pins sign = 0 there
     output_sat_d = gl_sub(x_data, C_d)
     y_d = torch.index_select(claim.silu_table.T_Y, 0, key_d.to(torch.int64))
     mux_a_d = gl_mul(is_high_d, y_d)
@@ -330,6 +331,7 @@ def silu_compute(claim: SiluClaim, live):
         claim.a_0: a0_d, claim.a_1: a1_d, claim.a_2: a2_d,
         claim.a_3: a3_d, claim.a_4: a4_d,
         claim.g: g_d, claim.inv_g: inv_g_d, claim.is_high: is_high_d,
+        claim.inv_x: inv_x_d,
         claim.key: key_d, claim.output_sat: output_sat_d,
         claim.mux_a: mux_a_d, claim.mux_b: mux_b_d, claim.y: y_d,
         claim.output: output_d,

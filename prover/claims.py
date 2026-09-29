@@ -36,6 +36,7 @@ from packets import (
     L2_StrideManyToOneScalar, L2_StrideOneToManyScalar, L2_FreivaldsLF3C,
     L2_RoPEX, L2_RoPEXRot,
     L2_CausalFilteredIdScalar, L2_CausalFilteredC2Stride,
+    L2_CausalMaskedIdScalar, causal_masked_count,
 )
 from cuda_primitives import gl_matvec, gl_mul, gl_neg, gl_sub, gl_add, gl_inv_batched
 
@@ -981,6 +982,7 @@ class SiluClaim:
     g: Variable
     inv_g: Variable
     is_high: Variable
+    inv_x: Variable            # 1/x if x ≠ 0 else 0: pins sign = 0 at x = 0 (F04)
     key: Variable
     output_sat: Variable
     mux_a: Variable
@@ -991,6 +993,7 @@ class SiluClaim:
     pt_u: Variable             # key + β · y
     pt_z: Variable             # 1/(α_pt − pt_u)
     z_a0: Variable             # 1/(α_b  − a_0)
+    z_a1: Variable             # 1/(α_a1 − a_1)   (F03: the table index is ranged too)
     z_a2: Variable             # 1/(α_w2 − a_2)
     z_a3: Variable             # 1/(α_w3 − a_3)
     z_a4: Variable             # 1/(α_w4 − a_4)
@@ -998,6 +1001,7 @@ class SiluClaim:
     # Table references (α/β are read off these at compile time)
     silu_table: Table
     range_b: Table
+    range_a1: Table            # [0, T_LEN): a_1 is the half-table index
     range_w2: Table
     range_w3: Table
     range_w4: Table
@@ -1018,7 +1022,7 @@ def silu_sample(c: SiluClaim, ci, s_op):
 
 
 def silu_aux(c: SiluClaim, witness: dict, _ch) -> dict:
-    """Phase-2 witnesses: pt_u, pt_z (paired_tlookup LogUp) and the four
+    """Phase-2 witnesses: pt_u, pt_z (paired_tlookup LogUp) and the five
     z_aN (range_word LogUp). All computed once α/β are known."""
     def _t(v):
         if isinstance(v, torch.Tensor): return v.contiguous().view(-1)
@@ -1026,6 +1030,7 @@ def silu_aux(c: SiluClaim, witness: dict, _ch) -> dict:
     key_t = _t(witness[c.key])
     y_t   = _t(witness[c.y])
     a0_t  = _t(witness[c.a_0])
+    a1_t  = _t(witness[c.a_1])
     a2_t  = _t(witness[c.a_2])
     a3_t  = _t(witness[c.a_3])
     a4_t  = _t(witness[c.a_4])
@@ -1035,6 +1040,7 @@ def silu_aux(c: SiluClaim, witness: dict, _ch) -> dict:
         c.pt_u: pt_u,
         c.pt_z: gl_inv_batched(gl_sub(torch.full_like(pt_u, c.silu_table.alpha), pt_u)),
         c.z_a0: gl_inv_batched(gl_sub(torch.full_like(a0_t, c.range_b.alpha),  a0_t)),
+        c.z_a1: gl_inv_batched(gl_sub(torch.full_like(a1_t, c.range_a1.alpha), a1_t)),
         c.z_a2: gl_inv_batched(gl_sub(torch.full_like(a2_t, c.range_w2.alpha), a2_t)),
         c.z_a3: gl_inv_batched(gl_sub(torch.full_like(a3_t, c.range_w3.alpha), a3_t)),
         c.z_a4: gl_inv_batched(gl_sub(torch.full_like(a4_t, c.range_w4.alpha), a4_t)),
@@ -1129,12 +1135,16 @@ def silu_compile(c: SiluClaim, _ch, cfg: LigeroConfig, base: int):
     quads: List[QuadraticConstraint] = []
     quads += _per_slot_quad("silu.sign²",    c.sign,    c.sign,       c.sign,    neg1, 0, L, ell)
     quads += _per_slot_quad("silu.C",        c.sign,    c.x,          c.C,       neg1, 0, L, ell)
+    # sign = C·inv_x: a negative sign needs C = sign·x ≠ 0, so sign = 0 at x = 0
+    # (F04: T_pos[0] ≠ T_neg[0], the sign at zero is not value-neutral).
+    quads += _per_slot_quad("silu.sign_pin", c.C,       c.inv_x,      c.sign,    neg1, 0, L, ell)
     quads += _per_slot_quad("silu.g_invg",   c.g,       c.inv_g,      c.is_high, neg1, 0, L, ell)
     quads += _per_slot_quad("silu.ish_g",    c.is_high, c.g,          c.g,       neg1, 0, L, ell)
     quads += _per_slot_quad("silu.ish²",     c.is_high, c.is_high,    c.is_high, neg1, 0, L, ell)
     quads += _per_slot_quad("silu.mux_a",    c.is_high, c.y,          c.mux_a,   neg1, 0, L, ell)
     quads += _per_slot_quad("silu.mux_b",    c.is_high, c.output_sat, c.mux_b,   neg1, 0, L, ell)
     quads += _per_slot_quad("silu.RW[a0]",   c.a_0,    c.z_a0, c.z_a0, (P - c.range_b.alpha)  % P, neg1, L, ell)
+    quads += _per_slot_quad("silu.RW[a1]",   c.a_1,    c.z_a1, c.z_a1, (P - c.range_a1.alpha) % P, neg1, L, ell)
     quads += _per_slot_quad("silu.RW[a2]",   c.a_2,    c.z_a2, c.z_a2, (P - c.range_w2.alpha) % P, neg1, L, ell)
     quads += _per_slot_quad("silu.RW[a3]",   c.a_3,    c.z_a3, c.z_a3, (P - c.range_w3.alpha) % P, neg1, L, ell)
     quads += _per_slot_quad("silu.RW[a4]",   c.a_4,    c.z_a4, c.z_a4, (P - c.range_w4.alpha) % P, neg1, L, ell)
@@ -1995,6 +2005,7 @@ def softmax_compile(c: SoftmaxClaim, _ch, cfg: LigeroConfig, base: int):
     Constraint families (some only present under saturate / causal):
       F0: z decomp  — L_u under causal, L_full otherwise
                        (sat adds Z_max·z_high term; same constraint count)
+      [causal] F0m: z = 0 on the masked cells                     L_m
       F1: pt_u_A = z + β_A · y_A_lookup                            L_full
       F2: pt_u_B = z + β_B · y_B_lookup                            L_full
       [sat] F1.5:  y_A = y_A_raw − mux_y_A                          L_full
@@ -2036,6 +2047,14 @@ def softmax_compile(c: SoftmaxClaim, _ch, cfg: LigeroConfig, base: int):
                 base=cur, var_row_start=c.z_high.row_start, L=L_full, M=M, H=H,
                 coef=Z_max % P), row_pkts)
         cur += L_u
+        # ---- F0m: masked z = 0 (protocol review F01) ----
+        # A free masked z could reach the nonzero half of the doubled table
+        # (key z + Z_max with z = −Z_max lands on T_A[0]); pinning z = 0 makes
+        # the masked key exactly Z_max, whose entry is 0 in both tables.
+        L_m = causal_masked_count(B, M, H)
+        _emit_pkt_per_row(c.z, ell, lambda: L2_CausalMaskedIdScalar(
+            base=cur, var_row_start=c.z.row_start, L=L_full, M=M, H=H, coef=1), row_pkts)
+        cur += L_m
     else:
         _emit_pkt_per_row(c.z,  ell, lambda: L2_IdentityScalar(
             base=cur, var_row_start=c.z.row_start,  L=L_full, coef=1), row_pkts)
@@ -2127,6 +2146,8 @@ def softmax_compile(c: SoftmaxClaim, _ch, cfg: LigeroConfig, base: int):
     # F0 z decomp size: L_u (causal) = H · SEQ · (SEQ+1) / 2  where SEQ = B/H;
     #                   L_full otherwise.
     off = (H * (B // H) * ((B // H) + 1) // 2) if causal else L_full
+    if causal:
+        off += causal_masked_count(B, M, H)   # F0m masked z = 0  (b = 0)
     if sat:
         off += L_full  # y_A mux  (b=0)
         off += L_full  # y_B mux  (b=0)

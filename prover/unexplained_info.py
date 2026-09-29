@@ -60,6 +60,9 @@ def prove_unexplained_info(tape, logits, tokens, *, T, V, s_c, s_y, s_b, gap_max
     assert s_c % s_b == 0 and (s_c // s_b) & (s_c // s_b - 1) == 0, \
         "need s_c/s_b a power of two (clean ceil divisor k)"
     k = s_c // s_b
+    from ui_claim import Z_O_BITS
+    assert ((gap_max - 1) ** 2 + k - 1) // k < (1 << Z_O_BITS), \
+        f"gap_max={gap_max}, k={k}: the honest ceiling quotient exceeds the {Z_O_BITS}-bit range"
 
     # ONE: exact max -> gap (>=0), hidden output select gap_o.
     gap, gap_o, neg_gap, vstar = max_gap(tape, logits, tokens, T=T, V=V,

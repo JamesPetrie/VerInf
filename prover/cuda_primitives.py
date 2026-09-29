@@ -96,6 +96,9 @@ void interp_band_causal_id(torch::Tensor out, int64_t out_off, int64_t flat_lo, 
 void interp_band_causal_c2(torch::Tensor out, int64_t out_off, int64_t flat_lo, int64_t n_slots,
                            uint64_t base, uint64_t h, uint64_t coef,
                            torch::Tensor seed, torch::Tensor label);
+void interp_band_causal_masked_id(torch::Tensor out, int64_t out_off, int64_t flat_lo, int64_t n_slots,
+                                  uint64_t base, uint64_t m, uint64_t h, uint64_t coef,
+                                  torch::Tensor seed, torch::Tensor label);
 void interp_band_embed(torch::Tensor out, int64_t out_off, int64_t flat_lo, int64_t n_slots,
                        uint64_t base, uint64_t d, uint64_t rows_per_w, uint64_t ell,
                        torch::Tensor token_ids, torch::Tensor seed, torch::Tensor label);
@@ -163,6 +166,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("interp_band", &interp_band);
     m.def("interp_band_causal_id", &interp_band_causal_id);
     m.def("interp_band_causal_c2", &interp_band_causal_c2);
+    m.def("interp_band_causal_masked_id", &interp_band_causal_masked_id);
     m.def("interp_band_embed", &interp_band_embed);
     m.def("interp_band_rope_x", &interp_band_rope_x);
 
@@ -689,6 +693,24 @@ __global__ void k_band_causal_c2(uint64_t* __restrict__ out, int64_t out_off,
     out[out_off + s] = gl::add(out[out_off + s], gl::mul(coef, acc));
 }
 
+// The complement of k_band_causal_id: the MASKED cells (j > i_qry), ranked
+// (b, j)-major among themselves. Pins masked z to 0 (protocol review F01).
+__global__ void k_band_causal_masked_id(uint64_t* __restrict__ out, int64_t out_off,
+                                        uint64_t flat_lo, int64_t n_slots,
+                                        uint64_t base, uint64_t m, uint64_t h, uint64_t coef,
+                                        const uint8_t* __restrict__ seed,
+                                        const uint8_t* __restrict__ label, int label_len) {
+    int64_t s = (int64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (s >= n_slots) return;
+    uint64_t f = flat_lo + (uint64_t)s, b = f / m, j = f % m;
+    uint64_t i_qry = b / h, hh = b % h;
+    if (j <= i_qry) return;                      // unmasked cell: not this family
+    uint64_t before = h * (i_qry * (m - 1) - i_qry * (i_qry - 1) / 2) + hh * (m - 1 - i_qry);
+    uint64_t cid = base + before + (j - i_qry - 1);
+    uint64_t r = gl_sparse::challenge_inline(seed, label, label_len, cid);
+    out[out_off + s] = gl::add(out[out_off + s], gl::mul(coef, r));
+}
+
 __global__ void k_band_embed(uint64_t* __restrict__ out, int64_t out_off,
                              uint64_t flat_lo, int64_t n_slots,
                              uint64_t base, uint64_t d, uint64_t rows_per_w, uint64_t ell,
@@ -757,6 +779,17 @@ void interp_band_causal_c2(torch::Tensor out, int64_t out_off, int64_t flat_lo, 
     auto [g, blk] = grid1d((int)n_slots);
     k_band_causal_c2<<<g, blk>>>((uint64_t*)out.data_ptr(), out_off, (uint64_t)flat_lo, n_slots,
         base, h, coef,
+        (const uint8_t*)seed.data_ptr(), (const uint8_t*)label.data_ptr(), (int)label.numel());
+}
+
+void interp_band_causal_masked_id(torch::Tensor out, int64_t out_off, int64_t flat_lo, int64_t n_slots,
+                                  uint64_t base, uint64_t m, uint64_t h, uint64_t coef,
+                                  torch::Tensor seed, torch::Tensor label) {
+    IRR_CHECKS(out, seed, label);
+    if (n_slots == 0) return;
+    auto [g, blk] = grid1d((int)n_slots);
+    k_band_causal_masked_id<<<g, blk>>>((uint64_t*)out.data_ptr(), out_off, (uint64_t)flat_lo, n_slots,
+        base, m, h, coef,
         (const uint8_t*)seed.data_ptr(), (const uint8_t*)label.data_ptr(), (int)label.numel());
 }
 
@@ -1217,6 +1250,11 @@ def interp_band_causal_id(out, out_off, flat_lo, n_slots, base, m, h, coef, seed
 def interp_band_causal_c2(out, out_off, flat_lo, n_slots, base, h, coef, seed, label):
     _ensure_compiled().interp_band_causal_c2(out, int(out_off), int(flat_lo), int(n_slots),
                                              int(base), int(h), int(coef), seed, label)
+
+
+def interp_band_causal_masked_id(out, out_off, flat_lo, n_slots, base, m, h, coef, seed, label):
+    _ensure_compiled().interp_band_causal_masked_id(out, int(out_off), int(flat_lo), int(n_slots),
+                                                    int(base), int(m), int(h), int(coef), seed, label)
 
 
 def interp_band_embed(out, out_off, flat_lo, n_slots, base, d, rows_per_w, ell, token_ids, seed, label):

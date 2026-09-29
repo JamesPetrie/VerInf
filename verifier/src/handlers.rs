@@ -74,6 +74,10 @@ impl Build {
         self.push_family(var, ell, Expander::CausalId { cid_base, m, h, coef });
     }
 
+    fn emit_causal_masked_id(&mut self, var: Var, cid_base: usize, m: usize, h: usize,
+                             coef: u64, ell: usize) {
+        self.push_family(var, ell, Expander::CausalMaskedId { cid_base, m, h, coef });
+    }
     fn emit_causal_c2(&mut self, var: Var, cid_base: usize, h: usize, coef: u64, ell: usize) {
         self.push_family(var, ell, Expander::CausalC2 { cid_base, h, coef });
     }
@@ -718,13 +722,17 @@ fn compile_silu(cl: &Claim, b: &mut Build, cfg: &Config) {
 
     b.emit_quad(cl.var("sign"), cl.var("sign"), cl.var("sign"), P - 1, 0, l, ell);
     b.emit_quad(cl.var("sign"), cl.var("x"), cl.var("C"), P - 1, 0, l, ell);
+    // sign = C·inv_x: sign = 0 is forced at x = 0 (protocol review F04)
+    b.emit_quad(cl.var("C"), cl.var("inv_x"), cl.var("sign"), P - 1, 0, l, ell);
     b.emit_quad(cl.var("g"), cl.var("inv_g"), cl.var("is_high"), P - 1, 0, l, ell);
     b.emit_quad(cl.var("is_high"), cl.var("g"), cl.var("g"), P - 1, 0, l, ell);
     b.emit_quad(cl.var("is_high"), cl.var("is_high"), cl.var("is_high"), P - 1, 0, l, ell);
     b.emit_quad(cl.var("is_high"), cl.var("y"), cl.var("mux_a"), P - 1, 0, l, ell);
     b.emit_quad(cl.var("is_high"), cl.var("output_sat"), cl.var("mux_b"), P - 1, 0, l, ell);
-    for (var, z, tbl) in [("a_0", "z_a0", "range_b"), ("a_2", "z_a2", "range_w2"),
-                          ("a_3", "z_a3", "range_w3"), ("a_4", "z_a4", "range_w4")] {
+    // every magnitude word is ranged, a_1 included (protocol review F03)
+    for (var, z, tbl) in [("a_0", "z_a0", "range_b"), ("a_1", "z_a1", "range_a1"),
+                          ("a_2", "z_a2", "range_w2"), ("a_3", "z_a3", "range_w3"),
+                          ("a_4", "z_a4", "range_w4")] {
         b.emit_quad(cl.var(var), cl.var(z), cl.var(z),
             (P - cl.table(tbl).alpha) % P, P - 1, l, ell);
     }
@@ -764,11 +772,17 @@ fn compile_softmax(cl: &Claim, b: &mut Build, cfg: &Config) {
     let base = b.nxt;
     let mut cur = base;
     if causal {
+        assert!(seq * h == bsz && seq <= m, "causal softmax needs B = SEQ·H with SEQ ≤ M");
         b.emit_causal_id(cl.var("z"), cur, m, h, 1, ell);
         b.emit_causal_c2(cl.var("c2"), cur, h, P - 1, ell);
         b.emit_causal_id(cl.var("x"), cur, m, h, 1, ell);
         if sat { b.emit_causal_id(cl.var("z_high"), cur, m, h, z_max % P, ell); }
         cur += l_u;
+        // masked cells: z = 0, so the lookup key is exactly Z_max and the
+        // doubled table's zero half answers (protocol review F01).
+        let l_m: usize = h * (0..seq).map(|i| m - 1 - i).sum::<usize>();
+        b.emit_causal_masked_id(cl.var("z"), cur, m, h, 1, ell);
+        cur += l_m;
     } else {
         b.emit_id(cl.var("z"), cur, 1, ell);
         b.emit_stride_o2m(cl.var("c2"), cur, m, P - 1, ell);
@@ -1100,8 +1114,19 @@ fn compile_info(cl: &Claim, b: &mut Build, cfg: &Config) {
     let surprisal = cl.var("surprisal");
     let z_dw = cl.var_list("z_dw");
     let z_rem = cl.var("z_rem");
+    let zw = cl.var_list("zw");
+    let z_zw = cl.var_list("z_zw");
     let range_wd = cl.table("range_wd");
     let range_k = cl.table("range_k");
+    // The public size bound (protocol review F05/F06): z_o is ranged below
+    // 2^(wb·|zw|) by its words and b below K by the Pow lookup, so the
+    // cross-position sum of T positions cannot wrap the field.
+    let k_pow = cl.scalar("K") as u128;
+    assert_eq!(range_wd.t_len, 1usize << wb, "info: range_wd is not the 2^wb table");
+    assert!(!zw.is_empty() && zw.len() == z_zw.len(), "info: z_o words missing");
+    let z_o_max = 1u128 << (wb * zw.len());
+    assert!((t as u128) * (z_o_max + k_pow) < P as u128,
+            "info: surprisal sum over T={t} positions could wrap the field");
     let neg1 = P - 1;
     let ones = vec![1u64; v];
     let base = b.nxt;
@@ -1125,12 +1150,19 @@ fn compile_info(cl: &Claim, b: &mut Build, cfg: &Config) {
     b.emit_id(z_o, ceil, k % P, ell);
     b.emit_id(gap_o2, ceil, neg1, ell);
     b.emit_id(rem, ceil, neg1, ell);
+    // z_o - Sum_j 2^(wb*j) zw_j = 0
+    let zdec = base + 4 * t;
+    b.emit_id(z_o, zdec, 1, ell);
+    for (j, zwj) in zw.iter().enumerate() {
+        let coef = (P - ((1u64 << (wb * j)) % P)) % P;        // -2^(wb*j)
+        b.emit_id(*zwj, zdec, coef, ell);
+    }
     // surprisal - z_o - b = 0
-    let sur = base + 4 * t;
+    let sur = base + 5 * t;
     b.emit_id(surprisal, sur, 1, ell);
     b.emit_id(z_o, sur, neg1, ell);
     b.emit_id(bb, sur, neg1, ell);
-    b.nxt = base + 5 * t;
+    b.nxt = base + 6 * t;
     // range LogUp quads: (alpha - x)*z = 1
     let na_wd = (P - range_wd.alpha) % P;
     for (dwj, zj) in dw.iter().zip(z_dw.iter()) {
@@ -1138,6 +1170,9 @@ fn compile_info(cl: &Claim, b: &mut Build, cfg: &Config) {
     }
     let na_k = (P - range_k.alpha) % P;
     b.emit_quad(rem, z_rem, z_rem, na_k, neg1, t, ell);
+    for (zwj, zj) in zw.iter().zip(z_zw.iter()) {
+        b.emit_quad(*zwj, *zj, *zj, na_wd, neg1, t, ell);
+    }
 }
 
 fn settle_table(t: &Table, b: &mut Build, ell: usize) {
