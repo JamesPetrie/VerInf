@@ -15,6 +15,7 @@ ACCEPTs:
 
 Needs a card.  Run:  python prover/tests/test_protocol_review_negatives.py
 """
+import os
 import sys
 import pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -186,10 +187,17 @@ def test_softmax_honest_accepts():
 
 def test_softmax_honest_accepts_without_saturation():
     # the masked pin applies to every causal claim: row [10, 0] has shift 10,
-    # and its masked cell must commit z = 0, not the shift
-    acc, msg = _verdict(_softmax_tape(saturate=False, scores=(10, 0, 0, 0)))
-    assert acc, f"honest causal softmax, no saturation: expected ACCEPT ({msg})"
-    print("    honest causal softmax without saturation: ACCEPT")
+    # and its masked cell must commit z = 0, not the shift — from BOTH witness
+    # generators (the torch one is the default; LIGERO_GPU_SOFTMAX=0 is numpy)
+    import compute_fns as _cf
+    for gpu in (True, False):
+        _cf._GPU_SOFTMAX_ON = gpu
+        try:
+            acc, msg = _verdict(_softmax_tape(saturate=False, scores=(10, 0, 0, 0)))
+        finally:
+            _cf._GPU_SOFTMAX_ON = os.environ.get("LIGERO_GPU_SOFTMAX", "1") != "0"
+        assert acc, f"honest causal softmax, no saturation, gpu={gpu}: expected ACCEPT ({msg})"
+        print(f"    honest causal softmax without saturation (gpu generator={gpu}): ACCEPT")
 
 
 def test_f01_masked_cell_takes_the_weight():

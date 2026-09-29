@@ -680,7 +680,10 @@ def _softmax_witness_gpu(x_in_u64, *, B, M, s_x, s_c, s_y, T_A_gpu, T_B_gpu, Z_m
         out["mux_y_A"] = torch.where(is_high_b, yA_raw, z0).reshape(-1).view(torch.uint64)
         out["mux_y_B"] = torch.where(is_high_b, yB_raw, z0).reshape(-1).view(torch.uint64)
     else:
-        out["z"] = _to_field_gpu(z_2d.reshape(-1))
+        # signed z when not saturating; a masked cell's z is pinned to 0 by the
+        # compiled constraint (its key is then exactly Z_max, the zero half)
+        z_out = torch.where(mask_2d, z0, z_2d) if causal else z_2d
+        out["z"] = _to_field_gpu(z_out.reshape(-1))
     return out
 
 
