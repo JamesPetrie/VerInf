@@ -208,7 +208,10 @@ def _softmax_witness_vec(x_in_uint64, *,
         # inv_z_high: Fermat inv where z_high>0, 0 otherwise. Computed on GPU
         # (gl_inv_batched) by the caller since numpy can't do mod-P pow.
     else:
-        out["z"] = _to_field_np(z_2d.reshape(-1))                            # signed z when not saturating
+        # signed z when not saturating; a masked cell's z is pinned to 0 by the
+        # compiled constraint (its key is then exactly Z_max, the zero half)
+        z_out = np.where(mask_2d, np.int64(0), z_2d) if causal else z_2d
+        out["z"] = _to_field_np(z_out.reshape(-1))
     return out
 
 
@@ -319,32 +322,6 @@ class WitnessTensor:
     def __add__(self, b):    return self.tape.add(self, b)
 
 
-# Negative tests only: (claim class name, field) -> fn(honest tensor) -> tensor.
-# Applied to a claim's computed phase-1 witness before it is committed; the
-# phase-2 aux is then derived from the tampered values, so a tamper that keeps
-# every OTHER constraint satisfied isolates the one under test.
-WITNESS_TAMPER: dict = {}
-
-
-def _apply_witness_tamper(claim, outs):
-    if not WITNESS_TAMPER:
-        return outs
-    import dataclasses
-    if not dataclasses.is_dataclass(claim):
-        return outs
-    name = type(claim).__name__
-    for f in dataclasses.fields(claim):
-        v = getattr(claim, f.name)
-        # a list field (e.g. the surprisal words) is keyed per element: "dw[0]"
-        targets = ([(f"{f.name}[{j}]", vj) for j, vj in enumerate(v)]
-                   if isinstance(v, (list, tuple)) else [(f.name, v)])
-        for key, var in targets:
-            fn = WITNESS_TAMPER.get((name, key))
-            if fn is not None and isinstance(var, Variable) and var in outs:
-                outs[var] = fn(outs[var])
-    return outs
-
-
 class Tape:
     def __init__(self, cfg, silu_config: SiluConfig = SILU_TOY, lazy: bool = False,
                   time_ops: bool = False):
@@ -437,7 +414,7 @@ class Tape:
         # `resolved` drops out of scope before the next compute_fn call.
         resolved = {v: (val() if callable(val) else val)
                      for v, val in ((v, self.inputs[v]) for v in input_vars)}
-        outs = _apply_witness_tamper(claim, _compute_fns.COMPUTE_FNS[type(claim)](claim, resolved))
+        outs = _compute_fns.COMPUTE_FNS[type(claim)](claim, resolved)
         for v, t in outs.items():
             self.inputs[v] = t
         if side_effects is not None:
@@ -1491,7 +1468,6 @@ class Tape:
             else:
                 input_data = {v: fetch(v) for v in input_vars}
                 outs = _compute_fns.COMPUTE_FNS[type(claim)](claim, input_data)
-            outs = _apply_witness_tamper(claim, outs)
             for v, t in outs.items():
                 live[v] = t
             if side_effects is not None:

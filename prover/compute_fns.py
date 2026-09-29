@@ -39,8 +39,46 @@ from tape import _signed_floor_decomp, _to_signed_np, _to_field_np, _softmax_wit
 import numpy as np
 
 
+# Negative tests only: (claim class name, field or "field[j]") -> fn(honest
+# tensor) -> tensor, applied to a claim's computed phase-1 witness wherever it
+# is computed — eager tapes, the engine pass, and the prover's streaming
+# sweeps all dispatch through COMPUTE_FNS[...] — so the phase-2 aux is derived
+# from the tampered values and a tamper that keeps every OTHER constraint
+# satisfied isolates the one under test.
+WITNESS_TAMPER: dict = {}
+
+
+def _apply_witness_tamper(claim, outs):
+    import dataclasses
+    if not WITNESS_TAMPER or not dataclasses.is_dataclass(claim):
+        return outs
+    name = type(claim).__name__
+    for f in dataclasses.fields(claim):
+        v = getattr(claim, f.name)
+        targets = ([(f"{f.name}[{j}]", vj) for j, vj in enumerate(v)]
+                   if isinstance(v, (list, tuple)) else [(f.name, v)])
+        for key, var in targets:
+            fn = WITNESS_TAMPER.get((name, key))
+            if fn is not None and isinstance(var, Variable) and var in outs:
+                outs[var] = fn(outs[var])
+    return outs
+
+
+class _TamperingRegistry(dict):
+    """The compute dispatch table. With WITNESS_TAMPER empty it is a plain
+    dict; otherwise every looked-up compute fn applies the tamper to its
+    result."""
+    def __getitem__(self, key):
+        fn = super().__getitem__(key)
+        if not WITNESS_TAMPER:
+            return fn
+        def tampered(claim, *a, **kw):
+            return _apply_witness_tamper(claim, fn(claim, *a, **kw))
+        return tampered
+
+
 COMPUTE_FNS: Dict[type, Callable[[Any, Dict[Variable, torch.Tensor]],
-                                  Dict[Variable, torch.Tensor]]] = {}
+                                  Dict[Variable, torch.Tensor]]] = _TamperingRegistry()
 
 
 def add_compute(claim: AddClaim, live):

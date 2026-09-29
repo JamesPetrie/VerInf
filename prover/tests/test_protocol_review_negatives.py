@@ -28,7 +28,8 @@ import packets as _PK      # noqa: F401
 import max_claim as _MX    # noqa: F401
 import ui_claim as _UI     # noqa: F401
 from claims import SiluConfig, silu_tpos_tneg
-from tape import Tape, WITNESS_TAMPER
+from tape import Tape
+from compute_fns import WITNESS_TAMPER
 from ui_claim import InfoFinalizeClaim
 from unexplained_info import prove_unexplained_info
 from _rust_verify import rust_verify_tape
@@ -151,13 +152,13 @@ def test_f04_sign_at_zero():
 Z_MAX, S = 40000, 4096           # demo_maverick_block's causal softmax
 
 
-def _softmax_tape(tamper=False):
+def _softmax_tape(tamper=False, saturate=True, scores=(0, 0, 0, 0)):
     core._COSET_POWERS_K_CACHE.clear()
     tape = Tape(CFG, lazy=True)
-    # two query positions, one head, all scores zero: row 0 has one permitted
-    # cell (i = 0) and one masked cell (i = 1)
-    x = tape.commit("sc", _u64([0, 0, 0, 0]), (4,))
-    tape.softmax(x, M=2, s_x=S, s_c=S, s_y=S, Z_max=Z_MAX, saturate=True,
+    # two query positions, one head: row 0 has one permitted cell (i = 0) and
+    # one masked cell (i = 1); row 1 is fully permitted
+    x = tape.commit("sc", _u64(list(scores)), (4,))
+    tape.softmax(x, M=2, s_x=S, s_c=S, s_y=S, Z_max=Z_MAX, saturate=saturate,
                  Z_high_width=16, aux_chunk_width=24, causal=True, heads=1)
     if tamper:
         # Row 0 under shift c = Z_max: the permitted cell decomposes as
@@ -181,6 +182,14 @@ def test_softmax_honest_accepts():
     acc, msg = _verdict(_softmax_tape())
     assert acc, f"honest causal softmax: expected ACCEPT ({msg})"
     print("    honest causal softmax: ACCEPT")
+
+
+def test_softmax_honest_accepts_without_saturation():
+    # the masked pin applies to every causal claim: row [10, 0] has shift 10,
+    # and its masked cell must commit z = 0, not the shift
+    acc, msg = _verdict(_softmax_tape(saturate=False, scores=(10, 0, 0, 0)))
+    assert acc, f"honest causal softmax, no saturation: expected ACCEPT ({msg})"
+    print("    honest causal softmax without saturation: ACCEPT")
 
 
 def test_f01_masked_cell_takes_the_weight():
