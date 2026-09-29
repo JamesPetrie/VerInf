@@ -229,9 +229,9 @@ The prover's cost is governed by three quantities, each a polynomial in the cont
 
 $$
 \begin{aligned}
-W(S) &\approx 4.00{\times}10^{11} + 4.48{\times}10^{8}\ S + 40320\ S^2, \\
+W(S) &\approx 4.00{\times}10^{11} + 4.49{\times}10^{8}\ S + 40320\ S^2, \\
 L(S) &\approx 1.19{\times}10^{8} + 1.50{\times}10^{8}\ S + 13440\ S^2, \\
-Q(S) &\approx 5.93{\times}10^{7} + 1.54{\times}10^{8}\ S + 19200\ S^2.
+Q(S) &\approx 5.93{\times}10^{7} + 1.55{\times}10^{8}\ S + 19200\ S^2.
 \end{aligned}
 $$
 
@@ -329,9 +329,9 @@ Summing the per-claim contributions over the 48-layer model (24 dense, 24 MoE; $
 
 $$
 \begin{aligned}
-W(S) &\approx 4.00{\times}10^{11} + 4.48{\times}10^{8}\ S + 40320\ S^2, \\
+W(S) &\approx 4.00{\times}10^{11} + 4.49{\times}10^{8}\ S + 40320\ S^2, \\
 L(S) &\approx 1.19{\times}10^{8} + 1.50{\times}10^{8}\ S + 13440\ S^2, \\
-Q(S) &\approx 5.93{\times}10^{7} + 1.54{\times}10^{8}\ S + 19200\ S^2.
+Q(S) &\approx 5.93{\times}10^{7} + 1.55{\times}10^{8}\ S + 19200\ S^2.
 \end{aligned}
 $$
 

@@ -89,11 +89,12 @@ def rmsnorm(B, dd):                         # output-rescale ON, K=4 slack chunk
 def softmax(B, M):                          # saturate + causal ON
     B, M = Poly.lift(B), Poly.lift(M)
     BM = B * M
-    causal_F0 = B * (M + 1) * 0.5           # z-decomp shrinks to the triangle
-    return (15 * BM + 9 * B, causal_F0 + 4 * BM + 5 * B, 8 * BM + 3 * B)
+    # z-decomp over the B(M+1)/2 unmasked cells plus the z = 0 pin over the
+    # B(M-1)/2 masked cells: one linear per cell (protocol review F01)
+    return (15 * BM + 9 * B, 5 * BM + 5 * B, 8 * BM + 3 * B)
 
 
-def silu(L):       L = Poly.lift(L); return (23 * L, 7 * L, 12 * L)          # no rescale
+def silu(L):       L = Poly.lift(L); return (25 * L, 7 * L, 14 * L)          # no rescale; a_1 range + inv_x
 def hadamard(L):   L = Poly.lift(L); return (6 * L, 2 * L, 3 * L)            # rescale ON
 def rope(L):       L = Poly.lift(L); return (6 * L, 3 * L, 2 * L)            # rescale ON
 def add_(L):       L = Poly.lift(L); return (L, L, Poly())
@@ -219,7 +220,7 @@ nL = 48
 print("\nINTUITIVE APPROXIMATION (one cause dominates each term):")
 print("  S^2 term = ATTENTION ONLY (softmax + scores matmul are the only S^2 claims):")
 print(f"     W    c2 = {att[0].c[2]:.0f}   closed form 21*n_q*n_L = {21*H*nL}")
-print(f"     cids c2 = {att[1].c[2]:.0f}   6.5*n_q*n_L = {6.5*H*nL:.0f}")
+print(f"     cids c2 = {att[1].c[2]:.0f}   7*n_q*n_L = {7*H*nL}")
 print(f"     Q    c2 = {att[2].c[2]:.0f}   10*n_q*n_L = {10*H*nL}")
 print(f"  S term ~ COMMITTED EXPERTS (W: {exp[0].c[1]:.3g} = {100*exp[0].c[1]/totW.c[1]:.0f}% of the linear term)")
 print(f"     closed form 6*E*(2*dff_e+d)*n_moe = {6*E*(2*dff_e+d)*24}")
