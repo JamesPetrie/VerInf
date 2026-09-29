@@ -319,8 +319,19 @@ fn wc_verify(wc: &WcSection, trusted_identity: &[u8; 32], s_op: &[u8], s_bind: &
 the trusted identity".into());
     }
     if wc_c.len() != k_w { return Err("c length != K_w".into()); }
-    let mut widths: Vec<usize> =
-        wc.group_meta.keys().map(|w| w.parse().unwrap()).collect();
+    // group_meta is wire: a key that is not a canonical width, or a width
+    // with no p_trace / pi group, is a REJECT (the loops below index by
+    // `w.to_string()`, so the key must round-trip exactly).
+    let mut widths: Vec<usize> = Vec::with_capacity(wc.group_meta.len());
+    for k in wc.group_meta.keys() {
+        let w: usize = k.parse().map_err(|_| format!("group_meta key {k:?} is not a width"))?;
+        if w == 0 || w.to_string() != *k {
+            return Err(format!("group_meta key {k:?} is not a canonical width"));
+        }
+        if !p_trace.contains_key(k) { return Err(format!("width {w}: p_trace group missing")); }
+        if !pi.contains_key(k) { return Err(format!("width {w}: pi group missing")); }
+        widths.push(w);
+    }
     widths.sort();
     // the enrollment must cover exactly the claim set's bridged weights
     for &w in &widths {
@@ -833,6 +844,25 @@ mod wc_bridge_tests {
         let pins = verify(&section(&e, 12, false)).unwrap();
         let rho = protocol::op_vec(&[1; 32], 0, "rho-w1", 1)[0];
         assert_eq!(pins[0].1, (1..=16).map(|v| mul(v, rho)).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn malformed_group_meta_is_a_reject_not_a_panic() {
+        let e = enrolled();
+        let mut s = section(&e, 12, false);
+        s.group_meta = HashMap::from([("abc".to_string(), (2, 1))]);
+        assert!(verify(&s).unwrap_err().contains("not a width"));
+        s.group_meta = HashMap::from([("01".to_string(), (2, 1))]);
+        assert!(verify(&s).unwrap_err().contains("not a canonical width"));
+        s.group_meta = HashMap::from([("0".to_string(), (2, 1))]);
+        assert!(verify(&s).unwrap_err().contains("not a canonical width"));
+        // a width declared in group_meta with no p_trace / pi group
+        let mut s = section(&e, 12, false);
+        s.p_trace.clear();
+        assert!(verify(&s).unwrap_err().contains("p_trace group missing"));
+        let mut s = section(&e, 12, false);
+        s.pi.clear();
+        assert!(verify(&s).unwrap_err().contains("pi group missing"));
     }
 
     #[test]

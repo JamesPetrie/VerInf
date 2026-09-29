@@ -37,6 +37,7 @@ WRONG = "ab" * 32
 def _dump(tape, proof):
     fd, path = tempfile.mkstemp(suffix=".json")
     os.close(fd)
+    os.unlink(path)          # dump_proof refuses an existing file
     dump_proof(path, pr.claims_to_json(tape.claims, tape.cfg), None, proof, None, None)
     return path
 
@@ -157,6 +158,31 @@ def test_legacy_seed_path_never_feeds_the_bridge():
         acc, msg = _run(path, root_w, "-", wc_identity)
         assert not acc and "s_bind" in msg, f"bridge ran on file-supplied seeds: {msg}"
         print("    legacy seeds: bridge refused")
+    finally:
+        os.unlink(path)
+
+
+def test_malformed_group_meta_rejects_without_a_panic():
+    """A wire key that is not a canonical width, or a width with no fold
+    group, is a REJECT with its reason — a panic would exit without the
+    policy line."""
+    tape, proof, _ = _prove_with_flag()
+    path = _dump(tape, proof)
+    try:
+        def rename(doc):
+            k, v = next(iter(doc["wc"]["group_meta"].items()))
+            doc["wc"]["group_meta"] = {"0" + k: v}
+        _rewrite(path, rename)
+        acc, msg = _run(path, *_policy(proof))
+        assert not acc and "wc bridge REJECT" in msg and "canonical width" in msg, msg
+        path2 = _dump(tape, proof)
+        try:
+            _rewrite(path2, lambda doc: doc["wc"]["p_trace"].clear())
+            acc, msg = _run(path2, *_policy(proof))
+            assert not acc and "wc bridge REJECT" in msg and "p_trace group missing" in msg, msg
+        finally:
+            os.unlink(path2)
+        print("    non-canonical group_meta key / missing fold group: REJECT, no panic")
     finally:
         os.unlink(path)
 
