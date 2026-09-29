@@ -49,6 +49,7 @@ def _proof_file(tape=None):
     proof = tape.prove()
     fd, path = tempfile.mkstemp(suffix=".json")
     os.close(fd)
+    os.unlink(path)          # dump_proof refuses an existing file
     dump_proof(path, pr.claims_to_json(tape.claims, CFG), None, proof, None, None)
     return path, proof
 

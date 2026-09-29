@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from profiler.instrumented_prove import write_dump_policy
 from tools.check_dumped_proof import check
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "prover"))
-from proof_dump import estimated_bytes
+from proof_dump import dump_proof, estimated_bytes
 
 
 def _fixture(tmp_path, verdict="ACCEPT"):
@@ -64,11 +64,33 @@ def test_dump_estimate_includes_bridge_openings():
         paths_p1={0: []}, paths_p2={0: []},
         q_irs=one, q_lin=one, p_0=one, wc_bridge=None,
     )
-    without_bridge = estimated_bytes(proof, [0], u64_encoding="u64le-base64")
+    without_bridge = estimated_bytes(proof, u64_encoding="u64le-base64")
     opened = torch.zeros(100, dtype=torch.uint64)
     proof.wc_bridge = {"bridge": SimpleNamespace(
         p_trace={4: one}, pi={4: one}, c=[0], v=[0], eta_idx=[0],
         opened={0: opened}, paths={0: [(b"x" * 32, 0)]},
     )}
-    with_bridge = estimated_bytes(proof, [0], u64_encoding="u64le-base64")
+    with_bridge = estimated_bytes(proof, u64_encoding="u64le-base64")
     assert with_bridge - without_bridge >= 100 * 11 + 80
+
+
+def test_unreserved_dump_never_replaces_an_existing_proof(tmp_path):
+    """A second run to the same --dump-proof path is refused, as reserve_output
+    refuses it: the .policy.json and .verify.json beside a proof must never
+    describe a file that was silently replaced."""
+    one = torch.zeros(1, dtype=torch.uint64)
+    proof = SimpleNamespace(
+        blocks=["p1", "p2"], opened_p1={0: one}, opened_p2={0: one},
+        paths_p1={0: []}, paths_p2={0: []},
+        q_irs=one, q_lin=one, p_0=one, wc_bridge=None,
+    )
+    path = tmp_path / "mavp.bin"
+    path.write_bytes(b"an earlier proof")
+    with pytest.raises(FileExistsError, match="refusing to overwrite"):
+        dump_proof(str(path), None, None, proof, [0], None)
+    assert path.read_bytes() == b"an earlier proof"
+    path.unlink()
+    (tmp_path / "mavp.bin.part").write_bytes(b"a stale partial write")
+    with pytest.raises(FileExistsError, match="refusing to overwrite"):
+        dump_proof(str(path), None, None, proof, [0], None)
+    assert not path.exists()

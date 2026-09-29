@@ -89,7 +89,7 @@ def test_proof_write_is_atomic_and_space_checked():
     tmp = tempfile.mkdtemp()
     path = os.path.join(tmp, "proof.json")
     try:
-        need = estimated_bytes(proof, proof.Q_cols, 0)
+        need = estimated_bytes(proof, 0)
         assert need > 0
         dump_proof(path, None, None, proof, None, None)
         assert os.path.exists(path) and not os.path.exists(path + ".part"), \
@@ -133,8 +133,8 @@ def test_compact_wire_and_preproof_reservation():
     path = os.path.join(tmp, "proof.json")
     try:
         compact_need = estimated_bytes(
-            proof, proof.Q_cols, 0, u64_encoding="u64le-base64")
-        decimal_need = estimated_bytes(proof, proof.Q_cols, 0)
+            proof, 0, u64_encoding="u64le-base64")
+        decimal_need = estimated_bytes(proof, 0)
         assert compact_need < decimal_need
         part = reserve_output(path, compact_need + (1 << 20))
         dump_proof(path, None, None, proof, None, None,

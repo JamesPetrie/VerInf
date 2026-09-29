@@ -161,6 +161,7 @@ def _proof_bytes(tape, proof):
     from proof_dump import dump_proof
     fd, path = tempfile.mkstemp(suffix=".json")
     os.close(fd)
+    os.unlink(path)          # dump_proof refuses an existing file
     try:
         dump_proof(path, pr.claims_to_json(tape.claims, CFG), None, proof, None, None)
         with open(path, "rb") as f:

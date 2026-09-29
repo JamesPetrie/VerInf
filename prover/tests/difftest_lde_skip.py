@@ -26,7 +26,7 @@ def dump(force_codewords):
     try:
         tape = build()
         p = tape.prove(zk_seed=ZK)
-        fd, path = tempfile.mkstemp(suffix=".json"); os.close(fd)
+        fd, path = tempfile.mkstemp(suffix=".json"); os.close(fd); os.unlink(path)
         dump_proof(path, pr.claims_to_json(tape.claims, CFG), None, p, None, None)
         h = hashlib.sha256(open(path, "rb").read()).hexdigest()
         os.unlink(path)

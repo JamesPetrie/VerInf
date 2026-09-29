@@ -94,7 +94,7 @@ def proof_block_order(proof):
     return list(getattr(proof, "blocks", None) or ["p1", "p2"])
 
 
-def estimated_bytes(proof, Q, claims_bytes_len=0, *, u64_encoding="decimal"):
+def estimated_bytes(proof, claims_bytes_len=0, *, u64_encoding="decimal"):
     """A deliberately generous size estimate for the proof file.
 
     Values are u64 in decimal, at most 20 digits plus a separator; paths are
@@ -178,7 +178,7 @@ def dump_proof(path, claims_json, seeds, proof, Q, python_accept, *,
     # after four hours leaves a truncated file that looks like a proof; the
     # rename makes the final path appear only once the whole document is on
     # disk and fsynced.
-    need = estimated_bytes(proof, Q, len(claims_bytes or b""),
+    need = estimated_bytes(proof, len(claims_bytes or b""),
                            u64_encoding=u64_encoding)
     target_dir = os.path.dirname(os.path.abspath(path)) or "."
     part = path + ".part"
@@ -191,6 +191,12 @@ def dump_proof(path, claims_json, seeds, proof, Q, python_accept, *,
                 f"reserved proof file is {reserved/1e9:.1f} GB, but this proof "
                 f"needs about {need/1e9:.1f} GB")
     else:
+        # Same rule as reserve_output: a proof already at `path`, or a stale
+        # .part, is never silently replaced — its sidecars and receipt would
+        # then describe a file that no longer exists.
+        if os.path.exists(path) or os.path.exists(part):
+            raise FileExistsError(
+                f"refusing to overwrite proof output: {path!r} or its .part exists")
         free = shutil.disk_usage(target_dir).free
         if free < need:
             raise OSError(
