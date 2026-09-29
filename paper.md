@@ -230,7 +230,7 @@ The prover's cost is governed by three quantities, each a polynomial in the cont
 $$
 \begin{aligned}
 W(S) &\approx 4.00{\times}10^{11} + 4.48{\times}10^{8}\ S + 40320\ S^2, \\
-L(S) &\approx 1.19{\times}10^{8} + 1.50{\times}10^{8}\ S + 12480\ S^2, \\
+L(S) &\approx 1.19{\times}10^{8} + 1.50{\times}10^{8}\ S + 13440\ S^2, \\
 Q(S) &\approx 5.93{\times}10^{7} + 1.54{\times}10^{8}\ S + 19200\ S^2.
 \end{aligned}
 $$
@@ -311,8 +311,8 @@ Each claim type contributes to $W$, $L$, and $Q$ as a function of its size param
 |---|---|---|---|
 | matmul $(m,k,n,H)$ ⓡ | $6\ mHn + 3k$ | $2k + H + 2\ mHn$ | $k + 2\ mHn$ |
 | rmsnorm $(B,d)$ ⓡ | $7Bd + 82B$ | $17B + 2Bd$ | $3Bd + 42B$ |
-| softmax $(B,M)$ sat+causal | $15BM + 9B$ | $\tfrac{1}{2}B(M{+}1) + 4BM + 5B$ | $8BM + 3B$ |
-| silu $(N)$ | $23N$ | $7N$ | $12N$ |
+| softmax $(B,M)$ sat+causal | $15BM + 9B$ | $5BM + 5B$ | $8BM + 3B$ |
+| silu $(N)$ | $25N$ | $7N$ | $14N$ |
 | hadamard $(N)$ ⓡ | $6N$ | $2N$ | $3N$ |
 | rope $(N)$ ⓡ | $6N$ | $3N$ | $2N$ |
 | add $(N)$ | $N$ | $N$ | $0$ |
@@ -330,7 +330,7 @@ Summing the per-claim contributions over the 48-layer model (24 dense, 24 MoE; $
 $$
 \begin{aligned}
 W(S) &\approx 4.00{\times}10^{11} + 4.48{\times}10^{8}\ S + 40320\ S^2, \\
-L(S) &\approx 1.19{\times}10^{8} + 1.50{\times}10^{8}\ S + 12480\ S^2, \\
+L(S) &\approx 1.19{\times}10^{8} + 1.50{\times}10^{8}\ S + 13440\ S^2, \\
 Q(S) &\approx 5.93{\times}10^{7} + 1.54{\times}10^{8}\ S + 19200\ S^2.
 \end{aligned}
 $$
@@ -348,10 +348,10 @@ Both leading coefficients have closed forms, so the cost can be understood from 
 | per score cell | scores matmul | softmax | total | $\times\ n_q\ n_{\text{layers}}$ |
 |---|---|---|---|---|
 | $W$ | 6 | 15 | 21 | 40320 |
-| $L$ | 2 | 4½ | 6½ | 12480 |
+| $L$ | 2 | 5 | 7 | 13440 |
 | $Q$ | 2 | 8 | 10 | 19200 |
 
-The half in the softmax $L$ count is the causal mask: only the lower triangle of each $S \times S$ block is constrained, so that constraint family is $\tfrac{1}{2}\ n_q S^2$.
+The causal mask splits one softmax family in two: the lower triangle of each $S \times S$ block carries the shift definition and the upper triangle the zero pin, one constraint per cell between them.
 
 **The $S$ term is the committed experts.** Each MoE layer runs all $E$ experts, committed even though one fires (§3.3). Each expert is three matmuls on the shared $S$-token input with output sizes $S\ d_{\text{ff,exp}}$, $S\ d_{\text{ff,exp}}$, and $S\ d$, each carrying the $6\times$ rescale block, so $6\ S\ (2 d_{\text{ff,exp}} + d)$ per expert, and over $E$ experts and $n_{\text{moe}} = 24$ layers,
 
@@ -482,8 +482,8 @@ Each row records one public table: its contents, length, which claims query it, 
 | $\mathrm{range}_{9}$ | identity on $[0, 2^{9})$ | $2^{9}$ | RMSNorm $\boldsymbol{G}_2$ top chunks ($2B$) | $194\ S$ | $2^{-46.4}$ |
 | $\mathrm{range}_{10}$ | identity on $[0, 2^{10})$ | $2^{10}$ | RMSNorm $\boldsymbol{g}_{0h}$ top chunks ($2B$) | $194\ S$ | $2^{-46.4}$ |
 | $\mathrm{range}_{11}$ | identity on $[0, 2^{11})$ | $2^{11}$ | routing gap words ($3TE$); hidden-token select gap words ($2TV$, B.8); RMSNorm $\boldsymbol{g}_{1h}$ and slack top chunks ($4B$) | $413{,}700\ S$ | $2^{-35.4}$ |
-| $\mathrm{range}_{12}$ | identity on $[0, 2^{12})$ | $2^{12}$ | rescale low words (all ⓡ claims); surprisal slack words ($4$ per position) | $1{,}920\ S^2 + 71{,}190{,}852\ S$ | $2^{-27.9}$ |
-| $\mathrm{range}_{14}$ | identity on $[0, 2^{14})$ | $2^{14}$ | SiLU word $\boldsymbol{a}_4$ ($N$) | $786{,}432\ S$ | $2^{-34.4}$ |
+| $\mathrm{range}_{12}$ | identity on $[0, 2^{12})$ | $2^{12}$ | rescale low words (all ⓡ claims); surprisal slack words ($4$ per position) and quotient words ($2$ per position) | $1{,}920\ S^2 + 71{,}190{,}852\ S$ | $2^{-27.9}$ |
+| $\mathrm{range}_{14}$ | identity on $[0, 2^{14})$ | $2^{14}$ | SiLU words $\boldsymbol{a}_1, \boldsymbol{a}_4$ ($2N$) | $1{,}572{,}864\ S$ | $2^{-33.4}$ |
 | $\mathrm{range}_{16}$ | identity on $[0, 2^{16})$ | $2^{16}$ | softmax $\boldsymbol{z}_{\text{high}}$ ($n_q S^2$); SiLU $\boldsymbol{a}_2, \boldsymbol{a}_3$ ($2N$); RMSNorm 16-bit chunks ($17B$); surprisal remainder ($1$ per position) | $1{,}920\ S^2 + 1{,}574{,}514\ S$ | $2^{-32.3}$ |
 | $\mathrm{range}_{18}$ | identity on $[0, 2^{18})$ | $2^{18}$ | RMSNorm $\boldsymbol{S}_{\text{tot}}$ limbs and carry lows ($7B$) | $679\ S$ | $2^{-44.2}$ |
 | $\mathrm{range}_{20}$ | identity on $[0, 2^{20})$ | $2^{20}$ | surprisal argmax gaps ($V$ per position, alongside $\mathrm{Exp}$'s key bound) | $202{,}048\ S$ | $2^{-36.4}$ |
@@ -575,8 +575,9 @@ $$
 \texttt{decl} & \boldsymbol{z}_ {\text{high}} & \forall\ h, q, i & n_q S^2 & \cdot & \cdot \\
 \texttt{range} & \boldsymbol{z}_ {\text{high}}[h,q,i] \sqsubseteq \mathrm{range}_ {16} & \forall\ h, q, i & n_q S^2 & \cdot & n_q S^2 \\
 \texttt{lin} & \boldsymbol{z}[h,q,i] \leftarrow \boldsymbol{c}[h,q] - \boldsymbol{x}[h,q,i] - \mathrm{Z_{max}}\ \boldsymbol{z}_ {\text{high}}[h,q,i] & \forall\ h, q,\ i \le q & \tfrac12 n_q S(S{+}1) & \tfrac12 n_q S(S{+}1) & \cdot \\
-& \textit{free in key range; value-neutral} & & & & \\
+& \textit{masked cells: pinned to the zero half} & & & & \\
 \texttt{decl} & \boldsymbol{z}[h,q,i] & \forall\ h, q,\ i > q & \tfrac12 n_q S(S{-}1) & \cdot & \cdot \\
+\texttt{lin} & \boldsymbol{z}[h,q,i] == 0 & \forall\ h, q,\ i > q & \cdot & \tfrac12 n_q S(S{-}1) & \cdot \\
 \texttt{lookup} & \boldsymbol{e}_ 1[h,q,i] \leftarrow \mathrm{T_A}\big[\ \boldsymbol{z}[h,q,i] + \mathrm{Z_{max}} \cdot [[\ i > q \ ]] \ \big] & \forall\ h, q, i & 3 n_q S^2 & n_q S^2 & n_q S^2 \\
 \texttt{lookup} & \boldsymbol{e}_ 2[h,q,i] \leftarrow \mathrm{T_B}\big[\ \boldsymbol{z}[h,q,i] + \mathrm{Z_{max}} \cdot [[\ i > q \ ]] \ \big] & \forall\ h, q, i & 3 n_q S^2 & n_q S^2 & n_q S^2 \\
  & \textit{--- saturate the tail ---} & & & & \\
@@ -597,13 +598,13 @@ $$
 \texttt{range} & \boldsymbol{r}_ {\text{lo}}[h,q] \sqsubseteq \mathrm{range}_ {24}, \quad \boldsymbol{r}_ {\text{hi}}[h,q] \sqsubseteq \mathrm{range}_ {24} & \forall\ h, q & 2 n_q S & \cdot & 2 n_q S \\
 \texttt{lin} & \boldsymbol{s}_ 1[h,q] + \boldsymbol{r}_ {\text{lo}}[h,q] == \mathrm{s_y} & \forall\ h, q & \cdot & n_q S & \cdot \\
 \texttt{lin} & \boldsymbol{r}_ {\text{hi}}[h,q] - \boldsymbol{s}_ 2[h,q] == -(\mathrm{s_y} + 1) & \forall\ h, q & \cdot & n_q S & \cdot \\
-\textit{totals} & & & 15\ n_q S^2 + 9\ n_q S & \tfrac12 n_q S(S{+}1) + 4\ n_q S^2 + 5\ n_q S & 8\ n_q S^2 + 3\ n_q S \\
+\textit{totals} & & & 15\ n_q S^2 + 9\ n_q S & 5\ n_q S^2 + 5\ n_q S & 8\ n_q S^2 + 3\ n_q S \\
 \end{array}
 $$
 
-The totals row matches the emitted counts and A.1's row at $B = n_q S$, $M = S$. The half-terms are the causal filter: the definition line and the complement declaration split each head's $S^2$ cells into $\tfrac12 S(S{+}1)$ unmasked and $\tfrac12 S(S{-}1)$ masked.
+The totals row matches the emitted counts and A.1's row at $B = n_q S$, $M = S$. The half-terms are the causal filter: the definition line and the masked pin split each head's $S^2$ cells into $\tfrac12 S(S{+}1)$ unmasked and $\tfrac12 S(S{-}1)$ masked, one linear constraint per cell between them.
 
-**Soundness (Lemma B.3).** The declarations are $\boldsymbol{c}$, $\boldsymbol{z}_{\text{high}}$, the masked $\boldsymbol{z}$, $\boldsymbol{inv}$, $\boldsymbol{r}_{\text{lo}}$, $\boldsymbol{r}_{\text{hi}}$. $\boldsymbol{z}_{\text{high}}$: given $\boldsymbol{c}$, the pair $(\boldsymbol{z}, \boldsymbol{z}_{\text{high}})$ is unique on unmasked cells by Lemma B.1a, $\boldsymbol{z}$'s window from the lookup key range and $\boldsymbol{z}_{\text{high}}$'s from its range pin; the width condition spans $\mathrm{Z_{max}} \cdot 2^{16} \approx 2^{31.3} \ll P$. The masked $\boldsymbol{z}$: for $i > q$ the lookup key lies in the zero half, so $\boldsymbol{e}_1 = \boldsymbol{e}_2 = 0$ whatever value is committed; the freedom is value-neutral, and by the same reading token $i$ contributes nothing to row $q$'s sums, outputs, or shift. Causality then holds globally by induction: every attention claim carries the filter $i \le q$ in its key, and every other claim in the graph is position-local, so position $q$'s logits depend only on tokens $\le q$ (the position-locality of the non-attention claims is a claim-graph fact the audit of §7.2 confirms). $\boldsymbol{inv}$: at $\boldsymbol{z}_{\text{high}} \neq 0$ the flag constraints force $\boldsymbol{t} = 1$, $\boldsymbol{inv} = 1/\boldsymbol{z}_{\text{high}}$, unique; at $\boldsymbol{z}_{\text{high}} = 0$ they force $\boldsymbol{t} = 0$ and leave $\boldsymbol{inv}$ free, value-neutral. The slacks: fixed by their equalities once $\boldsymbol{s}_1, \boldsymbol{s}_2$ are, non-negative by their range pins, so the pins state $\boldsymbol{s}_1(\boldsymbol{c}) \le \mathrm{s_y}$ and $\boldsymbol{s}_2(\boldsymbol{c}) \ge \mathrm{s_y} + 1$. For $\boldsymbol{c}$: the lookups bound every unmasked key, so $\boldsymbol{c} \ge \max_{i \le q} \boldsymbol{x}[h,q,i]$; the tables are bit-identical up to $\delta$ and reach zero before $\mathrm{Z_{max}}$ (registry), so a saturated cell equals what an unbounded table would return and $\boldsymbol{s}_2(\boldsymbol{c}) = \boldsymbol{s}_1(\boldsymbol{c} - \delta)$ over the muxed sums as exact integers; $\boldsymbol{s}_1$ is monotone non-increasing in $\boldsymbol{c}$; hence exactly one integer $\boldsymbol{c}$ satisfies both pins. Overflow: the rejecting case of §3.6 at the bracket, honest-fit $S\ \mathrm{s_y} \lesssim 2^{24}$ limiting $S \lesssim 4096$ at $\mathrm{s_y} = 2^{12}$, all checked values below $2^{24} \ll P$; elsewhere the accepting case.
+**Soundness (Lemma B.3).** The declarations are $\boldsymbol{c}$, $\boldsymbol{z}_{\text{high}}$, the masked $\boldsymbol{z}$, $\boldsymbol{inv}$, $\boldsymbol{r}_{\text{lo}}$, $\boldsymbol{r}_{\text{hi}}$. $\boldsymbol{z}_{\text{high}}$: given $\boldsymbol{c}$, the pair $(\boldsymbol{z}, \boldsymbol{z}_{\text{high}})$ is unique on unmasked cells by Lemma B.1a, $\boldsymbol{z}$'s window from the lookup key range and $\boldsymbol{z}_{\text{high}}$'s from its range pin; the width condition spans $\mathrm{Z_{max}} \cdot 2^{16} \approx 2^{31.3} \ll P$. The masked $\boldsymbol{z}$: for $i > q$ the pin fixes $\boldsymbol{z} = 0$, so the lookup key is exactly $\mathrm{Z_{max}}$, whose entry is zero in both tables, and $\boldsymbol{e}_1 = \boldsymbol{e}_2 = 0$; token $i$ contributes nothing to row $q$'s sums, outputs, or shift. The pin is load-bearing: the lookup bounds the key $\boldsymbol{z} + \mathrm{Z_{max}}$ to $[0, 2\mathrm{Z_{max}})$ and not $\boldsymbol{z}$ itself, so an unpinned masked $\boldsymbol{z} = -\mathrm{Z_{max}}$ would read $\mathrm{T_A}[0]$ and hand the row's weight to a future token; an earlier version of this listing left the masked $\boldsymbol{z}$ free and called the freedom value-neutral, which was false. Causality then holds globally by induction: every attention claim carries the filter $i \le q$ in its key, and every other claim in the graph is position-local, so position $q$'s logits depend only on tokens $\le q$ (the position-locality of the non-attention claims is a claim-graph fact the audit of §7.2 confirms). $\boldsymbol{inv}$: at $\boldsymbol{z}_{\text{high}} \neq 0$ the flag constraints force $\boldsymbol{t} = 1$, $\boldsymbol{inv} = 1/\boldsymbol{z}_{\text{high}}$, unique; at $\boldsymbol{z}_{\text{high}} = 0$ they force $\boldsymbol{t} = 0$ and leave $\boldsymbol{inv}$ free, value-neutral. The slacks: fixed by their equalities once $\boldsymbol{s}_1, \boldsymbol{s}_2$ are, non-negative by their range pins, so the pins state $\boldsymbol{s}_1(\boldsymbol{c}) \le \mathrm{s_y}$ and $\boldsymbol{s}_2(\boldsymbol{c}) \ge \mathrm{s_y} + 1$. For $\boldsymbol{c}$: the lookups bound every unmasked key, so $\boldsymbol{c} \ge \max_{i \le q} \boldsymbol{x}[h,q,i]$; the tables are bit-identical up to $\delta$ and reach zero before $\mathrm{Z_{max}}$ (registry), so a saturated cell equals what an unbounded table would return and $\boldsymbol{s}_2(\boldsymbol{c}) = \boldsymbol{s}_1(\boldsymbol{c} - \delta)$ over the muxed sums as exact integers; $\boldsymbol{s}_1$ is monotone non-increasing in $\boldsymbol{c}$; hence exactly one integer $\boldsymbol{c}$ satisfies both pins. Overflow: the rejecting case of §3.6 at the bracket, honest-fit $S\ \mathrm{s_y} \lesssim 2^{24}$ limiting $S \lesssim 4096$ at $\mathrm{s_y} = 2^{12}$, all checked values below $2^{24} \ll P$; elsewhere the accepting case.
 
 **Scope.** The claim supports index-predicate masks whose predicate implies $i \le q$, compiled in as public structure; a sliding window, $q - \mathrm{w} \lt i \le q$, is the worked example, and preserves the causality reading since the upper edge is unchanged. Arbitrary mask inputs are out of scope: admitting one would replace the syntactic causality check with a per-deployment audit of mask support, reopening the obligation the fixed predicate discharges. The non-causal form is the empty predicate with an undoubled table. A counting remark: the definition line's extent is $\sum_q (q{+}1) = S(S{+}1)/2$ per head, the diagonal $i = q$ included, which is A.1's $+1$.
 
@@ -690,11 +691,14 @@ $$
 \texttt{decl} & \boldsymbol{sign} & \forall\ n & N & \cdot & \cdot \\
 \texttt{quad} & \boldsymbol{sign}[n]^2 == \boldsymbol{sign}[n] & \forall\ n & \cdot & \cdot & N \\
 \texttt{quad} & \boldsymbol{C}[n] \leftarrow \boldsymbol{sign}[n] \cdot \boldsymbol{x}[n] & \forall\ n & N & \cdot & N \\
+& \textit{free at } \boldsymbol{sign} = 0 \textit{; value-neutral} & & & & \\
+\texttt{decl} & \boldsymbol{inv}_ x & \forall\ n & N & \cdot & \cdot \\
+\texttt{quad} & \boldsymbol{C}[n] \cdot \boldsymbol{inv}_ x[n] == \boldsymbol{sign}[n] & \forall\ n & \cdot & \cdot & N \\
 \texttt{lin} & \boldsymbol{mag}[n] \leftarrow \boldsymbol{x}[n] - 2\ \boldsymbol{C}[n] & \forall\ n & N & N & \cdot \\
  & \textit{--- magnitude words ---} & & & & \\
 & \textit{magnitude words} & & & & \\
 \texttt{decl} & \boldsymbol{a}_ 0,\ \boldsymbol{a}_ 1,\ \boldsymbol{a}_ 2,\ \boldsymbol{a}_ 3,\ \boldsymbol{a}_ 4 & \forall\ n & 5N & \cdot & \cdot \\
-\texttt{range} & \boldsymbol{a}_ 0[n] \sqsubseteq \mathrm{range}_ {2}, \quad \boldsymbol{a}_ 2[n] \sqsubseteq \mathrm{range}_ {16}, \quad \boldsymbol{a}_ 3[n] \sqsubseteq \mathrm{range}_ {16}, \quad \boldsymbol{a}_ 4[n] \sqsubseteq \mathrm{range}_ {14} & \forall\ n & 4N & \cdot & 4N \\
+\texttt{range} & \boldsymbol{a}_ 0[n] \sqsubseteq \mathrm{range}_ {2}, \quad \boldsymbol{a}_ 1[n] \sqsubseteq \mathrm{range}_ {14}, \quad \boldsymbol{a}_ 2[n] \sqsubseteq \mathrm{range}_ {16}, \quad \boldsymbol{a}_ 3[n] \sqsubseteq \mathrm{range}_ {16}, \quad \boldsymbol{a}_ 4[n] \sqsubseteq \mathrm{range}_ {14} & \forall\ n & 5N & \cdot & 5N \\
 \texttt{lin} & \boldsymbol{mag}[n] == \boldsymbol{a}_ 0[n] + \mathrm{w_{bin}}\ \boldsymbol{a}_ 1[n] + 2^{16} \boldsymbol{a}_ 2[n] + 2^{32} \boldsymbol{a}_ 3[n] + 2^{48} \boldsymbol{a}_ 4[n] & \forall\ n & \cdot & N & \cdot \\
  & \textit{--- saturation flag ---} & & & & \\
 \texttt{lin} & \boldsymbol{g}[n] \leftarrow 2^{16} \boldsymbol{a}_ 2[n] + 2^{32} \boldsymbol{a}_ 3[n] + 2^{48} \boldsymbol{a}_ 4[n] & \forall\ n & N & N & \cdot \\
@@ -710,13 +714,13 @@ $$
 \texttt{quad} & \boldsymbol{mux}_ a[n] \leftarrow \boldsymbol{t}[n] \cdot \boldsymbol{y}[n] & \forall\ n & N & \cdot & N \\
 \texttt{quad} & \boldsymbol{mux}_ b[n] \leftarrow \boldsymbol{t}[n] \cdot \boldsymbol{sat}[n] & \forall\ n & N & \cdot & N \\
 \texttt{lin} & \boldsymbol{out}[n] \leftarrow \boldsymbol{y}[n] - \boldsymbol{mux}_ a[n] + \boldsymbol{mux}_ b[n] & \forall\ n & N & N & \cdot \\
-\textit{totals} & & & 23N & 7N & 12N \\
+\textit{totals} & & & 25N & 7N & 14N \\
 \end{array}
 $$
 
 The totals row matches A.1's SiLU row exactly.
 
-**Soundness (Lemma B.5).** The declarations are $\boldsymbol{sign}$, the words, and $\boldsymbol{inv}$. The words are pinned by the tie with Lemma B.1a, the lookup bounding $\boldsymbol{a}_1$; the maximum recomposable magnitude is exactly $2^{62} - 1$ (widths $2, 14, 16, 16, 14$ at strides $1, 4, 2^{16}, 2^{32}, 2^{48}$). With $\boldsymbol{sign}$ boolean and $\boldsymbol{C} = \boldsymbol{sign}\cdot \boldsymbol{x}$, the two candidate $(\boldsymbol{sign}, \boldsymbol{mag})$ pairs for a given $\boldsymbol{x}$ are $(0, \boldsymbol{x})$ and $(1, P - \boldsymbol{x})$; since $\boldsymbol{x} + (P - \boldsymbol{x}) = P \gt 2\ (2^{62} - 1)$, at most one representative fits the bound, so the sign is unique. $\boldsymbol{inv}$: at $\boldsymbol{g} \neq 0$ the flag constraints force $\boldsymbol{t} = 1$ and $\boldsymbol{inv} = 1/\boldsymbol{g}$, unique; at $\boldsymbol{g} = 0$ they force $\boldsymbol{t} = 0$ and leave $\boldsymbol{inv}$ free, value-neutral. Everything else is an arrow: the flag, the mux, and the output follow linearly. Overflow: the decomposition is the rejecting case of §3.6; the saturated path returns $\boldsymbol{x}$ or $0$ exactly.
+**Soundness (Lemma B.5).** The declarations are $\boldsymbol{sign}$, the words, $\boldsymbol{inv}_x$, and $\boldsymbol{inv}$. The words are pinned by the tie with Lemma B.1a, every word range-checked, $\boldsymbol{a}_1$ included: the paired lookup bounds the key $2^{14}\boldsymbol{sign} + \boldsymbol{a}_1$ and not $\boldsymbol{a}_1$ itself, so without its own range line a word of $2^{14}$ under $\boldsymbol{sign} = 0$, or $-1$ under $\boldsymbol{sign} = 1$, reads the other branch with every other constraint satisfied; the maximum recomposable magnitude is exactly $2^{62} - 1$ (widths $2, 14, 16, 16, 14$ at strides $1, 4, 2^{16}, 2^{32}, 2^{48}$). With $\boldsymbol{sign}$ boolean and $\boldsymbol{C} = \boldsymbol{sign}\cdot \boldsymbol{x}$, the two candidate $(\boldsymbol{sign}, \boldsymbol{mag})$ pairs for a given $\boldsymbol{x}$ are $(0, \boldsymbol{x})$ and $(1, P - \boldsymbol{x})$; since $\boldsymbol{x} + (P - \boldsymbol{x}) = P \gt 2\ (2^{62} - 1)$, at most one representative fits the bound, so the sign is unique for $\boldsymbol{x} \neq 0$. At $\boldsymbol{x} = 0$ both signs give zero magnitude and read different entries ($\mathrm{silu}[0] = 1$ and $\mathrm{silu}[2^{14}] = -1$ at the registry's bin centres), so the sign there is pinned by $\boldsymbol{C} \cdot \boldsymbol{inv}_x = \boldsymbol{sign}$: $\boldsymbol{C} = 0$ forces $\boldsymbol{sign} = 0$. $\boldsymbol{inv}_x$: forced to $1/\boldsymbol{x}$ when $\boldsymbol{sign} = 1$, free and value-neutral when $\boldsymbol{sign} = 0$. $\boldsymbol{inv}$: at $\boldsymbol{g} \neq 0$ the flag constraints force $\boldsymbol{t} = 1$ and $\boldsymbol{inv} = 1/\boldsymbol{g}$, unique; at $\boldsymbol{g} = 0$ they force $\boldsymbol{t} = 0$ and leave $\boldsymbol{inv}$ free, value-neutral. Everything else is an arrow: the flag, the mux, and the output follow linearly. Overflow: the decomposition is the rejecting case of §3.6; the saturated path returns $\boldsymbol{x}$ or $0$ exactly.
 
 ### B.6 Mixture-of-experts routing and combine
 
@@ -744,10 +748,10 @@ $$
 \texttt{lin} & \boldsymbol{r}_ {\text{chosen}}[t] \leftarrow 2^{-L}\big(\boldsymbol{r}^{\ast}[t] - \textstyle\sum_{e} (E{-}1{-}e)\ \boldsymbol{m}[t,e]\big) & \forall\ t & T & T & \cdot \\
 \textit{routing totals} & & & 10TE + 2T & 3TE + 3T & 5TE \\
 \hline
-\texttt{chal} & \rho & \forall\ f & \cdot & \cdot & \cdot \\
  & \textit{--- combine ---} & & & & \\
-& \textit{the combined output} & & & & \\
+& \textit{the combined output, committed before the challenge} & & & & \\
 \texttt{decl} & \boldsymbol{y} & \forall\ t, f & TF & \cdot & \cdot \\
+\texttt{chal} & \rho & \forall\ f & \cdot & \cdot & \cdot \\
 \texttt{lin} & \boldsymbol{m}_ {\text{em}}[e,t] \leftarrow \boldsymbol{m}[t,e] & \forall\ e, t & ET & ET & \cdot \\
 \texttt{lin} & \boldsymbol{s}[e,t] \leftarrow \textstyle\sum_{f} \boldsymbol{X}_ e[t,f]\ \rho[f] & \forall\ e, t & ET & ET & \cdot \\
 \texttt{quad} & \boldsymbol{ms}[e,t] \leftarrow \boldsymbol{m}_ {\text{em}}[e,t] \cdot \boldsymbol{s}[e,t] & \forall\ e, t & ET & \cdot & ET \\
@@ -804,16 +808,19 @@ $$
 \texttt{range} & \boldsymbol{d}_ w[n] \sqsubseteq \mathrm{range}_ {12} & \forall\ n & 4 & \cdot & 4 \\
 \texttt{lin} & \boldsymbol{d} == \textstyle\sum_{n \in [4]} 2^{12n}\ \boldsymbol{d}_ w[n] & & \cdot & 1 & \cdot \\
 \texttt{lin}\ \le & \boldsymbol{a} + \boldsymbol{d} == \boldsymbol{pw} & & \cdot & 1 & \cdot \\
-& \textit{ceiling remainder} & & & & \\
+& \textit{ceiling remainder and quotient words} & & & & \\
 \texttt{decl} & \boldsymbol{rem} & & 1 & \cdot & \cdot \\
 \texttt{range} & \boldsymbol{rem} \sqsubseteq \mathrm{range}_ {16} & & 1 & \cdot & 1 \\
 \texttt{lin} & \boldsymbol{z}_ o \leftarrow \mathrm{k}^{-1}(\boldsymbol{g}_ 2 + \boldsymbol{rem}) & & 1 & 1 & \cdot \\
+\texttt{decl} & \boldsymbol{z}_ w & \forall\ n \in [2] & 2 & \cdot & \cdot \\
+\texttt{range} & \boldsymbol{z}_ w[n] \sqsubseteq \mathrm{range}_ {12} & \forall\ n & 2 & \cdot & 2 \\
+\texttt{lin} & \boldsymbol{z}_ o == \textstyle\sum_{n \in [2]} 2^{12n}\ \boldsymbol{z}_ w[n] & & \cdot & 1 & \cdot \\
 \texttt{lin} & \boldsymbol{surprisal}[t] \leftarrow \boldsymbol{z}_ o + \boldsymbol{b} & & 1 & 1 & \cdot \\
 \hline
 {} & \textit{--- across positions ---} & & & & \\
 \texttt{lin} & \boldsymbol{S}_ z \leftarrow \textstyle\sum_{t \in \text{scored}} \boldsymbol{surprisal}[t] & & 1 & 1 & \cdot \\
 \texttt{lin} & \boldsymbol{S}_ z == \text{the revealed public value} & & \cdot & 1 & \cdot \\
-\textit{totals per position} & & & 9V + 22 & 2V + 13 & 6V + 7 \\
+\textit{totals per position} & & & 9V + 26 & 2V + 14 & 6V + 9 \\
 \end{array}
 $$
 
@@ -821,7 +828,7 @@ The output tokens enter only as the committed stream $\boldsymbol{o}$ consumed b
 
 The totals row sums the listing per position; the $V$-length families dominate at $9V$ slots. The implementation additionally carries a negated copy of the gap family ($V$ slots and $V$ linears) and realizes the cross-position sum as chained adds over the scored positions. All of this machinery is excluded from the cost model by construction (A.6); it is about 0.1% of the per-token witness.
 
-**Soundness (Lemma B.7, one-sided).** The declarations are $\boldsymbol{A}$, $\boldsymbol{O}$, $\boldsymbol{b}$, $\boldsymbol{d}$ with its words, and $\boldsymbol{rem}$. $\boldsymbol{O}$ is pinned uniquely by booleanity, cardinality, and the index binding: a one-hot vector with $\sum_i i\ \boldsymbol{O}[i] = \boldsymbol{o}[t]$ is exactly the indicator of $\boldsymbol{o}[t]$. $\boldsymbol{A}$ with the gap non-negativity forces $\boldsymbol{v}^{\ast} = \max_i \boldsymbol{\ell}[i]$: any non-maximal selection makes some $\boldsymbol{gap}[i]$ negative, which the gap range and the $\mathrm{Exp}$ lookup's key range both exclude. $\boldsymbol{A}$ itself is not unique when maximal logits tie, and no tiebreak is imposed; the freedom is value-neutral, since every valid selection yields the same $\boldsymbol{v}^{\ast}$, hence the same gaps, the same $\boldsymbol{e}$, and the same reported value, so it is a permitted downstream freedom under §7.2's one-sided rule (it neither inflates nor deflates). The remaining freedom is $\boldsymbol{b}$, and every free direction inflates. Each table entry $\boldsymbol{e}[i]$ rounds the true exponential up and is floored at one, so $\boldsymbol{a}$ over-counts the true normalizer; $\mathrm{Pow}$ rounds down, so the one-sided pin $\boldsymbol{a} \le \mathrm{Pow}[\boldsymbol{b}]$ forces $\boldsymbol{b} \ge \mathrm{s_b} \ln(\boldsymbol{a}/\mathrm{s_y})$ with no fractional escape, and choosing $\boldsymbol{b}$ above the least valid index only raises the reported value; $\boldsymbol{z}_o$ is a ceiling, its slack $\boldsymbol{d}$ fixed by the pin once $\boldsymbol{a}$ and $\boldsymbol{pw}$ are and non-negative by its decomposition. With $Q(o) = \boldsymbol{e}_o/\boldsymbol{a}$, a genuine distribution since $\boldsymbol{a}$ normalizes the committed table values exactly, $\boldsymbol{z}_o + \boldsymbol{b} \ge \mathrm{s_b}(-\ln Q(o))$ follows term by term, so $\boldsymbol{S}_z$ upper-bounds the true surprisal sum and a poor witness penalizes only the prover. Two freedoms need field arguments rather than integer ones. The word decomposition of $\boldsymbol{d}$ is safe by width: at four $12$-bit words against $d_{\max} = V \mathrm{s_y}$ the maximum recomposable value lies far below the modulus, so no wrapped negative $\boldsymbol{d}$ has a valid decomposition (Lemma B.1a). The ceiling arrow is subtler: over the integers $\boldsymbol{z}_o$ is unique given $\boldsymbol{g}_2$, but over the field every range-valid remainder admits a solution $\boldsymbol{z}_o = \mathrm{k}^{-1}(\boldsymbol{g}_2 + \boldsymbol{rem}) \bmod P$, and $\boldsymbol{z}_o$ carries no range check. The reachable perturbations of the public sum are $\boldsymbol{S}_z' = \boldsymbol{S}_z + \mathrm{k}^{-1} s \bmod P$ for integer $s \in [0, T\mathrm{k})$; deflating by any amount requires $s = P - \mathrm{k}\Delta$, on the order of $2^{64}$ and unreachable by roughly twenty orders of magnitude, while every reachable perturbation either inflates the bound by less than $T$ scaled-nat units, i.e. $T/\mathrm{s_b}$ nats (at $\mathrm{s_b} = 2^{12}$ over the demonstrated 500 scored positions, about 0.12 nats or 0.18 bits, the safe direction) or lands $\boldsymbol{S}_z$ near the modulus, an absurd self-reported bound useless to a deflating prover. The claim is sound by exclusion rather than by uniqueness; this is the one place in the construction where that argument is load-bearing.
+**Soundness (Lemma B.7, one-sided).** The declarations are $\boldsymbol{A}$, $\boldsymbol{O}$, $\boldsymbol{b}$, $\boldsymbol{d}$ with its words, $\boldsymbol{rem}$, and the quotient words. $\boldsymbol{O}$ is pinned uniquely by booleanity, cardinality, and the index binding: a one-hot vector with $\sum_i i\ \boldsymbol{O}[i] = \boldsymbol{o}[t]$ is exactly the indicator of $\boldsymbol{o}[t]$. $\boldsymbol{A}$ with the gap non-negativity forces $\boldsymbol{v}^{\ast} = \max_i \boldsymbol{\ell}[i]$: any non-maximal selection makes some $\boldsymbol{gap}[i]$ negative, which the gap range and the $\mathrm{Exp}$ lookup's key range both exclude. $\boldsymbol{A}$ itself is not unique when maximal logits tie, and no tiebreak is imposed; the freedom is value-neutral, since every valid selection yields the same $\boldsymbol{v}^{\ast}$, hence the same gaps, the same $\boldsymbol{e}$, and the same reported value, so it is a permitted downstream freedom under §7.2's one-sided rule (it neither inflates nor deflates). The remaining freedom is $\boldsymbol{b}$, and every free direction inflates. Each table entry $\boldsymbol{e}[i]$ rounds the true exponential up and is floored at one, so $\boldsymbol{a}$ over-counts the true normalizer; $\mathrm{Pow}$ rounds down, so the one-sided pin $\boldsymbol{a} \le \mathrm{Pow}[\boldsymbol{b}]$ forces $\boldsymbol{b} \ge \mathrm{s_b} \ln(\boldsymbol{a}/\mathrm{s_y})$ with no fractional escape, and choosing $\boldsymbol{b}$ above the least valid index only raises the reported value; $\boldsymbol{z}_o$ is a ceiling, its slack $\boldsymbol{d}$ fixed by the pin once $\boldsymbol{a}$ and $\boldsymbol{pw}$ are and non-negative by its decomposition. With $Q(o) = \boldsymbol{e}_o/\boldsymbol{a}$, a genuine distribution since $\boldsymbol{a}$ normalizes the committed table values exactly, $\boldsymbol{z}_o + \boldsymbol{b} \ge \mathrm{s_b}(-\ln Q(o))$ follows term by term, so $\boldsymbol{S}_z$ upper-bounds the true surprisal sum and a poor witness penalizes only the prover. Two freedoms need field arguments rather than integer ones. The word decomposition of $\boldsymbol{d}$ is safe by width: at four $12$-bit words against $d_{\max} = V \mathrm{s_y}$ the maximum recomposable value lies far below the modulus, so no wrapped negative $\boldsymbol{d}$ has a valid decomposition (Lemma B.1a). The ceiling arrow: $\boldsymbol{z}_o$ is ranged below $2^{24}$ by its words and $\boldsymbol{rem}$ below $\mathrm{k}$, so both sides of $\mathrm{k}\ \boldsymbol{z}_o = \boldsymbol{g}_2 + \boldsymbol{rem}$ lie below $P$ and the congruence is an integer identity, which with $\boldsymbol{rem} \in [0, \mathrm{k})$ has exactly one solution, $\boldsymbol{z}_o = \lceil \boldsymbol{g}_2 / \mathrm{k} \rceil$; given $\boldsymbol{b}$ the per-position witness is unique. The cross-position sum is a field sum, and it is an integer sum because every term lies below $2^{24} + K$ and the public parameters satisfy $T\ (2^{24} + K) \lt P$, a condition the verifier checks; at the demonstrated $T \le 1000$ the sum is below $2^{35}$. Without the quotient range every range-valid remainder admits a field solution for $\boldsymbol{z}_o$, and with enough scored positions ($T \approx 1.7 \times 10^{7}$ at the demonstrated parameters) the field sum wraps to an arbitrary small value; an earlier version of this lemma argued the arrow by exclusion, which was wrong at that length, and admitted a deflation of under $T/\mathrm{s_b}$ nats at any length.
 
 **Generalization.** Normalization is where the asymmetry between §7.2's two rules pays: softmax pins its shift exactly because upstream slack is unanalyzable, while the bound replaces normalization with the one-sided logarithm pin because downstream slack provably only inflates. Summing over a subset of positions bounds the unexplained information of just those outputs; the demonstrated runs score the 500-token continuation.
 
