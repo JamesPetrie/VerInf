@@ -319,6 +319,8 @@ fn wc_verify(wc: &WcSection, trusted_identity: &[u8; 32], s_op: &[u8], s_bind: &
 the trusted identity".into());
     }
     if wc_c.len() != k_w { return Err("c length != K_w".into()); }
+    // v is read by eta position below: a short v is a REJECT, not a panic
+    if wc_v.len() != g.q_w { return Err("v length != q_w".into()); }
     // group_meta is wire: a key that is not a canonical width, or a width
     // with no p_trace / pi group, is a REJECT (the loops below index by
     // `w.to_string()`, so the key must round-trip exactly).
@@ -872,6 +874,18 @@ mod wc_bridge_tests {
         let e = enrolled();
         let err = verify(&section(&e, 12, true)).unwrap_err();
         assert!(err.contains("merkle path fails"), "{err}");
+    }
+
+    #[test]
+    fn a_short_or_long_v_is_a_reject_not_a_panic() {
+        let e = enrolled();
+        for len in [0usize, Q - 1, Q + 1] {
+            let mut s = section(&e, 12, false);
+            let v = s.v.to_vec().unwrap();
+            s.v = WireU64Vec::Legacy((0..len).map(|i| v.get(i).copied().unwrap_or(0)).collect());
+            let err = verify(&s).unwrap_err();
+            assert!(err.contains("v length"), "{len}: {err}");
+        }
     }
 
     #[test]
