@@ -4,7 +4,9 @@
 The companion policy file is written by instrumented_prove from the same
 proof. It tests the proof's mechanics, not an independently enrolled model.
 On ACCEPT, write a receipt with the exact proof's SHA-256, byte count,
-revision and verifier wall time for the run archive.
+the prover's and the verifier's revisions (recorded separately: the verifier
+may be rebuilt from a later tree than the one that proved), the verifier
+binary's SHA-256 and its wall time, for the run archive.
 """
 from __future__ import annotations
 
@@ -33,7 +35,8 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def check(proof: Path, verifier: Path, revision_file: Path | None = None) -> dict:
+def check(proof: Path, verifier: Path, revision_file: Path | None = None,
+          verifier_revision_file: Path | None = None) -> dict:
     proof = proof.resolve(strict=True)
     verifier = verifier.resolve(strict=True)
     receipt_path = Path(str(proof) + ".verify.json")
@@ -46,6 +49,15 @@ def check(proof: Path, verifier: Path, revision_file: Path | None = None) -> dic
     revision = revision_file.read_text().strip() if revision_file else None
     if revision_file and not revision:
         raise ValueError("revision stamp is empty")
+    # the verifier's own revision: an explicit file, else <verifier>.revision
+    # written beside the binary when it was built
+    if verifier_revision_file is None:
+        beside = Path(str(verifier) + ".revision")
+        verifier_revision_file = beside if beside.exists() else None
+    verifier_revision = (verifier_revision_file.read_text().strip()
+                         if verifier_revision_file else None)
+    if verifier_revision_file and not verifier_revision:
+        raise ValueError("verifier revision stamp is empty")
     policy_path = Path(str(proof) + ".policy.json")
     with policy_path.open() as fh:
         policy = json.load(fh)
@@ -77,6 +89,9 @@ def check(proof: Path, verifier: Path, revision_file: Path | None = None) -> dic
         "proof_bytes": proof_bytes,
         "proof_sha256": digest,
         "revision": revision,
+        "prover_revision": revision,
+        "verifier_revision": verifier_revision,
+        "verifier_sha256": _sha256_file(verifier),
         "verifier": "verify_proof",
         "verdict": "ACCEPT",
         "verify_seconds": round(elapsed, 3),
@@ -98,6 +113,7 @@ def check(proof: Path, verifier: Path, revision_file: Path | None = None) -> dic
         os.close(dfd)
     print(f"S=1000 PROOF CHECKED: rust_verify: ACCEPT; "
           f"sha256={digest}; bytes={receipt['proof_bytes']}; "
+          f"prover={revision}; verifier={verifier_revision}; "
           f"verify_s={elapsed:.1f}; receipt={receipt_path}", flush=True)
     return receipt
 
@@ -107,10 +123,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("proof", type=Path)
     ap.add_argument("--verifier", type=Path,
                     default=Path(os.environ.get("LIGERO_VERIFY_PROOF", "verifier/target/release/verify_proof")))
-    ap.add_argument("--revision-file", type=Path)
+    ap.add_argument("--revision-file", type=Path,
+                    help="the prover's revision stamp")
+    ap.add_argument("--verifier-revision-file", type=Path,
+                    help="the verifier's revision stamp (default: <verifier>.revision)")
     args = ap.parse_args(argv)
     try:
-        check(args.proof, args.verifier, args.revision_file)
+        check(args.proof, args.verifier, args.revision_file,
+              args.verifier_revision_file)
     except (OSError, ValueError, RuntimeError) as exc:
         print(f"S=1000 PROOF CHECK FAILED: {exc}", file=sys.stderr, flush=True)
         return 1

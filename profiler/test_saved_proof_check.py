@@ -94,3 +94,20 @@ def test_unreserved_dump_never_replaces_an_existing_proof(tmp_path):
     with pytest.raises(FileExistsError, match="refusing to overwrite"):
         dump_proof(str(path), None, None, proof, [0], None)
     assert not path.exists()
+
+
+def test_prover_and_verifier_revisions_are_recorded_separately(tmp_path):
+    """The saved S=1000 proof is checked by a verifier rebuilt from the final
+    PR head, which may be later than the tree that proved it: the receipt
+    keeps both, and the verifier binary's own hash."""
+    proof, _policy_path, revision, verifier = _fixture(tmp_path)
+    Path(str(verifier) + ".revision").write_text("f00dfeed\n")
+    receipt = check(proof, verifier, revision)
+    assert receipt["revision"] == receipt["prover_revision"] == "e488910"
+    assert receipt["verifier_revision"] == "f00dfeed"
+    assert receipt["verifier_sha256"] == hashlib.sha256(verifier.read_bytes()).hexdigest()
+
+
+def test_no_verifier_stamp_records_none(tmp_path):
+    proof, _policy_path, revision, verifier = _fixture(tmp_path)
+    assert check(proof, verifier, revision)["verifier_revision"] is None
