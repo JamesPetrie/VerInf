@@ -172,7 +172,7 @@ def test_malformed_forms_reject_before_identity_or_transcript_work():
 # and a short root still raised. Rather than lock those three, replace each
 # input the verifier reads, whole and element by element, with each of these
 # and require a clean (False, reason) from both entrypoints.
-BAD = [None, 0, 1, -1, 2 ** 70, 1.5, 1.0, 4.0, True, "x", b"", b"x" * 31, b"x" * 33,
+BAD = [None, 0, 1, -1, 2 ** 70, 2 ** 64, P, 1.5, 1.0, 4.0, True, "x", b"", b"x" * 31, b"x" * 33,
        [], [1], [[1]], (1,), {}, {4: None},
        torch.zeros(0, dtype=torch.uint64), torch.zeros(3, dtype=torch.int64),
        torch.zeros(2, 2, dtype=torch.uint64), torch.zeros(3, dtype=torch.float32)]
@@ -234,7 +234,7 @@ def _params_with(**kw):
     return p
 
 
-N_CASES_FLOOR = 1700          # 1,767 today: the loops ran (the count prints with -s)
+N_CASES_FLOOR = 1950          # 1,977 today: the loops ran (the count prints with -s)
 
 
 def test_both_honest_baselines_accept():
@@ -274,6 +274,16 @@ def test_no_malformed_input_raises():
                 pf.rho[4] = [bad] + pf.rho[4][1:]
             check(f"rho[4][0] = {r}", rho0)
             check(f"opened[eta0] = {r}", lambda pf: pf.opened.__setitem__(pf.eta_idx[0], bad))
+            # one element of an opened column, the column sent as a list (a
+            # tensor cannot hold -1 or 2**64; the list form reached a uint64
+            # conversion that raised)
+            def col_elem(pf):
+                col = pf.opened[pf.eta_idx[0]].tolist()
+                if _same(col[0], bad):
+                    return False
+                col[0] = bad
+                pf.opened[pf.eta_idx[0]] = col
+            check(f"opened[eta0][0] = {r}", col_elem)
             check(f"paths[eta0] = {r}", lambda pf: pf.paths.__setitem__(pf.eta_idx[0], bad))
             for k, form in ((0, lambda s: bad), (1, lambda s: (bad, s[1])),
                             (2, lambda s: (s[0], bad))):

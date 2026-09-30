@@ -702,11 +702,12 @@ def _is_int(x) -> bool:
     return isinstance(x, numbers.Integral) and not isinstance(x, bool)
 
 
-def _ints(seq, n: int) -> bool:
+def _ints(seq, n: int, bound: int = None) -> bool:
     """A flat sequence of exactly n integers (never a bool, a float or a
-    nested sequence)."""
+    nested sequence), each in [0, bound) when a bound is given."""
     return (isinstance(seq, (list, tuple)) and len(seq) == n
-            and all(_is_int(x) for x in seq))
+            and all(_is_int(x) and (bound is None or 0 <= x < bound)
+                    for x in seq))
 
 
 def _shapes_ok(group_meta: Dict[int, Tuple[int, int]], proof: BridgeProof,
@@ -714,9 +715,11 @@ def _shapes_ok(group_meta: Dict[int, Tuple[int, int]], proof: BridgeProof,
     """Every wire array has exactly the type and shape the geometry and the
     groups give it (group_meta already checked against the layout), so a
     malformed proof is a REJECT, not an exception."""
-    if not _ints(proof.c, params.K_w):
+    # c and v are canonical field elements, compared exactly as in Rust (a
+    # value plus P would otherwise pass a comparison made after reduction)
+    if not _ints(proof.c, params.K_w, P):
         return False, "c is not K_w field elements"
-    if not _ints(proof.v, params.q_w) or not _ints(proof.eta_idx, params.q_w):
+    if not _ints(proof.v, params.q_w, P) or not _ints(proof.eta_idx, params.q_w):
         return False, "v/eta are not q_w field elements"
     for name in ("p_trace", "pi", "rho"):
         arr = getattr(proof, name)
@@ -766,7 +769,7 @@ def _verify_core(root: bytes, group_meta: Dict[int, Tuple[int, int]],
             for h in range(params.lam):
                 c[params.B + h] = (c[params.B + h] + alpha * pim[a][h]) % P
             bi += 1
-    if c != [x % P for x in proof.c]:
+    if c != list(proof.c):
         return False, "c does not aggregate the committed P_trace/pi"
     # v = c(eta) and the enrollment side of the bridge
     domain = _rs_domain(params).cpu().tolist()
@@ -781,7 +784,7 @@ def _verify_core(root: bytes, group_meta: Dict[int, Tuple[int, int]],
             # unsigned values as they are: an int64 view would shift every
             # value at or above 2^63 (review, 2026-09-20)
             col = (col if col.dtype == torch.uint64 else col.view(torch.uint64)).cpu().tolist()
-        if not _ints(col, total):
+        if not _ints(col, total, 1 << 64):
             return False, f"column length at eta[{l}]"
         if not _verify_path(_leaf(torch.tensor(col, dtype=torch.uint64)),
                             proof.paths[i], root, i, params.N_w):
@@ -790,7 +793,7 @@ def _verify_core(root: bytes, group_meta: Dict[int, Tuple[int, int]],
         x, acc = domain[i], 0
         for k in reversed(range(params.K_w)):
             acc = (acc * x + c[k]) % P
-        if acc != proof.v[l] % P:
+        if acc != proof.v[l]:
             return False, f"v[{l}] != c(eta_{l})"
         # enrollment side: sum_a alpha_a sum_j rho_j F_{a,j}(eta_l)
         rhs, bi, off = 0, 0, 0
@@ -805,7 +808,7 @@ def _verify_core(root: bytes, group_meta: Dict[int, Tuple[int, int]],
                 rhs = (rhs + alpha * s) % P
                 bi += 1
             off += n_blocks * width
-        if rhs != proof.v[l] % P:
+        if rhs != proof.v[l]:
             return False, f"bridge equation fails at eta[{l}]"
     return True, "ACCEPT"
 
