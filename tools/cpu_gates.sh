@@ -75,7 +75,9 @@ if grep -qE '[0-9]+ skipped' "$LOG"; then
 fi
 
 echo "== rust: the verifier's tests"
-(cd verifier && RUSTC_WRAPPER= cargo test --release -q 2>&1) > "$LOG.rust" \
+# the tree's own target dir: a CARGO_TARGET_DIR shared with another checkout of
+# the same crate (a worktree) let cargo run THAT tree's test binaries here
+(cd verifier && RUSTC_WRAPPER= CARGO_TARGET_DIR="$PWD/target" cargo test --release -q 2>&1) > "$LOG.rust" \
   || { tail -30 "$LOG.rust"; fail "cargo test"; }
 grep -E '^test result' "$LOG.rust" | awk '{p += $4; f += $6} END {print p " passed, " f " failed"}'
 
