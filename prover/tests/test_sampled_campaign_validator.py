@@ -56,6 +56,9 @@ def _current(tmp_path, **override):
         "rs_column_samples": [{"local_receipts": 5, "columns": list(range(61))}] * 53,
     })
     r.update(override)
+    # the timed components sum to the wall (the validator checks it)
+    r["forward_s"] = r["wall_s"] - (r["commit_s"] + r["local_checks_s"]
+                                    + r["rs_open_s"] + r["rs_verify_s"])
     (root / "campaign_results.json").write_text(json.dumps(r))
     log = (root / "full.log").read_text().replace(
         v.LOG_LINES["august-2026"], v.LOG_LINES["prototype-v1"])
@@ -87,3 +90,13 @@ def test_the_old_acceptance_line_does_not_pass_a_current_campaign(tmp_path):
     (root / "full.log").write_text(log)
     with pytest.raises(AssertionError):
         v.validate(root)
+
+
+def test_the_cap_follows_the_format(tmp_path):
+    # review of f80cf27: a current campaign under its own 1,740 s cap failed
+    # the August 600 s
+    assert v.validate(_current(tmp_path / "a", wall_s=1000.0))["format"] == "prototype-v1"
+    with pytest.raises(AssertionError, match="exceeds the 1740"):
+        v.validate(_current(tmp_path / "b", wall_s=1800.0))
+    assert v.validate(_current(tmp_path / "c", wall_s=1800.0), cap_s=2000)["validated"]
+    assert v.DEFAULT_CAP_S["august-2026"] == 600

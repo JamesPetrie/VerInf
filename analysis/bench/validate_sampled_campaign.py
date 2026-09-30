@@ -29,6 +29,12 @@ LOG_LINES = {
 }
 
 
+# the timed audit's cap: the August runs' 600 s, and for prototype-v1 the
+# campaign script's default SAMPLED_AUDIT_TIMEOUT_S (sampled_audit_vast.sh);
+# a campaign run under another cap passes it with --cap-s
+DEFAULT_CAP_S = {"august-2026": 600, "prototype-v1": 1740}
+
+
 def artifact_format(result: dict) -> str:
     if "prototype" not in result:
         return "august-2026"
@@ -36,7 +42,7 @@ def artifact_format(result: dict) -> str:
     return "prototype-v1"
 
 
-def validate(root: pathlib.Path) -> dict:
+def validate(root: pathlib.Path, cap_s: float | None = None) -> dict:
     result = json.loads((root / "campaign_results.json").read_text())
     progress = [json.loads(line) for line in
                 (root / "progress.jsonl").read_text().splitlines() if line]
@@ -50,7 +56,8 @@ def validate(root: pathlib.Path) -> dict:
     assert result["selected"] == len(result["selected_indices"])
     assert len(set(result["selected_indices"])) == result["selected"]
     assert abs(result["fraction"] - 265 / 2596) < 1e-12
-    assert result["wall_s"] <= 600
+    cap = DEFAULT_CAP_S[fmt] if cap_s is None else cap_s
+    assert result["wall_s"] <= cap, f"timed audit {result['wall_s']:.1f}s exceeds the {cap}s cap"
     if result["local_argument"] == "exact-recomputation":
         expected_binding = "rs-window+striped-blake3 exact-local runtime"
     else:
@@ -151,8 +158,11 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("artifact", type=pathlib.Path)
     ap.add_argument("--out", type=pathlib.Path)
+    ap.add_argument("--cap-s", type=float, default=None,
+                    help="the campaign's SAMPLED_AUDIT_TIMEOUT_S when it was not "
+                         "the default for its format")
     args = ap.parse_args()
-    report = validate(args.artifact)
+    report = validate(args.artifact, args.cap_s)
     payload = json.dumps(report, indent=2, sort_keys=True) + "\n"
     print(payload, end="")
     if args.out:
