@@ -177,11 +177,17 @@ def test_a_redeclared_block_boundary_names_another_identity():
     enr, meta = _toy_enrollment()
     proof = wc.prove_bridge(enr, S_R1)
     moved = wc.WcParams(B=40, lam=24, N_w=128, q_w=8)
+    assert wc.enrollment_identity(enr.root, enr.manifest_digest, moved,
+                                  enr.layout) != enr.identity()
     ok, why = wc.verify_bridge(enr.root, enr.manifest_digest, meta,
                                proof, S_R1, moved,
                                trusted_identity=enr.identity(), layout=enr.layout,
                                t_cols=T_COLS)
-    assert not ok and "enrollment identity" in why, why
+    # the form checks come first (7468870): the declared B also fixes the
+    # shape p_trace must have, so this proof is refused before the identity
+    assert not ok and why in ("p_trace shape",
+                              "enrollment identity (root, geometry, layout, manifest) "
+                              "is not the trusted identity"), why
 
 
 def test_duplicate_eta_rejects():
