@@ -63,7 +63,7 @@ def _run(path, proof=None):
 def test_zero_root_sentinel():
     tape = _build()
     proof = tape.prove(seed=SEED)
-    fd, path = tempfile.mkstemp(suffix=".json"); os.close(fd)
+    fd, path = tempfile.mkstemp(suffix=".json"); os.close(fd); os.unlink(path)  # dump_proof refuses an existing file
     try:
         _dump(tape, proof, path)
         d = json.load(open(path))

@@ -70,6 +70,7 @@ def rust_verify(claims, proof, seed, cfg):
     wc_identity = wc["identity"] if wc is not None else None
     fd, path = tempfile.mkstemp(suffix=".json")
     os.close(fd)
+    os.unlink(path)          # dump_proof refuses an existing file
     argv = [_verify_proof_bin(), path,
             root_w.hex() if root_w else "-",
             stmt.hex() if stmt else "-",
@@ -78,7 +79,8 @@ def rust_verify(claims, proof, seed, cfg):
         dump_proof(path, pr.claims_to_json(claims, cfg), seeds, proof, Q, None)
         r = subprocess.run(argv, capture_output=True, text=True)
     finally:
-        os.unlink(path)
+        if os.path.exists(path):
+            os.unlink(path)
     accepted = "rust_verify: ACCEPT" in r.stdout
     return accepted, (r.stdout + r.stderr).strip()
 
