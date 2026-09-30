@@ -22,6 +22,7 @@ SUITES=(
   prover/tests/test_merkle_index.py
   prover/tests/test_row_map.py
   prover/tests/test_sampled_audit_prototype_gate.py
+  prover/tests/test_sampled_campaign_validator.py
   prover/tests/test_sampled_local_transcript.py
   prover/tests/test_sha256_trace.py
   prover/tests/test_shard_plan.py

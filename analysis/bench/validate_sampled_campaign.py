@@ -1,9 +1,39 @@
-"""Fail-closed consistency checks for a downloaded sampled-audit campaign."""
+"""Fail-closed consistency checks for a downloaded sampled-audit campaign.
+
+Two artifact formats, told apart by what the result carries and checked by
+their own rules; anything else fails:
+
+  august-2026    the August runs, before the prototype labels: exact
+                 recomputation or partial cryptographic local proofs, and the
+                 log line "sampled audit: ACCEPT; 265/2596";
+  prototype-v1   the runtime since it runs only as a labeled prototype:
+                 prototype true, verified_inference false, the unchecked
+                 list, every selected claim a materialized local proof (the
+                 same rules sampled_audit_vast.sh applies after a run), and
+                 the log line "sampled audit [PROTOTYPE, not verified
+                 inference]: local checks ACCEPT; 265/2596".
+"""
 from __future__ import annotations
 
 import argparse
 import json
 import pathlib
+
+
+FORMATS = ("august-2026", "prototype-v1")
+FAMILIES = {"freivalds", "product-tree", "sumcheck"}
+LOG_LINES = {
+    "august-2026": "sampled audit: ACCEPT; 265/2596",
+    "prototype-v1": ("sampled audit [PROTOTYPE, not verified inference]: "
+                     "local checks ACCEPT; 265/2596"),
+}
+
+
+def artifact_format(result: dict) -> str:
+    if "prototype" not in result:
+        return "august-2026"
+    assert result["prototype"] is True, "a labeled result that is not a prototype"
+    return "prototype-v1"
 
 
 def validate(root: pathlib.Path) -> dict:
@@ -13,6 +43,7 @@ def validate(root: pathlib.Path) -> dict:
     full_log = (root / "full.log").read_text()
     enroll_log = (root / "enroll.log").read_text()
 
+    fmt = artifact_format(result)
     assert result["accepted"] is True
     assert result["failures"] == []
     assert result["claims"] == 2596 and result["selected"] == 265
@@ -30,22 +61,24 @@ def validate(root: pathlib.Path) -> dict:
                             + result["local_argument"] + " runtime")
     assert result["binding"] == expected_binding
     assert result["rs_openings_materialized"] is True
-    assert result["cryptographic_local_proofs"] is False
-    if result["local_argument"] != "exact-recomputation":
-        assert result["manifest_proof_family_counts"] == {
-            "freivalds": 554, "product-tree": 755, "sumcheck": 1287}
-        assert result["materialized_local_proofs"] > 0
-        assert result["materialized_local_proofs"] == len(
-            result["local_proof_digests"])
-        assert len(result["local_receipts"]) == result["selected"]
-        assert len(result["rs_column_samples"]) == 53
-        assert sum(sample["local_receipts"] for sample in
-                   result["rs_column_samples"]) == result["selected"]
-        assert all(len(sample["columns"]) ==
-                   len(set(sample["columns"])) == 61
-                   for sample in result["rs_column_samples"])
-        assert result["local_proof_bytes"] > 0
-        assert 0 < result["cryptographic_local_proof_coverage"] < 1
+    if fmt == "august-2026":
+        assert result["cryptographic_local_proofs"] is False
+        if result["local_argument"] != "exact-recomputation":
+            _check_materialized(result)
+            assert 0 < result["cryptographic_local_proof_coverage"] < 1
+    else:
+        # a prototype's ACCEPT: its local checks passed, nothing more
+        assert result["verified_inference"] is False
+        assert [u.split(":")[0] for u in result["unchecked"]] == [
+            "weight-to-enrollment binding", "cross-window value consistency"]
+        assert set(result["local_argument"].split("+")) == FAMILIES
+        assert result["cryptographic_local_proofs"] is True
+        assert result["manifest_materialized_local_proofs"] == result["claims"] == 2596
+        assert set(result["materialized_local_proof_counts"]) == FAMILIES
+        assert result["materialized_local_proofs"] == result["selected"] == 265
+        assert result["exact_fallbacks"] == 0
+        _check_materialized(result)
+        assert result["cryptographic_local_proof_coverage"] == 1
     assert result["rs_columns"] == 61
     assert result["rs_geometry"] == {
         "ELL": 16322, "K_DEG": 16384, "N_LIG": 32768}
@@ -77,12 +110,13 @@ def validate(root: pathlib.Path) -> dict:
     assert abs(last["rs_verify_total_s"] - result["rs_verify_s"]) < 1e-6
     assert completes[0]["accepted"] is True
     assert completes[0]["selected"] == 265
-    assert "sampled audit: ACCEPT; 265/2596" in full_log
+    assert LOG_LINES[fmt] in full_log
     assert "2596 claims total" in enroll_log
     assert "enrolled 49160720 weight rows" in enroll_log
 
     return {
         "validated": True,
+        "format": fmt,
         "artifact": str(root),
         "wall_s": result["wall_s"],
         "claims": result["claims"],
@@ -96,6 +130,21 @@ def validate(root: pathlib.Path) -> dict:
         "materialized_local_proofs": result.get(
             "materialized_local_proofs", 0),
     }
+
+
+def _check_materialized(result: dict) -> None:
+    """The materialized local proofs' bookkeeping, common to both formats."""
+    assert result["manifest_proof_family_counts"] == {
+        "freivalds": 554, "product-tree": 755, "sumcheck": 1287}
+    assert result["materialized_local_proofs"] > 0
+    assert result["materialized_local_proofs"] == len(result["local_proof_digests"])
+    assert len(result["local_receipts"]) == result["selected"]
+    assert len(result["rs_column_samples"]) == 53
+    assert sum(sample["local_receipts"] for sample in
+               result["rs_column_samples"]) == result["selected"]
+    assert all(len(sample["columns"]) == len(set(sample["columns"])) == 61
+               for sample in result["rs_column_samples"])
+    assert result["local_proof_bytes"] > 0
 
 
 def main() -> int:
