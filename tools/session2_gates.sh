@@ -91,7 +91,7 @@ need toy-repaired-verify 'rust_verify: ACCEPT'
 # targeted alternative witnesses, the review's threshold counterexample among
 # them (analysis/topk-routing-design.md §3.1-3.3).
 gate topk-routing python3 prover/tests/run_tests.py test_topk_routing
-suite topk-routing 17
+suite topk-routing 21
 gate toy-ab env LIGERO_SWEEP_TIMING=1 python3 analysis/bench/ab_routed_cache.py
 need toy-ab 'ab_routed_cache: counts as expected'
 # A small REAL-GGUF proof through the research driver, independently

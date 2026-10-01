@@ -486,6 +486,9 @@ def topk_moe_ffn(tape, x, s, b, w, *, T, E, k, d, d_ff, S, S_w, C, score_bits,
     from rescale_claim import rescale
     from routed_projected import routed_projected_matmul
     from routing_claim import freivalds_combine
+    assert tape.silu_config.s_in in (0, tape.silu_config.s_x) and tape.silu_config.s_x == S, (
+        f"topk_moe_ffn: the tape's SiLU tables are at scale {tape.silu_config.s_x}, "
+        f"the activations at {S}: build the tape with a SiluConfig of r = log2(S)")
     m, _tau = route_topk(tape, s, b, T=T, E=E, k=k, width=width,
                          word_bits=select_word_bits)
     M, ss = topk_slots(tape, m, s, T=T, E=E, k=k)
