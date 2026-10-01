@@ -113,7 +113,11 @@ without an rsqrt lookup table. The bracket products are assembled from
 LIMB_W-bit limbs of `S_total` with range-checked carries, so both bracket
 identities hold over the integers — a field-wrapped `y′` has no valid
 witness (this replaced a vacuous configuration; see
-rmsnorm-bracket-fix.md §1). Freivalds-folded broadcast (`y · u = p`)
+rmsnorm-bracket-fix.md §1). The integers are those of the decoded
+`S_total`, which equals `Σ x² + d·ε` only when that sum is below P: `x`,
+the residual stream, has no range of its own, so a row with RMS above
+about 14,650 (at d = 5120, scale 2^12) could wrap and pass (paper B.4,
+§3.6). Freivalds-folded broadcast (`y · u = p`)
 avoids committing `B·d` cells of `y_broadcast`.
 
 ---
