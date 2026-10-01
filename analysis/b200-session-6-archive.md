@@ -18,7 +18,7 @@ from bootstrap to the end (`logs/sampler.log`).
 
 ## What ran
 
-1. Bootstrap (`logs/phase0.log`), then the twelve GPU-free suites before
+1. Bootstrap (`logs/phase0.log`), then the twelve GGUF-free suites before
    the pull. Two failures, both in tests and both fixed and shipped during
    the session: the weight-cache suite's verifier helper dumped proofs
    onto an existing temporary file, which the dump's overwrite refusal
@@ -52,17 +52,16 @@ The bridged S=100 arm across three hosts (sessions 4 and 5 uncapped):
 | CPU quota; torch threads | 23.8; 112 | 30.6; 144 | 20.4; 20 (capped) |
 | throttled CPU-seconds over the arm | 20 | 8,120 (build 581, enrollments 1,559, reveal 1,723, prove 4,256) | 0 |
 | streaming enrollment of every expert shard | 273.4 s | 133.9 s | 119.8 s (shard decode 54.4 s / 9,218) |
-| the bridge's per-proof pass | 592 s (uninstrumented) | 198.5 s | 126.6 s: NTT 41.6, shard decode 36.7 / 9,218, columns concat 15.6, columns to host 6.9, projected-mask matvec 4.9, gather 4.5, masks 4.4 + 4.3, pack 4.1 |
+| the bridge's per-proof pass | not separated: 592.3 s outside the sweeps altogether (987.8 s wall less 395.5 s of sweeps) | 198.5 s | 126.6 s: NTT 41.6, shard decode 36.7 / 9,218, columns concat 15.6, columns to host 6.9, projected-mask matvec 4.9, gather 4.5, masks 4.4 + 4.3, pack 4.1 |
 | prove wall | 988.0 s | 1,271.2 s | 809.9 s |
 | five sweeps | 395 s (fetch 109, encode 136, compile 22) | 633 s (fetch 290, encode 136, compile 65) | 642 s (fetch 367, encode 136, compile 1.4) |
-| outside the sweeps, not the bridge | ~110 s | ~440 s | 41 s |
+| outside the sweeps, not the bridge | unmeasured (within the 592.3 s) | ~440 s | 41 s |
 | build, dense enrollment, reveal | 19.1, 48.0, 37.3 s | 41.2, 134.1, 96.4 s | 39.4, 83.6, 104.2 s |
 | Rust verify of the three gate proofs (plain, wc, bridged) | 272, 272, 65 s | 230, 230, 67 s | 583, 546, 131 s |
 | leaf check | true | true | true |
 
-The S=1000 prove against the only earlier one, session 2's unbridged arm
-with the caches off on an H200 (a different card and configuration, not
-an A/B):
+The S=1000 prove against session 2's unbridged arm with the caches off on
+an H200 (a different card and configuration, not an A/B):
 
 | item | session 2 (H200, caches off, no bridge) | session 6 (B200, bridge, routed and weight caches) |
 |---|---|---|

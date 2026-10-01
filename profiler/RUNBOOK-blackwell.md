@@ -673,7 +673,8 @@ On a B200 with a 20.4-CPU quota and the pools capped at 20: the S=1000
 prove 1,780.2 s (build 42 s, enrollments 139 + 116 s, reveal 183 s outside
 it), peak GPU 152.64 GiB, anonymous host memory 32.7 GB beside the mapped
 model; the proof 19.67 GB, dumped in 30.4 s. The Rust check took 5,662 s
-with the parse, 98% of it in `lin_col`, and peaked at 27.2 GB: at this
+with the parse; `lin_col` is 98% of the 5,385 s verification phase
+(about 93.5% with the parse), and the check peaked at 27.2 GB: at this
 quota the check is three times the prove, so start copying the proof home
 while it runs (about 48 minutes at the 6.8 MB/s this pod gave over scp).
 The verdict was ACCEPT; the receipt and the run are in
