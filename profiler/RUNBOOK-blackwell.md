@@ -391,8 +391,8 @@ With the protocol review's repairs the gates also run, before the toy A/B,
 the review's counterexamples and honest cases through the Rust binary
 (`test_protocol_review_negatives`, 9), `test_claims`, the unexplained-
 information, rescale and max-claim scripts, and a one-layer toy
-transformer proof (`--engine`) checked by `verify_proof` with its own
-statement digest. Proofs made before the repairs do not verify under them.
+transformer proof with the surprisal claims (`--engine --unexplained-info`)
+checked by `verify_proof` with its own statement digest. Proofs made before the repairs do not verify under them.
 
 ## C. The projected crosscheck (~45-60 min)
 

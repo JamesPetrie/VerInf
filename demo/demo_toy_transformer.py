@@ -831,8 +831,8 @@ if __name__ == "__main__":
         help="After the LM head, append the unexplained-information "
         "bound U(o) over the output tokens. The output tokens are "
         "HIDDEN: committed + blinded exactly like the model weights "
-        "(never public). Requires the LM head + eager mode (no "
-        "--engine).",
+        "(never public). Requires the LM head; a proof also needs "
+        "--engine, since tape.prove replays a lazy tape.",
     )
     ap.add_argument(
         "--ui-sigma",

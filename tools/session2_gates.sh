@@ -75,13 +75,14 @@ need rescale '=== rescale fixtures: 4/4 PASS ==='
 gate max-claim python3 prover/tests/test_max_claim.py
 need max-claim '=== max_claim: 2/2 PASS ==='
 # One honest end-to-end proof on the repaired constraint set: the toy
-# transformer (causal softmax, SiLU, the surprisal claims) dumped and checked
-# by the Rust binary. --engine because tape.prove needs a lazy tape. The
-# statement digest is the proof's own, as prover/tests/_rust_verify.py
-# passes it: this checks the constraints, not a trusted statement.
+# transformer (causal softmax, SiLU, and with --unexplained-info the surprisal
+# claims, which it omits otherwise) dumped and checked by the Rust binary.
+# --engine because tape.prove needs a lazy tape. The statement digest is the
+# proof's own, as prover/tests/_rust_verify.py passes it: this checks the
+# constraints, not a trusted statement.
 TOY_PROOF=$(mktemp -u "$VERINF_LOGS/toy-repaired.XXXXXX.json")
 gate toy-repaired env LIGERO_DUMP_PROOF="$TOY_PROOF" \
-    python3 demo/demo_toy_transformer.py --num-layers 1 --engine
+    python3 demo/demo_toy_transformer.py --num-layers 1 --engine --unexplained-info
 gate toy-repaired-verify "${LIGERO_VERIFY_PROOF:-verifier/target/release/verify_proof}" "$TOY_PROOF" - \
     "$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["statement_digest"])' "$TOY_PROOF")"
 need toy-repaired-verify 'rust_verify: ACCEPT'
