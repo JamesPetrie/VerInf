@@ -387,6 +387,13 @@ demo's --enroll-weights run (enrollment timing only) plus
 admission_bench.py --runs 30 for the kernel stages; neither answers the
 A/B question. Gate: "== all gates passed" and logrun's status 0.
 
+With the protocol review's repairs the gates also run, before the toy A/B,
+the review's counterexamples and honest cases through the Rust binary
+(`test_protocol_review_negatives`, 9), `test_claims`, the unexplained-
+information, rescale and max-claim scripts, and a one-layer toy
+transformer proof (`--engine`) checked by `verify_proof` with its own
+statement digest. Proofs made before the repairs do not verify under them.
+
 ## C. The projected crosscheck (~45-60 min)
 
 ```sh
