@@ -1201,7 +1201,9 @@ def test_weightsplit():
     st = ws.stages(m2, mp)
     assert abs(st.floor - want) < 1e-12, (st.floor, want)      # aligned fixture
     ev1 = ws.evaluate(m2, mp, 1, resident=True)
-    assert abs(ev1["wall"] - st.floor) < 1e-12 and ev1["kernel_floor_ratio"] == 1.0
+    # the ratio is wall/floor in floats: the repaired silu/softmax triples
+    # make it 1 - 1 ulp, so it is compared as the wall is
+    assert abs(ev1["wall"] - st.floor) < 1e-12 and abs(ev1["kernel_floor_ratio"] - 1.0) < 1e-12
     assert ev1["aligned"] and ev1["same_mode_speedup"] == 1.0
     evx = ws.evaluate(m2, mp, 2, x_fold=1.0, x_open=1.0, resident=True)
     assert abs(evx["wall"] - st.floor) < 1e-12 and evx["plan_mode"] == "explicit"
