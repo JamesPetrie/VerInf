@@ -62,10 +62,10 @@ suite wc-bridge-rust 7
 # The protocol review's repairs (F01 the masked softmax z, F03/F04 the SiLU
 # index and zero sign, F05/F06 the surprisal quotient): each counterexample,
 # a full alternative witness, is a Rust REJECT and every honest case an
-# ACCEPT; then the claim suites the repairs touch. The three after
+# ACCEPT, as are both splits of F02's value-neutral softmax choice; then the claim suites the repairs touch. The three after
 # test_claims are scripts with a main(), as kquant is.
 gate protocol-review python3 prover/tests/run_tests.py test_protocol_review_negatives
-suite protocol-review 9
+suite protocol-review 10
 gate claims python3 prover/tests/run_tests.py test_claims
 suite claims 21
 gate unexplained-info python3 prover/tests/test_unexplained_info.py

@@ -13,6 +13,12 @@ ACCEPTs:
   F05  surprisal: a non-canonical remainder gives a field quotient that
        changes the reported sum
 
+and one freedom the repairs keep, which must ACCEPT with the same outputs:
+
+  F02  Softmax: a permitted cell whose difference is exactly Z_max splits as
+       (z, z_high) = (Z_max, 0), read in the tables' zero tail, or (0, 1),
+       muxed to zero; both give zero outputs (Lemma B.3, value-neutral)
+
 Needs a card.  Run:  python prover/tests/test_protocol_review_negatives.py
 """
 import os
@@ -204,6 +210,29 @@ def test_f01_masked_cell_takes_the_weight():
     acc, msg = _verdict(_softmax_tape(tamper=True))
     assert not acc, "F01: attention on a masked (future) cell accepted"
     print(f"    F01 masked z = -Z_max: REJECT ({msg.splitlines()[-1]})")
+
+
+def _f02_tape(split):
+    """Row 1 = [0, -Z_max] under its shift c = 0: the second permitted cell's
+    difference is exactly Z_max. Each split is written in full; the outputs
+    y_A and y_B are zero in both."""
+    tape = _softmax_tape(scores=(0, 0, 0, -Z_MAX))
+    if split == (0, 1):
+        cell = {"z": 0, "z_high": 1, "inv_z_high": 1, "is_high": 1,
+                "y_A_raw": S, "y_B_raw": S + 1, "mux_y_A": S, "mux_y_B": S + 1}
+    else:
+        cell = {"z": Z_MAX, "z_high": 0, "inv_z_high": 0, "is_high": 0,
+                "y_A_raw": 0, "y_B_raw": 0, "mux_y_A": 0, "mux_y_B": 0}
+    cell.update(y_A=0, y_B=0)
+    _tamper("SoftmaxClaim", {f: {3: v} for f, v in cell.items()})
+    return tape
+
+
+def test_f02_split_at_z_max_is_value_neutral():
+    for split in ((Z_MAX, 0), (0, 1)):
+        acc, msg = _verdict(_f02_tape(split))
+        assert acc, f"F02: the split {split} with zero outputs: expected ACCEPT ({msg})"
+        print(f"    F02 split (z, z_high) = {split} at d = Z_max, outputs 0: ACCEPT")
 
 
 # ---------------------------------------------------------------- Surprisal
