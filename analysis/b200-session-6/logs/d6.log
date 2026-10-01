@@ -1,0 +1,3 @@
+D6 (bridge, thread cap, decode-once, compact wire) START 18:35:00
+launched pgid 10005 job 10008 (log ~/mavp-s100-bridge6.log; kill -- -$(cat ~/mavp-s100-bridge6.pid))
+D6 (bridge, thread cap, decode-once, compact wire) status 0 18:55:00

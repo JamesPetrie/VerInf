@@ -1,0 +1,9 @@
+{
+  "format": "verinf-dump-policy-v1",
+  "policy_source": "same-run prover (mechanism check only)",
+  "proof_bytes": 19667647609,
+  "proof_file": "mavp-s1000.bin",
+  "statement_digest": "6640d6fe62b1b60842b13d2c9076890766ad94f97c1f0a9db85a22516f50f2ba",
+  "wc_identity": "649f6029d039763eb3bedf4629ad08c95c3fffaaa6d8ee83b731ac1f3f8e3032",
+  "weight_root": "3f582c05041023e1d51e15aec3638a64f143f4a3d82a638eaa76dc293292cde4"
+}

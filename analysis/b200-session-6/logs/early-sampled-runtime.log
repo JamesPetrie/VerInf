@@ -1,0 +1,9 @@
+........................................................................ [ 84%]
+.............                                                            [100%]
+=============================== warnings summary ===============================
+prover/tests/test_sampled_claim_runtime.py::test_window_rs_commit_opens_and_binds_selected_wire
+  /workspace/verinf/prover/core.py:644: UserWarning: The given buffer is not writable, and PyTorch does not support non-writable tensors. This means you can write to the underlying (supposedly non-writable) buffer using the tensor. You may want to copy the buffer to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at /pytorch/torch/csrc/utils/tensor_new.cpp:1578.)
+    return torch.frombuffer(bytes(master_seed), dtype=torch.uint8).cuda()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+85 passed, 1 warning in 6.65s

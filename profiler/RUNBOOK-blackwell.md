@@ -287,11 +287,14 @@ export PATH=/usr/local/cuda/bin:$PATH         # nvcc is not on the login PATH
 # cgroup throttles them — session 5's sampler counted thousands of throttled
 # CPU-seconds in the enrollments and the reveal pass, and every CPU-side
 # phase ran two to four times slower than on the less-oversubscribed host.
-# Cap the pools to the quota (session 6 measures the effect; hold it fixed
-# within an A/B).
+# Cap the pools to the quota (hold it fixed within an A/B). Session 6 ran
+# capped at 20 on a 20.4-CPU quota: 16 throttled CPU-seconds in 3.5 hours
+# against session 5's 9,608 in 70 minutes, the non-bridge time outside the
+# sweeps 41 s against 440 s (analysis/b200-session-6-archive.md).
 _q=$(cut -d' ' -f1 /sys/fs/cgroup/cpu.max 2>/dev/null || echo max)   # 'max' = no quota: leave the pools alone
 [ "$_q" != max ] && export OMP_NUM_THREADS=$(( _q / $(cut -d' ' -f2 /sys/fs/cgroup/cpu.max) ))
 [ "$_q" != max ] && export MKL_NUM_THREADS=$OMP_NUM_THREADS
+[ "$_q" != max ] && export RAYON_NUM_THREADS=$OMP_NUM_THREADS   # the Rust verifier's pool, sized to the visible CPUs otherwise
 mkdir -p "$VERINF_OUT" "$(dirname "$VERINF_PROOF")" "$VERINF_ROOT/probe" "$VERINF_LOGS"
 waitfor() { until grep -q '^EXIT=' ~/"$1".log 2>/dev/null; do sleep 60; done
             grep -qx 'EXIT=0' ~/"$1".log && return 0
@@ -663,6 +666,18 @@ verifier log and revision stamp have been copied to durable storage and the
 copied proof's SHA-256 matches the receipt. Run the scratchpad's
 `bash pull6_proof.sh <destination-outside-this-repo>` to do that check. A receipt
 alone does not preserve a proof that can be checked again.
+
+### As measured (session 6, 2026-09-30)
+
+On a B200 with a 20.4-CPU quota and the pools capped at 20: the S=1000
+prove 1,780.2 s (build 42 s, enrollments 139 + 116 s, reveal 183 s outside
+it), peak GPU 152.64 GiB, anonymous host memory 32.7 GB beside the mapped
+model; the proof 19.67 GB, dumped in 30.4 s. The Rust check took 5,662 s
+with the parse, 98% of it in `lin_col`, and peaked at 27.2 GB: at this
+quota the check is three times the prove, so start copying the proof home
+while it runs (about 48 minutes at the 6.8 MB/s this pod gave over scp).
+The verdict was ACCEPT; the receipt and the run are in
+`analysis/b200-session-6/`.
 
 ## D. The S=1000 instrumented prove, cache OFF, proof dumped (~30-60 min, unmeasured)
 

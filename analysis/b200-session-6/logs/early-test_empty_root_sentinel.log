@@ -1,0 +1,15 @@
+/workspace/verinf/prover/core.py:644: UserWarning: The given buffer is not writable, and PyTorch does not support non-writable tensors. This means you can write to the underlying (supposedly non-writable) buffer using the tensor. You may want to copy the buffer to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at /pytorch/torch/csrc/utils/tensor_new.cpp:1578.)
+  return torch.frombuffer(bytes(master_seed), dtype=torch.uint8).cuda()
+W0930 17:56:08.148000 3835 torch/utils/cpp_extension.py:2425] TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
+W0930 17:56:08.148000 3835 torch/utils/cpp_extension.py:2425] If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'] to specific architectures.
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 4 rounds done; opened columns match committed leaves: True; W-block rows 4; W-ref False; Wnew rows 0; p3 rows 0; peak 0.01 GB
+    baseline ACCEPT (p2 empty under the sentinel root)
+    zeroed root_blind (opened columns intact): REJECT (want REJECT)
+    zeroed root_w (opened columns intact): REJECT (want REJECT)
+    zeroed root_p1 (opened columns intact): REJECT (want REJECT)
+  PASS test_zero_root_sentinel
+=== 1 passed, 0 failed (of 1) ===
