@@ -10,3 +10,4 @@ numpy                # host-side field/index math
 safetensors          # lazy per-tensor weight loading (loader.py)
 blake3               # Fiat-Shamir PRF + Merkle hash (matches verifier-rs)
 ninja                # JIT build backend for the CUDA primitives (cuda_primitives.py)
+gguf                 # GGUFReader: prover/loader.py reads the Maverick shards through it

@@ -1,0 +1,6 @@
+D3 START 20:35:52
+launched pgid 6871 job 6874 (log ~/mavp-s100-wc-off.log; kill -- -$(cat ~/mavp-s100-wc-off.pid))
+D3 off arm done 21:33:52
+launched pgid 9466 job 9469 (log ~/mavp-s100-wc-on.log; kill -- -$(cat ~/mavp-s100-wc-on.pid))
+D3 on arm status 0 22:44:53
+D3 DONE 22:44:53

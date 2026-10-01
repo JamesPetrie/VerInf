@@ -1,0 +1,89 @@
+sweep  col               off         on     on-off   ratio
+R1     wall            116.5      790.6      674.1   6.786
+R1     witness          11.8       12.8        1.0   1.085
+R1     fetch            85.9      716.2      630.3   8.338
+R1     encode           17.3       17.4        0.1   1.006
+R1     loads          2702.0     2702.0        0.0   1.000
+R1     load_GB         914.6      914.6        0.0   1.000
+R1     weight_s         78.2      693.7      615.5   8.871
+R1     weight_n        362.0      362.0        0.0   1.000
+R1     shard_s           7.8       22.6       14.8   2.897
+R1     shard_n        2340.0     2340.0        0.0   1.000
+
+R2     wall            168.3      147.0      -21.3   0.873
+R2     witness          26.5       27.9        1.4   1.053
+R2     fetch           126.4      102.1      -24.3   0.808
+R2     aux               2.0        2.8        0.8   1.400
+R2     encode           12.4       12.4        0.0   1.000
+R2     loads          9940.0     9940.0        0.0   1.000
+R2     load_GB        3351.2     3351.2        0.0   1.000
+R2     routed_rd        72.0       72.0        0.0   1.000
+R2     proj             72.0       72.0        0.0   1.000
+R2     weight_s         97.3        0.0      -97.3   0.000
+R2     weight_n        724.0        0.0     -724.0   0.000
+R2     shard_s          49.3      119.3       70.0   2.420
+R2     shard_n        9216.0     9216.0        0.0   1.000
+R2     hits              0.0      724.0      724.0     n/a
+
+R3     wall             93.8       15.2      -78.6   0.162
+R3     witness           5.5        7.4        1.9   1.345
+R3     fetch            85.3        2.8      -82.5   0.033
+R3     aux               2.0        3.7        1.7   1.850
+R3     encode            0.6        0.6        0.0   1.000
+R3     loads           724.0      724.0        0.0   1.000
+R3     load_GB         258.8      258.8        0.0   1.000
+R3     routed_rd        72.0       72.0        0.0   1.000
+R3     weight_s         85.3        0.0      -85.3   0.000
+R3     weight_n        724.0        0.0     -724.0   0.000
+R3     hits              0.0      724.0      724.0     n/a
+
+fold   wall           1001.2      984.9      -16.3   0.984
+fold   witness           5.6        6.9        1.3   1.232
+fold   fetch           149.4       70.2      -79.2   0.470
+fold   aux               2.0        2.9        0.9   1.450
+fold   encode          488.1      489.8        1.7   1.003
+fold   fold_qlin       277.0      324.2       47.2   1.170
+fold   loads         10302.0    10302.0        0.0   1.000
+fold   load_GB        3480.6     3480.6        0.0   1.000
+fold   routed_rd        72.0       72.0        0.0   1.000
+fold   weight_s        121.1        0.0     -121.1   0.000
+fold   weight_n       1086.0        0.0    -1086.0   0.000
+fold   shard_s          28.4       66.3       37.9   2.335
+fold   shard_n        9216.0     9216.0        0.0   1.000
+fold   hits              0.0     1086.0     1086.0     n/a
+
+open   wall            998.6      854.5     -144.1   0.856
+open   witness           5.6        7.3        1.7   1.304
+open   fetch           277.9       73.4     -204.5   0.264
+open   aux               2.1        3.6        1.5   1.714
+open   encode          675.7      678.9        3.2   1.005
+open   loads         10302.0    10302.0        0.0   1.000
+open   load_GB        3480.6     3480.6        0.0   1.000
+open   routed_rd        72.0       72.0        0.0   1.000
+open   weight_s        249.2        0.0     -249.2   0.000
+open   weight_n       1086.0        0.0    -1086.0   0.000
+open   shard_s          28.9       69.7       40.8   2.412
+open   shard_n        9216.0     9216.0        0.0   1.000
+open   hits              0.0     1086.0     1086.0     n/a
+
+ALL    wall           2378.5     2792.2      413.7   1.174
+ALL    witness          54.9       62.3        7.4   1.135
+ALL    fetch           724.9      964.6      239.7   1.331
+ALL    aux               8.1       13.1        5.0   1.617
+ALL    encode         1194.1     1199.1        5.0   1.004
+ALL    fold_qlin       277.0      324.2       47.2   1.170
+ALL    loads         33970.0    33970.0        0.0   1.000
+ALL    load_GB       11485.9    11485.9        0.0   1.000
+ALL    routed_rd       288.0      288.0        0.0   1.000
+ALL    proj             72.0       72.0        0.0   1.000
+ALL    weight_s        631.0      693.7       62.7   1.099
+ALL    weight_n       3982.0      362.0    -3620.0   0.091
+ALL    shard_s         114.4      277.9      163.5   2.429
+ALL    shard_n       29988.0    29988.0        0.0   1.000
+ALL    hits              0.0     3620.0     3620.0     n/a
+ALL    stores            0.0      362.0      362.0     n/a
+
+fixed: {'build_s': (41.8, 303.3), 'enroll_s': (851.5, 839.3), 'reveal_s': (82.9, 76.2), 'prove_s': (2492.8, 2966.6), 'peak_GiB': (48.43, 48.44), 'leaf_check': ('True', 'True')}
+weight cache (on arm): {'wc_weights': 362.0, 'wc_packed_GB': 64.7, 'wc_pinned_GB': 92.4, 'wc_reserved_GB': 92.4, 'wc_hits': 3620.0, 'wc_refused': 0.0}
+prove: off 2492.8s, on 2966.6s, saving -473.8s = -19.0%
+dense loader seconds per proof: off 631.0 (3982 calls), on 693.7 (362 calls + 3620 hits)

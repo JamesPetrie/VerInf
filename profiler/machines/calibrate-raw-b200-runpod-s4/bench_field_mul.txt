@@ -1,0 +1,9 @@
+device: NVIDIA B200  sm=10.0  SMs=148  totalGlobalMem=178.34 GB
+config: blocks=1184 threads=256 K_LANES=8 iters=4096  warmup=3 runs=5
+  run 0: 14.683 ms  -> 676.45 Gmul/s
+  run 1: 14.667 ms  -> 677.16 Gmul/s
+  run 2: 14.682 ms  -> 676.50 Gmul/s
+  run 3: 14.666 ms  -> 677.23 Gmul/s
+  run 4: 14.682 ms  -> 676.49 Gmul/s
+best: 677.23 Gmul/s
+sink[0] = 4f25411223a5cde9 (anti-DCE)

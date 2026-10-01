@@ -30,6 +30,7 @@ class Variable:
     length: int
     phase: int = 1
     persistent: bool = False
+    w_new: bool = False
 
 
 @dataclass(eq=False)
@@ -68,6 +69,8 @@ import cli                                  # noqa: E402
 import dag                                  # noqa: E402
 import partition                            # noqa: E402
 import predict                              # noqa: E402
+import crosscheck                           # noqa: E402
+import weightsplit                          # noqa: E402
 
 # --- fake claims with the real prover field spellings ---
 
@@ -229,6 +232,7 @@ class FakeTape:
     def __init__(self, cfg, lazy=True):
         self.cfg, self.lazy = cfg, lazy
         self.claims, self._deferred = [], []
+        self.inputs = {}                 # Variable -> tensor | lazy loader
 
     def add(self, claim, inputs):
         self.claims.append(claim)
@@ -249,6 +253,13 @@ def _build_manifest():
     # layer-0 chain: rmsnorm -> matmul(weight) -> softmax -> silu -> rope
     x0 = Variable("x_input", S * D)
     w0 = Variable("W_Q_L0", D * D, persistent=True)
+    # a lazy loader carrying source provenance (extract copies it onto the
+    # persistent VariableRecord; see prover/loader.py gguf_provenance)
+    def _w0_loader():
+        raise AssertionError("extraction must not resolve weight loaders")
+    _w0_loader.provenance = {"quant": "Q6_K",
+                             "packed_bytes": D * D * 210 // 256}
+    t.inputs[w0] = _w0_loader
     n0 = Variable("x_input@rms_L0#1", S * D)
     t.add(RmsNormClaim(x=x0, output=n0, config=RmsNormConfig(B=S, d=D)), [x0])
     q0 = Variable("x_input@W_Q_L0#2", S * D)
@@ -349,6 +360,13 @@ def test_extractor():
     assert man.claims[0].layer == 0 and man.claims[5].layer == 0
     # weight is input, not output
     assert by_name["W_Q_L0"].producer is None and by_name["W_Q_L0"].persistent
+    # lazy-loader source provenance is copied onto the persistent record;
+    # a persistent var with no loader (token_embd: eager table) records
+    # nothing and the profiler falls back to its quant table
+    assert by_name["W_Q_L0"].quant == "Q6_K"
+    assert by_name["W_Q_L0"].packed_bytes == float(D * D * 210 // 256)
+    assert by_name["token_embd"].quant is None
+    assert by_name["token_embd"].packed_bytes is None
     # ...even when a claim's _deferred input list omits it (the embed claim
     # is added with inputs=[]): persistent => committed run input
     emb_idx = next(c.idx for c in man.claims
@@ -517,6 +535,24 @@ def test_expert_labels():
     assert partition._expert_of("a.e3.b@L1_Wg7#2") == 7
 
 
+def test_manifest_gz_roundtrip():
+    # save gzips on a .gz suffix, matching load (an archive saved as
+    # x.json.gz used to be plain JSON that load then failed to gunzip)
+    man = _build_manifest()
+    with tempfile.TemporaryDirectory() as td:
+        gz = os.path.join(td, "m.json.gz")
+        man.save(gz)
+        import gzip
+        with gzip.open(gz, "rt") as f:
+            assert '"claims"' in f.read()          # gunzips: really gzipped
+        m2 = Manifest.load(gz)
+        assert len(m2.claims) == len(man.claims)
+        plain = os.path.join(td, "m.json")
+        man.save(plain)
+        with open(plain) as f:
+            assert f.read(1) == "{"
+
+
 def test_manifest_validation():
     mp = MachineProfile.load("gb10-spark")
     with tempfile.TemporaryDirectory() as td:
@@ -580,6 +616,10 @@ def test_consumers():
     assert "u64le/base64, production" in rep
     assert "legacy decimal JSON" in rep
     assert "A100 reference" in rep     # gb10 has no compact measurement
+    # the reference must be the page-cache-excluded egress bound, never the
+    # retracted 751 MB/s (analysis/routed-projected-status.md: "not a
+    # measurement"; egress bench 200-315 MB/s, final run 245)
+    assert 200 <= predict.PROOF_COMPACT_REF_MBPS <= 315
     # extracted manifests itemize every slot: rows are exact, no approx label
     assert "(approx" not in rep
     assert predict.live_set_peak(m2) is not None
@@ -600,8 +640,12 @@ def test_consumers():
     assign2 = [0] * len(m2.claims)
     assign2[settle_idx] = 1
     ev2 = partition.evaluate(m2, assign2, 2, mp)
-    assert ev2["mult_bytes_per_sweep"] == T_LEN * 8 + 8, \
-        ev2["mult_bytes_per_sweep"]
+    # the z inputs cost nothing per settlement (their balance is a linear
+    # constraint the owning shard folds); only the mult partial crosses,
+    # per sweep — and the fold partials merge ONCE per proof
+    assert ev2["mult_bytes_per_sweep"] == T_LEN * 8, ev2["mult_bytes_per_sweep"]
+    k_deg = m2.run["ligero"].get("K_DEG", 16384)
+    assert ev2["fold_merge_bytes"] == 1 * 3 * k_deg * 8
     # with only the settlement remote, every other edge is co-located and
     # its z inputs are reduction-handled: zero activation traffic
     assert ev2["act_bytes_per_sweep"] == 0, ev2["act_bytes_per_sweep"]
@@ -610,6 +654,7 @@ def test_consumers():
     tot = predict.totals(m2)
     ev1 = partition.evaluate(m2, [0] * len(m2.claims), 1, mp)
     assert ev1["mult_bytes_per_sweep"] == 0    # co-located: nothing ships
+    assert ev1["fold_merge_bytes"] == 0
     inputs = sum(v.length for v in m2.variables
                  if v.producer is None and not v.persistent)
     weights = sum(v.length for v in m2.variables if v.persistent)
@@ -674,6 +719,162 @@ def test_enrolled_weights():
             * (ev_leg["shard_W"][0] + inputs)) * 1e-9
     got = ev_enr["shard_t"][0] - ev_leg["shard_t"][0]
     assert abs(got - want) < 1e-12, (got, want)
+    # predict's printed floor equals partition's N=1 wall in BOTH modes
+    # (the two tools price the same slots with the same constants — the
+    # agreement was asserted in commit messages, now locked)
+    import re as _re
+    def _floor_of(report_text):
+        m_ = _re.search(r"floor \(NTT-bound, post-reorg target\):\s+([\d,.]+) s", report_text)
+        assert m_, report_text
+        return float(m_.group(1).replace(",", ""))
+    for enr, ev in ((False, ev_leg), (True, ev_enr)):
+        pf = _floor_of(predict.report(m2, mp, enrolled_weights=enr))
+        # _fmt_s prints 1 decimal below 60 s and whole seconds above
+        tol = 0.06 if ev["shard_t"][0] < 60 else 0.6
+        assert abs(pf - ev["shard_t"][0]) <= tol, (enr, pf, ev["shard_t"][0])
+    # no refresh budget at a toy geometry is said, not divided through
+    tiny = Manifest(run=dict(seq=1, ligero=dict(ELL=64, K_DEG=128, T_QUERIES=80)),
+                    claims=m2.claims, variables=m2.variables)
+    assert "NO refresh budget" in partition._mode_suffix(tiny, True, False)
+    # CLI: the two modes are mutually exclusive at the command line too
+    with tempfile.TemporaryDirectory() as td:
+        path = os.path.join(td, "m.json")
+        m2.save(path)
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                cli.main(["partition", path, "--shards", "2",
+                          "--enrolled-weights", "--skip-weight-commit"])
+            raise AssertionError("CLI accepted both modes")
+        except SystemExit as e:
+            assert e.code == 2
+
+
+def _shared_weight_partition_manifest():
+    from manifest import VariableRecord as V
+    return Manifest(
+        run=dict(ligero=dict(ELL=8, K_DEG=16384, T_QUERIES=4)),
+        claims=[ClaimRecord(i, "matmul", layer=i,
+                            params=dict(m=1, k=8, n=100, rescale=False),
+                            inputs=[f"x{i}", "w"], outputs=[f"y{i}"])
+                for i in range(2)],
+        variables=[V("w", 800, persistent=True, consumers=[0, 1])]
+        + [v for i in range(2) for v in
+           (V(f"x{i}", 8, consumers=[i]), V(f"y{i}", 100, producer=i))])
+
+
+def test_partition_serial_baseline():
+    import math
+    m = _shared_weight_partition_manifest()
+    mp = MachineProfile(dict(prove_constants=dict(
+        A_ns_per_slot=1, B_ns_per_cid=0, C_ns_per_product=0)))
+    # Each matmul has 124 fresh witness slots. The one-device proof pays
+    # for both (plus 16 input slots) and folds/opens the 800-slot W once.
+    ev = partition.evaluate(m, [0, 1], 2, mp, enrolled_weights=True)
+    assert math.isclose(ev["serial"], 1596e-9)
+    assert math.isclose(ev["wall"], 1398e-9)
+    assert math.isclose(ev["serial"] / ev["wall"], 1596 / 1398)
+    assert ev["imbalance"] == 1.0  # balanced work still repeats W
+    # Baseline depends on the workload/mode, never on its parallel mapping.
+    for mode in ({}, dict(enrolled_weights=True), dict(skip_weight_commit=True)):
+        one = partition.evaluate(m, [0, 0], 1, mp, **mode)
+        for n, assignment in ((2, [0, 1]), (2, [1, 1]), (3, [0, 2])):
+            many = partition.evaluate(m, assignment, n, mp, **mode)
+            assert math.isclose(many["serial"], one["wall"]), (mode, many)
+    # Include nonzero cid/product terms in the comparison as well.
+    mp.raw["prove_constants"].update(B_ns_per_cid=3, C_ns_per_product=7)
+    one = partition.evaluate(m, [0, 0], 1, mp, enrolled_weights=True)
+    many = partition.evaluate(m, [0, 1], 2, mp, enrolled_weights=True)
+    assert math.isclose(many["serial"], one["wall"])
+    mp.raw["prove_constants"].update(B_ns_per_cid=0, C_ns_per_product=0)
+    assert "speedup 1.14x" in partition.report(m, "rows", 2, mp,
+                                               enrolled_weights=True)
+    comp = partition.compare(m, 2, mp, enrolled_weights=True)
+    assert comp.count("1.14x") == 3, comp
+    assert partition.evaluate(m, [0, 1], 2, MachineProfile({}))["serial"] is None
+
+
+def test_partition_opened_ownership():
+    from manifest import VariableRecord as V
+    m = _shared_weight_partition_manifest()
+    mp = MachineProfile({})  # memory must work even without calibration
+    # Both owners open the entire shared W, plus 124 witness + 8 input
+    # slots, at four queries and eight bytes per row/query.
+    ev = partition.evaluate(m, [0, 1], 2, mp, enrolled_weights=True)
+    assert ev["opened_bytes_max"] == (800 + 124 + 8) / 8 * 4 * 8
+    # Uneven ownership: only shard 0 consumes W. Inputs remain evenly split
+    # by the existing model (24 / 2), giving 3744 B rather than 2144 B.
+    m.claims[1] = ClaimRecord(1, "add", layer=1, params=dict(L=8),
+                              inputs=["a", "b"], outputs=["c"])
+    m.variables = [V("w", 800, persistent=True, consumers=[0]),
+                   V("x0", 8, consumers=[0]), V("y0", 100, producer=0),
+                   V("a", 8, consumers=[1]), V("b", 8, consumers=[1]),
+                   V("c", 8, producer=1)]
+    enr = partition.evaluate(m, [0, 1], 2, mp, enrolled_weights=True)
+    legacy = partition.evaluate(m, [0, 1], 2, mp)
+    assert enr["opened_bytes_max"] == 3744
+    assert legacy["opened_bytes_max"] == 2144
+    # Single-device ownership is identical in the two modes.
+    assert partition.evaluate(m, [0, 0], 1, mp, enrolled_weights=True)[
+        "opened_bytes_max"] == partition.evaluate(m, [0, 0], 1, mp)[
+            "opened_bytes_max"]
+
+
+def test_partition_fold_merge_traffic():
+    import math
+    from manifest import VariableRecord as V
+    m = _shared_weight_partition_manifest()
+    mp = MachineProfile(dict(prove_constants=dict(
+        A_ns_per_slot=1, B_ns_per_cid=0, C_ns_per_product=0)))
+    # No activation edges: the sole cross-shard message is the remote
+    # shard's three K_DEG field-element fold buffers, once per proof.
+    merge = 3 * 16384 * 8
+    for sweeps in (4, 5):
+        ev = partition.evaluate(m, [0, 1], 2, mp, sweeps=sweeps)
+        assert ev["traffic_per_sweep"] == 0
+        assert ev["traffic_total"] == merge
+        bw, seconds, fraction = partition._comms_row(ev, [25])[0]
+        assert bw == 25 and math.isclose(seconds, merge / 25e9)
+        assert math.isclose(fraction, seconds / ev["wall"])
+        assert partition._verdict(fraction) == "BINDING"
+    report = partition.report(m, "rows", 2, mp, bandwidths=[25])
+    assert "fold merge once/proof: 393,216 B" in report
+    assert "BINDING" in report
+    comparison = partition.compare(m, 2, mp, bandwidths=[25])
+    assert "fold/proof(B)" in comparison
+    assert comparison.count("393,216") == 3
+    assert comparison.count("BINDING") == 3
+    # A claim-free shard still contributes if it owns the even-split input
+    # rows, or (outside enrolled mode) dependency-free weight rows.
+    for mode in ({}, dict(enrolled_weights=True), dict(skip_weight_commit=True)):
+        for n, assignment in ((2, [0, 0]), (3, [0, 2])):
+            ev = partition.evaluate(m, assignment, n, mp, **mode)
+            assert ev["traffic_total"] == merge * (n - 1)
+    for v in m.variables:
+        if v.producer is None:
+            v.persistent = True
+    for mode in ({}, dict(skip_weight_commit=True)):
+        ev = partition.evaluate(m, [0, 0], 2, mp, **mode)
+        assert ev["traffic_total"] == merge
+    # With all inputs enrolled on the only claim owner, the second device
+    # really is idle and has no partial to send.
+    ev = partition.evaluate(m, [0, 0], 2, mp, enrolled_weights=True)
+    assert ev["shard_t"][1] == ev["traffic_total"] == 0
+    # An additional activation edge repeats every sweep, unlike the fold.
+    m = Manifest(
+        claims=[ClaimRecord(0, "add", params=dict(L=100),
+                            inputs=["a", "b"], outputs=["x"]),
+                ClaimRecord(1, "add", params=dict(L=100),
+                            inputs=["x", "c"], outputs=["y"])],
+        variables=[V("a", 100, consumers=[0]), V("b", 100, consumers=[0]),
+                   V("c", 100, consumers=[1]),
+                   V("x", 100, producer=0, consumers=[1]),
+                   V("y", 100, producer=1)])
+    for sweeps in (4, 5):
+        ev = partition.evaluate(m, [0, 1], 2, mp, sweeps=sweeps)
+        assert ev["traffic_per_sweep"] == 100 * 8
+        assert ev["traffic_total"] == 100 * 8 * sweeps + merge
+    one = partition.evaluate(m, [0, 0], 1, mp)
+    assert one["fold_merge_bytes"] == one["traffic_total"] == 0
 
 
 def test_projected_protocol():
@@ -704,6 +905,23 @@ def test_projected_protocol():
     y_slots = 24 * 1000 * (8192 + 8192 + 5120)
     assert sum(t[0] for t in trip) == \
         2 * N + R + 72 * 1000 + 72 * 3 * 128 + y_slots
+    # ...and against the ledger MODULE itself (independent of the numbers
+    # typed above): W_ROUTE charges yr and the three f-vectors at full ELL
+    # rows (one variable each); synth counts their logical lengths, so the
+    # two agree once that padding is swapped for S and E per matmul
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "_rp4h", os.path.join(os.path.dirname(__file__), "..", "analysis",
+                              "routed_projected_4h_model.py"))
+    rp4h = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(rp4h)
+    ledger_logical = (rp4h.W_ROUTE - 4 * rp4h.N_MATS * rp4h.ELL
+                      + rp4h.N_MATS * rp4h.S + 3 * rp4h.N_MATS * rp4h.E)
+    assert sum(t[0] for t in trip) - y_slots == ledger_logical
+    assert sum(t[1] for t in trip) == rp4h.L_ROUTE
+    assert sum(t[2] for t in trip) == rp4h.Q_ROUTE
+    # LinComb: no own witness, one cid per slot (lincomb_compile), no quads
+    assert claimcosts.cost("LinCombClaim", dict(length=40)) == (0.0, 40.0, 0.0)
     # rescale side: 5/2/2 per selected element; the 2-cids/2-Q sums are
     # exactly the ledger's LQ_SELECTED_OLD
     rst = [claimcosts.cost(c.type, c.params) for c in rs]
@@ -761,6 +979,23 @@ def test_projected_protocol():
     bb = partition.assign_layers(m3, 4)
     assert a4[:3] == bb[:3], (a4, bb)     # routed family: backbone
     assert a4[3] == 3                      # per-expert matmul: expert 3
+    # DISCRIMINATING case: a routed family labelled _Wg1 on layer 0 — the
+    # old label parser sent it to expert 1 -> shard 1, the type-aware rule
+    # keeps it on the backbone (layer 0 -> shard 0); expert 0 above could
+    # not tell the two apart (0 % 4 == backbone 0)
+    m3b = Manifest(
+        run=dict(seq=4, ligero=dict(ELL=8192)),
+        claims=[ClaimRecord(idx=0, type="RoutedProjectedMatmulClaim",
+                            label="x_r@L0_Wg1#1", layer=0,
+                            params=dict(T=4, K=8, J=8, E=4)),
+                ClaimRecord(idx=1, type="RescaleClaim",
+                            label="x_r@L0_Wg1#1_rs", layer=0,
+                            params=dict(length=32))],
+        variables=[VariableRecord(name="v", length=8)])
+    assert partition.assign_experts(m3b, 4) == partition.assign_layers(m3b, 4) == [0, 0]
+    # routed-only manifest: NO expert labels under the type-aware rule (the
+    # label-based version read _Wg1 and said False)
+    assert partition._no_expert_labels(m3b)
     assert a4[4] == bb[4] == 3, (a4, bb)  # attention matmul: backbone (L3)
     # type-aware note: nothing here is expert-assignable except idx 3
     assert not partition._no_expert_labels(m3)
@@ -792,6 +1027,14 @@ def test_projected_extraction():
         f_p=Variable(name + ".f_p", E_, phase=3),
         T=T_, K=K_, J=J_, E=E_)
     t.add(rp, [x, mask])          # W shards deliberately NOT deferred inputs
+    # provenance-carrying lazy loaders on the shards (as maverick_lazy_expert
+    # attaches); the walker must copy quant/packed_bytes onto the records
+    # without calling the loaders
+    for e, sh in enumerate(shards):
+        def _ld(e=e):
+            raise AssertionError(f"extraction resolved shard {e}")
+        _ld.provenance = {"quant": "Q4_K", "packed_bytes": 144 * (K_ * J_ // 256 + e)}
+        t.inputs[sh] = _ld
     L_ = T_ * J_
     zl = Variable(name + "_rs_zlow", L_, phase=2)
     zs = Variable(name + "_rs_zshift", L_, phase=2)
@@ -821,6 +1064,8 @@ def test_projected_extraction():
         assert nm in c_rp.inputs
         v = by[nm]
         assert v.persistent and v.producer is None and 0 in v.consumers
+        assert v.quant == "Q4_K" and v.packed_bytes == 144 * (K_ * J_ // 256 + e)
+        assert v.w_new is False
     # outputs and exact W agree with the compile-derived formula
     assert c_rp.w_slots ==         claimcosts.cost("RoutedProjectedMatmulClaim", c_rp.params)[0]
     assert by[name + ".f_y"].phase == 3
@@ -872,6 +1117,634 @@ def test_rows_approx_label():
     assert "(approx" in predict.report(m, mp)
 
 
+def _hetero_manifest(n_vars=60, ELL=8, T_Q=4, seed=7, fresh=0):
+    # Many heterogeneous enrolled variables (mixed lengths, several
+    # non-ELL-aligned, mixed quant types) with no claims: exercises the
+    # interior-worker geometry, padding, and provenance paths that the
+    # two-weight fake manifest cannot.
+    import random
+    from manifest import VariableRecord
+    rng = random.Random(seed)
+    m = Manifest()
+    m.run = {"ligero": {"ELL": ELL, "T_QUERIES": T_Q}}
+    quants = ["Q4_K", "Q6_K", "Q5_K", None]
+    for i in range(n_vars):
+        length = rng.choice([ELL, 2 * ELL, 3 * ELL, 5 * ELL, ELL + 1, 2 * ELL - 3, 9])
+        m.variables.append(VariableRecord(name=f"w{i}", length=length, persistent=True,
+                                          quant=rng.choice(quants)))
+    m.variables.append(VariableRecord(name="x", length=ELL))    # a fresh input
+    if fresh:   # substantial coordinator-only fresh work -> asymmetric optimum
+        m.variables.append(VariableRecord(name="x_big", length=fresh))
+    return m
+
+
+def test_weightsplit():
+    # Stage-aware weight-ownership model (the M1 coordinator/worker
+    # architecture) from EXECUTABLE plans: wall = commit + max(fold) +
+    # max(open) across the s_col barrier; N=1 reproduces predict's enrolled
+    # floor exactly on an aligned manifest; plans are contiguous whole-
+    # variable runs with cuts solved EXACTLY (matches brute force); slots
+    # are physical (row-padded); holds are unions (interior workers do not
+    # nest); shared-volume streaming is aggregate-bandwidth bound; two
+    # metrics (kernel floor ratio, same-mode speedup); UNAVAILABLE when the
+    # profile lacks disk (streaming) or mem_GB (resident); invalid
+    # provenance fails; zero shares valid; HBM-constrained optimum found
+    # even when the feasible band is narrower than any fraction grid.
+    import weightsplit as ws
+    import cli
+    man = _build_manifest()
+    for v in man.variables:
+        if v.persistent:
+            v.quant = "Q6_K"
+    pv0 = [v for v in man.variables if v.persistent]
+    pv0[0].packed_bytes = 1.0          # exact size beats the quant table
+    with tempfile.TemporaryDirectory() as td:
+        path = os.path.join(td, "fake_man.json")
+        man.save(path)
+        m2 = Manifest.load(path)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            cli.main(["weightsplit", path, "--machine", "gb10-spark",
+                      "--gpus", "1", "2", "--resident", "--intervals", "2",
+                      "--x-fold", "0", "--x-open", "0.5"])
+        out = buf.getvalue()
+        assert "fold stage (x=0.000)" in out and "open stage (x=" in out
+        assert "encode-share sensitivity" in out and "same-mode" in out
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            cli.main(["weightsplit", path, "--machine", "gb10-spark", "--gpus", "2"])
+        assert "UNAVAILABLE" in buf.getvalue()      # no disk calibration
+    pv = [v for v in m2.variables if v.persistent]
+    assert pv[0].packed_bytes == 1.0 and all(v.quant == "Q6_K" for v in pv)
+    assert ws.packed_bytes_of(pv[0], None) == 1.0
+    assert ws.packed_bytes_of(pv[1], None) == pv[1].length * ws.QUANT_BYTES_PER_PARAM["Q6_K"]
+    assert ws.packed_bytes_of(pv[1], 0.7) == pv[1].length * 0.7
+    # invalid provenance fails loudly instead of sizing HBM wrong
+    from manifest import VariableRecord
+    for bad in (dict(packed_bytes=-1.0), dict(packed_bytes=float("nan")),
+                dict(quant="Q4_0")):
+        try:
+            ws.packed_bytes_of(VariableRecord(name="b", length=8, persistent=True, **bad), None)
+            raise AssertionError(f"accepted {bad}")
+        except ValueError:
+            pass
+    mp = MachineProfile.load("gb10-spark")
+    A = mp.get("prove_constants", "A_ns_per_slot")
+    B = mp.get("prove_constants", "B_ns_per_cid")
+    C = mp.get("prove_constants", "C_ns_per_product")
+    t = predict.totals(m2)
+    W_fresh = t.W - t.W_weights
+    want = (A * W_fresh + B * t.cids + C * t.Q
+            + (predict.ENROLLED_QLIN_RATIO + predict.ENROLLED_OPEN_RATIO)
+            * A * t.W_weights
+            + predict.ENROLLED_OPEN_RATIO * A * W_fresh) * 1e-9
+    st = ws.stages(m2, mp)
+    assert abs(st.floor - want) < 1e-12, (st.floor, want)      # aligned fixture
+    ev1 = ws.evaluate(m2, mp, 1, resident=True)
+    assert abs(ev1["wall"] - st.floor) < 1e-12 and ev1["kernel_floor_ratio"] == 1.0
+    assert ev1["aligned"] and ev1["same_mode_speedup"] == 1.0
+    evx = ws.evaluate(m2, mp, 2, x_fold=1.0, x_open=1.0, resident=True)
+    assert abs(evx["wall"] - st.floor) < 1e-12 and evx["plan_mode"] == "explicit"
+    # resident needs mem_GB
+    nomem = MachineProfile({"name": "nomem", "prove_constants": mp.raw["prove_constants"]})
+    assert ws.evaluate(m2, nomem, 2, resident=True)["wall"] is None
+    assert ws.evaluate(m2, MachineProfile({"name": "x"}), 2)["wall"] is None
+    assert "UNAVAILABLE" in ws.report(m2, MachineProfile({"name": "x"}), [1, 2])
+
+    # --- heterogeneous many-variable fixture ---------------------------
+    hm = _hetero_manifest()
+    hpv = [v for v in hm.variables if v.persistent]
+    ELL = 8
+    ev = ws.evaluate(hm, mp, 2, resident=True)
+    assert not ev["aligned"]
+    phys = sum(-(-v.length // ELL) * ELL for v in hpv)
+    assert ev["physical_slots"] == phys > ev["logical_slots"] == sum(v.length for v in hpv)
+    # timing and payload use physical rows
+    assert abs(sum(ev["fold_slots"]) - phys) < 1e-9
+    assert abs(sum(ev["open_payload"]) - phys / ELL * 4 * 8) < 1e-9
+    # the reviewer's two-weight example: lengths 1 and 9 at ELL=8 -> 3 rows
+    tiny = Manifest(run={"ligero": {"ELL": 8, "T_QUERIES": 4}})
+    tiny.variables = [VariableRecord(name="a", length=1, persistent=True),
+                      VariableRecord(name="b", length=9, persistent=True)]
+    e = ws.evaluate(tiny, mp, 1, resident=True)
+    assert e["physical_slots"] == 24 and abs(sum(e["open_payload"]) - 96) < 1e-9
+    # stage structure from the plans
+    assert abs(ev["wall"] - (ws.stages(hm, mp).commit + ev["fold_t"] + ev["open_t"])) < 1e-12
+    rate_f = predict.ENROLLED_QLIN_RATIO * A * 1e-9
+    assert abs(ev["fold_compute"][1] - ev["fold_slots"][1] * rate_f) < 1e-12
+    # exact cut optimum at N=2: brute force over every boundary per stage
+    stg = ws.stages(hm, mp)
+    blk = ws._Block(hm, None, ELL)
+    def brute(stage_fresh, rate):
+        best = None
+        for c in range(blk.n + 1):
+            tt = max(stage_fresh + rate * blk.phys(0, c), rate * blk.phys(c, blk.n))
+            best = tt if best is None or tt < best else best
+        return best
+    rate_o = predict.ENROLLED_OPEN_RATIO * A * 1e-9
+    assert abs(ev["fold_t"] - brute(stg.fresh_fold, rate_f)) < 1e-9
+    assert abs(ev["open_t"] - brute(stg.fresh_open, rate_o)) < 1e-9
+    assert ev["plan_mode"] == "independent"
+    # per-stage optimum never loses to tied cuts (static)
+    evs = ws.evaluate(hm, mp, 2, resident=True, static=True)
+    assert evs["plan_fold"] == evs["plan_open"] and ev["wall"] <= evs["wall"] + 1e-9
+    # N=3/4: plans contiguous/exhaustive per stage; holds = brute-force
+    # variable-set unions; the solver beats or ties the equal-slot heuristic
+    for n in (3, 4):
+        e = ws.evaluate(hm, mp, n, x_fold=0.2, x_open=0.7, resident=True)
+        for key in ("plan_fold", "plan_open"):
+            plan = e[key]
+            assert plan[0][0] == 0 and plan[-1][1] == len(hpv)
+            assert all(a[1] == b[0] for a, b in zip(plan, plan[1:]))
+        for d in range(n):
+            (flo, fhi), (olo, ohi) = e["plan_fold"][d], e["plan_open"][d]
+            union = set(range(flo, fhi)) | set(range(olo, ohi))
+            assert abs(e["hold_bytes"][d]
+                       - sum(ws.packed_bytes_of(hpv[i], None) for i in union)) < 1e-6
+        solved = ws.evaluate(hm, mp, n, resident=True)
+        assert solved["wall"] <= e["wall"] + 1e-9
+        # unequal worker runs are allowed (physical slots differ)
+        ws_ = solved["fold_slots"][1:]
+        assert len(set(ws_)) > 1 or n == 2
+    # shared volume: the stage cannot beat aggregate bandwidth whatever
+    # the split; per-device disks can; 'none' overlap adds I/O to compute
+    blk_bytes = sum(ws.packed_bytes_of(v, None) for v in hpv)
+    slow = 1e-9                                  # GB/s -> I/O dominates
+    sh = ws.evaluate(hm, mp, 2, disk_GBps=slow, disk_mode="shared", io_overlap="perfect")
+    assert sh["fold_t"] >= blk_bytes / (slow * 1e9) - 1e-6
+    pd = ws.evaluate(hm, mp, 2, disk_GBps=slow, disk_mode="per-device", io_overlap="perfect")
+    assert pd["fold_t"] < sh["fold_t"]
+    nn = ws.evaluate(hm, mp, 2, disk_GBps=slow, disk_mode="per-device", io_overlap="none",
+                     x_fold=0.5, x_open=0.5)
+    pp = ws.evaluate(hm, mp, 2, disk_GBps=slow, disk_mode="per-device", io_overlap="perfect",
+                     x_fold=0.5, x_open=0.5)
+    assert nn["fold_t"] > pp["fold_t"]
+    # two metrics: same-mode speedup uses the N=1 wall under the same
+    # storage; kernel-floor ratio uses the compute-only floor
+    s2 = ws.evaluate(hm, mp, 2, disk_GBps=1e-6)
+    s1 = ws.evaluate(hm, mp, 1, disk_GBps=1e-6)
+    assert abs(s2["n1_wall_same_mode"] - s1["wall"]) < 1e-9
+    assert abs(s2["same_mode_speedup"] - s1["wall"] / s2["wall"]) < 1e-12
+    assert s2["kernel_floor_ratio"] < s2["same_mode_speedup"]
+    nodisk = MachineProfile({"name": "nodisk", "gpu": {"mem_GB": 100},
+                             "prove_constants": mp.raw["prove_constants"]})
+    assert ws.evaluate(hm, nodisk, 2)["wall"] is None
+    assert ws.evaluate(hm, nodisk, 2, disk_GBps=1.0)["wall"] is not None
+    # HBM-constrained optimum: a cap just above the theoretical minimum
+    # (half the block at N=2, up to one variable) admits only a narrow
+    # band of cuts — far narrower than a 0.005 fraction step — and the
+    # solver finds it; a cap below any two-run split is infeasible and
+    # reported as the least-infeasible (min max-hold) plan
+    # (the hetero fixture's fresh work is negligible, so its free optimum
+    # already sits at the byte-balanced cut; the projected S=1000 tape on
+    # the B200 profile has a genuinely asymmetric optimum — worker ~2/3 of
+    # the block — and a one-shard-wide feasible band at the cap)
+    import synth
+    mproj = synth.BUILDERS["maverick-projected"](1000)
+    mpb = MachineProfile.load("b200-runpod")
+    pblk = ws._Block(mproj, None, mproj.run["ligero"]["ELL"])
+    free = ws.evaluate(mproj, mpb, 2, resident=True, workspace_GB=0.0)
+    bmin = min(max(pblk.bytes(0, c), pblk.bytes(c, pblk.n)) for c in range(pblk.n + 1))
+    assert free["feasible"] and max(free["hold_bytes"]) > 1.2 * bmin
+    cap_GB = bmin * (1 + 1e-9) / ws.MEM_GB_BYTES        # profile mem_GB is GiB
+    assert (max(free["hold_bytes"]) - bmin) / pblk.total_bytes > 0.05     # far from the cap
+    assert pblk.bytes(0, 1) / pblk.total_bytes < 0.005                    # band < a grid step
+    tight = MachineProfile({"name": "tight", "gpu": {"mem_GB": cap_GB},
+                            "prove_constants": mpb.raw["prove_constants"]})
+    con = ws.evaluate(mproj, tight, 2, resident=True, workspace_GB=0.0)
+    assert con["feasible"] and max(con["hold_bytes"]) <= cap_GB * ws.MEM_GB_BYTES
+    assert con["wall"] >= free["wall"] - 1e-9 and con["plan_mode"] == "capped-exact"
+    # resident same-mode needs an executable N=1: the whole block does not
+    # fit one B200, so it is n/a (floor ratio still reported)
+    assert free["same_mode_speedup"] is None and free["n1_wall_same_mode"] is None
+    assert free["kernel_floor_ratio"] > 1.0 and "n/a" in ws.report(
+        mproj, mpb, [2], resident=True, workspace_GB=0.0)
+    # --static honours a binding cap and equals the exhaustive capped
+    # single-cut optimum of the true wall (0.7 B/param: the speed-optimal
+    # plan does not fit under the B200's 178 GiB - 10 GB)
+    sta = ws.evaluate(mproj, mpb, 2, resident=True, static=True, bytes_per_param=0.7)
+    assert sta["feasible"] and sta["plan_mode"] == "static-exact"
+    cap7 = mpb.get("gpu", "mem_GB") * ws.MEM_GB_BYTES - 10.0 * 1e9
+    assert sta["cap_bytes"] == cap7
+    blk7 = ws._Block(mproj, 0.7, mproj.run["ligero"]["ELL"])
+    st7 = ws.stages(mproj, mpb, bytes_per_param=0.7)
+    Ab = mpb.get("prove_constants", "A_ns_per_slot") * 1e-9
+    best = None
+    for c in range(blk7.n + 1):
+        if max(blk7.bytes(0, c), blk7.bytes(c, blk7.n)) > cap7:
+            continue
+        f = max(st7.fresh_fold + Ab * blk7.phys(0, c), Ab * blk7.phys(c, blk7.n))
+        o = max(st7.fresh_open + 0.5 * Ab * blk7.phys(0, c), 0.5 * Ab * blk7.phys(c, blk7.n))
+        w = st7.commit + f + o
+        best = w if best is None or w < best else best
+    assert abs(sta["wall"] - best) < 1e-9 and max(sta["hold_bytes"]) <= cap7
+    # N>=3 tied/static plans are labelled heuristic
+    assert ws.evaluate(hm, mp, 3, resident=True, static=True)["plan_mode"] == "static-heuristic"
+    # capped N=2 is EXACT over UNTIED plans: on a hetero fixture with
+    # substantial coordinator-only fresh work the free optimum is
+    # asymmetric (the worker holds well over half); a cap between the
+    # balanced split and that hold binds. Brute force every (c_fold,
+    # c_open) pair under the union-hold cap: the model's wall equals the
+    # brute-force optimum and beats or ties the best TIED plan.
+    hf = _hetero_manifest(fresh=200 * ELL)
+    blkf = ws._Block(hf, None, ELL)
+    stg_h = ws.stages(hf, mp)
+    rf, ro = predict.ENROLLED_QLIN_RATIO * A * 1e-9, predict.ENROLLED_OPEN_RATIO * A * 1e-9
+    def _wall(cf, co):
+        f = max(stg_h.fresh_fold + rf * blkf.phys(0, cf), rf * blkf.phys(cf, blkf.n))
+        o = max(stg_h.fresh_open + ro * blkf.phys(0, co), ro * blkf.phys(co, blkf.n))
+        return stg_h.commit + f + o
+    def _fits(cf, co, cap):
+        return (blkf.bytes(0, max(cf, co)) <= cap and blkf.bytes(min(cf, co), blkf.n) <= cap)
+    free_f = ws.evaluate(hf, mp, 2, resident=True, workspace_GB=0.0)
+    assert free_f["plan_mode"] == "independent"
+    half = min(max(blkf.bytes(0, c), blkf.bytes(c, blkf.n)) for c in range(blkf.n + 1))
+    assert max(free_f["hold_bytes"]) > 1.15 * half          # genuinely asymmetric
+    cap_h = 0.5 * (half + max(free_f["hold_bytes"]))         # binds, box non-empty
+    prof_h = MachineProfile({"name": "h", "gpu": {"mem_GB": cap_h / ws.MEM_GB_BYTES},
+                             "prove_constants": mp.raw["prove_constants"]})
+    capped = ws.evaluate(hf, prof_h, 2, resident=True, workspace_GB=0.0)
+    brute = min(_wall(cf, co) for cf in range(blkf.n + 1) for co in range(blkf.n + 1)
+                if _fits(cf, co, cap_h))
+    tied_best = min(_wall(c, c) for c in range(blkf.n + 1) if _fits(c, c, cap_h))
+    assert capped["feasible"] and capped["plan_mode"] == "capped-exact", capped["plan_mode"]
+    assert abs(capped["wall"] - brute) < 1e-9, (capped["wall"], brute)
+    assert capped["wall"] <= tied_best + 1e-9 and max(capped["hold_bytes"]) <= cap_h
+    assert free_f["wall"] <= capped["wall"] + 1e-9
+    # --static at the same cap is the tied optimum (and >= the untied one)
+    sta_h = ws.evaluate(hf, prof_h, 2, resident=True, static=True, workspace_GB=0.0)
+    assert abs(sta_h["wall"] - tied_best) < 1e-9 and sta_h["plan_mode"] == "static-exact"
+    # N=3 under a binding cap (same fresh-heavy fixture: the free plan's
+    # largest hold is well above the min-max 3-way split): the tied
+    # heuristic returns a FEASIBLE plan whose holds respect the cap —
+    # optimality is NOT claimed, the label says heuristic
+    free3 = ws.evaluate(hf, mp, 3, resident=True, workspace_GB=0.0)
+    minhold_plan, _ = ws._solve_stage(blkf, 3, blkf.bytes, blkf.bytes, None)
+    minhold = max(blkf.bytes(lo, hi) for lo, hi in minhold_plan)
+    assert max(free3["hold_bytes"]) > 1.1 * minhold
+    cap3 = 0.5 * (minhold + max(free3["hold_bytes"]))
+    prof3 = MachineProfile({"name": "h3", "gpu": {"mem_GB": cap3 / ws.MEM_GB_BYTES},
+                            "prove_constants": mp.raw["prove_constants"]})
+    e3 = ws.evaluate(hf, prof3, 3, resident=True, workspace_GB=0.0)
+    assert e3["feasible"] and e3["plan_mode"] == "tied-heuristic", e3["plan_mode"]
+    assert max(e3["hold_bytes"]) <= cap3 and e3["plan_fold"] == e3["plan_open"]
+    assert e3["wall"] >= free3["wall"] - 1e-9
+    # w_new (a linking proof's refreshed copy) is not the enrolled block:
+    # excluded from the plan's variable list, as core._layout excludes it
+    hm2 = Manifest(run=hm.run, claims=hm.claims,
+                   variables=list(hm.variables) + [VariableRecord(
+                       name="Wnew0", length=40, persistent=True, w_new=True)])
+    assert ws._Block(hm2, None, ELL).n == ws._Block(hm, None, ELL).n
+    # the W-fold-rate reading and the whole-proof line are in the report
+    txt = ws.report(hm, mp, [1, 2], resident=True, semantic_s=1000.0)
+    assert "W-fold-rate sensitivity" in txt and "whole-proof speedup" in txt
+    e_sem = ws.evaluate(hm, mp, 2, resident=True, semantic_s=1000.0)
+    assert abs(e_sem["whole_proof_speedup"]
+               - (1000.0 + e_sem["n1_wall_same_mode"]) / (1000.0 + e_sem["wall"])) < 1e-12
+    # when the N=1 run does not fit (B200 resident), the whole-proof line
+    # falls back to the kernel floor as its reference and says so
+    e_b = ws.evaluate(mproj, mpb, 2, resident=True, semantic_s=2024.0)
+    assert e_b["n1_wall_same_mode"] is None and e_b["whole_proof_ref"] == "kernel-floor"
+    assert abs(e_b["whole_proof_speedup"] - (2024.0 + e_b["floor"]) / (2024.0 + e_b["wall"])) < 1e-12
+    assert "N=1 reference = kernel floor" in ws.report(mproj, mpb, [2], resident=True,
+                                                       semantic_s=2024.0)
+    e_wf = ws.evaluate(hm, mp, 2, resident=True, w_fold_ratio=0.5)
+    assert e_wf["floor"] < ev["floor"] and e_wf["w_fold_ratio"] == 0.5
+    # nothing fits: the least-infeasible (min max-hold) plan is reported
+    hmin = min(max(blk.bytes(0, c), blk.bytes(c, blk.n)) for c in range(blk.n + 1))
+    none = MachineProfile({"name": "none", "gpu": {"mem_GB": hmin * 0.99 / ws.MEM_GB_BYTES},
+                           "prove_constants": mp.raw["prove_constants"]})
+    inf = ws.evaluate(hm, none, 2, resident=True, workspace_GB=0.0)
+    assert not inf["feasible"] and inf["plan_mode"].startswith("least-infeasible")
+    assert abs(max(inf["hold_bytes"]) - hmin) < 1e-6
+    assert "NO" in ws.report(hm, none, [2], resident=True, workspace_GB=0.0)
+    # mem_GB is GiB (calibrate writes total_memory / 2**30; the b200 profile's
+    # 178 is 191.1e9 bytes): the cap converts with 2**30, the workspace stays
+    # decimal — a decimal reading (178e9 - 10e9) under-sized the cap 7%
+    gib = MachineProfile({"name": "gib", "gpu": {"mem_GB": 178},
+                          "prove_constants": mpb.raw["prove_constants"]})
+    e178 = ws.evaluate(mproj, gib, 2, resident=True, workspace_GB=10.0)
+    assert e178["cap_bytes"] == 178 * 2 ** 30 - 10e9 > (178 - 10) * 1e9
+    assert "178 GiB (191.1 GB)" in ws.report(mproj, gib, [2], resident=True)
+    # provenance fallback is reported, never silent: the synth manifest has
+    # no quant/packed_bytes, so every enrolled byte is a Q4_K guess
+    assert e178["default_sized_vars"] == len(pblk.vars) and e178["default_share"] == 1.0
+    rep_txt = ws.report(mproj, mpb, [2], resident=True)
+    assert "WARNING" in rep_txt and "100% of packed bytes" in rep_txt
+    assert "WARNING" not in ws.report(mproj, mpb, [2], resident=True, bytes_per_param=0.7)
+    assert "WARNING" not in ws.report(m2, mp, [1, 2], resident=True)  # quant on every var
+    assert ws.evaluate(m2, mp, 2, resident=True)["default_share"] == 0.0
+
+def test_linking_manifest_roundtrip_and_plan():
+    from shard_plan import ShardPlan
+    import weightsplit as ws
+    old = Variable("Wold", 800, persistent=True)
+    new = Variable("Wnew", 800, persistent=True, w_new=True)
+    result = Variable("link_sum", 800)
+    tape = FakeTape(Cfg())
+    tape.add(AddClaim(a=old, b=new, c=result, length=800), [old, new])
+    with _fake_core():
+        man = extract_tape(tape, model=dict(name="link"), seq=1)
+    assert man.var_by_name()["Wnew"].w_new
+    with tempfile.TemporaryDirectory() as td:
+        for suffix in ("json", "json.gz"):
+            path = os.path.join(td, f"link.{suffix}")
+            man.save(path)
+            loaded = Manifest.load(path)
+            assert loaded == man
+            blk = ws._Block(loaded, None, Cfg.ELL)
+            assert [v.name for v in blk.vars] == ["Wold"]
+            ev = ws.evaluate(loaded, MachineProfile.load("gb10-spark"), 2,
+                             resident=True)
+            ShardPlan.from_pairs(ev["plan_fold"], ev["plan_open"]).validated(1)
+        # Old manifests have neither optional field; they must still load.
+        path = os.path.join(td, "legacy.json")
+        man.save(path)
+        with open(path) as f:
+            raw = json.load(f)
+        for var in raw["variables"]:
+            var.pop("w_new")
+            var.pop("packed_source")
+        with open(path, "w") as f:
+            json.dump(raw, f)
+        assert all(not v.w_new and v.packed_source is None
+                   for v in Manifest.load(path).variables)
+
+
+def test_weightsplit_prices_refreshed_rows():
+    from manifest import VariableRecord
+    import weightsplit as ws
+    mp = MachineProfile({"name": "refresh", "gpu": {"mem_GB": 1},
+                         "prove_constants": {"A_ns_per_slot": 1e9,
+                                             "B_ns_per_cid": 0, "C_ns_per_product": 0}})
+    man = Manifest(run={"ligero": {"ELL": 8}}, variables=[
+        VariableRecord("Wold", 8, persistent=True)])
+    baseline = ws.stages(man, mp)
+    man.variables.append(VariableRecord("Wnew", 800, persistent=True, w_new=True))
+    for share in (0.0, ws.ENCODE_SHARE_OF_A, 1.0):
+        st = ws.stages(man, mp, encode_share=share)
+        assert abs(st.commit - share * 800) < 1e-10
+        assert abs(st.fresh_fold - (1 - share) * 800) < 1e-10
+        assert st.fresh_open == 400
+        assert (st.w_fold, st.w_open) == (baseline.w_fold, baseline.w_open)
+        assert abs(st.floor - baseline.floor - 1200) < 1e-10
+        ev = ws.evaluate(man, mp, 2, resident=True, encode_share=share)
+        # Refreshed work stays on the coordinator, including when it owns
+        # no old weights; it never enters the workers' ownership intervals.
+        assert sum(ev["fold_slots"]) == sum(ev["open_slots"]) == 8
+        assert ev["fold_compute"][0] >= st.fresh_fold
+        assert ev["open_compute"][0] >= st.fresh_open
+        assert ev["wall"] >= 1200
+
+
+def test_linking_cost_tools_agree():
+    import math
+    import re
+    from manifest import VariableRecord as V
+    import weightsplit as ws
+    mp = MachineProfile(dict(name="linking", gpu=dict(mem_GB=1),
+                             prove_constants=dict(A_ns_per_slot=1e9,
+                                                  B_ns_per_cid=0, C_ns_per_product=0)))
+    # A linear link has no new witness variables: the old and refreshed
+    # commitments supply its rows. Both are consumed only on shard 0.
+    man = Manifest(run=dict(ligero=dict(ELL=8, T_QUERIES=4)),
+                   claims=[ClaimRecord(0, "lincomb", params=dict(L=800),
+                                       inputs=["Wold", "Wnew"])],
+                   variables=[V("Wold", 800, persistent=True, consumers=[0]),
+                              V("Wnew", 800, persistent=True, w_new=True,
+                                consumers=[0])])
+
+    def seconds(report, label):
+        line = next(line for line in report.splitlines() if label in line)
+        return float(re.search(r":\s*([\d,.]+) s", line).group(1).replace(",", ""))
+
+    with tempfile.TemporaryDirectory() as td:
+        for suffix in ("json", "json.gz"):
+            path = os.path.join(td, f"link.{suffix}")
+            man.save(path)
+            m = Manifest.load(path)
+            t = predict.totals(m)
+            assert t.W == t.W_weights == 1600
+            assert t.W_enrolled == t.W_new == 800
+            assert t.W_inputs == 0
+            st = ws.stages(m, mp)
+            rep = predict.report(m, mp, enrolled_weights=True)
+            assert "refreshed Wnew (fresh) 8.000e+02" in rep
+            # Default fresh and enrolled costs both total 1.5*A. Check the
+            # breakdown, since the old misclassification had the same floor.
+            assert seconds(rep, "A*Wf") == 800
+            assert seconds(rep, "enrolled block qlin+open") == 1200
+            assert seconds(rep, "open (fresh rows)") == 400
+            assert math.isclose(st.commit + st.fresh_fold, 800)
+            assert st.fresh_open == 400
+            assert st.w_fold + st.w_open == 1200
+            one = partition.evaluate(m, [0], 1, mp, enrolled_weights=True)
+            assert seconds(rep, "floor (") == one["wall"] == st.floor == 2400
+            assert ws.evaluate(m, mp, 1, resident=True)["wall"] == 2400
+            ev = partition.evaluate(m, [0], 2, mp, enrolled_weights=True)
+            assert ev["shard_t"] == [1800, 600]
+            assert ev["shard_enrolled_slots"] == [800, 0]
+            assert ev["shard_weight_slots"] == [1600, 0]  # both sources load
+            assert ev["weight_stream_bytes_max"] == 1600 * ev["sweeps"]
+            assert ev["opened_bytes_max"] == 4800
+            assert ev["fold_merge_bytes"] == ev["traffic_total"] == 393216
+            for mode, times, serial in (({}, [800, 800], 1600),
+                                        (dict(skip_weight_commit=True), [400, 400], 800)):
+                ev = partition.evaluate(m, [0], 2, mp, **mode)
+                assert ev["shard_t"] == times and ev["serial"] == serial
+                assert ev["opened_bytes_max"] == 3200
+            assert seconds(predict.report(m, mp), "floor (") == 1600
+            for mode in ({}, dict(enrolled_weights=True), dict(skip_weight_commit=True)):
+                baseline = partition.evaluate(m, [0], 1, mp, **mode)["wall"]
+                for n, assignment in ((2, [1]), (3, [2])):
+                    ev = partition.evaluate(m, assignment, n, mp, **mode)
+                    assert math.isclose(ev["serial"], baseline)
+    # A shared Wnew is still fresh work once across the row split, whereas
+    # each owner pays its own passes over the shared OLD enrolled weight.
+    man.claims.append(ClaimRecord(1, "lincomb", params=dict(L=800),
+                                   inputs=["Wold", "Wnew"]))
+    for v in man.variables:
+        v.consumers.append(1)
+    ev = partition.evaluate(man, [0, 1], 2, mp, enrolled_weights=True)
+    assert ev["shard_t"] == [1800, 1800]
+    assert ev["serial"] == partition.evaluate(man, [0, 0], 1, mp,
+                                              enrolled_weights=True)["wall"] == 2400
+    assert ev["opened_bytes_max"] == 4800
+
+
+def test_refreshed_only_rows_are_fresh():
+    from manifest import VariableRecord as V
+    mp = MachineProfile(dict(prove_constants=dict(A_ns_per_slot=1e9,
+                                                  B_ns_per_cid=0, C_ns_per_product=0)))
+    m = Manifest(run=dict(ligero=dict(ELL=8, T_QUERIES=4)),
+                 claims=[ClaimRecord(0, "lincomb", params=dict(L=800), inputs=["Wnew"])],
+                 variables=[V("Wnew", 800, persistent=True, w_new=True, consumers=[0])])
+    t = predict.totals(m)
+    assert t.W_enrolled == t.W_inputs == 0
+    assert t.W == t.W_weights == t.W_new == 800
+    ev = partition.evaluate(m, [0], 2, mp, enrolled_weights=True)
+    assert ev["shard_enrolled_slots"] == [0, 0]
+    assert ev["shard_t"] == [600, 600]
+    assert ev["serial"] == 1200
+    assert ev["opened_bytes_max"] == 1600
+    assert ev["fold_merge_bytes"] == 393216
+    assert partition.evaluate(m, [0], 2, mp, skip_weight_commit=True)[
+        "shard_t"] == [400, 400]
+
+
+def test_weightsplit_shared_sources():
+    from manifest import VariableRecord as V
+    import weightsplit as ws
+    # This is the demo's embedding -> middle weights -> transposed tied head
+    # ordering. A worker needs the head's source even when another device
+    # holds the embedding; keeping the whole block on one device dedups it.
+    man = Manifest(run={"ligero": {"ELL": 8, "T_QUERIES": 4}}, variables=[
+        V("token_embd", 64, persistent=True, packed_bytes=128, packed_source="embedding"),
+        V("middle", 64, persistent=True, packed_bytes=128),
+        V("W_lm", 64, persistent=True, packed_bytes=128, packed_source="embedding")])
+    mp = MachineProfile({"name": "small", "gpu": {"mem_GB": 150 / ws.MEM_GB_BYTES},
+                         "prove_constants": {"A_ns_per_slot": 1,
+                                             "B_ns_per_cid": 0, "C_ns_per_product": 0}})
+    kw = dict(workspace_GB=0, x_fold=1/3, x_open=1/3)
+    ev = ws.evaluate(man, mp, 2, resident=True, **kw)
+    assert ev["plan_fold"] == [(0, 1), (1, 3)]
+    assert ev["hold_bytes"] == [128, 256]
+    assert ev["fits_hbm"] == [True, False] and not ev["feasible"]
+    assert not ws.evaluate(man, mp, 2, resident=True, workspace_GB=0)["feasible"]
+    assert ev["packed_total"] == 256
+    for mode in ("shared", "per-device"):
+        stream = ws.evaluate(man, mp, 2, disk_GBps=1, disk_mode=mode, **kw)
+        assert stream["fold_bytes"] == stream["open_bytes"] == [128, 256]
+        assert abs(stream["fold_io_total"] - 384e-9) < 1e-15
+    whole = ws.evaluate(man, mp, 1, disk_GBps=1, workspace_GB=0)
+    # Streaming loaders read each logical use again (no source cache).
+    assert whole["fold_bytes"] == whole["open_bytes"] == [384]
+    # Explicit flat estimates apply per logical variable, even for aliases.
+    assert ws._Block(man, 2.0, 8).total_bytes == 384
+    # Independent set-based oracle for every interval and every two-stage
+    # union, including empty, overlapping, disjoint, and repeated aliases.
+    ids = ["a", "b", "a", "c", "b", "a"]
+    sizes = {"a": 32, "b": 64, "c": 96}
+    mixed = Manifest(variables=[V(str(i), 8, persistent=True,
+                                 packed_source=key, packed_bytes=sizes[key])
+                                for i, key in enumerate(ids)])
+    blk = ws._Block(mixed, None, 8)
+    runs = [(lo, hi) for lo in range(7) for hi in range(lo, 7)]
+    for a in runs:
+        sources_a = set(ids[a[0]:a[1]])
+        assert blk.bytes(*a) == sum(sizes[k] for k in sources_a)
+        for b in runs:
+            want = sum(sizes[k] for k in sources_a | set(ids[b[0]:b[1]]))
+            assert blk.union_bytes(a, b) == want, (a, b)
+    # An ambiguous source must not silently under-size a device's hold.
+    for bad in (V("bad", 64, persistent=True, packed_source="embedding", packed_bytes=0),
+                V("bad", 64, persistent=True, packed_source="embedding"),
+                V("bad", 64, persistent=True, packed_source="", packed_bytes=128)):
+        broken = Manifest(variables=[man.variables[0], bad])
+        try:
+            ws._Block(broken, None, 8)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"accepted inconsistent source metadata: {bad}")
+
+
+def test_shared_source_extraction_roundtrip():
+    import weightsplit as ws
+    a, b = (Variable(name, 64, persistent=True) for name in ("embedding", "head"))
+    tape = FakeTape(Cfg())
+    def raising():
+        raise AssertionError("metadata extraction resolved a loader")
+    raising.provenance = {"quant": "F16", "packed_bytes": 128,
+                          "packed_source": "gguf:token_embd.weight"}
+    tape.inputs[a] = tape.inputs[b] = raising
+    tape.add(AddClaim(a=a, b=b, c=Variable("sum", 64), length=64), [a, b])
+    with _fake_core():
+        man = extract_tape(tape, model=dict(name="tied"), seq=1)
+    with tempfile.TemporaryDirectory() as td:
+        for suffix in ("json", "json.gz"):
+            path = os.path.join(td, f"sources.{suffix}")
+            man.save(path)
+            loaded = Manifest.load(path)
+            assert loaded == man
+            blk = ws._Block(loaded, None, Cfg.ELL)
+            assert all(v.packed_source == raising.provenance["packed_source"]
+                       and v.packed_bytes == 128 for v in blk.vars)
+            assert blk.bytes(0, 2) == blk.bytes(0, 1) == blk.bytes(1, 2) == 128
+
+
+
+def test_extractor_bridged_external_weights():
+    """WC-LCRL-STC: expert weights held OUTSIDE the witness (Variable.external)
+    are source dependencies with provenance, never claim outputs — the routed
+    claims keep their shards out of the input list so the sweep does not
+    preload them, and before the 2026-09-21 fix extraction counted them as
+    fresh routed-claim outputs (386 G slots on a bridged Maverick). Two
+    experts, 8x8 each, one token, per the finding's reproduction."""
+    import dataclasses, math
+
+    @dataclasses.dataclass
+    class RoutedProjectedMatmulClaim(globals()["RoutedProjectedMatmulClaim"]):   # same type name: the cost table keys on it
+        use_bridge: int = 1
+
+    x, y, mask = Variable("X", 8), Variable("Y", 8), Variable("M", 2)
+    weights = [Variable(f"W{i}", 64) for i in range(2)]
+    for w in weights:
+        w.external = True
+    pj, qm, hd, yr = [Variable(n, size, phase=2) for n, size in
+                      [("Pj", 16), ("Qm", 8), ("Hd", 8), ("yr", 1)]]
+    fy, fu, fp = [Variable(n, 2, phase=3) for n in ("f_y", "f_u", "f_p")]
+    claim = RoutedProjectedMatmulClaim(x, y, mask, weights, pj, qm, hd, yr, fy, fu, fp,
+                          T=1, K=8, J=8, E=2)
+    t = FakeTape(Cfg())
+    t.add(claim, [x, mask])                 # the shards are NOT declared inputs
+
+    def _shard_loader():
+        raise AssertionError("extraction must not resolve a shard")
+    _shard_loader.provenance = {"quant": "Q4_K", "packed_bytes": 36.0,
+                                "packed_source": "blk.1.ffn_gate_exps.weight"}
+    t.inputs[weights[0]] = _shard_loader
+    with _fake_core():
+        man = extract_tape(t, model={"name": "bridge-gap"}, seq=1)
+    rec = man.claims[0]
+    assert rec.params["use_bridge"] == 1
+    assert rec.outputs == ["Y", "Pj", "Qm", "Hd", "yr", "f_y", "f_u", "f_p"], rec.outputs
+    assert set(rec.inputs) == {"X", "M", "W0", "W1"}, rec.inputs
+    assert rec.w_slots == 47, rec.w_slots
+    by = man.var_by_name()
+    for name in ("W0", "W1"):
+        v = by[name]
+        assert v.external and not v.persistent and v.producer is None and v.consumers == [0]
+    assert by["W0"].quant == "Q4_K" and by["W0"].packed_bytes == 36.0 \
+        and by["W0"].packed_source == "blk.1.ffn_gate_exps.weight"
+    tot = predict.totals(man)
+    assert tot.W == 57 and tot.W_external == 128 and tot.n_external == 2, (tot.W, tot.W_external)
+    rows = sum(math.ceil(v.length / t.cfg.ELL) for v in man.variables if not v.external)
+    assert rows == 10, rows
+    # the manifest round-trips the flag, and a report says the estimate is unsupported
+    import json, tempfile, os
+    fd, path = tempfile.mkstemp(suffix=".json"); os.close(fd)
+    try:
+        man.save(path); back = Manifest.load(path)
+    finally:
+        os.unlink(path)
+    assert back.var_by_name()["W1"].external
+    mp = MachineProfile.load(os.path.join(os.path.dirname(__file__), "machines", "gb10-spark.json"))
+    text = predict.report(back, mp)
+    assert "UNSUPPORTED ESTIMATE: bridged manifest" in text
+    assert "2 bridge-held weight variables" in text
+    peak = predict.live_set_peak(back)
+    assert peak["peak_bytes"] <= (8 + 2 + 47) * 8 + 8 * 8, peak    # no shard resident from the start
+    # the review's three edges: the crosscheck's row total, and the note on
+    # every report entry point, the weight-split one included even when the
+    # bridged tape leaves no enrolled block to split
+    assert crosscheck.rows_total(back) == 10
+    strategy = next(iter(partition.STRATEGIES))
+    for text in (partition.report(back, strategy, 2, mp), partition.compare(back, 2, mp),
+                 weightsplit.report(back, mp, [1, 2])):
+        assert "UNSUPPORTED ESTIMATE: bridged manifest" in text
+
+
 def main():
     test_extractor()
     test_explicit_settlement_reused()
@@ -879,15 +1752,28 @@ def main():
     test_costs()
     test_mode_flags_extracted()
     test_expert_labels()
+    test_manifest_gz_roundtrip()
     test_manifest_validation()
     test_consumers()
     test_cli_validation()
     test_rows_approx_label()
     test_enrolled_weights()
+    test_partition_serial_baseline()
+    test_partition_opened_ownership()
+    test_partition_fold_merge_traffic()
     test_projected_protocol()
     test_projected_extraction()
+    test_weightsplit()
+    test_linking_manifest_roundtrip_and_plan()
+    test_weightsplit_prices_refreshed_rows()
+    test_linking_cost_tools_agree()
+    test_refreshed_only_rows_are_fresh()
+    test_weightsplit_shared_sources()
+    test_shared_source_extraction_roundtrip()
+    test_extractor_bridged_external_weights()
     print("profiler regression tests OK (no torch needed)")
 
 
 if __name__ == "__main__":
     main()
+

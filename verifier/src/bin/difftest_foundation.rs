@@ -40,7 +40,7 @@ fn main() {
     let sib = merkle_leaf(&vec![40u64, 50]);
     let root = *blake3::hash(&[sib.as_slice(), leaf.as_slice()].concat()).as_bytes();
     // print Python-style bool so the diff is exact
-    let ok = merkle_verify(leaf, &[(sib, 0)], root);                  // side 0 = sib left
+    let ok = merkle_verify(leaf, &[(sib, 0)], root, 1, 2);            // leaf 1 of 2: side 0 = sib left
     println!("mverify {}", if ok { "True" } else { "False" });
 }
 

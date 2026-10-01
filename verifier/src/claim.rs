@@ -58,8 +58,14 @@ fn as_u64(v: &Value) -> u64 {
 /// _ser_table dumps them as bare arrays, not {"var":...}).
 fn var_from_pair(a: &Value) -> Var {
     let a = a.as_array().unwrap();
-    Var { row_start: a[0].as_u64().unwrap() as usize,
-          length:    a[1].as_u64().unwrap() as usize }
+    // null row_start = an EXTERNAL (bridge-held, uncommitted) variable —
+    // poisoned sentinel: any family/fold that touches it overflows loudly.
+    let row_start = match a[0].as_u64() {
+        Some(r) => r as usize,
+        None if a[0].is_null() => usize::MAX / 2,
+        None => panic!("expected u64 or null row_start"),
+    };
+    Var { row_start, length: a[1].as_u64().unwrap() as usize }
 }
 
 fn parse_var(v: &Value) -> Var {

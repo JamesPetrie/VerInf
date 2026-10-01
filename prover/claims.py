@@ -680,6 +680,11 @@ class RangeWordClaim:
     z: Variable
     table: Table
     length: int
+    # Sampled-audit lookup index fixed before the local fingerprint challenge.
+    # Production range tables have T[j] = j, so Tape aliases this to `x`: no
+    # extra witness slots are needed. The full Ligero/LogUp path continues to
+    # use table.mult_var.
+    local_indices: Optional[Variable] = None
 
 
 def range_word_sample(c: RangeWordClaim, ci, s_op):
@@ -2465,4 +2470,3 @@ AUX_FNS.update({
     RoPEClaim:             rope_aux,
     EmbeddingLookupClaim:  embedding_lookup_aux,
 })
-

@@ -1,0 +1,3 @@
+D3 rerun START 20:24:43
+launched pgid 8970 job 8973 (log ~/mavp-s100-wc-on2.log; kill -- -$(cat ~/mavp-s100-wc-on2.pid))
+D3 rerun status 0 21:08:43

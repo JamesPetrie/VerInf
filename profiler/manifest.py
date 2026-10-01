@@ -9,8 +9,10 @@ form, for boxes without torch and as a cross-check).
 
 Everything downstream — cost totals, time/memory prediction, DAG export, and
 eventually the multi-GPU scheduler's work list — consumes this format only,
-never the tape directly. Extending the schema: add fields, bump
-SCHEMA_VERSION, keep old readers working (readers ignore unknown fields).
+never the tape directly. Extending the schema: ADDITIVE optional fields
+(with defaults) keep SCHEMA_VERSION as is — a bump would make older
+readers on main refuse newer manifests for nothing; bump only for a
+change an old reader would misinterpret. Readers ignore unknown fields.
 """
 from __future__ import annotations
 
@@ -42,6 +44,49 @@ class VariableRecord:
     persistent: bool = False       # model weight (streamed, own Merkle block)
     producer: Optional[int] = None  # claim idx, None = run input / weight
     consumers: List[int] = field(default_factory=list)
+    # persistent weights only, optional: on-disk provenance for storage
+    # models (weightsplit). `packed_bytes` is the exact packed source size
+    # when extraction knows it (a logical K/V variable can be several
+    # times its packed GGUF source); `quant` the GGUF block type.
+    quant: Optional[str] = None
+    packed_bytes: Optional[float] = None
+    # linking proofs only (core P5): the REFRESHED copy of a weight — a
+    # per-proof Wnew block, not the enrolled block. core._layout excludes
+    # w_new from `weight_vars`; weightsplit mirrors that so plan indices
+    # line up with the prover's.
+    w_new: bool = False
+    # Same nonempty ID means the same complete packed source (including any
+    # slice). Keep its full packed_bytes on EVERY reference; consumers may
+    # deduplicate within one device, never across independent device holds.
+    # None keeps legacy per-variable accounting. IDs are scoped to a manifest.
+    packed_source: Optional[str] = None
+    # WC-LCRL-STC bridge: a weight the prover holds OUTSIDE the witness
+    # (Variable.external — tape.external / external_lazy under use_bridge).
+    # The enrollment authenticates it; core._layout never lays it out. It is
+    # a source dependency (producer None, consumers set, provenance kept) and
+    # contributes NO witness slots, rows, opening or fold work. Additive
+    # field, default False, schema unchanged: a reader without it would
+    # count these slots as witness again, so bridged manifests must be read
+    # by this version or later (predict flags them as unsupported estimates
+    # until the bridge's own work is modeled).
+    external: bool = False
+
+
+def bridged_note(m) -> str:
+    """The line every report opens with when a manifest holds bridge-held
+    (external) weights: their slots are outside the witness and excluded,
+    and the bridge's own work is not modeled, so the estimate is unsupported.
+    Empty for an ordinary manifest."""
+    ext = [v for v in m.variables if getattr(v, "external", False)]
+    if not ext:
+        return ""
+    slots = sum(v.length for v in ext)
+    return ("!! UNSUPPORTED ESTIMATE: bridged manifest. "
+            f"{len(ext):,} bridge-held weight variables ({slots:.3e} slots) are outside "
+            "the witness and excluded below, as the prover's layout excludes them; the "
+            "bridge's own work — the one-time enrollment, the per-proof pass (masks, "
+            "aggregate, column re-derivation) and the wc proof section — is NOT modeled. "
+            "The totals, rows, sizes and times below cover the Ligero part only.")
 
 
 @dataclass
@@ -54,7 +99,11 @@ class Manifest:
     variables: List[VariableRecord] = field(default_factory=list)
 
     def save(self, path: str) -> None:
-        with open(path, "w") as f:
+        # symmetric with load: a .gz path is written gzipped, so an archive
+        # saved as x.json.gz loads back (save/load used to disagree — plain
+        # JSON under a .gz name raised BadGzipFile on load)
+        opener = gzip.open if str(path).endswith(".gz") else open
+        with opener(path, "wt") as f:
             json.dump(asdict(self), f)
 
     @staticmethod
@@ -91,7 +140,10 @@ class Manifest:
                 m.variables.append(VariableRecord(
                     name=v["name"], length=v["length"], phase=v.get("phase", 1),
                     persistent=v.get("persistent", False),
-                    producer=v.get("producer"), consumers=v.get("consumers", [])))
+                    producer=v.get("producer"), consumers=v.get("consumers", []),
+                    quant=v.get("quant"), packed_bytes=v.get("packed_bytes"),
+                    w_new=v.get("w_new", False), packed_source=v.get("packed_source"),
+                    external=v.get("external", False)))
         except (KeyError, TypeError, AttributeError) as e:
             # structural failures (non-dict records, missing required keys)
             # normalize to ValueError: the CLI boundary catches that

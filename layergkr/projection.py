@@ -256,9 +256,11 @@ def verify_projection(cfg: rs.Config, w_root: bytes, p_root: bytes,
         pvals = opening.p_values[k]
         if len(pvals) != blocks:
             return False, f"column {c}: {len(pvals)} P rows for {blocks} blocks"
-        if not rs.merkle_verify(rs.merkle_leaf(wvals), opening.w_paths[k], w_root):
+        if not rs.merkle_verify(rs.merkle_leaf(wvals), opening.w_paths[k], w_root,
+                                c, cfg.N_LIG):
             return False, f"column {c}: W merkle failed"
-        if not rs.merkle_verify(rs.merkle_leaf(pvals), opening.p_paths[k], p_root):
+        if not rs.merkle_verify(rs.merkle_leaf(pvals), opening.p_paths[k], p_root,
+                                c, cfg.N_LIG):
             return False, f"column {c}: P merkle failed"
         for b in range(blocks):
             acc = 0

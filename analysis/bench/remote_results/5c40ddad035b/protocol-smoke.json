@@ -1,0 +1,12 @@
+{
+  "blocks": 2596,
+  "selected": 265,
+  "fraction": 0.10208012326656395,
+  "columns": 61,
+  "prove_s": 69.53443209640682,
+  "verify_s": 64.60002670064569,
+  "accepted": true,
+  "why": "ok",
+  "c0": "5d48ac6572fe63d956df3db1c08cc2b821fe3fb9ef332365201e3104b0251ec0",
+  "ts": 1787938309
+}

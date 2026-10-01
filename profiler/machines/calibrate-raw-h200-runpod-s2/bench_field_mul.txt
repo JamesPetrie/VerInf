@@ -1,0 +1,9 @@
+device: NVIDIA H200  sm=9.0  SMs=132  totalGlobalMem=139.81 GB
+config: blocks=1056 threads=256 K_LANES=8 iters=4096  warmup=3 runs=5
+  run 0: 14.585 ms  -> 607.35 Gmul/s
+  run 1: 14.584 ms  -> 607.38 Gmul/s
+  run 2: 14.585 ms  -> 607.37 Gmul/s
+  run 3: 14.584 ms  -> 607.40 Gmul/s
+  run 4: 14.584 ms  -> 607.42 Gmul/s
+best: 607.42 Gmul/s
+sink[0] = 4f25411223a5cde9 (anti-DCE)

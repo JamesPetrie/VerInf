@@ -1,0 +1,6 @@
+device: NVIDIA B200  sm=10.0  SMs=148
+n= 65536 m=    1  fwd+inv x 5  total=    0.123 ms  ->   12.294 us/NTT  0.1876 ns/elem
+n= 65536 m=    8  fwd+inv x 5  total=    0.370 ms  ->    4.620 us/NTT  0.0705 ns/elem
+n= 65536 m=   64  fwd+inv x 5  total=    2.367 ms  ->    3.699 us/NTT  0.0564 ns/elem
+n= 65536 m=  512  fwd+inv x 5  total=   18.636 ms  ->    3.640 us/NTT  0.0555 ns/elem
+n= 65536 m= 2048  fwd+inv x 5  total=   74.267 ms  ->    3.626 us/NTT  0.0553 ns/elem

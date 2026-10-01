@@ -1,0 +1,14 @@
+{
+ "params": {
+  "widths": "4096,11008",
+  "blocks": 2,
+  "toy": false,
+  "json": "analysis/bench/remote_results/3a76848e3099/wc_bench_4096x11008_b2.json"
+ },
+ "n_params": 463994880,
+ "t_enroll": 22.88086223602295,
+ "t_prove": 0.17452526092529297,
+ "t_verify": 0.6540212631225586,
+ "ns_per_param_enroll": 49.31274723553619,
+ "ns_per_param_prove": 0.37613617832440943
+}

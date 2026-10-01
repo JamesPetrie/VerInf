@@ -1,0 +1,8 @@
+LAUNCH 19:43:06 cmd: python3 profiler/calibrate.py --name h200-runpod-s2 --tmpdir /workspace/probe --io-only
+[io probes] /workspace/probe on overlay (overlay) mounted at /; 196 GB free
+[disk] write + cache-evict + read over 8 GB
+[compact dump] u64le/base64 production transport
+[dump proxy]
+
+updated io fields in /workspace/verinf/profiler/machines/h200-runpod-s2.json: disk_read_GBps=1.52, h2d_GBps=55.3, proof_dump_MBps=246.2, proof_dump_compact_MBps=771.4
+EXIT=0

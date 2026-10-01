@@ -1,0 +1,46 @@
+== 2026-09-19T19:55:28Z on 0bbb8b05e969
+== paths
+VERINF_GGUF=/workspace/gguf/UD-Q4_K_XL/Llama-4-Maverick-17B-128E-Instruct-UD-Q4_K_XL-00001-of-00005.gguf
+VERINF_GGUF_DIR=/workspace/gguf
+VERINF_LOGS=/workspace/logs
+VERINF_OUT=/workspace/crosscheck-out
+VERINF_PROOF=/workspace/proofs/mavp-s1000.bin
+VERINF_ROOT=/workspace
+== python / torch
+torch 2.8.0+cu128 cuda 12.8 NVIDIA B200 capability (10, 0)
+== nvcc
+Build cuda_12.8.r12.8/compiler.35583870_0
+== gpu
+name, memory.total [MiB], driver_version
+NVIDIA B200, 183359 MiB, 595.91.07
+== host
+               total        used        free      shared  buff/cache   available
+Mem:            2267         632         218          51        1487        1634
+Swap:              0           0           0
+cgroup memory.max: 282999996416
+224
+cgroup cpu.max: 2380000 100000
+nr_periods 293 nr_throttled 1 throttled_usec 2741434 
+OMP_NUM_THREADS=unset MKL_NUM_THREADS=unset torch threads: 112
+== filesystems
+SOURCE  FSTYPE  TARGET  SIZE  AVAIL
+overlay overlay /       400G 399.2G
+SOURCE  FSTYPE  TARGET  SIZE  AVAIL
+overlay overlay /       400G 399.2G
+SOURCE  FSTYPE  TARGET  SIZE  AVAIL
+overlay overlay /       400G 399.2G
+Filesystem      Size  Used Avail Use% Mounted on
+overlay         400G  842M  400G   1% /
+overlay         400G  842M  400G   1% /
+== revision
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+== packages
+blake3                    1.0.9
+gguf                      0.19.0
+hf_transfer               0.1.9
+ninja                     1.13.2
+numpy                     2.1.2
+safetensors               0.8.0
+torch                     2.8.0+cu128
+transformers              5.17.0

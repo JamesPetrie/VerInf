@@ -103,11 +103,42 @@ def pack_column(col: List[int]) -> bytes:
 def merkle_leaf(col: List[int]) -> bytes:
     return blake3.blake3(pack_column(col)).digest()
 
-def merkle_verify(leaf: bytes, path: List[Tuple[bytes, int]], root: bytes) -> bool:
-    """path: list of (sibling, side); side==0 → sibling is the left child."""
-    h = leaf
-    for sibling, side in path:
-        h = blake3.blake3((sibling + h) if side == 0 else (h + sibling)).digest()
+def merkle_depth(n_leaves: int) -> int:
+    """Levels above the leaves of a tree over `n_leaves` whose odd last node
+    is paired with itself (core.merkle_path's rule): ceil(log2(n_leaves))."""
+    n, d = n_leaves, 0
+    while n > 1:
+        n, d = (n + 1) // 2, d + 1
+    return d
+
+def merkle_verify(leaf: bytes, path: List[Tuple[bytes, int]], root: bytes,
+                  index: int, n_leaves: int) -> bool:
+    """Verify that `leaf` sits at position `index` of a tree over `n_leaves`
+    committing to `root` (the Rust twin is verifier/src/protocol.rs). The
+    ordering at every level comes from `index`, never from the proof: a valid
+    path for another column is a REJECT, as are an index out of range and a
+    path shorter or longer than the tree. path is core.merkle_path's list of
+    (sibling, side); the side bit must agree with the index (side==0 ⇔ this
+    node is a right child, sibling + h), and a last node with no right
+    neighbour must be paired with itself."""
+    if not 0 <= index < n_leaves or not isinstance(path, (list, tuple)) \
+            or len(path) != merkle_depth(n_leaves):
+        return False
+    h, idx, width = leaf, index, n_leaves
+    for step in path:
+        # each step is (32-byte sibling, side bit); any other form is a REJECT
+        if not (isinstance(step, (list, tuple)) and len(step) == 2
+                and isinstance(step[0], (bytes, bytearray)) and len(step[0]) == 32
+                and isinstance(step[1], int) and not isinstance(step[1], bool)):
+            return False
+        sibling, side = bytes(step[0]), step[1]
+        right = idx & 1
+        if side != (0 if right else 1):
+            return False
+        if not right and idx + 1 >= width and sibling != h:
+            return False
+        h = blake3.blake3((sibling + h) if right else (h + sibling)).digest()
+        idx, width = idx >> 1, (width + 1) // 2
     return h == root
 
 # ----------------------------------------------------------------------
@@ -301,7 +332,9 @@ def _distinct_tables(claim_list):
 # scalars pass through. So it tracks the handlers without hand-listing fields.
 # ======================================================================
 def _ser_var(v):
-    return [v.row_start, v.length]
+    # external (bridge-held, uncommitted) vars have no row: null on the wire;
+    # the Rust side maps null to a poisoned sentinel it must never index.
+    return [None if getattr(v, "external", False) else v.row_start, v.length]
 
 def _ser_table(t, _cache=None):
     # The table's key domain T is (verified, check_tables.py) always
@@ -390,7 +423,11 @@ def claims_to_json(claim_list, cfg: Config) -> dict:
     tbl_cache = {}          # share one serialized dict per table id (see _ser_table)
     out = []
     for cl in claim_list:
-        fields = {k: _ser_value(v, tbl_cache) for k, v in _obj_vars(cl).items()}
+        # An underscore attribute is prover-side state attached for one proof
+        # (the bridge's _bridge_pin), never a statement field: serializing it
+        # changed a tape's statement bytes after its first bridged proof.
+        fields = {k: _ser_value(v, tbl_cache) for k, v in _obj_vars(cl).items()
+                  if not k.startswith("_")}
         out.append({"op": type(cl).__name__, "fields": fields})
     # Explicit settle order (= _distinct_tables, by table id) so the Rust side
     # need not re-derive it from field-iteration order (which JSON does not

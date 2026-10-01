@@ -1,0 +1,18 @@
+W0919 22:50:34.147000 2100 torch/utils/cpp_extension.py:2425] TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
+W0919 22:50:34.147000 2100 torch/utils/cpp_extension.py:2425] If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'] to specific architectures.
+  PASS test_chain_registry_enforces_exactly_one_chain
+  PASS test_duplicate_eta_rejects
+  PASS test_foreign_eta_rejects
+  PASS test_geometry_is_bound
+  PASS test_honest_bridge_accepts
+  PASS test_ledger_margin_and_overflow
+  PASS test_mask_vandermonde_full_rank
+  PASS test_qw_scaling_rule
+  PASS test_recommitted_fake_projection_rejects
+  PASS test_rs_domain_matches_poly_eval
+  PASS test_soundness_bound_value
+  PASS test_tampered_enrollment_column_rejects
+  PASS test_tampered_p_trace_rejects
+  PASS test_tampered_pi_rejects
+  PASS test_zero_pad_tail_is_bound
+=== 15 passed, 0 failed (of 15) ===

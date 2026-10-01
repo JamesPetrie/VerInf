@@ -1,0 +1,368 @@
+LAUNCH 23:29:21 cmd: python3 -u profiler/instrumented_prove.py --from-gguf /workspace/gguf/UD-Q4_K_XL/Llama-4-Maverick-17B-128E-Instruct-UD-Q4_K_XL-00001-of-00005.gguf --t-queries 54 --prompt-n 50 --cont-n 50 --sweep-timing --routed-cache --wc-bridge
+[instrumented_prove +0.0s] RESEARCH TIMING RUN — not a production proof: no admission gate, in-process throwaway enrollment, Sz discovered by a reveal pass
+[instrumented_prove +0.0s] geometry ELL=8192 K_DEG=16384 N_LIG=65536 T_QUERIES=54 (pinned)
+[instrumented_prove +0.0s] flags: witness cache on, host spill off, disk spill off, routed-output cache ON, decoded-weight cache off, group memo on, wc bridge ON, per-sweep table ON, phase timing on
+[instrumented_prove +0.0s] layers=48 E=128 T=100 V=202048 T_QUERIES=54 (ELL=8192 K_DEG=16384 N_LIG=65536)
+[maverick-full +0.0s] input bound: all 100 tokens hidden (50 prompt + 50 continuation)
+W0919 23:29:34.401000 9598 torch/utils/cpp_extension.py:2425] TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
+W0919 23:29:34.401000 9598 torch/utils/cpp_extension.py:2425] If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'] to specific architectures.
+/workspace/verinf/demo/demo_maverick_block.py:124: UserWarning: The given NumPy array is not writable, and PyTorch does not support non-writable tensors. This means writing to this tensor will result in undefined behavior. You may want to copy the array to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at /pytorch/torch/csrc/utils/tensor_numpy.cpp:203.)
+  w = kquant_to_field(torch.from_numpy(
+W0919 23:29:34.448000 9598 torch/utils/cpp_extension.py:2425] TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
+W0919 23:29:34.448000 9598 torch/utils/cpp_extension.py:2425] If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'] to specific architectures.
+[maverick-full +7.2s] layer 0 built (dense, rope=True) — 28 claims so far
+[maverick-full +7.8s] layer 1 built (moe E=128, rope=True) — 68 claims so far
+[maverick-full +8.3s] layer 2 built (dense, rope=True) — 90 claims so far
+[maverick-full +8.8s] layer 3 built (moe E=128, rope=False) — 128 claims so far
+[maverick-full +9.3s] layer 4 built (dense, rope=True) — 150 claims so far
+[maverick-full +9.8s] layer 5 built (moe E=128, rope=True) — 190 claims so far
+[maverick-full +10.3s] layer 6 built (dense, rope=True) — 212 claims so far
+[maverick-full +10.8s] layer 7 built (moe E=128, rope=False) — 250 claims so far
+[maverick-full +11.3s] layer 8 built (dense, rope=True) — 272 claims so far
+[maverick-full +11.8s] layer 9 built (moe E=128, rope=True) — 312 claims so far
+[maverick-full +12.3s] layer 10 built (dense, rope=True) — 334 claims so far
+[maverick-full +12.8s] layer 11 built (moe E=128, rope=False) — 372 claims so far
+[maverick-full +13.3s] layer 12 built (dense, rope=True) — 394 claims so far
+[maverick-full +13.8s] layer 13 built (moe E=128, rope=True) — 434 claims so far
+[maverick-full +14.3s] layer 14 built (dense, rope=True) — 456 claims so far
+[maverick-full +14.8s] layer 15 built (moe E=128, rope=False) — 494 claims so far
+[maverick-full +15.2s] layer 16 built (dense, rope=True) — 516 claims so far
+[maverick-full +15.7s] layer 17 built (moe E=128, rope=True) — 556 claims so far
+[maverick-full +16.2s] layer 18 built (dense, rope=True) — 578 claims so far
+[maverick-full +16.7s] layer 19 built (moe E=128, rope=False) — 616 claims so far
+[maverick-full +17.2s] layer 20 built (dense, rope=True) — 638 claims so far
+[maverick-full +17.7s] layer 21 built (moe E=128, rope=True) — 678 claims so far
+[maverick-full +18.2s] layer 22 built (dense, rope=True) — 700 claims so far
+[maverick-full +18.6s] layer 23 built (moe E=128, rope=False) — 738 claims so far
+[maverick-full +19.1s] layer 24 built (dense, rope=True) — 760 claims so far
+[maverick-full +19.6s] layer 25 built (moe E=128, rope=True) — 800 claims so far
+[maverick-full +20.1s] layer 26 built (dense, rope=True) — 822 claims so far
+[maverick-full +20.6s] layer 27 built (moe E=128, rope=False) — 860 claims so far
+[maverick-full +21.1s] layer 28 built (dense, rope=True) — 882 claims so far
+[maverick-full +21.6s] layer 29 built (moe E=128, rope=True) — 922 claims so far
+[maverick-full +22.1s] layer 30 built (dense, rope=True) — 944 claims so far
+[maverick-full +22.6s] layer 31 built (moe E=128, rope=False) — 982 claims so far
+[maverick-full +23.1s] layer 32 built (dense, rope=True) — 1004 claims so far
+[maverick-full +23.6s] layer 33 built (moe E=128, rope=True) — 1044 claims so far
+[maverick-full +24.1s] layer 34 built (dense, rope=True) — 1066 claims so far
+[maverick-full +24.6s] layer 35 built (moe E=128, rope=False) — 1104 claims so far
+[maverick-full +25.1s] layer 36 built (dense, rope=True) — 1126 claims so far
+[maverick-full +25.6s] layer 37 built (moe E=128, rope=True) — 1166 claims so far
+[maverick-full +26.0s] layer 38 built (dense, rope=True) — 1188 claims so far
+[maverick-full +26.5s] layer 39 built (moe E=128, rope=False) — 1226 claims so far
+[maverick-full +27.0s] layer 40 built (dense, rope=True) — 1248 claims so far
+[maverick-full +27.5s] layer 41 built (moe E=128, rope=True) — 1288 claims so far
+[maverick-full +28.0s] layer 42 built (dense, rope=True) — 1310 claims so far
+[maverick-full +28.7s] layer 43 built (moe E=128, rope=False) — 1348 claims so far
+[maverick-full +29.3s] layer 44 built (dense, rope=True) — 1370 claims so far
+[maverick-full +29.8s] layer 45 built (moe E=128, rope=True) — 1410 claims so far
+[maverick-full +30.3s] layer 46 built (dense, rope=True) — 1432 claims so far
+[maverick-full +30.8s] layer 47 built (moe E=128, rope=False) — 1470 claims so far
+[maverick-full +30.8s] LM head from output.weight (untied)
+[maverick-full +30.9s] UI claim over 50 continuation positions; 1580 claims total
+[instrumented_prove +41.2s] build 41.2s, 1580 claims
+/workspace/verinf/prover/core.py:647: UserWarning: The given buffer is not writable, and PyTorch does not support non-writable tensors. This means you can write to the underlying (supposedly non-writable) buffer using the tensor. You may want to copy the buffer to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at /pytorch/torch/csrc/utils/tensor_new.cpp:1578.)
+  return torch.frombuffer(bytes(master_seed), dtype=torch.uint8).cuda()
+[instrumented_prove +175.2s] enrolled 1974800 weight rows in 134.1s (root c84b0b456c410c23…, throwaway)
+[instrumented_prove +309.2s] wc enrollment (streaming coefficient-RS, throwaway) 133.9s root c2d3ec158cd590e7…
+[instrumented_prove +309.2s] [wc-bridge] stages: shard decode 71.2 s/18434; ntt 41.0 s/3687; merkle update 11.5 s/3687; masks 4.2 s/3687; pack 4.1 s/3687; merkle finalize + tree 0.0 s/1
+[instrumented_prove +405.6s] reveal engine pass 96.4s: Sz=3004245 -> 21.1631 bits/token over 50 positions (pinned as the public bound)
+[sweep] op 1/1627 (0%) elapsed=0.0m eta=2.1m cur=3.4GB
+[sweep] op 33/1627 (2%) elapsed=0.0m eta=1.4m cur=3.0GB
+[sweep] op 65/1627 (4%) elapsed=0.1m eta=1.9m cur=3.5GB
+[sweep] op 97/1627 (6%) elapsed=0.1m eta=1.6m cur=3.5GB
+[sweep] op 129/1627 (8%) elapsed=0.1m eta=1.7m cur=4.0GB
+[sweep] op 161/1627 (10%) elapsed=0.2m eta=1.5m cur=4.1GB
+[sweep] op 193/1627 (12%) elapsed=0.2m eta=1.6m cur=4.5GB
+[sweep] op 225/1627 (14%) elapsed=0.2m eta=1.5m cur=4.5GB
+[sweep] op 257/1627 (16%) elapsed=0.3m eta=1.5m cur=4.9GB
+[sweep] op 289/1627 (18%) elapsed=0.3m eta=1.5m cur=5.2GB
+[sweep] op 321/1627 (20%) elapsed=0.3m eta=1.4m cur=5.4GB
+[sweep] op 353/1627 (22%) elapsed=0.4m eta=1.4m cur=5.7GB
+[sweep] op 385/1627 (24%) elapsed=0.4m eta=1.3m cur=5.8GB
+[sweep] op 417/1627 (26%) elapsed=0.5m eta=1.3m cur=6.2GB
+[sweep] op 449/1627 (28%) elapsed=0.5m eta=1.2m cur=6.4GB
+[sweep] op 481/1627 (30%) elapsed=0.5m eta=1.2m cur=7.0GB
+[sweep] op 513/1627 (32%) elapsed=0.5m eta=1.2m cur=7.6GB
+[sweep] op 545/1627 (33%) elapsed=0.6m eta=1.2m cur=7.5GB
+[sweep] op 577/1627 (35%) elapsed=0.6m eta=1.1m cur=8.5GB
+[sweep] op 609/1627 (37%) elapsed=0.7m eta=1.1m cur=8.1GB
+[sweep] op 641/1627 (39%) elapsed=0.7m eta=1.0m cur=8.3GB
+[sweep] op 673/1627 (41%) elapsed=0.7m eta=1.1m cur=9.1GB
+[sweep] op 705/1627 (43%) elapsed=0.8m eta=1.0m cur=8.9GB
+[sweep] op 737/1627 (45%) elapsed=0.8m eta=1.0m cur=9.2GB
+[sweep] op 769/1627 (47%) elapsed=0.8m eta=0.9m cur=9.4GB
+[sweep] op 801/1627 (49%) elapsed=0.9m eta=0.9m cur=9.9GB
+[sweep] op 833/1627 (51%) elapsed=0.9m eta=0.9m cur=9.9GB
+[sweep] op 865/1627 (53%) elapsed=1.0m eta=0.8m cur=10.2GB
+[sweep] op 897/1627 (55%) elapsed=1.0m eta=0.8m cur=10.4GB
+[sweep] op 929/1627 (57%) elapsed=1.0m eta=0.8m cur=10.7GB
+[sweep] op 961/1627 (59%) elapsed=1.1m eta=0.7m cur=11.1GB
+[sweep] op 993/1627 (61%) elapsed=1.1m eta=0.7m cur=11.3GB
+[sweep] op 1025/1627 (63%) elapsed=1.1m eta=0.7m cur=11.6GB
+[sweep] op 1057/1627 (65%) elapsed=1.2m eta=0.6m cur=11.8GB
+[sweep] op 1089/1627 (67%) elapsed=1.2m eta=0.6m cur=12.3GB
+[sweep] op 1121/1627 (69%) elapsed=1.2m eta=0.6m cur=13.4GB
+[sweep] op 1153/1627 (71%) elapsed=1.3m eta=0.5m cur=12.9GB
+[sweep] op 1185/1627 (73%) elapsed=1.3m eta=0.5m cur=13.4GB
+[sweep] op 1217/1627 (75%) elapsed=1.4m eta=0.5m cur=13.6GB
+[sweep] op 1249/1627 (77%) elapsed=1.4m eta=0.4m cur=13.7GB
+[sweep] op 1281/1627 (79%) elapsed=1.4m eta=0.4m cur=14.0GB
+[sweep] op 1313/1627 (81%) elapsed=1.4m eta=0.3m cur=14.2GB
+[sweep] op 1345/1627 (83%) elapsed=1.5m eta=0.3m cur=14.8GB
+[sweep] op 1377/1627 (85%) elapsed=1.5m eta=0.3m cur=14.8GB
+[sweep] op 1409/1627 (87%) elapsed=1.6m eta=0.2m cur=15.1GB
+[sweep] op 1441/1627 (89%) elapsed=1.6m eta=0.2m cur=15.3GB
+[sweep] op 1473/1627 (91%) elapsed=1.6m eta=0.2m cur=15.7GB
+[sweep] op 1505/1627 (93%) elapsed=1.6m eta=0.1m cur=15.6GB
+[sweep] op 1537/1627 (94%) elapsed=1.6m eta=0.1m cur=15.6GB
+[sweep] op 1569/1627 (96%) elapsed=1.7m eta=0.1m cur=15.6GB
+[sweep] op 1601/1627 (98%) elapsed=1.7m eta=0.0m cur=15.6GB
+[sweep] op 1627/1627 (100%) elapsed=1.7m eta=0.0m cur=15.5GB
+[sweep] op 1/1627 (0%) elapsed=0.0m eta=0.5m cur=15.7GB
+[sweep] op 33/1627 (2%) elapsed=0.0m eta=1.4m cur=15.5GB
+[sweep] op 65/1627 (4%) elapsed=0.1m eta=2.8m cur=15.8GB
+[sweep] op 97/1627 (6%) elapsed=0.1m eta=2.2m cur=15.5GB
+[sweep] op 129/1627 (8%) elapsed=0.2m eta=2.5m cur=15.7GB
+[sweep] op 161/1627 (10%) elapsed=0.2m eta=2.2m cur=15.5GB
+[sweep] op 193/1627 (12%) elapsed=0.3m eta=2.4m cur=15.8GB
+[sweep] op 225/1627 (14%) elapsed=0.3m eta=2.1m cur=15.6GB
+[sweep] op 257/1627 (16%) elapsed=0.4m eta=2.2m cur=15.6GB
+[sweep] op 289/1627 (18%) elapsed=0.5m eta=2.1m cur=15.7GB
+[sweep] op 321/1627 (20%) elapsed=0.5m eta=2.1m cur=15.6GB
+[sweep] op 353/1627 (22%) elapsed=0.6m eta=2.0m cur=15.7GB
+[sweep] op 385/1627 (24%) elapsed=0.6m eta=2.0m cur=15.6GB
+[sweep] op 417/1627 (26%) elapsed=0.7m eta=1.9m cur=15.7GB
+[sweep] op 449/1627 (28%) elapsed=0.7m eta=1.9m cur=15.7GB
+[sweep] op 481/1627 (30%) elapsed=0.8m eta=1.8m cur=15.9GB
+[sweep] op 513/1627 (32%) elapsed=0.8m eta=1.7m cur=16.0GB
+[sweep] op 545/1627 (33%) elapsed=0.9m eta=1.7m cur=15.9GB
+[sweep] op 577/1627 (35%) elapsed=0.9m eta=1.6m cur=17.1GB
+[sweep] op 609/1627 (37%) elapsed=1.0m eta=1.6m cur=15.9GB
+[sweep] op 641/1627 (39%) elapsed=1.0m eta=1.5m cur=15.8GB
+[sweep] op 673/1627 (41%) elapsed=1.1m eta=1.5m cur=16.3GB
+[sweep] op 705/1627 (43%) elapsed=1.1m eta=1.4m cur=15.8GB
+[sweep] op 737/1627 (45%) elapsed=1.2m eta=1.4m cur=15.9GB
+[sweep] op 769/1627 (47%) elapsed=1.2m eta=1.3m cur=15.8GB
+[sweep] op 801/1627 (49%) elapsed=1.3m eta=1.3m cur=16.0GB
+[sweep] op 833/1627 (51%) elapsed=1.3m eta=1.2m cur=15.8GB
+[sweep] op 865/1627 (53%) elapsed=1.4m eta=1.2m cur=15.8GB
+[sweep] op 897/1627 (55%) elapsed=1.4m eta=1.1m cur=15.8GB
+[sweep] op 929/1627 (57%) elapsed=1.5m eta=1.1m cur=15.9GB
+[sweep] op 961/1627 (59%) elapsed=1.5m eta=1.1m cur=16.0GB
+[sweep] op 993/1627 (61%) elapsed=1.6m eta=1.0m cur=15.9GB
+[sweep] op 1025/1627 (63%) elapsed=1.6m eta=1.0m cur=16.0GB
+[sweep] op 1057/1627 (65%) elapsed=1.7m eta=0.9m cur=15.9GB
+[sweep] op 1089/1627 (67%) elapsed=1.7m eta=0.8m cur=16.1GB
+[sweep] op 1121/1627 (69%) elapsed=1.8m eta=0.8m cur=17.5GB
+[sweep] op 1153/1627 (71%) elapsed=1.8m eta=0.8m cur=16.2GB
+[sweep] op 1185/1627 (73%) elapsed=1.9m eta=0.7m cur=16.2GB
+[sweep] op 1217/1627 (75%) elapsed=1.9m eta=0.7m cur=16.2GB
+[sweep] op 1249/1627 (77%) elapsed=2.0m eta=0.6m cur=16.0GB
+[sweep] op 1281/1627 (79%) elapsed=2.0m eta=0.6m cur=16.2GB
+[sweep] op 1313/1627 (81%) elapsed=2.1m eta=0.5m cur=16.0GB
+[sweep] op 1345/1627 (83%) elapsed=2.1m eta=0.4m cur=16.3GB
+[sweep] op 1377/1627 (85%) elapsed=2.2m eta=0.4m cur=16.0GB
+[sweep] op 1409/1627 (87%) elapsed=2.2m eta=0.3m cur=16.2GB
+[sweep] op 1441/1627 (89%) elapsed=2.3m eta=0.3m cur=16.0GB
+[sweep] op 1473/1627 (91%) elapsed=2.3m eta=0.2m cur=16.3GB
+[sweep] op 1505/1627 (93%) elapsed=2.3m eta=0.2m cur=16.2GB
+[sweep] op 1537/1627 (94%) elapsed=2.3m eta=0.1m cur=16.2GB
+[sweep] op 1569/1627 (96%) elapsed=2.3m eta=0.1m cur=16.2GB
+[sweep] op 1601/1627 (98%) elapsed=2.3m eta=0.0m cur=16.1GB
+[sweep] op 1627/1627 (100%) elapsed=2.3m eta=0.0m cur=16.1GB
+  [wc-bridge] the bridge's per-proof pass took 198.5 s outside the sweeps; stages: shard decode 66.5 s/18434; columns to python ints 46.0 s/1; ntt 41.0 s/3687; columns to host 5.9 s/3687; pi matvec 4.9 s/3687; columns gather 4.8 s/3687; masks 4.3 s/3687; pi masks 4.2 s/3687; pack 4.2 s/3687; aggregate c 0.1 s/1; eval v 0.0 s/1; columns drift check 0.0 s/1
+[sweep] op 1/1627 (0%) elapsed=0.0m eta=0.2m cur=16.8GB
+[sweep] op 33/1627 (2%) elapsed=0.0m eta=1.0m cur=16.5GB
+[sweep] op 65/1627 (4%) elapsed=0.3m eta=6.5m cur=16.7GB
+[sweep] op 97/1627 (6%) elapsed=0.3m eta=4.4m cur=16.5GB
+[sweep] op 129/1627 (8%) elapsed=0.3m eta=3.5m cur=16.7GB
+[sweep] op 161/1627 (10%) elapsed=0.3m eta=2.8m cur=16.5GB
+[sweep] op 193/1627 (12%) elapsed=0.3m eta=2.4m cur=16.7GB
+[sweep] op 225/1627 (14%) elapsed=0.3m eta=2.1m cur=16.5GB
+[sweep] op 257/1627 (16%) elapsed=0.4m eta=1.9m cur=16.5GB
+[sweep] op 289/1627 (18%) elapsed=0.4m eta=1.8m cur=16.7GB
+[sweep] op 321/1627 (20%) elapsed=0.4m eta=1.6m cur=16.5GB
+[sweep] op 353/1627 (22%) elapsed=0.4m eta=1.5m cur=16.7GB
+[sweep] op 385/1627 (24%) elapsed=0.4m eta=1.4m cur=16.5GB
+[sweep] op 417/1627 (26%) elapsed=0.4m eta=1.3m cur=16.7GB
+[sweep] op 449/1627 (28%) elapsed=0.5m eta=1.2m cur=16.5GB
+[sweep] op 481/1627 (30%) elapsed=0.5m eta=1.1m cur=16.7GB
+[sweep] op 513/1627 (32%) elapsed=0.5m eta=1.1m cur=16.8GB
+[sweep] op 545/1627 (33%) elapsed=0.5m eta=1.0m cur=16.7GB
+[sweep] op 577/1627 (35%) elapsed=0.5m eta=0.9m cur=17.9GB
+[sweep] op 609/1627 (37%) elapsed=0.5m eta=0.9m cur=16.7GB
+[sweep] op 641/1627 (39%) elapsed=0.5m eta=0.8m cur=16.6GB
+[sweep] op 673/1627 (41%) elapsed=0.6m eta=0.8m cur=16.8GB
+[sweep] op 705/1627 (43%) elapsed=0.6m eta=0.8m cur=16.6GB
+[sweep] op 737/1627 (45%) elapsed=0.6m eta=0.7m cur=16.7GB
+[sweep] op 769/1627 (47%) elapsed=0.6m eta=0.7m cur=16.6GB
+[sweep] op 801/1627 (49%) elapsed=0.6m eta=0.6m cur=16.8GB
+[sweep] op 833/1627 (51%) elapsed=0.6m eta=0.6m cur=16.6GB
+[sweep] op 865/1627 (53%) elapsed=0.7m eta=0.6m cur=16.6GB
+[sweep] op 897/1627 (55%) elapsed=0.7m eta=0.5m cur=16.6GB
+[sweep] op 929/1627 (57%) elapsed=0.7m eta=0.5m cur=16.5GB
+[sweep] op 961/1627 (59%) elapsed=0.7m eta=0.5m cur=16.7GB
+[sweep] op 993/1627 (61%) elapsed=0.7m eta=0.5m cur=16.6GB
+[sweep] op 1025/1627 (63%) elapsed=0.7m eta=0.4m cur=16.7GB
+[sweep] op 1057/1627 (65%) elapsed=0.7m eta=0.4m cur=16.5GB
+[sweep] op 1089/1627 (67%) elapsed=0.8m eta=0.4m cur=16.7GB
+[sweep] op 1121/1627 (69%) elapsed=0.8m eta=0.4m cur=17.9GB
+[sweep] op 1153/1627 (71%) elapsed=0.8m eta=0.3m cur=16.8GB
+[sweep] op 1185/1627 (73%) elapsed=0.8m eta=0.3m cur=16.8GB
+[sweep] op 1217/1627 (75%) elapsed=0.8m eta=0.3m cur=16.8GB
+[sweep] op 1249/1627 (77%) elapsed=0.8m eta=0.3m cur=16.6GB
+[sweep] op 1281/1627 (79%) elapsed=0.9m eta=0.2m cur=16.8GB
+[sweep] op 1313/1627 (81%) elapsed=0.9m eta=0.2m cur=16.6GB
+[sweep] op 1345/1627 (83%) elapsed=0.9m eta=0.2m cur=16.8GB
+[sweep] op 1377/1627 (85%) elapsed=0.9m eta=0.2m cur=16.6GB
+[sweep] op 1409/1627 (87%) elapsed=0.9m eta=0.1m cur=16.8GB
+[sweep] op 1441/1627 (89%) elapsed=0.9m eta=0.1m cur=16.6GB
+[sweep] op 1473/1627 (91%) elapsed=1.0m eta=0.1m cur=16.7GB
+[sweep] op 1505/1627 (93%) elapsed=1.0m eta=0.1m cur=16.7GB
+[sweep] op 1537/1627 (94%) elapsed=1.0m eta=0.1m cur=16.7GB
+[sweep] op 1569/1627 (96%) elapsed=1.0m eta=0.0m cur=16.7GB
+[sweep] op 1601/1627 (98%) elapsed=1.0m eta=0.0m cur=16.7GB
+[sweep] op 1627/1627 (100%) elapsed=1.0m eta=0.0m cur=16.7GB
+[sweep] op 1/1627 (0%) elapsed=0.0m eta=2.7m cur=17.6GB
+[sweep] op 33/1627 (2%) elapsed=0.3m eta=16.4m cur=17.3GB
+[sweep] op 65/1627 (4%) elapsed=0.4m eta=9.4m cur=17.5GB
+[sweep] op 97/1627 (6%) elapsed=0.4m eta=7.0m cur=17.3GB
+[sweep] op 129/1627 (8%) elapsed=0.5m eta=5.9m cur=17.5GB
+[sweep] op 161/1627 (10%) elapsed=0.6m eta=5.1m cur=17.3GB
+[sweep] op 193/1627 (12%) elapsed=0.6m eta=4.6m cur=17.5GB
+[sweep] op 225/1627 (14%) elapsed=0.7m eta=4.2m cur=17.3GB
+[sweep] op 257/1627 (16%) elapsed=0.7m eta=3.9m cur=17.3GB
+[sweep] op 289/1627 (18%) elapsed=0.8m eta=3.7m cur=17.5GB
+[sweep] op 321/1627 (20%) elapsed=0.8m eta=3.4m cur=17.3GB
+[sweep] op 353/1627 (22%) elapsed=0.9m eta=3.3m cur=17.5GB
+[sweep] op 385/1627 (24%) elapsed=0.9m eta=3.0m cur=17.3GB
+[sweep] op 417/1627 (26%) elapsed=1.0m eta=2.9m cur=17.5GB
+[sweep] op 449/1627 (28%) elapsed=1.0m eta=2.7m cur=17.3GB
+[sweep] op 481/1627 (30%) elapsed=1.1m eta=2.6m cur=17.5GB
+[sweep] op 513/1627 (32%) elapsed=1.2m eta=2.5m cur=17.6GB
+[sweep] op 545/1627 (33%) elapsed=1.2m eta=2.4m cur=17.5GB
+[sweep] op 577/1627 (35%) elapsed=1.6m eta=2.9m cur=18.7GB
+[sweep] op 609/1627 (37%) elapsed=1.7m eta=2.8m cur=17.5GB
+[sweep] op 641/1627 (39%) elapsed=1.7m eta=2.7m cur=17.4GB
+[sweep] op 673/1627 (41%) elapsed=1.8m eta=2.5m cur=17.6GB
+[sweep] op 705/1627 (43%) elapsed=1.8m eta=2.4m cur=17.4GB
+[sweep] op 737/1627 (45%) elapsed=1.9m eta=2.3m cur=17.5GB
+[sweep] op 769/1627 (47%) elapsed=1.9m eta=2.2m cur=17.4GB
+[sweep] op 801/1627 (49%) elapsed=2.0m eta=2.1m cur=17.6GB
+[sweep] op 833/1627 (51%) elapsed=2.0m eta=1.9m cur=17.4GB
+[sweep] op 865/1627 (53%) elapsed=2.1m eta=1.8m cur=17.4GB
+[sweep] op 897/1627 (55%) elapsed=2.1m eta=1.7m cur=17.4GB
+[sweep] op 929/1627 (57%) elapsed=2.2m eta=1.7m cur=17.4GB
+[sweep] op 961/1627 (59%) elapsed=2.3m eta=1.6m cur=17.6GB
+[sweep] op 993/1627 (61%) elapsed=2.3m eta=1.5m cur=17.4GB
+[sweep] op 1025/1627 (63%) elapsed=2.4m eta=1.4m cur=17.6GB
+[sweep] op 1057/1627 (65%) elapsed=2.4m eta=1.3m cur=17.4GB
+[sweep] op 1089/1627 (67%) elapsed=2.5m eta=1.2m cur=17.6GB
+[sweep] op 1121/1627 (69%) elapsed=2.5m eta=1.1m cur=18.8GB
+[sweep] op 1153/1627 (71%) elapsed=2.6m eta=1.1m cur=17.6GB
+[sweep] op 1185/1627 (73%) elapsed=2.6m eta=1.0m cur=17.6GB
+[sweep] op 1217/1627 (75%) elapsed=2.7m eta=0.9m cur=17.6GB
+[sweep] op 1249/1627 (77%) elapsed=3.3m eta=1.0m cur=17.4GB
+[sweep] op 1281/1627 (79%) elapsed=3.3m eta=0.9m cur=17.6GB
+[sweep] op 1313/1627 (81%) elapsed=3.4m eta=0.8m cur=17.4GB
+[sweep] op 1345/1627 (83%) elapsed=3.4m eta=0.7m cur=17.6GB
+[sweep] op 1377/1627 (85%) elapsed=3.5m eta=0.6m cur=17.4GB
+[sweep] op 1409/1627 (87%) elapsed=3.5m eta=0.5m cur=17.6GB
+[sweep] op 1441/1627 (89%) elapsed=3.6m eta=0.5m cur=17.4GB
+[sweep] op 1473/1627 (91%) elapsed=3.6m eta=0.4m cur=17.6GB
+[sweep] op 1505/1627 (93%) elapsed=3.7m eta=0.3m cur=17.6GB
+[sweep] op 1537/1627 (94%) elapsed=3.7m eta=0.2m cur=17.6GB
+[sweep] op 1569/1627 (96%) elapsed=3.7m eta=0.1m cur=17.6GB
+[sweep] op 1601/1627 (98%) elapsed=3.7m eta=0.1m cur=17.6GB
+[sweep] op 1627/1627 (100%) elapsed=3.7m eta=0.0m cur=17.6GB
+[sweep] op 1/1627 (0%) elapsed=0.0m eta=2.1m cur=17.7GB
+[sweep] op 33/1627 (2%) elapsed=0.1m eta=4.1m cur=17.4GB
+[sweep] op 65/1627 (4%) elapsed=0.1m eta=3.1m cur=17.5GB
+[sweep] op 97/1627 (6%) elapsed=0.2m eta=2.6m cur=17.4GB
+[sweep] op 129/1627 (8%) elapsed=0.2m eta=2.4m cur=17.5GB
+[sweep] op 161/1627 (10%) elapsed=0.2m eta=2.2m cur=17.4GB
+[sweep] op 193/1627 (12%) elapsed=0.3m eta=2.0m cur=17.5GB
+[sweep] op 225/1627 (14%) elapsed=0.3m eta=1.9m cur=17.3GB
+[sweep] op 257/1627 (16%) elapsed=0.3m eta=1.8m cur=17.4GB
+[sweep] op 289/1627 (18%) elapsed=0.4m eta=1.8m cur=17.5GB
+[sweep] op 321/1627 (20%) elapsed=0.4m eta=1.7m cur=17.4GB
+[sweep] op 353/1627 (22%) elapsed=0.5m eta=1.7m cur=17.5GB
+[sweep] op 385/1627 (24%) elapsed=0.5m eta=1.6m cur=17.4GB
+[sweep] op 417/1627 (26%) elapsed=0.5m eta=1.6m cur=17.5GB
+[sweep] op 449/1627 (28%) elapsed=0.6m eta=1.5m cur=17.4GB
+[sweep] op 481/1627 (30%) elapsed=0.6m eta=1.5m cur=17.6GB
+[sweep] op 513/1627 (32%) elapsed=0.6m eta=1.4m cur=17.6GB
+[sweep] op 545/1627 (33%) elapsed=0.7m eta=1.3m cur=17.6GB
+[sweep] op 577/1627 (35%) elapsed=0.7m eta=1.3m cur=18.7GB
+[sweep] op 609/1627 (37%) elapsed=0.7m eta=1.2m cur=17.6GB
+[sweep] op 641/1627 (39%) elapsed=0.8m eta=1.2m cur=17.4GB
+[sweep] op 673/1627 (41%) elapsed=0.8m eta=1.2m cur=17.7GB
+[sweep] op 705/1627 (43%) elapsed=0.8m eta=1.1m cur=17.4GB
+[sweep] op 737/1627 (45%) elapsed=0.9m eta=1.1m cur=17.6GB
+[sweep] op 769/1627 (47%) elapsed=0.9m eta=1.0m cur=17.4GB
+[sweep] op 801/1627 (49%) elapsed=1.0m eta=1.0m cur=17.6GB
+[sweep] op 833/1627 (51%) elapsed=1.0m eta=1.0m cur=17.4GB
+[sweep] op 865/1627 (53%) elapsed=1.0m eta=0.9m cur=17.4GB
+[sweep] op 897/1627 (55%) elapsed=1.1m eta=0.9m cur=17.4GB
+[sweep] op 929/1627 (57%) elapsed=1.1m eta=0.8m cur=17.4GB
+[sweep] op 961/1627 (59%) elapsed=1.2m eta=0.8m cur=17.6GB
+[sweep] op 993/1627 (61%) elapsed=1.2m eta=0.8m cur=17.4GB
+[sweep] op 1025/1627 (63%) elapsed=1.2m eta=0.7m cur=17.6GB
+[sweep] op 1057/1627 (65%) elapsed=1.3m eta=0.7m cur=17.4GB
+[sweep] op 1089/1627 (67%) elapsed=1.3m eta=0.7m cur=17.6GB
+[sweep] op 1121/1627 (69%) elapsed=1.3m eta=0.6m cur=18.8GB
+[sweep] op 1153/1627 (71%) elapsed=1.4m eta=0.6m cur=17.6GB
+[sweep] op 1185/1627 (73%) elapsed=1.4m eta=0.5m cur=17.7GB
+[sweep] op 1217/1627 (75%) elapsed=1.5m eta=0.5m cur=17.6GB
+[sweep] op 1249/1627 (77%) elapsed=1.5m eta=0.5m cur=17.4GB
+[sweep] op 1281/1627 (79%) elapsed=1.5m eta=0.4m cur=17.6GB
+[sweep] op 1313/1627 (81%) elapsed=1.6m eta=0.4m cur=17.4GB
+[sweep] op 1345/1627 (83%) elapsed=1.6m eta=0.3m cur=17.6GB
+[sweep] op 1377/1627 (85%) elapsed=1.6m eta=0.3m cur=17.5GB
+[sweep] op 1409/1627 (87%) elapsed=1.7m eta=0.3m cur=17.6GB
+[sweep] op 1441/1627 (89%) elapsed=1.7m eta=0.2m cur=17.5GB
+[sweep] op 1473/1627 (91%) elapsed=1.8m eta=0.2m cur=17.6GB
+[sweep] op 1505/1627 (93%) elapsed=1.8m eta=0.1m cur=17.6GB
+[sweep] op 1537/1627 (94%) elapsed=1.8m eta=0.1m cur=17.6GB
+[sweep] op 1569/1627 (96%) elapsed=1.8m eta=0.1m cur=17.6GB
+[sweep] op 1601/1627 (98%) elapsed=1.8m eta=0.0m cur=17.6GB
+[sweep] op 1627/1627 (100%) elapsed=1.8m eta=0.0m cur=17.6GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 1974800; W-ref True; Wnew rows 0; p3 rows 216; peak 51.68 GB
+  [phase] prove-time breakdown (cuda-synced buckets; shares, not absolute — syncs remove overlap):
+    fetch         289.7s   44.9%
+    encode        136.0s   21.1%
+    witness        68.2s   10.6%
+    compile        64.8s   10.0%
+    quad           36.2s    5.6%
+    fold_qlin      18.7s    2.9%
+    qlin_polymul     10.8s    1.7%
+    aux             8.5s    1.3%
+    qlin_rTA        3.0s    0.5%
+    qlin_interp      2.9s    0.4%
+    cols            2.6s    0.4%
+    fold_qirs       2.1s    0.3%
+    qlin_rowsum      1.3s    0.2%
+    merkle          0.8s    0.1%
+    cache_r         0.1s    0.0%
+    cache_w         0.0s    0.0%
+    BUCKETED      645.7s  (vs total prove wall-clock; remainder = setup + un-bucketed)
+  [sweep] per-sweep breakdown (LIGERO_SWEEP_TIMING; cuda-synced seconds, so an instrumented wall; fetch = whole loader calls — storage read, decode and transfer together — taken out of the bucket they ran in; load_GB = decoded field bytes the loaders returned, not packed or disk bytes):
+    sweep          wall   witness     fetch       aux   compile    encode    merkle fold_qirs fold_qlin      cols      quad   cache_r   cache_w     loads   load_GB  cache_rd  cache_wr routed_rd routed_wr      proj
+    R1             99.7      12.0      68.9       0.0       0.0      17.4       0.5       0.0       0.0       0.0       0.0       0.0       0.0      2702    914.59         0       120         0        72         0
+              loader calls by kind: weight 61.7 s / 362; shard 7.2 s / 2,340
+    R2            140.9      26.6      98.6       2.1       0.0      12.4       0.3       0.0       0.0       0.0       0.0       0.0       0.0      9940   3351.22       120         0        72         0        72
+              loader calls by kind: weight 65.8 s / 724; shard 53.1 s / 9,216
+    R3             57.7      18.5      36.0       2.1       0.0       0.6       0.0       0.0       0.0       0.0       0.0       0.0       0.0       724    258.84       120         0        72         0         0
+              loader calls by kind: weight 36.0 s / 724
+    fold          224.8       5.6      46.0       2.1      64.8      47.6       0.0       2.1      18.7       0.0      36.2       0.0       0.0      1086    388.26       120         0        72         0         0
+              loader calls by kind: weight 46.1 s / 1,086
+    open          110.0       5.5      40.1       2.2       0.0      58.0       0.0       0.0       0.0       2.6       0.0       0.0       0.0      1086    388.26       120         0        72         0         0
+              loader calls by kind: weight 40.2 s / 1,086
+    ALL           633.1      68.2     289.7       8.5      64.8     136.0       0.8       2.1      18.7       2.6      36.2       0.1       0.0     15538   5301.18       480       120       288        72        72
+              loader calls by kind: weight 249.7 s / 3,982; shard 60.3 s / 11,556
+    proof wall 1271.0s; sweeps 633.1s; outside the sweeps 637.9s with 0 loader calls (0.00 GB); first fill (cache_w in R1) 0.0s
+[instrumented_prove +1676.9s] PROVE WALL 1271.2s (21.2 min) peakGPU=48.13GiB — the per-phase table above is LIGERO_PHASE_TIMING's
+[instrumented_prove +1676.9s] opened columns: 54 (T_QUERIES=54)
+[instrumented_prove +1676.9s] SUMMARY build=41.2s enroll=134.1s wc_enroll=133.9s reveal=96.4s prove=1271.2s T=100 T_QUERIES=54 claims=1580
+EXIT=0

@@ -22,6 +22,8 @@ verifier/target/
 /spark-bench/bench_goldilocks_matmul
 
 # Generated artifacts (proofs, logits)
+*.tar.gz
+*.tgz
 *.npy
 proof*.json
 logits*.npy
@@ -29,3 +31,6 @@ logits*.npy
 
 # profiler calibration builds (binaries compiled on the target box)
 profiler/machines/calibrate-raw-*/build/
+
+# profiler crosscheck outputs (session artifacts are copied into analysis/ by hand)
+crosscheck-out/

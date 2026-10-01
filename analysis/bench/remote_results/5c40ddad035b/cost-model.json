@@ -1,0 +1,53 @@
+{
+  "audit_fraction": 0.10208012326656395,
+  "evidence": {
+    "forward": "measured: analysis/bench/remote_results/0b51ac2023c5/witness.log",
+    "other_terms": "projected hypotheses pending sampled-audit Vast campaign"
+  },
+  "excluded": [
+    "model download",
+    "GGUF/model loading",
+    "one-time verifier startup"
+  ],
+  "full_windows": 52,
+  "geometry": {
+    "blocks": 2596,
+    "rs_columns": 61,
+    "selected_per_window": 5,
+    "window": 49
+  },
+  "min_first_bad_block_detection": 0.10204081632653061,
+  "real_campaign": {
+    "date": "2026-08-28",
+    "diagnostics": {
+      "estimated_nonpersistent_witness_gib": 508.5406,
+      "largest_49_claim_window_gib": 27.91,
+      "largest_hash_batch_temporary_gib": 16.559,
+      "local_128_mib_effective_commit_gib_s": 1.79,
+      "old_one_column_hash_gib_s": 0.027,
+      "warm_window_batched_hash_gib_s_high": 31.8,
+      "warm_window_batched_hash_gib_s_low": 23.0
+    },
+    "process_elapsed_lower_bound_s": 4226.0,
+    "remediation": "fold-aware host retention for boundary wires plus a real GNU timeout, claim/window JSONL telemetry, and striped window-batched BLAKE3",
+    "root_cause": "sampled runtime forced LIGERO_NO_FOLD=1, disabling the Maverick MoE incremental FreivaldsCombine schedule; C0 hashed the witness as one serial GPU column; the harness enforced its cap only after process exit",
+    "status": "manually_aborted_over_cap",
+    "target_s": 600.0,
+    "timed_audit_lower_bound_s": 4147.5,
+    "validated_within_10_min": false
+  },
+  "selected_blocks": 265,
+  "tail_blocks": 48,
+  "tail_selected": 5,
+  "terms": {
+    "c0_stream_commit_s": 113.4,
+    "one_real_forward_s": 289.1,
+    "persistent_verify_orchestration_s": 6.0,
+    "rs_61_column_openings_s": 31.5,
+    "selected_local_proofs_s": 159.5
+  },
+  "total_min": 9.991666666666667,
+  "total_s": 599.5,
+  "within_10_min": true,
+  "within_20_min": true
+}

@@ -1,0 +1,342 @@
+== pip extras
+== rustup
+== record + builds
+== 2026-09-16T19:54:53Z on ffd691e3ecfd
+== paths
+VERINF_GGUF=/workspace/gguf/UD-Q4_K_XL/Llama-4-Maverick-17B-128E-Instruct-UD-Q4_K_XL-00001-of-00005.gguf
+VERINF_GGUF_DIR=/workspace/gguf
+VERINF_LOGS=/workspace/logs
+VERINF_OUT=/workspace/crosscheck-out
+VERINF_PROOF=/workspace/proofs/mavp-s1000.bin
+VERINF_ROOT=/workspace
+== python / torch
+torch 2.8.0+cu128 cuda 12.8 NVIDIA B200 capability (10, 0)
+== nvcc
+Build cuda_12.8.r12.8/compiler.35583870_0
+== gpu
+name, memory.total [MiB], driver_version
+NVIDIA B200, 183359 MiB, 595.71.05
+== host
+               total        used        free      shared  buff/cache   available
+Mem:            3023        1292         410          16        1365        1731
+Swap:              0           0           0
+cgroup memory.max: 376999997440
+288
+== filesystems
+SOURCE  FSTYPE  TARGET  SIZE  AVAIL
+overlay overlay /       400G 399.2G
+SOURCE  FSTYPE  TARGET  SIZE  AVAIL
+overlay overlay /       400G 399.2G
+SOURCE  FSTYPE  TARGET  SIZE  AVAIL
+overlay overlay /       400G 399.2G
+Filesystem      Size  Used Avail Use% Mounted on
+overlay         400G  836M  400G   1% /
+overlay         400G  836M  400G   1% /
+== revision
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+== packages
+blake3                    1.0.9
+gguf                      0.19.0
+hf_transfer               0.1.9
+ninja                     1.13.2
+numpy                     2.1.2
+safetensors               0.8.0
+torch                     2.8.0+cu128
+transformers              5.17.0
+    Updating crates.io index
+ Downloading crates ...
+  Downloaded arrayref v0.3.9
+  Downloaded cfg-if v1.0.4
+  Downloaded constant_time_eq v0.4.2
+  Downloaded cc v1.2.63
+  Downloaded cpufeatures v0.3.0
+  Downloaded itoa v1.0.18
+  Downloaded arrayvec v0.7.6
+  Downloaded find-msvc-tools v0.1.9
+  Downloaded crossbeam-deque v0.8.6
+  Downloaded crossbeam-utils v0.8.21
+  Downloaded quote v1.0.45
+  Downloaded crossbeam-epoch v0.9.18
+  Downloaded zmij v1.0.21
+  Downloaded unicode-ident v1.0.24
+  Downloaded proc-macro2 v1.0.106
+  Downloaded shlex v2.0.1
+  Downloaded serde_core v1.0.228
+  Downloaded serde_derive v1.0.228
+  Downloaded memchr v2.8.1
+  Downloaded rayon-core v1.13.0
+  Downloaded serde v1.0.228
+  Downloaded serde_json v1.0.150
+  Downloaded blake3 v1.8.5
+  Downloaded rayon v1.12.0
+  Downloaded syn v2.0.117
+  Downloaded either v1.16.0
+   Compiling proc-macro2 v1.0.106
+   Compiling crossbeam-utils v0.8.21
+   Compiling quote v1.0.45
+   Compiling unicode-ident v1.0.24
+   Compiling find-msvc-tools v0.1.9
+   Compiling shlex v2.0.1
+   Compiling serde_core v1.0.228
+   Compiling zmij v1.0.21
+   Compiling rayon-core v1.13.0
+   Compiling serde v1.0.228
+   Compiling serde_json v1.0.150
+   Compiling cfg-if v1.0.4
+   Compiling arrayref v0.3.9
+   Compiling either v1.16.0
+   Compiling itoa v1.0.18
+   Compiling memchr v2.8.1
+   Compiling constant_time_eq v0.4.2
+   Compiling cpufeatures v0.3.0
+   Compiling arrayvec v0.7.6
+   Compiling cc v1.2.63
+   Compiling crossbeam-epoch v0.9.18
+   Compiling syn v2.0.117
+   Compiling crossbeam-deque v0.8.6
+   Compiling blake3 v1.8.5
+   Compiling rayon v1.12.0
+   Compiling serde_derive v1.0.228
+   Compiling ligero-verifier v0.1.0 (/workspace/verinf/verifier)
+warning: value assigned to `s_bind_out` is never read
+   --> src/bin/verify_proof.rs:232:43
+    |
+232 |     let mut s_bind_out: Option<Vec<u8>> = None;
+    |                                           ^^^^ this value is reassigned later and never used
+...
+256 |             s_bind_out = Some(s_bind.to_vec());
+    |             ---------- `s_bind_out` is overwritten here before the previous value is read
+    |
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: `ligero-verifier` (bin "verify_proof") generated 1 warning
+    Finished `release` profile [optimized] target(s) in 10.57s
+W0916 19:55:09.204000 1636 torch/utils/cpp_extension.py:2425] TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
+W0916 19:55:09.204000 1636 torch/utils/cpp_extension.py:2425] If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'] to specific architectures.
+  commit m=64 W=524288: 40.28s
+  PASS test_commit_phase_integration
+  PASS test_gl_arithmetic_correctness
+  PASS test_gl_axpy_correctness
+  PASS test_gl_inv_batched_roundtrip
+  PASS test_gl_inv_scalar_correctness
+  PASS test_gl_matmul_correctness_small
+  gl_matmul 4096^3: 0.16s
+  PASS test_gl_matmul_llama_shape
+  PASS test_gl_matvec_correctness
+  PASS test_gl_spmv_correctness
+  PASS test_hash_columns_streamed_correctness
+  hash_columns_streamed m=2048 N_LIG=65536: 0.00s
+  PASS test_hash_columns_streamed_scale
+  PASS test_lookup_multiplicities_correctness
+  PASS test_lookup_multiplicities_logup_size
+  PASS test_merkle_build_blake3_correctness
+  merkle_build N=65536: 0.00s
+  PASS test_merkle_build_blake3_production_size
+  batched NTT N=16384 m=8: round-trip + matches-per-row OK
+  batched NTT N=32768 m=8: round-trip + matches-per-row OK
+  batched NTT N=65536 m=8: round-trip + matches-per-row OK
+  PASS test_ntt_batched_at_production_sizes
+  PASS test_ntt_batched_matches_single
+  PASS test_ntt_correctness_small
+  PASS test_ntt_roundtrip_production
+  PASS test_poly_add_correctness
+  PASS test_poly_eval_correctness
+  PASS test_poly_mul_batched_matches_single
+  PASS test_poly_mul_correctness
+  rs_encode_rows m=128 K_DEG=16384 N_LIG=65536: 0.00s
+  PASS test_rs_encode_rows_production
+  PASS test_rs_encode_rows_small
+=== 25 passed, 0 failed (of 25) ===
+== BOOTSTRAP status: env-record 9 sections; cargo 1 finished; primitives: === 25 passed, 0 failed (of 25) ===
+== early gates (no GGUF needed): the weight cache and shard streaming
+/workspace/verinf/prover/core.py:642: UserWarning: The given buffer is not writable, and PyTorch does not support non-writable tensors. This means you can write to the underlying (supposedly non-writable) buffer using the tensor. You may want to copy the buffer to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at /pytorch/torch/csrc/utils/tensor_new.cpp:1578.)
+  return torch.frombuffer(bytes(master_seed), dtype=torch.uint8).cuda()
+W0916 19:55:54.012000 1741 torch/utils/cpp_extension.py:2425] TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
+W0916 19:55:54.012000 1741 torch/utils/cpp_extension.py:2425] If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'] to specific architectures.
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 258; W-ref True; Wnew rows 0; p3 rows 48; peak 0.00 GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 258; W-ref True; Wnew rows 0; p3 rows 48; peak 0.00 GB
+  [weight-cache] 1 weights decoded once (0.0 GB packed, 0.0 GB pinned after the allocator's power-of-two rounding; host allocator reserved n/a GB), 10 resolutions served from the cache, 0 resolutions refused by the budget
+Traceback (most recent call last):
+  File "/workspace/verinf/prover/tests/run_tests.py", line 13, in <module>
+    getattr(mod, n)()
+  File "/workspace/verinf/prover/tests/test_weight_cache.py", line 155, in test_pack_roundtrip_at_the_boundaries_and_the_charged_size
+    assert core._weight_pack(small, 31) is None and core._weight_pack(_u64([1 << 40]), 15) is None
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError
+    dense weight decodes per proof: uncached 11 -> cached 1; shard loads 896 on both arms
+  PASS test_dense_weight_decoded_once_and_shards_never_cached
+  FAIL test_pack_roundtrip_at_the_boundaries_and_the_charged_size: AssertionError: 
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 258; W-ref True; Wnew rows 0; p3 rows 48; peak 0.00 GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 258; W-ref True; Wnew rows 0; p3 rows 48; peak 0.00 GB
+  [weight-cache] 1 weights decoded once (0.0 GB packed, 0.0 GB pinned after the allocator's power-of-two rounding; host allocator reserved n/a GB), 10 resolutions served from the cache, 0 resolutions refused by the budget
+    cache off/on: 97009 proof bytes identical; Rust ACCEPT
+  PASS test_weight_cache_is_byte_identical_and_accepts
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+    raise after the first store: cache released
+  PASS test_weight_cache_released_when_the_prove_raises
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 258; W-ref True; Wnew rows 0; p3 rows 48; peak 0.00 GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 258; W-ref True; Wnew rows 0; p3 rows 48; peak 0.00 GB
+  [weight-cache] 0 weights decoded once (0.0 GB packed, 0.0 GB pinned after the allocator's power-of-two rounding; host allocator reserved n/a GB), 0 resolutions served from the cache, 11 resolutions refused by the budget
+    zero budget: 11 decodes, bytes identical
+  PASS test_zero_budget_falls_back_to_the_loader
+=== 4 passed, 1 failed (of 5) ===
+early-weight-cache FAILED rc=1
+early-weight-cache rc=1
+/workspace/verinf/prover/core.py:642: UserWarning: The given buffer is not writable, and PyTorch does not support non-writable tensors. This means you can write to the underlying (supposedly non-writable) buffer using the tensor. You may want to copy the buffer to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at /pytorch/torch/csrc/utils/tensor_new.cpp:1578.)
+  return torch.frombuffer(bytes(master_seed), dtype=torch.uint8).cuda()
+W0916 19:55:58.124000 1843 torch/utils/cpp_extension.py:2425] TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
+W0916 19:55:58.124000 1843 torch/utils/cpp_extension.py:2425] If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'] to specific architectures.
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 0; W-ref False; Wnew rows 0; p3 rows 48; peak 0.00 GB
+    sweeps=5 projections=1 cache_hits=4 -> ACCEPT
+  PASS test_five_semantic_sweeps_and_one_projection
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 0; W-ref False; Wnew rows 0; p3 rows 48; peak 0.00 GB
+    128 lazy shards, 520 resolutions, peak resident = 1
+  PASS test_one_expert_shard_resident_at_a_time
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 256; W-ref True; Wnew rows 0; p3 rows 48; peak 0.00 GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 256; W-ref True; Wnew rows 0; p3 rows 48; peak 0.00 GB
+    shard loads: unfused 1024 -> fused 896 (one full weight pass saved)
+  PASS test_projection_adds_no_second_read_of_the_weights
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 256; W-ref False; Wnew rows 0; p3 rows 48; peak 0.00 GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 256; W-ref True; Wnew rows 0; p3 rows 48; peak 0.00 GB
+    encoded rows: rebuild 1216 -> referenced 960 (saved 256 = the whole weight block), ACCEPT
+  PASS test_referenced_commitment_saves_the_r1_weight_encode
+[sweep] op 1/3 (33%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/3 (67%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 3/3 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/3 (33%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/3 (67%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 3/3 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/3 (33%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/3 (67%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 3/3 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/3 (33%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/3 (67%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 3/3 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/3 (33%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/3 (67%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 3/3 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 256; W-ref True; Wnew rows 0; p3 rows 48; peak 0.00 GB
+    cached Y freed after its consumer in all 4 sweeps that loaded it; Rust ACCEPT
+  PASS test_routed_output_cache_frees_y_after_its_consumer
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 256; W-ref True; Wnew rows 0; p3 rows 48; peak 0.00 GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 256; W-ref True; Wnew rows 0; p3 rows 48; peak 0.00 GB
+    cache off/on: 89987 proof bytes identical; Rust ACCEPT
+  PASS test_routed_output_cache_is_byte_identical_and_accepts
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 256; W-ref True; Wnew rows 0; p3 rows 48; peak 0.00 GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/1 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 256; W-ref True; Wnew rows 0; p3 rows 48; peak 0.00 GB
+    shard loads per proof: uncached 896 -> cached 512 (three passes of 128 saved; projection still computed once)
+  PASS test_routed_output_cache_skips_three_of_five_shard_passes
+=== 7 passed, 0 failed (of 7) ===
+early-shard-streaming rc=0
+PHASE0 DONE

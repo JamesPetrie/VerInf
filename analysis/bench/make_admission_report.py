@@ -45,6 +45,7 @@ SWEEPS = 5          # the transcript's five witness regenerations
 def _measure_model_stages(a):
     """model_load and ONE active-only semantic sweep, on the real GGUF."""
     import demo_maverick_full as drv
+    drv.WC_BRIDGE = bool(getattr(a, "wc_bridge", False))
 
     if a.tokens:
         tk = json.load(open(a.tokens))
@@ -104,7 +105,12 @@ def main():
     ap.add_argument("--d", type=int, default=5120)
     ap.add_argument("--d-ff", type=int, default=8192)
     ap.add_argument("--vocab", type=int, default=202048)
-    ap.add_argument("--weight-commitment", required=True)
+    ap.add_argument("--weight-commitment", default=None,
+                    help="required unless --wc-bridge")
+    ap.add_argument("--wc-bridge", action="store_true",
+                    help="WC-LCRL-STC mode: the tape's routed matmuls are "
+                         "bridged (use_bridge claims), the model root is the "
+                         "streaming weight-enrollment root")
     ap.add_argument("--public-sz", type=int, required=True)
     ap.add_argument("--egress-dir", required=True,
                     help="the filesystem that will receive --dump-proof")
@@ -116,6 +122,7 @@ def main():
     a = ap.parse_args()
 
     import demo_maverick_full as drv
+    drv.WC_BRIDGE = bool(getattr(a, "wc_bridge", False))
     admission.check_config(drv.CFG)
 
     print(f"[1/3] kernel campaign: {a.kernel_runs} runs/stage", flush=True)
@@ -127,7 +134,19 @@ def main():
 
     print("[3/3] binding the report to this build/model/statement/layout",
           flush=True)
-    wc = core.WeightCommitment.load(a.weight_commitment)
+    if a.wc_bridge:
+        import gc
+        import wc_bridge as _wcb
+        gc.collect(); torch.cuda.empty_cache()   # the stage sweep left the GPU full
+        print("    (wc-bridge: streaming enrollment root)", flush=True)
+        enr = _wcb.lazy_enroll_tape(
+            tape, b"wc-maverick-mask-v1",
+            f"maverick|{a.from_gguf}|S={1 << 12}".encode(), _wcb.WcParams())
+        model_root_hex = enr.root.hex()
+    else:
+        assert a.weight_commitment, "--weight-commitment or --wc-bridge"
+        wc = core.WeightCommitment.load(a.weight_commitment)
+        model_root_hex = wc.root.hex()
     claims_bytes, manifest, stmt = admission.prepare(tape, drv.CFG)
 
     samples = dict(kernel_samples)
@@ -150,7 +169,7 @@ def main():
 
     report = {
         "source_digest": admission.source_digest(),
-        "model_root": wc.root.hex(),
+        "model_root": model_root_hex,
         "statement_digest": stmt.hex(),
         "machine": admission.machine_fingerprint(),
         "egress_filesystem": admission.filesystem_fingerprint(a.egress_dir),

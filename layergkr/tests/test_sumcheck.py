@@ -151,3 +151,31 @@ def test_exhausted_tape_raises():
     except RuntimeError:
         raised = True
     assert raised, "short tape silently accepted"
+
+
+# ── the transcript length is part of the statement ───────────────────────────
+def test_short_transcript_rejects():
+    """A proof whose transcript carries fewer rounds than log2(size) must be
+    rejected, whatever its claim: mle_eval folds only over the point it is
+    given, so a zero-round transcript would otherwise be checked against the
+    product at index 0 alone (found on the collaborator's sampled-audit
+    review, 2026-09-17; the gap was in verify_terms and verify alike)."""
+    f = _factors(2)
+    proof = sc.prove(f, _coin())
+    ok, why = sc.verify(proof, f, _coin())
+    assert ok, why
+    short = sc.SumcheckProof(claim=proof.claim, round_polys=proof.round_polys[:-1],
+                             challenges=proof.challenges[:-1],
+                             final_point=proof.final_point[:-1])
+    ok, why = sc.verify(short, f, _coin())
+    assert not ok and "rounds" in why, why
+    empty = sc.SumcheckProof(claim=(f[0][0] * f[1][0]) % FIELD_P)
+    ok, why = sc.verify(empty, f, _coin())
+    assert not ok and "rounds" in why, why
+    ok, why = sc.verify_terms(empty, [(1, f)], _coin())
+    assert not ok and "rounds" in why, why
+    over = sc.SumcheckProof(claim=proof.claim, round_polys=proof.round_polys + [proof.round_polys[-1]],
+                            challenges=proof.challenges + [proof.challenges[-1]],
+                            final_point=proof.final_point + [proof.final_point[-1]])
+    ok, why = sc.verify(over, f, _coin())
+    assert not ok and "rounds" in why, why

@@ -1,0 +1,27 @@
+LAUNCH 19:31:53 cmd: python3 profiler/calibrate.py --name h200-runpod-s2 --tmpdir /workspace/probe --skip-io
+gpu: NVIDIA H200 x1 140 GB [sm_90]
+[cuda benches] nvcc=/usr/local/cuda/bin/nvcc
+  ALU benches: grid 1056x256 (full occupancy on 132 SMs)
+  nvcc bench_field_mul.cu [sm_90]
+  nvcc bench_ntt.cu [sm_90]
+  nvcc bench_blake3_columns.cu [sm_90]
+  nvcc bench_goldilocks_matmul.cu [sm_90]
+  nvcc bench_blake3_reg.cu [sm_90]
+  nvcc bench_ntt_batched.cu [sm_90]
+  nvcc bench_hbm_random.cu [sm_90]
+  nvcc bench_launch_latency.cu [sm_90]
+[torch benches]
+  mem_bandwidth_GBps = 4259.5 GB/s
+  h2d_GBps = 55.3 GB/s
+[io probes] skipped (--skip-io): rerun with --io-only once the storage is idle
+
+wrote /workspace/verinf/profiler/machines/h200-runpod-s2.json
+
+ratios vs gb10-spark (the floor scales A/C by bandwidth, B by compute):
+  mem bandwidth        4259.5 / 223      = 19.10x
+  field mul             607.4 / 312      =  1.95x
+  blake3 compress         7.9 / 2        =  3.96x
+  blake3 bulk           506.7 / 128      =  3.96x
+  ntt ns/elem           0.213 / 0.42     =  1.97x faster
+  ntt BATCHED          0.0622 ns/elem vs 0.0220 expected if encode scaled with bandwidth (2.83x of that): encode is NOT bandwidth-scaled here — A is optimistic; treat the floor accordingly
+EXIT=0

@@ -1,0 +1,9 @@
+device: NVIDIA H200  sm=9.0  SMs=132
+config: blocks=1056 threads=256 iters=2048  warmup=3 runs=5  (register-resident chained compress)
+  run 0: 53.383 ms  -> 10.37 Gcompress/s
+  run 1: 53.206 ms  -> 10.41 Gcompress/s
+  run 2: 53.343 ms  -> 10.38 Gcompress/s
+  run 3: 53.389 ms  -> 10.37 Gcompress/s
+  run 4: 53.205 ms  -> 10.41 Gcompress/s
+best: 10.41 Gcompress/s (register-resident)
+sink[0] = 3826d6c9 (anti-DCE)

@@ -1,0 +1,11 @@
+W0919 23:11:43.887000 5714 torch/utils/cpp_extension.py:2425] TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
+W0919 23:11:43.887000 5714 torch/utils/cpp_extension.py:2425] If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'] to specific architectures.
+/workspace/verinf/prover/tests/test_kquant_kernel.py:46: UserWarning: The given NumPy array is not writable, and PyTorch does not support non-writable tensors. This means writing to this tensor will result in undefined behavior. You may want to copy the array to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at /pytorch/torch/csrc/utils/tensor_numpy.cpp:203.)
+  got = kquant_to_field(torch.from_numpy(raw).cuda(), qt, S)
+W0919 23:11:43.946000 5714 torch/utils/cpp_extension.py:2425] TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
+W0919 23:11:43.946000 5714 torch/utils/cpp_extension.py:2425] If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'] to specific architectures.
+[OK ] blk.1.ffn_gate_exps.weight[0] (Q4_K): bit-exact over 41943040 values, kernel 31772 ms (1M elem/s)
+[OK ] blk.1.ffn_down_exps.weight[0] (Q5_K): bit-exact over 41943040 values, kernel 4 ms (10632M elem/s)
+[OK ] blk.1.ffn_down_shexp.weight (Q6_K): bit-exact over 41943040 values, kernel 5 ms (9215M elem/s)
+[OK ] blk.1.ffn_gate_exps.weight[5] (Q4_K): bit-exact over 41943040 values, kernel 3 ms (13167M elem/s)
+=== kquant_kernel: 4/4 PASS ===

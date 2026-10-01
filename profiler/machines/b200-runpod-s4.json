@@ -1,0 +1,63 @@
+{
+  "name": "b200-runpod-s4",
+  "description": "NVIDIA B200 \u2014 calibrated by profiler/calibrate.py 2026-09-19 \u2014 storage probes re-measured 2026-09-19 (--io-only)",
+  "gpu": {
+    "count": 1,
+    "mem_GB": 178,
+    "mem_bandwidth_GBps": 6413.0,
+    "field_mul_Gps": 677.23,
+    "blake3_compress_Gps": 11.63,
+    "blake3_bulk_GBps": 744.2,
+    "blake3_reg_compress_Gps": 18.77,
+    "ntt_ns_per_elem": 0.172576904296875,
+    "ntt_batched_ns_per_elem": 0.0554,
+    "hbm_random_GBps": 291.3,
+    "hbm_chase_ns": 1800.94,
+    "launch_us_sync": 8.17,
+    "launch_us_stream": 1.902
+  },
+  "prove_constants": {
+    "A_ns_per_slot": 0.313,
+    "B_ns_per_cid": 0.0533,
+    "C_ns_per_product": 0.522,
+    "aggregate_ns_per_slot": null
+  },
+  "verify": {
+    "bytes_per_row": 700,
+    "cores": 224
+  },
+  "io": {
+    "disk_read_GBps": 3.49,
+    "h2d_GBps": 57.7,
+    "proof_dump_MBps": 356.7,
+    "proof_dump_compact_MBps": 1271.0
+  },
+  "interconnect": null,
+  "provenance": {
+    "_suite": "profiler/calibrate.py run 2026-09-19; raw outputs in calibrate-raw-b200-runpod-s4/",
+    "field_mul_Gps": "bench_field_mul best-of-5, grid 1184x256 (full occupancy on 148 SMs), 2026-09-19",
+    "ntt_ns_per_elem": "bench_ntt best variant at n=65536 (us/NTT * 1000 / 65536), 2026-09-19",
+    "blake3_compress_Gps": "bench_blake3_columns best over m sweep, 2026-09-19 \u2014 memory-bandwidth-limited at large m; NOT a basis for B",
+    "blake3_bulk_GBps": "bench_blake3_columns best GB/s absorbed, 2026-09-19",
+    "matmul_Gmul_s": "bench_goldilocks_matmul best 272.82 Gmul/s across the n sweep, 2026-09-19 \u2014 informational (no profile field; its printed 'peak floor' line is GB10's 312, ignore)",
+    "blake3_reg_compress_Gps": "bench_blake3_reg register-resident chained compress, grid 1184x256 (full occupancy on 148 SMs), 2026-09-19 \u2014 the ALU-bound rate; B's proper scaling basis",
+    "ntt_batched_ns_per_elem": "bench_ntt_batched at n=65536, the LARGEST batch of the sweep (m=2048), 2026-09-19 \u2014 the prover's working set; per batch: m=1 0.1782, m=8 0.0703, m=64 0.0564, m=512 0.0557, m=2048 0.0554; the single-transform bench is launch-bound on large-L2 parts",
+    "hbm_random_GBps": "bench_hbm_random gather over an L2-exceeding buffer, 2026-09-19 \u2014 random 8B-read throughput",
+    "hbm_chase_ns": "bench_hbm_random dependent pointer chase, 2026-09-19 \u2014 per-hop WALL across the default 65536 walkers: a throughput figure, NOT the single-access HBM latency (rerun with --walkers 1 for that)",
+    "launch_us_sync": "bench_launch_latency synced round trip, 2026-09-19",
+    "launch_us_stream": "bench_launch_latency back-to-back enqueue, 2026-09-19",
+    "mem_bandwidth_GBps": "torch d2d copy, read+write counted (2x bytes), 2026-09-19",
+    "h2d_GBps": "torch pinned-host->device copy, 2026-09-19",
+    "A_ns_per_slot": "DERIVED from gb10-spark x bandwidth ratio (223/6413 GB/s) \u2014 replace via validation-mode recalibration",
+    "C_ns_per_product": "DERIVED from gb10-spark x bandwidth ratio (223/6413 GB/s) \u2014 replace via validation-mode recalibration",
+    "B_ns_per_cid": "DIRECT: one challenge compress per cid at the measured register-resident rate (18.8 Gc/s); no cross-machine baseline yet \u2014 run bench_blake3_reg on gb10-spark to upgrade to a ratioed value. Leans floor-ward structurally: raw ALU compress only, no launch/orchestration margin \u2014 replace via validation-mode recalibration",
+    "aggregate_ns_per_slot": "left null: bakes in code-level overhead that does not transfer; needs a measured run on this box",
+    "mem_GB": "GiB as the driver reports it (total_memory / 2**30); consumers convert with 2**30",
+    "verify.bytes_per_row": "700: gb10-spark estimate carried over, not measured here",
+    "verify.cores": "os.sched_getaffinity(0) \u2014 the container's CPU share, not the host's",
+    "io_tmpdir": "/workspace/probe on overlay (overlay) mounted at /; 196 GB free at probe time, 2026-09-19",
+    "disk_read_GBps": "python sequential read of a 8 GB probe after fsync + posix_fadvise(DONTNEED) eviction, 2026-09-19 \u2014 device-served but not O_DIRECT-cold",
+    "proof_dump_compact_MBps": "bench_dump_compact_MBps: base64 of u64le chunks + fsync to --tmpdir, 2026-09-19 \u2014 the production transport; supersedes the A100 reference in predict when present",
+    "proof_dump_MBps": "PROXY: json string-build+write of u64 arrays, 2026-09-19 \u2014 replace with a real proof_dump measurement"
+  }
+}

@@ -37,4 +37,4 @@ print("leaf", leaf.hex())
 import blake3
 sib = pr.merkle_leaf([40, 50])
 root = blake3.blake3(sib + leaf).digest()        # side 0 = sib left: blake3(sib ‖ leaf)
-print("mverify", pr.merkle_verify(leaf, [(sib, 0)], root))
+print("mverify", pr.merkle_verify(leaf, [(sib, 0)], root, 1, 2))   # leaf 1 of 2

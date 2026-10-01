@@ -1,0 +1,36 @@
+W0915 19:30:39.602000 1031 torch/utils/cpp_extension.py:2425] TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
+W0915 19:30:39.602000 1031 torch/utils/cpp_extension.py:2425] If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'] to specific architectures.
+  commit m=64 W=524288: 43.92s
+  PASS test_commit_phase_integration
+  PASS test_gl_arithmetic_correctness
+  PASS test_gl_axpy_correctness
+  PASS test_gl_inv_batched_roundtrip
+  PASS test_gl_inv_scalar_correctness
+  PASS test_gl_matmul_correctness_small
+  gl_matmul 4096^3: 0.17s
+  PASS test_gl_matmul_llama_shape
+  PASS test_gl_matvec_correctness
+  PASS test_gl_spmv_correctness
+  PASS test_hash_columns_streamed_correctness
+  hash_columns_streamed m=2048 N_LIG=65536: 0.00s
+  PASS test_hash_columns_streamed_scale
+  PASS test_lookup_multiplicities_correctness
+  PASS test_lookup_multiplicities_logup_size
+  PASS test_merkle_build_blake3_correctness
+  merkle_build N=65536: 0.00s
+  PASS test_merkle_build_blake3_production_size
+  batched NTT N=16384 m=8: round-trip + matches-per-row OK
+  batched NTT N=32768 m=8: round-trip + matches-per-row OK
+  batched NTT N=65536 m=8: round-trip + matches-per-row OK
+  PASS test_ntt_batched_at_production_sizes
+  PASS test_ntt_batched_matches_single
+  PASS test_ntt_correctness_small
+  PASS test_ntt_roundtrip_production
+  PASS test_poly_add_correctness
+  PASS test_poly_eval_correctness
+  PASS test_poly_mul_batched_matches_single
+  PASS test_poly_mul_correctness
+  rs_encode_rows m=128 K_DEG=16384 N_LIG=65536: 0.01s
+  PASS test_rs_encode_rows_production
+  PASS test_rs_encode_rows_small
+=== 25 passed, 0 failed (of 25) ===

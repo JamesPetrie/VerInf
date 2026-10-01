@@ -249,7 +249,8 @@ class Commit:
         return self.col_values(col), merkle_path(self.levels, col)
 
     def check_open(self, col: int, values: List[int], path: Path) -> bool:
-        return merkle_verify(merkle_leaf(values), path, self.root)
+        return merkle_verify(merkle_leaf(values), path, self.root, col,
+                             self.cfg.N_LIG)
 
     def combine(self, coeffs: Sequence[int]):
         """sum_i coeffs[i] * row_i, on whichever backend holds the data."""

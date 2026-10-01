@@ -18,40 +18,52 @@ from dataclasses import dataclass, field
 from typing import Dict, Optional
 
 import claimcosts
-from manifest import Manifest
+from manifest import Manifest, bridged_note
 from machine import MachineProfile
 
 BYTES_PER_SLOT = 8            # Goldilocks element = u64
 
 # Enrolled-weight per-proof passes. Under enrollment (core.WeightCommitment,
 # the kept-trees/opening-ledger path on main) the weight block is never
-# re-encoded per proof, but its linear fold and its opening remain per-proof
-# work over the whole enrolled block. Ratios mirror the admissible rates in
-# analysis/routed_projected_4h_model.py: qlin at the full A per-slot rate,
-# opening at half — validation mode (README roadmap 2) refines both.
+# re-COMMITTED per proof (no Merkle tree, no R1 work), but two passes over
+# every enrolled row remain per-proof work: the test-polynomial fold
+# (interpolate + linear fold, no codeword) and the column opening, which
+# re-encodes each row (the full LDE — core._stream_phase needs codewords
+# whenever a column sink is attached) and extracts the challenged columns.
+# Ratios mirror the admissible rates in analysis/routed_projected_4h_model.py:
+# qlin at the full A per-slot rate, opening at half. Neither is validated by
+# that model's bench (analysis/bench/admission_bench.py pre-encodes and times
+# only the column gather); validation mode (README roadmap 2) refines both.
 ENROLLED_QLIN_RATIO = 1.0
 ENROLLED_OPEN_RATIO = 0.5
 PROOF_JSON_BYTES_PER_VALUE = 21.4   # empirical: 93.6 GB / (40 * 109.27 M) — decimal-ASCII u64 + separators
 # Production transport on current main is JSON-framed u64le/base64 (legacy
 # decimal JSON still verifies but is not the fast path): 10.67 B/value for
 # base64 of 8 canonical bytes, 11 covering the envelope — the convention of
-# analysis/routed_projected_4h_model.py, whose demonstrated run wrote
-# 35.46 GB at ~751 MB/s (47.2 s), I/O-bound rather than string-building
-# bound. Machine profiles may carry io.proof_dump_compact_MBps once
-# measured per box; until then the report quotes the A100 reference.
+# analysis/routed_projected_4h_model.py. Reference rate when a machine has
+# no measured io.proof_dump_compact_MBps: the A100 final-run proof_egress
+# bound in analysis/routed-projected-status.md (52 GB modeled wire in
+# 212.5 s = 245 MB/s; the egress bench there sees 200-315 MB/s). NOT the
+# 751 MB/s "35.46 GB in 47.2 s" figure from the same document — that
+# write went to page cache on a 129 GB-RAM box and the document itself
+# says not to read it as a measurement.
 PROOF_COMPACT_BYTES_PER_VALUE = 11
-PROOF_COMPACT_REF_MBPS = 751
+PROOF_COMPACT_REF_MBPS = 245
 
 
 @dataclass
 class CostTotals:
     W: float = 0.0            # witness slots (weights + activations + aux)
-    W_weights: float = 0.0    # persistent (streamed) share of W
+    W_weights: float = 0.0    # all persistent slots, including refreshed Wnew
     W_inputs: float = 0.0     # committed run inputs (producer-less, non-persistent)
     cids: float = 0.0
     Q: float = 0.0
     by_type: Dict[str, list] = field(default_factory=dict)  # type -> [W, cids, Q]
     n_claims: int = 0
+    W_enrolled: float = 0.0   # old phase-1 weights eligible for commitment reuse
+    W_new: float = 0.0        # refreshed Wnew: committed/folded/opened as fresh
+    W_external: float = 0.0   # bridge-held weights: OUTSIDE the witness, not in W
+    n_external: int = 0
 
 
 def totals(m: Manifest) -> CostTotals:
@@ -69,9 +81,17 @@ def totals(m: Manifest) -> CostTotals:
     for v in m.variables:
         if v.producer is not None:
             continue                # claim outputs: already counted above
+        if getattr(v, "external", False):
+            t.W_external += v.length    # authenticated by the bridge, never a row
+            t.n_external += 1
+            continue
         t.W += v.length             # committed rows, not claim-counted
         if v.persistent:
             t.W_weights += v.length # weights (streamed, own Merkle block)
+            if v.w_new:
+                t.W_new += v.length
+            elif v.phase == 1:
+                t.W_enrolled += v.length
         else:
             t.W_inputs += v.length  # run inputs: embeddings, one-hots, tables
     return t
@@ -93,6 +113,8 @@ def live_set_peak(m: Manifest) -> Optional[dict]:
     peak, peak_idx = 0, 0
     expiring: Dict[int, list] = {}
     for v in m.variables:
+        if getattr(v, "external", False):
+            continue                # streamed one shard at a time, never resident
         if v.producer is None and not v.persistent and v.consumers:
             live += v.length * BYTES_PER_SLOT
             expiring.setdefault(last_use[v.name], []).append(v.name)
@@ -134,12 +156,14 @@ def report(m: Manifest, mp: MachineProfile, gpus: int = 1,
 
     # Rows: per-variable row rounding when variables are present, else W/ELL.
     if m.variables:
-        m_rows = sum(math.ceil(v.length / ELL) for v in m.variables)
+        m_rows = sum(math.ceil(v.length / ELL) for v in m.variables
+                     if not getattr(v, "external", False))
         # phase-2/aux vars are only itemized by the extractor; cover the
         # formula-only remainder at W/ELL density. Core layout rounds every
         # variable up independently, so pooling understates slightly — the
         # report labels such totals approximate.
-        itemized = sum(v.length for v in m.variables)
+        itemized = sum(v.length for v in m.variables
+                       if not getattr(v, "external", False))
         aux_pooled = max(0.0, t.W - itemized)
         m_rows += aux_pooled / ELL
     else:
@@ -154,12 +178,18 @@ def report(m: Manifest, mp: MachineProfile, gpus: int = 1,
 
     L = []
     L.append(f"== VerInf dry-run prediction ==")
+    _bn = bridged_note(m)
+    if _bn:
+        L.append(_bn)
     L.append(f"model: {m.model.get('name', '?')}   seq: {seq}   "
              f"claims: {t.n_claims:,}   source: {m.source.get('kind', '?')}")
     L.append(f"machine: {mp.name}" + (f"   what-if: {gpus} GPUs" if gpus > 1 else ""))
     L.append("")
     L.append(f"-- workload totals --")
     share = f"weights {t.W_weights:.3e} = {100 * t.W_weights / t.W:.0f}%"
+    if t.W_new:
+        share += (f", old enrolled {t.W_enrolled:.3e}, "
+                  f"refreshed Wnew (fresh) {t.W_new:.3e}")
     if t.W_inputs:
         share += f", run inputs {t.W_inputs:.3e}"
     L.append(f"W     (witness slots)     : {t.W:.3e}   ({share})")
@@ -183,7 +213,7 @@ def report(m: Manifest, mp: MachineProfile, gpus: int = 1,
     else:
         bw_scale = (bandwidth_ratio or gpus)   # A/C ride aggregate bandwidth
         cp_scale = (compute_ratio or gpus)     # B rides compute
-        W_fresh = (t.W - t.W_weights) if enrolled_weights else t.W
+        W_fresh = (t.W - t.W_enrolled) if enrolled_weights else t.W
         tA = A * W_fresh * 1e-9 / bw_scale
         tB = B * t.cids * 1e-9 / cp_scale
         tC = C * t.Q * 1e-9 / bw_scale
@@ -191,7 +221,7 @@ def report(m: Manifest, mp: MachineProfile, gpus: int = 1,
         tE = tOF = 0.0
         if enrolled_weights:
             tE = ((ENROLLED_QLIN_RATIO + ENROLLED_OPEN_RATIO)
-                  * A * t.W_weights * 1e-9 / bw_scale)
+                  * A * t.W_enrolled * 1e-9 / bw_scale)
             # Fresh rows are opened by the same final sweep — priced at the
             # same OPEN ratio (matches the fresh_open stage of
             # routed_projected_4h_model.py exactly: 0.5*A*fresh slots).
@@ -208,9 +238,13 @@ def report(m: Manifest, mp: MachineProfile, gpus: int = 1,
                      f"{ENROLLED_OPEN_RATIO:g})*A*Ww       : {_fmt_s(tE)}")
             L.append(f"    open (fresh rows) {ENROLLED_OPEN_RATIO:g}*A*Wf"
                      f"                 : {_fmt_s(tOF)}")
-            L.append("    (enrolled weights: zero per-proof RS encode; "
-                     "fold+opening passes priced per "
-                     "routed_projected_4h_model.py ratios)")
+            L.append("    (old enrolled weights: no per-proof commitment; the "
+                     "fold pass and the opening pass — which re-encodes "
+                     "every enrolled row for its columns — are priced at "
+                     "the routed_projected_4h_model.py ratios)")
+            if t.W_new:
+                L.append("    refreshed Wnew stays in fresh encode, fold and "
+                         "opening work; its commitment is rebuilt per proof")
             kd = lig.get("K_DEG", 16384)
             budget = max(0, (kd - ELL) // 2)
             L.append(f"    enrollment lifecycle (unpriced): one-time enroll "
@@ -238,7 +272,8 @@ def report(m: Manifest, mp: MachineProfile, gpus: int = 1,
 
     L.append(f"-- memory ({mp.name}) --")
     opened = T_Q * m_rows * BYTES_PER_SLOT
-    L.append(f"  opened-column payload (T={T_Q} x rows x 8B, GPU-resident): {_gb(opened)}")
+    L.append(f"  opened-column payload (T={T_Q} x rows x 8B, HOST-resident: "
+             f"core.ColumnSink pre-sizes ordinary host buffers): {_gb(opened)}")
     chunk_rows = 1024
     n_lig = lig.get("N_LIG", 65536)
     work = chunk_rows * (ELL + n_lig) * BYTES_PER_SLOT
@@ -272,7 +307,8 @@ def report(m: Manifest, mp: MachineProfile, gpus: int = 1,
                  f"{_fmt_s(proof_c / (dump_c * 1e6))}")
     else:
         L.append(f"  proof dump time (compact, ~{PROOF_COMPACT_REF_MBPS} "
-                 f"MB/s A100 reference — unbenchmarked on this machine): "
+                 f"MB/s A100 reference = final-run egress bound, page-cache "
+                 f"excluded — unbenchmarked on this machine): "
                  f"{_fmt_s(proof_c / (PROOF_COMPACT_REF_MBPS * 1e6))}")
     dump = mp.get("io", "proof_dump_MBps")
     if dump:

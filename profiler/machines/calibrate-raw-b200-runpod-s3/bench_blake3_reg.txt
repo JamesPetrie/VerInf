@@ -1,0 +1,9 @@
+device: NVIDIA B200  sm=10.0  SMs=148
+config: blocks=1184 threads=256 iters=2048  warmup=3 runs=5  (register-resident chained compress)
+  run 0: 33.074 ms  -> 18.77 Gcompress/s
+  run 1: 33.086 ms  -> 18.76 Gcompress/s
+  run 2: 33.080 ms  -> 18.77 Gcompress/s
+  run 3: 33.068 ms  -> 18.77 Gcompress/s
+  run 4: 33.067 ms  -> 18.77 Gcompress/s
+best: 18.77 Gcompress/s (register-resident)
+sink[0] = 3826d6c9 (anti-DCE)

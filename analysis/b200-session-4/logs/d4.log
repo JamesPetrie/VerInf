@@ -1,0 +1,3 @@
+D4 START 21:08:55
+launched pgid 13273 job 13276 (log ~/mavp-s100-bridge.log; kill -- -$(cat ~/mavp-s100-bridge.pid))
+D4 status 0 21:32:55
