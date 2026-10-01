@@ -180,7 +180,12 @@ def word_extract_compute(claim: WordExtractionClaim, live):
         x = live[claim.x]
         # Infer B from coeffs[1] (coeffs[0] is always 1 in the extract case).
         N = len(claim.words)
-        B = (claim.coeffs[1].bit_length() - 1) if N > 1 else 0
+        if N == 1:
+            # x = 1·w0 forces w0 = x; there is no stride to infer B from (it was
+            # taken as 0, so every word came out 0), and the range check on w0
+            # is what bounds x
+            return {claim.words[0]: x.contiguous().view(-1).clone()}
+        B = claim.coeffs[1].bit_length() - 1
         mask = (1 << B) - 1
         xi = x.contiguous().view(torch.int64)   # torch CUDA has no uint64 >>; bits are identical
         return {claim.words[n]: ((xi >> (n * B)) & mask).to(torch.uint64) for n in range(N)}
