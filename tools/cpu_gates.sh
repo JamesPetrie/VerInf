@@ -15,6 +15,7 @@ LOG=${CPU_GATE_LOG:-/tmp/verinf-cpu-gate.log}
 
 SUITES=(
   prover/tests/test_bench_static_check.py
+  prover/tests/test_topk_reference.py
   prover/tests/test_aes_trace.py
   prover/tests/test_demo_bridge_policy.py
   prover/tests/test_gguf_loader.py
