@@ -86,6 +86,12 @@ gate toy-repaired env LIGERO_DUMP_PROOF="$TOY_PROOF" \
 gate toy-repaired-verify "${LIGERO_VERIFY_PROOF:-verifier/target/release/verify_proof}" "$TOY_PROOF" - \
     "$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["statement_digest"])' "$TOY_PROOF")"
 need toy-repaired-verify 'rust_verify: ACCEPT'
+# Top-k routing on the toy tape (E = 8, k = 3): honest selection, slots,
+# gate weights and the stacked chain through the Rust verifier, and the
+# targeted alternative witnesses, the review's threshold counterexample among
+# them (analysis/topk-routing-design.md §3.1-3.3).
+gate topk-routing python3 prover/tests/run_tests.py test_topk_routing
+suite topk-routing 17
 gate toy-ab env LIGERO_SWEEP_TIMING=1 python3 analysis/bench/ab_routed_cache.py
 need toy-ab 'ab_routed_cache: counts as expected'
 # A small REAL-GGUF proof through the research driver, independently
