@@ -1,0 +1,14 @@
+== early gates (no GGUF needed): ours and the bridge's; the first failure stops phase 0
+early-test_instrument_bookkeeping rc=0 :: === 3 passed, 0 failed
+early-test_weight_cache rc=0 :: === 5 passed, 0 failed
+early-test_shard_streaming rc=0 :: === 7 passed, 0 failed
+early-test_wc_bridge rc=0 :: === 17 passed, 0 failed
+early-test_wc_streaming_flag rc=0 :: === 10 passed, 0 failed
+early-test_wc_tape_link rc=0 :: === 1 passed, 0 failed
+early-test_wc_bridge_rust_negatives rc=0 :: === 8 passed, 0 failed
+early-test_fiat_shamir rc=0 :: === 7 passed, 0 failed
+early-test_empty_root_sentinel rc=0 :: === 1 passed, 0 failed
+early-test_phase3_block rc=0 :: === 5 passed, 0 failed
+early-test_pipeline_integration rc=0 :: === 3 passed, 0 failed
+early-sampled-runtime rc=0 :: 85 passed, 1 warning in 6.65s
+PHASE0 DONE 17:56:40

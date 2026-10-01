@@ -1,0 +1,82 @@
+/workspace/verinf/prover/core.py:644: UserWarning: The given buffer is not writable, and PyTorch does not support non-writable tensors. This means you can write to the underlying (supposedly non-writable) buffer using the tensor. You may want to copy the buffer to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at /pytorch/torch/csrc/utils/tensor_new.cpp:1578.)
+  return torch.frombuffer(bytes(master_seed), dtype=torch.uint8).cuda()
+W0930 17:56:03.004000 3610 torch/utils/cpp_extension.py:2425] TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
+W0930 17:56:03.004000 3610 torch/utils/cpp_extension.py:2425] If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'] to specific architectures.
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 4 rounds done; opened columns match committed leaves: True; W-block rows 0; W-ref False; Wnew rows 0; p3 rows 0; peak 0.00 GB
+    honest: ACCEPT, s_op=0c7090f43c71… recomputed by the verifier
+  PASS test_honest_proof_accepts_with_recomputed_coins
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 4 rounds done; opened columns match committed leaves: True; W-block rows 0; W-ref False; Wnew rows 0; p3 rows 0; peak 0.00 GB
+    no trusted statement digest: REJECT ok
+  PASS test_missing_policy_rejects
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 4 rounds done; opened columns match committed leaves: True; W-block rows 0; W-ref False; Wnew rows 0; p3 rows 0; peak 0.00 GB
+    round order ok: [(False, True, True), (True, False, True), (True, False, True), (True, False, False)]
+  PASS test_no_coin_before_its_message
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 4 rounds done; opened columns match committed leaves: True; W-block rows 0; W-ref False; Wnew rows 0; p3 rows 0; peak 0.00 GB
+    policy statement digest: matching ACCEPT / wrong REJECT
+  PASS test_policy_statement_digest_enforced
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 4 rounds done; opened columns match committed leaves: True; W-block rows 0; W-ref False; Wnew rows 0; p3 rows 0; peak 0.00 GB
+    rewritten s_col: REJECT ok
+  PASS test_rewritten_column_coin_rejects
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 4 rounds done; opened columns match committed leaves: True; W-block rows 0; W-ref False; Wnew rows 0; p3 rows 0; peak 0.00 GB
+    rewritten s_op: REJECT ok
+  PASS test_rewritten_op_coin_rejects
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 1/2 (50%) elapsed=0.0m eta=0.0m cur=0.0GB
+[sweep] op 2/2 (100%) elapsed=0.0m eta=0.0m cur=0.0GB
+  [stream-sound] 4 rounds done; opened columns match committed leaves: True; W-block rows 0; W-ref False; Wnew rows 0; p3 rows 0; peak 0.00 GB
+    rewritten claim set: REJECT ok
+  PASS test_rewritten_statement_rejects
+=== 7 passed, 0 failed (of 7) ===

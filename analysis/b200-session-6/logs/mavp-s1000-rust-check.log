@@ -1,0 +1,147 @@
+LAUNCH 19:34:01 cmd: python3 -u tools/check_dumped_proof.py /workspace/proofs/mavp-s1000.bin --revision-file /workspace/session6-rev
+Rust check of /workspace/proofs/mavp-s1000.bin (19667647609 bytes)
+Policy roots from the same prover run: proof mechanics check only
+[verify] merkle @ 0.0 min
+[verify] irs_col @ 0.1 min
+[verify] lin_sum @ 0.1 min
+[verify] lin_col @ 1.3 min
+[verify]   lin_col ~5% (944963/18899057 rows)
+[verify]   lin_col ~10% (1891900/18899057 rows)
+[verify]   lin_col ~15% (2835402/18899057 rows)
+[verify]   lin_col ~20% (3780883/18899057 rows)
+[verify]   lin_col ~25% (4725079/18899057 rows)
+[verify]   lin_col ~30% (5670044/18899057 rows)
+[verify]   lin_col ~35% (6618730/18899057 rows)
+[verify]   lin_col ~40% (7560264/18899057 rows)
+[verify]   lin_col ~45% (8505431/18899057 rows)
+[verify]   lin_col ~50% (9450140/18899057 rows)
+[verify]   lin_col ~55% (10394536/18899057 rows)
+[verify]   lin_col ~60% (11340131/18899057 rows)
+[verify]   lin_col ~65% (12286387/18899057 rows)
+[verify]   lin_col ~70% (13229637/18899057 rows)
+[verify]   lin_col ~75% (14176515/18899057 rows)
+[verify]   lin_col ~80% (15211597/18899057 rows)
+[verify]   lin_col ~85% (16065609/18899057 rows)
+[verify]   lin_col ~90% (17009427/18899057 rows)
+[verify]   lin_col ~95% (17955233/18899057 rows)
+[verify]   lin_col ~100% (18899057/18899057 rows)
+[verify] quad_zero @ 89.5 min
+[verify] quad_col @ 89.6 min
+[verify]   quad_col 0/5414877 quads
+[verify]   quad_col 54148/5414877 quads
+[verify]   quad_col 108296/5414877 quads
+[verify]   quad_col 162444/5414877 quads
+[verify]   quad_col 216592/5414877 quads
+[verify]   quad_col 270740/5414877 quads
+[verify]   quad_col 324888/5414877 quads
+[verify]   quad_col 379036/5414877 quads
+[verify]   quad_col 433184/5414877 quads
+[verify]   quad_col 487332/5414877 quads
+[verify]   quad_col 541480/5414877 quads
+[verify]   quad_col 595628/5414877 quads
+[verify]   quad_col 649776/5414877 quads
+[verify]   quad_col 703924/5414877 quads
+[verify]   quad_col 758072/5414877 quads
+[verify]   quad_col 812220/5414877 quads
+[verify]   quad_col 866368/5414877 quads
+[verify]   quad_col 920516/5414877 quads
+[verify]   quad_col 974664/5414877 quads
+[verify]   quad_col 1028812/5414877 quads
+[verify]   quad_col 1082960/5414877 quads
+[verify]   quad_col 1137108/5414877 quads
+[verify]   quad_col 1191256/5414877 quads
+[verify]   quad_col 1245404/5414877 quads
+[verify]   quad_col 1299552/5414877 quads
+[verify]   quad_col 1353700/5414877 quads
+[verify]   quad_col 1407848/5414877 quads
+[verify]   quad_col 1461996/5414877 quads
+[verify]   quad_col 1516144/5414877 quads
+[verify]   quad_col 1570292/5414877 quads
+[verify]   quad_col 1624440/5414877 quads
+[verify]   quad_col 1678588/5414877 quads
+[verify]   quad_col 1732736/5414877 quads
+[verify]   quad_col 1786884/5414877 quads
+[verify]   quad_col 1841032/5414877 quads
+[verify]   quad_col 1895180/5414877 quads
+[verify]   quad_col 1949328/5414877 quads
+[verify]   quad_col 2003476/5414877 quads
+[verify]   quad_col 2057624/5414877 quads
+[verify]   quad_col 2111772/5414877 quads
+[verify]   quad_col 2165920/5414877 quads
+[verify]   quad_col 2220068/5414877 quads
+[verify]   quad_col 2274216/5414877 quads
+[verify]   quad_col 2328364/5414877 quads
+[verify]   quad_col 2382512/5414877 quads
+[verify]   quad_col 2436660/5414877 quads
+[verify]   quad_col 2490808/5414877 quads
+[verify]   quad_col 2544956/5414877 quads
+[verify]   quad_col 2599104/5414877 quads
+[verify]   quad_col 2653252/5414877 quads
+[verify]   quad_col 2707400/5414877 quads
+[verify]   quad_col 2761548/5414877 quads
+[verify]   quad_col 2815696/5414877 quads
+[verify]   quad_col 2869844/5414877 quads
+[verify]   quad_col 2923992/5414877 quads
+[verify]   quad_col 2978140/5414877 quads
+[verify]   quad_col 3032288/5414877 quads
+[verify]   quad_col 3086436/5414877 quads
+[verify]   quad_col 3140584/5414877 quads
+[verify]   quad_col 3194732/5414877 quads
+[verify]   quad_col 3248880/5414877 quads
+[verify]   quad_col 3303028/5414877 quads
+[verify]   quad_col 3357176/5414877 quads
+[verify]   quad_col 3411324/5414877 quads
+[verify]   quad_col 3465472/5414877 quads
+[verify]   quad_col 3519620/5414877 quads
+[verify]   quad_col 3573768/5414877 quads
+[verify]   quad_col 3627916/5414877 quads
+[verify]   quad_col 3682064/5414877 quads
+[verify]   quad_col 3736212/5414877 quads
+[verify]   quad_col 3790360/5414877 quads
+[verify]   quad_col 3844508/5414877 quads
+[verify]   quad_col 3898656/5414877 quads
+[verify]   quad_col 3952804/5414877 quads
+[verify]   quad_col 4006952/5414877 quads
+[verify]   quad_col 4061100/5414877 quads
+[verify]   quad_col 4115248/5414877 quads
+[verify]   quad_col 4169396/5414877 quads
+[verify]   quad_col 4223544/5414877 quads
+[verify]   quad_col 4277692/5414877 quads
+[verify]   quad_col 4331840/5414877 quads
+[verify]   quad_col 4385988/5414877 quads
+[verify]   quad_col 4440136/5414877 quads
+[verify]   quad_col 4494284/5414877 quads
+[verify]   quad_col 4548432/5414877 quads
+[verify]   quad_col 4602580/5414877 quads
+[verify]   quad_col 4656728/5414877 quads
+[verify]   quad_col 4710876/5414877 quads
+[verify]   quad_col 4765024/5414877 quads
+[verify]   quad_col 4819172/5414877 quads
+[verify]   quad_col 4873320/5414877 quads
+[verify]   quad_col 4927468/5414877 quads
+[verify]   quad_col 4981616/5414877 quads
+[verify]   quad_col 5035764/5414877 quads
+[verify]   quad_col 5089912/5414877 quads
+[verify]   quad_col 5144060/5414877 quads
+[verify]   quad_col 5198208/5414877 quads
+[verify]   quad_col 5252356/5414877 quads
+[verify]   quad_col 5306504/5414877 quads
+[verify]   quad_col 5360652/5414877 quads
+[verify]   quad_col 5414800/5414877 quads
+[verify] done @ 89.6 min
+  [OK ] merkle
+  [OK ] irs_col
+  [OK ] lin_sum
+  [OK ] lin_col
+  [OK ] quad_zero
+  [OK ] quad_col
+  [OK ] statement_digest = H(claim bytes, block order)
+  [OK ] statement_digest = trusted policy digest
+  [OK ] seeds in file = recomputed transcript
+  [OK ] weight root = trusted enrolled root
+  [OK ] wc bridge: P_trace authenticated against the trusted enrollment
+verify_elapsed_ms: 5385129  (rayon threads: 20)
+rust_verify: ACCEPT
+python_accept: (none — GPU verify skipped; Rust verdict stands alone)
+S=1000 PROOF CHECKED: rust_verify: ACCEPT; sha256=4b3ecb29f8ec9b3fad7a47a0c845b06b2c2ff69198d49227fb61519ece3888bf; bytes=19667647609; prover=62c1cf4; verifier=c5d72e5 (verifier/ tree 2846cd7dd65c); verify_s=5661.7; receipt=/workspace/proofs/mavp-s1000.bin.verify.json
+EXIT=0

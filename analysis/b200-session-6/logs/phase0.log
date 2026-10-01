@@ -1,0 +1,188 @@
+== pip extras
+== rustup
+== sampler
+sampler pid 642
+== record + builds
+== 2026-09-30T17:48:58Z on ca1efb1cf846
+== paths
+VERINF_GGUF=/workspace/gguf/UD-Q4_K_XL/Llama-4-Maverick-17B-128E-Instruct-UD-Q4_K_XL-00001-of-00005.gguf
+VERINF_GGUF_DIR=/workspace/gguf
+VERINF_LOGS=/workspace/logs
+VERINF_OUT=/workspace/crosscheck-out
+VERINF_PROOF=/workspace/proofs/mavp-s1000.bin
+VERINF_ROOT=/workspace
+== python / torch
+torch 2.8.0+cu128 cuda 12.8 NVIDIA B200 capability (10, 0)
+== nvcc
+Build cuda_12.8.r12.8/compiler.35583870_0
+== gpu
+name, memory.total [MiB], driver_version
+NVIDIA B200, 183359 MiB, 595.91.07
+== host
+               total        used        free      shared  buff/cache   available
+Mem:            2015         447        1067           1         511        1568
+Swap:              0           0           0
+cgroup memory.max: 250999996416
+20
+cgroup cpu.max: 2040000 100000
+nr_periods 540 nr_throttled 0 throttled_usec 0 
+OMP_NUM_THREADS=20 MKL_NUM_THREADS=20 torch threads: 20
+== filesystems
+SOURCE  FSTYPE  TARGET  SIZE  AVAIL
+overlay overlay /       400G 399.2G
+SOURCE  FSTYPE  TARGET  SIZE  AVAIL
+overlay overlay /       400G 399.2G
+SOURCE  FSTYPE  TARGET  SIZE  AVAIL
+overlay overlay /       400G 399.2G
+Filesystem      Size  Used Avail Use% Mounted on
+overlay         400G  846M  400G   1% /
+overlay         400G  846M  400G   1% /
+== revision
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+== packages
+blake3                    1.0.10
+gguf                      0.19.0
+hf_transfer               0.1.9
+ninja                     1.13.2
+numpy                     2.1.2
+safetensors               0.8.0
+torch                     2.8.0+cu128
+transformers              5.18.0
+    Updating crates.io index
+ Downloading crates ...
+  Downloaded arrayref v0.3.9
+  Downloaded cfg-if v1.0.4
+  Downloaded itoa v1.0.18
+  Downloaded cpufeatures v0.3.0
+  Downloaded find-msvc-tools v0.1.9
+  Downloaded shlex v2.0.1
+  Downloaded quote v1.0.45
+  Downloaded constant_time_eq v0.4.2
+  Downloaded arrayvec v0.7.6
+  Downloaded zmij v1.0.21
+  Downloaded crossbeam-deque v0.8.6
+  Downloaded crossbeam-utils v0.8.21
+  Downloaded either v1.16.0
+  Downloaded crossbeam-epoch v0.9.18
+  Downloaded blake3 v1.8.5
+  Downloaded serde_derive v1.0.228
+  Downloaded unicode-ident v1.0.24
+  Downloaded proc-macro2 v1.0.106
+  Downloaded rayon-core v1.13.0
+  Downloaded serde v1.0.228
+  Downloaded serde_core v1.0.228
+  Downloaded cc v1.2.63
+  Downloaded memchr v2.8.1
+  Downloaded serde_json v1.0.150
+  Downloaded rayon v1.12.0
+  Downloaded syn v2.0.117
+   Compiling proc-macro2 v1.0.106
+   Compiling crossbeam-utils v0.8.21
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.45
+   Compiling serde_core v1.0.228
+   Compiling shlex v2.0.1
+   Compiling find-msvc-tools v0.1.9
+   Compiling rayon-core v1.13.0
+   Compiling zmij v1.0.21
+   Compiling serde v1.0.228
+   Compiling serde_json v1.0.150
+   Compiling constant_time_eq v0.4.2
+   Compiling cpufeatures v0.3.0
+   Compiling cfg-if v1.0.4
+   Compiling arrayref v0.3.9
+   Compiling memchr v2.8.1
+   Compiling itoa v1.0.18
+   Compiling arrayvec v0.7.6
+   Compiling either v1.16.0
+   Compiling cc v1.2.63
+   Compiling crossbeam-epoch v0.9.18
+   Compiling crossbeam-deque v0.8.6
+   Compiling syn v2.0.117
+   Compiling blake3 v1.8.5
+   Compiling rayon v1.12.0
+   Compiling serde_derive v1.0.228
+   Compiling ligero-verifier v0.1.0 (/workspace/verinf/verifier)
+warning: unused import: `compile_claims_bound`
+  --> src/verify.rs:18:23
+   |
+18 | use crate::handlers::{compile_claims_bound, compile_claims_bound_pinned};
+   |                       ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `ligero-verifier` (lib) generated 1 warning (run `cargo fix --lib -p ligero-verifier` to apply 1 suggestion)
+warning: unused import: `verify_bound`
+  --> src/bin/verify_proof.rs:17:47
+   |
+17 | use ligero_verifier::verify::{Round3, Round4, verify_bound, verify_bound_pinned};
+   |                                               ^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `s_bind_out` is never read
+   --> src/bin/verify_proof.rs:555:43
+    |
+555 |     let mut s_bind_out: Option<Vec<u8>> = None;
+    |                                           ^^^^ this value is reassigned later and never used
+...
+579 |             s_bind_out = Some(s_bind.to_vec());
+    |             ---------- `s_bind_out` is overwritten here before the previous value is read
+    |
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `claim_index` is never read
+   --> src/bin/verify_proof.rs:161:5
+    |
+157 | struct WcSection {
+    |        --------- field in this struct
+...
+161 |     claim_index: usize,
+    |     ^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `ligero-verifier` (bin "verify_proof") generated 3 warnings (run `cargo fix --bin "verify_proof" -p ligero-verifier` to apply 1 suggestion)
+    Finished `release` profile [optimized] target(s) in 17.81s
+W0930 17:49:25.610000 1433 torch/utils/cpp_extension.py:2425] TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
+W0930 17:49:25.610000 1433 torch/utils/cpp_extension.py:2425] If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'] to specific architectures.
+  commit m=64 W=524288: 60.57s
+  PASS test_commit_phase_integration
+  PASS test_gl_arithmetic_correctness
+  PASS test_gl_axpy_correctness
+  PASS test_gl_inv_batched_roundtrip
+  PASS test_gl_inv_scalar_correctness
+  PASS test_gl_matmul_correctness_small
+  gl_matmul 4096^3: 0.16s
+  PASS test_gl_matmul_llama_shape
+  PASS test_gl_matvec_correctness
+  PASS test_gl_spmv_correctness
+  PASS test_hash_columns_streamed_correctness
+  hash_columns_streamed m=2048 N_LIG=65536: 0.00s
+  PASS test_hash_columns_streamed_scale
+  PASS test_lookup_multiplicities_correctness
+  PASS test_lookup_multiplicities_logup_size
+  PASS test_merkle_build_blake3_correctness
+  merkle_build N=65536: 0.00s
+  PASS test_merkle_build_blake3_production_size
+  batched NTT N=16384 m=8: round-trip + matches-per-row OK
+  batched NTT N=32768 m=8: round-trip + matches-per-row OK
+  batched NTT N=65536 m=8: round-trip + matches-per-row OK
+  PASS test_ntt_batched_at_production_sizes
+  PASS test_ntt_batched_matches_single
+  PASS test_ntt_correctness_small
+  PASS test_ntt_roundtrip_production
+  PASS test_poly_add_correctness
+  PASS test_poly_eval_correctness
+  PASS test_poly_mul_batched_matches_single
+  PASS test_poly_mul_correctness
+  rs_encode_rows m=128 K_DEG=16384 N_LIG=65536: 0.00s
+  PASS test_rs_encode_rows_production
+  PASS test_rs_encode_rows_small
+=== 25 passed, 0 failed (of 25) ===
+== BOOTSTRAP status: env-record 9 sections; cargo 1 finished; primitives: === 25 passed, 0 failed (of 25) ===
+== early gates (no GGUF needed): ours and the bridge's; the first failure stops phase 0
+early-test_instrument_bookkeeping rc=0 :: === 3 passed, 0 failed
+early-test_weight_cache rc=1 :: === 4 passed, 1 failed
+PHASE0 FAILED at early-test_weight_cache 17:50:38

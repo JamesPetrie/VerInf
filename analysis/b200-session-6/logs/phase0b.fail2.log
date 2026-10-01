@@ -1,0 +1,6 @@
+== early gates (no GGUF needed): ours and the bridge's; the first failure stops phase 0
+early-test_instrument_bookkeeping rc=0 :: === 3 passed, 0 failed
+early-test_weight_cache rc=0 :: === 5 passed, 0 failed
+early-test_shard_streaming rc=0 :: === 7 passed, 0 failed
+early-test_wc_bridge rc=1 :: === 16 passed, 1 failed
+PHASE0 FAILED at early-test_wc_bridge 17:53:49

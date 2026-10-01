@@ -1,0 +1,5 @@
+D6 S=1000 bridged START 18:55:01
+launched pgid 12493 job 12496 (log ~/mavp-s1000-bridge.log; kill -- -$(cat ~/mavp-s1000-bridge.pid))
+D6 S=1000 proof saved (19667647609 bytes); Rust check starting 19:34:01
+launched pgid 18009 job 18012 (log ~/mavp-s1000-rust-check.log; kill -- -$(cat ~/mavp-s1000-rust-check.pid))
+D6 S=1000 bridged status 0 (saved and Rust ACCEPT) 21:09:02

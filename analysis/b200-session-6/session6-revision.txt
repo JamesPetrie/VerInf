@@ -1,0 +1,1 @@
+prover tree 62c1cf4 (tarball of 7bb00c2 + three test files, hash-checked); the S=1000 check runs verify_proof from c5d72e5 (verifier/ tree 2846cd7dd65c), built on the pod 19:21, and tools/check_dumped_proof.py from c5d72e5
