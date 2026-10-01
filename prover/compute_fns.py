@@ -39,8 +39,46 @@ from tape import _signed_floor_decomp, _to_signed_np, _to_field_np, _softmax_wit
 import numpy as np
 
 
+# Negative tests only: (claim class name, field or "field[j]") -> fn(honest
+# tensor) -> tensor, applied to a claim's computed phase-1 witness wherever it
+# is computed — eager tapes, the engine pass, and the prover's streaming
+# sweeps all dispatch through COMPUTE_FNS[...] — so the phase-2 aux is derived
+# from the tampered values and a tamper that keeps every OTHER constraint
+# satisfied isolates the one under test.
+WITNESS_TAMPER: dict = {}
+
+
+def _apply_witness_tamper(claim, outs):
+    import dataclasses
+    if not WITNESS_TAMPER or not dataclasses.is_dataclass(claim):
+        return outs
+    name = type(claim).__name__
+    for f in dataclasses.fields(claim):
+        v = getattr(claim, f.name)
+        targets = ([(f"{f.name}[{j}]", vj) for j, vj in enumerate(v)]
+                   if isinstance(v, (list, tuple)) else [(f.name, v)])
+        for key, var in targets:
+            fn = WITNESS_TAMPER.get((name, key))
+            if fn is not None and isinstance(var, Variable) and var in outs:
+                outs[var] = fn(outs[var])
+    return outs
+
+
+class _TamperingRegistry(dict):
+    """The compute dispatch table. With WITNESS_TAMPER empty it is a plain
+    dict; otherwise every looked-up compute fn applies the tamper to its
+    result."""
+    def __getitem__(self, key):
+        fn = super().__getitem__(key)
+        if not WITNESS_TAMPER:
+            return fn
+        def tampered(claim, *a, **kw):
+            return _apply_witness_tamper(claim, fn(claim, *a, **kw))
+        return tampered
+
+
 COMPUTE_FNS: Dict[type, Callable[[Any, Dict[Variable, torch.Tensor]],
-                                  Dict[Variable, torch.Tensor]]] = {}
+                                  Dict[Variable, torch.Tensor]]] = _TamperingRegistry()
 
 
 def add_compute(claim: AddClaim, live):
@@ -319,6 +357,7 @@ def silu_compute(claim: SiluClaim, live):
         g_d, key_d, is_high_d = _t(g_np), _t(key_np), _t(is_high_np)
     C_d = gl_mul(sign_d, x_data)
     inv_g_d = gl_inv(g_d)
+    inv_x_d = gl_inv(x_data)          # 0 at x = 0 (0^(P−2)); pins sign = 0 there
     output_sat_d = gl_sub(x_data, C_d)
     y_d = torch.index_select(claim.silu_table.T_Y, 0, key_d.to(torch.int64))
     mux_a_d = gl_mul(is_high_d, y_d)
@@ -330,6 +369,7 @@ def silu_compute(claim: SiluClaim, live):
         claim.a_0: a0_d, claim.a_1: a1_d, claim.a_2: a2_d,
         claim.a_3: a3_d, claim.a_4: a4_d,
         claim.g: g_d, claim.inv_g: inv_g_d, claim.is_high: is_high_d,
+        claim.inv_x: inv_x_d,
         claim.key: key_d, claim.output_sat: output_sat_d,
         claim.mux_a: mux_a_d, claim.mux_b: mux_b_d, claim.y: y_d,
         claim.output: output_d,
@@ -640,7 +680,10 @@ def _softmax_witness_gpu(x_in_u64, *, B, M, s_x, s_c, s_y, T_A_gpu, T_B_gpu, Z_m
         out["mux_y_A"] = torch.where(is_high_b, yA_raw, z0).reshape(-1).view(torch.uint64)
         out["mux_y_B"] = torch.where(is_high_b, yB_raw, z0).reshape(-1).view(torch.uint64)
     else:
-        out["z"] = _to_field_gpu(z_2d.reshape(-1))
+        # signed z when not saturating; a masked cell's z is pinned to 0 by the
+        # compiled constraint (its key is then exactly Z_max, the zero half)
+        z_out = torch.where(mask_2d, z0, z_2d) if causal else z_2d
+        out["z"] = _to_field_gpu(z_out.reshape(-1))
     return out
 
 

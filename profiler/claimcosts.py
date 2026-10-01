@@ -75,15 +75,18 @@ def _softmax(p) -> Triple:
         _reject_mode("softmax", "without saturation")
     B, M = p["B"], p["M"]
     BM = B * M
-    causal_f0 = B * (M + 1) * 0.5 if p.get("causal", True) else BM
-    return (15 * BM + 9 * B, causal_f0 + 4 * BM + 5 * B, 8 * BM + 3 * B)
+    # causal: the z decomposition over the B(M+1)/2 unmasked cells plus the
+    # z = 0 pin over the B(M-1)/2 masked cells (protocol review F01) — one
+    # linear per cell, as in the non-causal form.
+    return (15 * BM + 9 * B, 5 * BM + 5 * B, 8 * BM + 3 * B)
 
 
 def _silu(p) -> Triple:
     if p.get("rescale", False):
         _reject_mode("silu", "with rescale")
     L = _length(p)
-    return (23 * L, 7 * L, 12 * L)
+    # 25 slots: the a_1 range inverse and inv_x (protocol review F03/F04)
+    return (25 * L, 7 * L, 14 * L)
 
 
 def _hadamard(p) -> Triple:

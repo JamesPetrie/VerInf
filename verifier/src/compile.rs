@@ -56,6 +56,10 @@ pub enum Expander {
     ///   cid = cid_base + (f % cols)·rows·fan + (f / cols)·fan + k,  k ∈ [0, fan)
     TransposeO2m { cid_base: usize, rows: usize, cols: usize, fan: usize, coef: u64 },
     CausalId { cid_base: usize, m: usize, h: usize, coef: u64 },
+    /// The complement of CausalId: the masked cells (j > i_qry), ranked
+    /// (b, j)-major among themselves; pins the masked softmax z to 0
+    /// (protocol review F01). Requires SEQ ≤ M.
+    CausalMaskedId { cid_base: usize, m: usize, h: usize, coef: u64 },
     CausalC2 { cid_base: usize, h: usize, coef: u64 },
     Embed { cid_base: usize, d: usize, token_ids: Vec<usize>, vocab_lo: usize, rows_per_w: usize },
     FreivaldsB { base: usize, k: usize, n: usize, h: usize, kk: usize,
@@ -99,6 +103,13 @@ pub enum Run<'a> {
     Repeat   { slot_lo: usize, len: usize, cid: usize, coef: CoefSrc<'a> },
     OneToOne { slot_lo: usize, len: usize, cid_lo: usize, cid_step: usize, coef: CoefSrc<'a> },
     Fan      { slot: usize, cid_lo: usize, len: usize, coef: u64 },
+}
+
+/// Masked cells of a causal softmax before row (i_qry, hh): rows with a smaller
+/// query index have M−1−i masked cells each, over H heads; the earlier heads of
+/// this query index have M−1−i_qry each. Requires i_qry ≤ M−1 (SEQ ≤ M).
+pub fn causal_masked_before(i_qry: usize, hh: usize, m: usize, h: usize) -> usize {
+    h * (i_qry * (m - 1) - i_qry * i_qry.saturating_sub(1) / 2) + hh * (m - 1 - i_qry)
 }
 
 /// flat index → (pair_t, e_self, coef_idx) for RoPE split-half rotation.
@@ -150,6 +161,17 @@ impl Expander {
                     let (i_qry, hh) = (b / h, b % h);
                     if j <= i_qry {
                         let rank = h * i_qry * (i_qry + 1) / 2 + hh * (i_qry + 1) + j;
+                        f(s, cid_base + rank, *coef);
+                    }
+                }
+            }
+            Expander::CausalMaskedId { cid_base, m, h, coef } => {
+                for s in 0..n_slots {
+                    let flat = flat_lo + s;
+                    let (b, j) = (flat / m, flat % m);
+                    let (i_qry, hh) = (b / h, b % h);
+                    if j > i_qry {
+                        let rank = causal_masked_before(i_qry, hh, *m, *h) + (j - i_qry - 1);
                         f(s, cid_base + rank, *coef);
                     }
                 }
@@ -274,6 +296,24 @@ impl Expander {
                         let len = (i_qry + 1 - j0).min(b_end - s);
                         let rank0 = h * i_qry * (i_qry + 1) / 2 + hh * (i_qry + 1) + j0;
                         f(Run::OneToOne { slot_lo: s, len, cid_lo: cid_base + rank0,
+                                          cid_step: 1, coef: CoefSrc::Const(*coef) });
+                    }
+                    s = b_end;
+                }
+            }
+            Expander::CausalMaskedId { cid_base, m, h, coef } => {
+                let mut s = 0usize;
+                while s < n_slots {
+                    let flat = flat_lo + s;
+                    let (b, j0) = (flat / m, flat % m);
+                    let (i_qry, hh) = (b / h, b % h);
+                    let b_end = ((b + 1) * m - flat_lo).min(n_slots);
+                    let j_start = j0.max(i_qry + 1);
+                    let s_lo = s + (j_start - j0);
+                    if j_start < *m && s_lo < b_end {
+                        let len = (m - j_start).min(b_end - s_lo);
+                        let rank0 = causal_masked_before(i_qry, hh, *m, *h) + (j_start - i_qry - 1);
+                        f(Run::OneToOne { slot_lo: s_lo, len, cid_lo: cid_base + rank0,
                                           cid_step: 1, coef: CoefSrc::Const(*coef) });
                     }
                     s = b_end;

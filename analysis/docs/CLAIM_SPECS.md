@@ -225,6 +225,18 @@ can't be satisfied for huge values: the proof rejects. So `c2 ≥ max(x)`
 is enforced automatically by witness-range constraints; no separate gadget
 needed.
 
+### Optional: causal mask (`causal=True`, `heads=H`)
+
+The exp tables are doubled, `T_A ‖ 0` and `T_B ‖ 0` (size `2·Z_max`), and
+the lookup key of a masked cell (j > i_qry for row b = i_qry·H + h) carries a
+public `+Z_max` on the RHS, so it reads the zero half. The z-decomposition
+linear runs over the unmasked cells only (`L2_CausalFilteredIdScalar`, L_u
+= H·SEQ·(SEQ+1)/2 constraints), and the masked cells carry the complement
+family `z = 0` (`L2_CausalMaskedIdScalar`, L_m = H·SEQ·(SEQ−1)/2). The pin
+is load-bearing: the lookup bounds `z + Z_max`, not `z`, so a free masked
+`z = −Z_max` would read `T_A[0]` and hand the row's weight to a future
+token. Requires SEQ = B/H ≤ M.
+
 ---
 
 ## SiLU
@@ -257,6 +269,7 @@ s_in (optional, ≥ 2^r)`. Derived: `s_x = 1<<r`, `rescale_bits = log2(s_in/s_x)
 | `g` | L | b_2·a_2 + b_3·a_3 + b_4·a_4 (sat indicator value) |
 | `inv_g` | L | 1/g if g ≠ 0 else 0 (Fermat) |
 | `is_high` | L | g·inv_g (≡ saturation flag ∈ {0,1}) |
+| `inv_x` | L | 1/x if x ≠ 0 else 0 (Fermat); pins sign = 0 at x = 0 |
 | `key` | L | sign·T_LEN + a_1 (paired lookup index) |
 | `output_sat` | L | x − C (signed-saturated value: x if pos, 0 if neg) |
 | `mux_a, mux_b` | L each | is_high · y_lookup, is_high · output_sat |
@@ -269,7 +282,7 @@ s_in (optional, ≥ 2^r)`. Derived: `s_x = 1<<r`, `rescale_bits = log2(s_in/s_x)
 |---|---|---|
 | `pt_u` | L | key + β · y |
 | `pt_z` | L | 1/(α_pt − pt_u) |
-| `z_a0, z_a2, z_a3, z_a4` | L each | range-LogUp z's for word range checks |
+| `z_a0, z_a1, z_a2, z_a3, z_a4` | L each | range-LogUp z's for word range checks |
 | *rescale:* `z_x_low, z_x` | L each | |
 
 **Tables.**
@@ -277,6 +290,8 @@ s_in (optional, ≥ 2^r)`. Derived: `s_x = 1<<r`, `rescale_bits = log2(s_in/s_x)
 - `silu_table`: paired `(k, T_combined[k])` where `T_combined = T_pos || T_neg`,
   `T_pos[i] = round(silu(bin_center_i·2^r) · 2^r)`, similar for `T_neg`. Size `2·T_LEN`.
 - `range_b`: `b` entries (for a_0).
+- `range_a1`: `T_LEN` entries (for a_1, the half-table index; shares a
+  width table when one has that size).
 - `range_w2, range_w3, range_w4`: 2^width entries each (for a_2/3/4).
 - `range_rescale` (when active).
 
@@ -297,10 +312,15 @@ Quadratic (per cell):
 
 - **Sign indicator:** `sign² = sign` (forces sign ∈ {0,1})
 - **C definition:** `sign · x = C`
+- **Sign pin at zero:** `C · inv_x = sign` (sign = 1 needs C = sign·x ≠ 0,
+  so sign = 0 at x = 0, where `T_pos[0] = 1 ≠ T_neg[0] = −1`)
 - **Saturation flag:** `g · inv_g = is_high`, `is_high · g = g`,
   `is_high² = is_high` (forces is_high ∈ {0,1}; commits to `is_high = (g ≠ 0)`)
 - **Mux components:** `is_high · y = mux_a`, `is_high · output_sat = mux_b`
-- **Range LogUps:** `(α_b − a_0)·z_a0 = 1`, same for a_2/a_3/a_4
+- **Range LogUps:** `(α_b − a_0)·z_a0 = 1`, same for a_1/a_2/a_3/a_4 (the
+  paired lookup bounds the key `sign·T_LEN + a_1`, not `a_1`; without its
+  own range check `a_1 = T_LEN` under sign 0, or `a_1 = −1` under sign 1,
+  reads the other branch)
 - **Paired tlookup:** `(α_pt − pt_u)·pt_z = 1`
 - *rescale:* `(α_rescale − x_low)·z_x_low = 1`, `(α_w2 − x)·z_x = 1`
 

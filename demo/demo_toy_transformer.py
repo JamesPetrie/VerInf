@@ -111,7 +111,6 @@ SILU_CFG = SiluConfig(
     width_4=14,
     r=SCALE_BITS,
 )  # s_x = S
-RMS_SLACK_N_CHUNKS = 4
 
 # Production-shape independent benchmarks (NOT chained from x).
 SM_B = 512
@@ -232,7 +231,6 @@ def _run_block(tape, x, weights, *, H: int):
         d=d,
         s=S,
         eps_int=EPS_INT,
-        slack_n_chunks=RMS_SLACK_N_CHUNKS,
         s_out=S,
         output_width=OUTPUT_WIDTH,
     )
@@ -283,7 +281,6 @@ def _run_block(tape, x, weights, *, H: int):
         d=d,
         s=S,
         eps_int=EPS_INT,
-        slack_n_chunks=RMS_SLACK_N_CHUNKS,
         s_out=S,
         output_width=OUTPUT_WIDTH,
     )
@@ -321,7 +318,6 @@ def _run_tail(
         d=d,
         s=S,
         eps_int=EPS_INT,
-        slack_n_chunks=RMS_SLACK_N_CHUNKS,
         s_out=S,
         output_width=OUTPUT_WIDTH,
     )
@@ -835,8 +831,8 @@ if __name__ == "__main__":
         help="After the LM head, append the unexplained-information "
         "bound U(o) over the output tokens. The output tokens are "
         "HIDDEN: committed + blinded exactly like the model weights "
-        "(never public). Requires the LM head + eager mode (no "
-        "--engine).",
+        "(never public). Requires the LM head; a proof also needs "
+        "--engine, since tape.prove replays a lazy tape.",
     )
     ap.add_argument(
         "--ui-sigma",

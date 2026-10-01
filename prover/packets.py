@@ -168,6 +168,30 @@ class L2_CausalFilteredC2Stride:
 
 
 @dataclass(frozen=True, slots=True)
+class L2_CausalMaskedIdScalar:
+    """The complement of L2_CausalFilteredIdScalar: identity slot mapping over
+    the MASKED cells (j > i_qry) of a causal softmax, L_m = Σ_rows (M−1−i_qry)
+    constraints. Pins the masked z to 0 (protocol review F01: a free masked z
+    could reach the nonzero half of the doubled table). Rank of masked cell
+    (b, j), b = i_qry·H + h:
+        H·(i_qry·(M−1) − i_qry·(i_qry−1)/2) + h·(M−1−i_qry) + (j − i_qry − 1).
+    Requires SEQ = B/H ≤ M (every row has i_qry ≤ M−1), as the filtered kind does."""
+    base: int
+    var_row_start: int
+    L: int            # full variable length = B·M
+    M: int
+    H: int
+    coef: int
+
+
+def causal_masked_count(B: int, M: int, H: int) -> int:
+    """L_m: the number of masked cells of a causal (B, M) softmax with H heads."""
+    seq = B // H
+    assert B == seq * H and seq <= M, f"causal softmax needs B = SEQ·H with SEQ ≤ M (B={B}, M={M}, H={H})"
+    return H * sum(M - 1 - i for i in range(seq))
+
+
+@dataclass(frozen=True, slots=True)
 class L2_EmbedE:
     """E-side of EmbeddingLookup: 1·x[i·d+j] − 1·E[token_ids[i]·d+j] = 0.
 

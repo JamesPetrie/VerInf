@@ -16,6 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import calibrate                                  # noqa: E402
+import claimcosts                                 # noqa: E402
 import crosscheck                                 # noqa: E402
 import synth                                      # noqa: E402
 from manifest import Manifest, ClaimRecord, VariableRecord   # noqa: E402
@@ -577,12 +578,27 @@ def test_diff_report_ui_extras_cannot_reduce_modeled_costs():
     assert any("hadamard" in f and "cost below synth" in f for f in flags)
 
 
+def _lift_to_repaired_listings(ex):
+    """The archived extractions predate the protocol review's repairs. A
+    SiLU's exact w_slots there counts the old 23 slots per element; the
+    repaired listing has 25 (the a_1 range inverse and inv_x, F03/F04).
+    Softmax's W is unchanged by F01, and cids and Q are priced from params
+    on both sides, so SiLU's W is the only archived number to lift."""
+    for c in ex.claims:
+        if crosscheck._canon_group(c.type) == "silu" and c.w_slots is not None:
+            c.w_slots += 2 * claimcosts._length(c.params)
+
+
 def test_archived_crosschecks_reject_routing_cost_loss():
     archive = Path(__file__).resolve().parents[1] / "analysis/blackwell-session-1/crosscheck-out"
     for name, seq, continuation in [("llama7b", 100, None),
                                     ("maverick", 4, 2), ("maverick", 1000, 998)]:
         ex = Manifest.load(str(archive / f"{name}-s{seq}-extracted.json.gz"))
         sy = synth.BUILDERS[name](seq, t_queries=ex.run["ligero"]["T_QUERIES"])
+        flags, _ = _quiet(crosscheck.diff_report, sy, ex, continuation)
+        assert flags and all(f.startswith(("silu: cost drift", "total W")) for f in flags), \
+            (name, seq, flags)          # the old listing shows, and only as SiLU's W
+        _lift_to_repaired_listings(ex)
         flags, _ = _quiet(crosscheck.diff_report, sy, ex, continuation)
         assert flags == [], (name, seq, flags)
         if name == "llama7b":

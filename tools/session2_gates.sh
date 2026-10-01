@@ -59,6 +59,33 @@ gate wc-tape-link python3 prover/tests/run_tests.py test_wc_tape_link
 suite wc-tape-link 1
 gate wc-bridge-rust python3 prover/tests/run_tests.py test_wc_bridge_rust_negatives
 suite wc-bridge-rust 7
+# The protocol review's repairs (F01 the masked softmax z, F03/F04 the SiLU
+# index and zero sign, F05/F06 the surprisal quotient): each counterexample,
+# a full alternative witness, is a Rust REJECT and every honest case an
+# ACCEPT, as are both splits of F02's value-neutral softmax choice; then the claim suites the repairs touch. The three after
+# test_claims are scripts with a main(), as kquant is.
+gate protocol-review python3 prover/tests/run_tests.py test_protocol_review_negatives
+suite protocol-review 10
+gate claims python3 prover/tests/run_tests.py test_claims
+suite claims 21
+gate unexplained-info python3 prover/tests/test_unexplained_info.py
+need unexplained-info '=== unexplained_info: 3/3 PASS ==='
+gate rescale python3 prover/tests/test_rescale.py
+need rescale '=== rescale fixtures: 4/4 PASS ==='
+gate max-claim python3 prover/tests/test_max_claim.py
+need max-claim '=== max_claim: 2/2 PASS ==='
+# One honest end-to-end proof on the repaired constraint set: the toy
+# transformer (causal softmax, SiLU, and with --unexplained-info the surprisal
+# claims, which it omits otherwise) dumped and checked by the Rust binary.
+# --engine because tape.prove needs a lazy tape. The statement digest is the
+# proof's own, as prover/tests/_rust_verify.py passes it: this checks the
+# constraints, not a trusted statement.
+TOY_PROOF=$(mktemp -u "$VERINF_LOGS/toy-repaired.XXXXXX.json")
+gate toy-repaired env LIGERO_DUMP_PROOF="$TOY_PROOF" \
+    python3 demo/demo_toy_transformer.py --num-layers 1 --engine --unexplained-info
+gate toy-repaired-verify "${LIGERO_VERIFY_PROOF:-verifier/target/release/verify_proof}" "$TOY_PROOF" - \
+    "$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["statement_digest"])' "$TOY_PROOF")"
+need toy-repaired-verify 'rust_verify: ACCEPT'
 gate toy-ab env LIGERO_SWEEP_TIMING=1 python3 analysis/bench/ab_routed_cache.py
 need toy-ab 'ab_routed_cache: counts as expected'
 # A small REAL-GGUF proof through the research driver, independently

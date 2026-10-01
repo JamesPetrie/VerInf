@@ -208,7 +208,10 @@ def _softmax_witness_vec(x_in_uint64, *,
         # inv_z_high: Fermat inv where z_high>0, 0 otherwise. Computed on GPU
         # (gl_inv_batched) by the caller since numpy can't do mod-P pow.
     else:
-        out["z"] = _to_field_np(z_2d.reshape(-1))                            # signed z when not saturating
+        # signed z when not saturating; a masked cell's z is pinned to 0 by the
+        # compiled constraint (its key is then exactly Z_max, the zero half)
+        z_out = np.where(mask_2d, np.int64(0), z_2d) if causal else z_2d
+        out["z"] = _to_field_np(z_out.reshape(-1))
     return out
 
 
@@ -756,7 +759,7 @@ class Tape:
         """Eager-compute all silu witnesses, then emit one `SiluClaim`.
 
         The Tape's job is just witness creation + table registration. All
-        constraint emission (7 linear + 12 quadratic per slot) happens inside
+        constraint emission (7 linear + 14 quadratic per slot) happens inside
         SiluClaim.silu_compile in claims.py. See SiluClaim for the
         full relation and soundness argument.
 
@@ -780,14 +783,22 @@ class Tape:
                         self.register_table(
                             f"silu_range_w{sc.width_4}",
                             T_data=list(range(1 << sc.width_4))))
+            # a_1 is the half-table index: ranged to [0, T_LEN) (F03 — the
+            # paired lookup bounds sign·T_LEN + a_1, not a_1 itself).
+            t_bits = sc.T_LEN.bit_length() - 1
+            assert 1 << t_bits == sc.T_LEN, f"silu T_LEN={sc.T_LEN} must be a power of two"
+            by_size = {sc.b: range_b, 1 << sc.width_2: range_w2,
+                       1 << sc.width_3: range_w3, 1 << sc.width_4: range_w4}
+            range_a1 = by_size.get(sc.T_LEN) or self.register_table(
+                f"silu_range_w{t_bits}", T_data=list(range(sc.T_LEN)))
             T_pos, T_neg = silu_tpos_tneg(sc)
             silu_table = self.register_table(
                 "silu_paired",
                 T_data=list(range(2 * sc.T_LEN)),
                 T_Y_data=T_pos + T_neg,
             )
-            self._silu_state = (range_b, range_w2, range_w3, range_w4, silu_table)
-        range_b, range_w2, range_w3, range_w4, silu_table = self._silu_state
+            self._silu_state = (range_b, range_a1, range_w2, range_w3, range_w4, silu_table)
+        range_b, range_a1, range_w2, range_w3, range_w4, silu_table = self._silu_state
         # Build a per-call SiluConfig that carries the (optional) s_in. Use
         # self.silu_config's existing knobs unchanged.
         base_sc = self.silu_config
@@ -837,16 +848,19 @@ class Tape:
         mux_b_var      = self._alloc(f"{x.var.name}_silu_muxb", L)
         y_var          = self._alloc(f"{x.var.name}_silu_y",    L)
         output_var     = self._alloc(f"{x.var.name}_silu_out",  L)
+        inv_x_var      = self._alloc(f"{x.var.name}_silu_invx", L)
 
         # Phase-2 LogUp z slots — values filled in by silu_aux after α/β.
         pt_u = Variable(f"{x.var.name}_silu_pt_u", length=L, phase=2)
         pt_z = Variable(f"{x.var.name}_silu_pt_z", length=L, phase=2)
         z_a0 = Variable(f"{x.var.name}_silu_z_a0", length=L, phase=2)
+        z_a1 = Variable(f"{x.var.name}_silu_z_a1", length=L, phase=2)
         z_a2 = Variable(f"{x.var.name}_silu_z_a2", length=L, phase=2)
         z_a3 = Variable(f"{x.var.name}_silu_z_a3", length=L, phase=2)
         z_a4 = Variable(f"{x.var.name}_silu_z_a4", length=L, phase=2)
         silu_table.z_vars.append(pt_z)
         range_b.z_vars.append(z_a0)
+        range_a1.z_vars.append(z_a1)
         range_w2.z_vars.append(z_a2)
         range_w3.z_vars.append(z_a3)
         range_w4.z_vars.append(z_a4)
@@ -855,12 +869,12 @@ class Tape:
             x=x_internal_var, output=output_var, length=L, config=sc,
             sign=sign_var, magnitude=magnitude_var, C=C_var,
             a_0=a_0_var, a_1=a_1_var, a_2=a_2_var, a_3=a_3_var, a_4=a_4_var,
-            g=g_var, inv_g=inv_g_var, is_high=is_high_var,
+            g=g_var, inv_g=inv_g_var, is_high=is_high_var, inv_x=inv_x_var,
             key=key_var, output_sat=output_sat_var,
             mux_a=mux_a_var, mux_b=mux_b_var, y=y_var,
             pt_u=pt_u, pt_z=pt_z,
-            z_a0=z_a0, z_a2=z_a2, z_a3=z_a3, z_a4=z_a4,
-            silu_table=silu_table, range_b=range_b,
+            z_a0=z_a0, z_a1=z_a1, z_a2=z_a2, z_a3=z_a3, z_a4=z_a4,
+            silu_table=silu_table, range_b=range_b, range_a1=range_a1,
             range_w2=range_w2, range_w3=range_w3, range_w4=range_w4,
             x_in=x_in_var,
             x_low=x_low_var, x_shifted=x_shifted_var,
@@ -871,8 +885,9 @@ class Tape:
         def side_effects(values):
             lookup_multiplicities_into(values[key_var], silu_table.T,
                                         self.inputs[silu_table.mult_var])
-            for chunk_var, tbl in [(a_0_var, range_b), (a_2_var, range_w2),
-                                    (a_3_var, range_w3), (a_4_var, range_w4)]:
+            for chunk_var, tbl in [(a_0_var, range_b), (a_1_var, range_a1),
+                                    (a_2_var, range_w2), (a_3_var, range_w3),
+                                    (a_4_var, range_w4)]:
                 lookup_multiplicities_into(values[chunk_var], tbl.T,
                                             self.inputs[tbl.mult_var])
             if rescale_bits > 0:
