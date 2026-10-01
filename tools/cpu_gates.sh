@@ -14,6 +14,7 @@ PY=${PY:-python3}
 LOG=${CPU_GATE_LOG:-/tmp/verinf-cpu-gate.log}
 
 SUITES=(
+  prover/tests/test_bench_static_check.py
   prover/tests/test_aes_trace.py
   prover/tests/test_demo_bridge_policy.py
   prover/tests/test_gguf_loader.py
@@ -64,6 +65,8 @@ print(" ".join(m for m in need if importlib.util.find_spec(m) is None))') \
 command -v cargo >/dev/null || fail "cargo not found (the Rust verifier's tests)"
 for s in "${SUITES[@]}"; do [ -f "$s" ] || fail "listed suite $s does not exist"; done
 
+echo "== bench scripts: static check against the tree (tools/bench_static_check.py)"
+"$PY" tools/bench_static_check.py || fail "bench static check: a maintained script no longer matches the tree"
 echo "== python: ${#SUITES[@]} suites (log: $LOG)"
 CUDA_VISIBLE_DEVICES= "$PY" -m pytest -q -p no:cacheprovider -rs "${SUITES[@]}" \
   > "$LOG" 2>&1
