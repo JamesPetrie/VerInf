@@ -15,6 +15,12 @@ import demo_toy_transformer as dt
 import core
 from core import LigeroConfig
 from tape import Tape
+
+# Two proofs compare byte-for-byte only under one ZK seed: since d481e1d
+# (2026-08-05) every proof pads and blinds under a fresh secret seed unless
+# the caller pins it, which these gates did not, so they failed on every tree
+# since. The pin changes nothing a verifier checks.
+ZK_SEED = b"\x5a" * 32
 from _rust_verify import rust_verify_tape
 
 CFG = LigeroConfig(ELL=512, K_DEG=1024, N_LIG=4096, T_QUERIES=16)
@@ -41,13 +47,13 @@ def build():
 torch.manual_seed(1234)
 core._WITNESS_SPILL_ON = False
 core._WITNESS_SPILL_DISK = False
-p_off = build().prove(seed=SEED)
+p_off = build().prove(seed=SEED, zk_seed=ZK_SEED)
 
 # disk spill on: full witness re-read from a disk file in rounds 2-4
 torch.manual_seed(1234)
 core._WITNESS_SPILL_DISK = True
 tape_on = build()
-p_on = tape_on.prove(seed=SEED)
+p_on = tape_on.prove(seed=SEED, zk_seed=ZK_SEED)
 
 teq = torch.equal
 checks = {
@@ -55,8 +61,8 @@ checks = {
     "root_p2": p_off.root_p2 == p_on.root_p2,
     "q_irs": teq(p_off.q_irs, p_on.q_irs), "q_lin": teq(p_off.q_lin, p_on.q_lin),
     "p_0": teq(p_off.p_0, p_on.p_0),
-    "opened_p1": all(teq(p_off.opened_p1[j], p_on.opened_p1[j]) for j in p_off.opened_p1),
-    "opened_p2": all(teq(p_off.opened_p2[j], p_on.opened_p2[j]) for j in p_off.opened_p2),
+    "opened_p1": (p_off.opened_p1.keys() == p_on.opened_p1.keys() and all(teq(p_off.opened_p1[j], p_on.opened_p1[j]) for j in p_off.opened_p1)),
+    "opened_p2": (p_off.opened_p2.keys() == p_on.opened_p2.keys() and all(teq(p_off.opened_p2[j], p_on.opened_p2[j]) for j in p_off.opened_p2)),
 }
 print("=== DISK-spill soundness: recompute vs disk re-read, identical model ===")
 for k, v in checks.items():

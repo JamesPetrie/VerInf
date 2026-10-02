@@ -84,14 +84,45 @@ as `route_top1` does today):
     Q2   mq = m ⊙ q̃                                                        T·E quads
     Q3   mτ = m ⊙ τ(bcast)                               τ fanned out by L2_StrideOneToManyScalar
     F6   v = 2·(mq − mτ) − q̃ + τ(bcast)                 = (2m−1)(q̃ − τ)   T·E linear
-    R    v ∈ [0, 2^{B_q + L})                            word_extract + range words, as route_top1
+    R    v ∈ [0, 2^R),  R = n_words·word_bits ≥ w     word_extract + range words, as route_top1
 
-The uniqueness lemma is the appendix's (`:86-92`): booleanity and
-cardinality make m a k-subset; dominance forces every selected q̃ ≥ τ
-and every unselected q̃ ≤ τ; the tiebreak makes all q̃ distinct; so m is
-the unique top-k of q̃ and τ is free only inside the gap between the
-k-th and (k+1)-th, which certifies the same m and leaks nothing. F3 and
-F5 disappear.
+Here 2^w bounds the difference of any two q̃, from the lookup table's
+range and the committed bias (w = B_q + L when q fits B_q bits); that
+bound is an upstream hypothesis the lemma names, as top-1's is.
+
+The uniqueness lemma is the appendix's (`:86-92`), with one step the
+top-1 form does not need. Booleanity and cardinality make m a k-subset,
+and the tiebreak makes all q̃ distinct. Dominance is where τ enters: τ
+is a free field element with no range of its own, so the range on v
+bounds q̃_s − τ (s selected) and τ − q̃_u (u unselected) only as
+residues. Adding one of each cancels τ:
+
+    q̃_s − q̃_u ≡ a + c  (mod P),   a, c ∈ [0, 2^R),   so a + c ∈ [0, 2^{R+1} − 1)
+
+The integer difference D = q̃_s − q̃_u lies in (−2^w, 2^w), and a
+negative D has residue P + D > P − 2^w. So the threshold guard
+
+    2^{R+1} − 1 ≤ P − 2^w                                   (threshold guard)
+
+makes every negative D unreachable: every selected q̃ exceeds every
+unselected one, and m is the unique top-k of q̃. τ is then an integer
+between the k-th and (k+1)-th q̃ (a τ whose residue wrapped would need
+a > P − 2^R ≥ 2^R), which certifies the same m and leaks nothing. F3
+and F5 disappear.
+
+Top-1's guard `2^R ≤ P − 2^w` (`route_top1`) is not enough here. It
+bounds one gap whose ends are both pinned, since the chosen logit is
+defined from m; the threshold form bounds two gaps through a free τ,
+and a wrap of τ can split between them. Counterexample, kept as a
+negative case (review of 2026-10-01): E = 8, k = 3, B_q = 40 (w = 43),
+three 21-bit words (R = 63), every selection score zero, so q̃[e] = 7 − e
+and the honest top-3 is {0, 1, 2}. Selecting {5, 6, 7} with
+τ = (P − 1)/2 + 3 puts every v between (P − 9)/2 and (P − 1)/2, below
+2^63: every range passes, and so does top-1's guard (2^63 ≤ P − 2^43),
+while the threshold guard fails (2^64 − 1 > P − 2^43). The alternative
+is a range on τ itself, to the interval of q̃ (T range checks per
+layer), after which top-1's guard suffices. The guard costs nothing at
+the widths below (it caps R at 62) and is the default.
 
 Four points the review fixed here:
 
@@ -120,7 +151,8 @@ Four points the review fixed here:
   matmul's 26-bit output width bounds nothing that tight.
 - **Gap width.** With q at 14 to 16 bits plus the bias's headroom and L,
   the gap is 24 to 27 bits: two 12-bit or three 9-bit words under the
-  unchanged guard `2^{n_words·word_bits} ≤ P − 2^{width}`. The word
+  threshold guard above, `2^{n_words·word_bits + 1} − 1 ≤ P − 2^{width}`,
+  not top-1's. The word
   count is fixed after the bias magnitudes are measured; the sentence
   "cheaper than today's three words" is conditional on that.
 

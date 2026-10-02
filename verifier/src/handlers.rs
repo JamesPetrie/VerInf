@@ -311,6 +311,10 @@ fn compile_op(cl: &Claim, ci: usize, s_op: &[u8], s_bind: Option<&[u8]>,
                         (P - table.alpha) % P, P - 1, cl.scalar("length") as usize, ell);
         }
         "RoutingClaim" => compile_routing(cl, b, cfg),
+        "TopkRoutingClaim" => compile_topk_routing(cl, b, cfg),
+        "TopkSlotsClaim" => compile_topk_slots(cl, b, cfg),
+        "GateBracketClaim" => compile_gate_bracket(cl, b, cfg),
+        "SplitClaim" => compile_split(cl, b, cfg),
         "MaskedCombineClaim" => compile_masked_combine(cl, b, cfg),
         "ConcatClaim" => compile_concat(cl, b, cfg),
         "FreivaldsCombineClaim" => compile_freivalds_combine(cl, ci, s_op, b, cfg),
@@ -972,6 +976,161 @@ fn compile_routing(cl: &Claim, b: &mut Build, cfg: &Config) {
     b.emit_quad(m, rt, mrt, neg1, 0, l, ell);
 }
 
+// TopkRoutingClaim: the committed k-hot mask m (T,E) is the top-k of the
+// tiebroken selection quantity q̃ = 2^L·(s + b) + (E−1−e), through a free
+// per-token threshold τ. Mirrors prover/topk_routing.py topk_compile
+// (analysis/topk-routing-design.md §3.1). Linear families (cids from b.nxt):
+//   F1 q̃ − 2^L·s − 2^L·b(bcast) = (E−1−e)  [E·T, expert-major e·T + t] ·
+//   F2 Σ_e m = k  [T] · Fd d − q̃ + τ(bcast) = 0  [T·E] · Fv v − 2·md + d = 0  [T·E]
+// Quads: m·m = m, m·d = md. The range on v is a composed WordExtractionClaim.
+// The threshold guard fails closed: τ is free, so a selected and an
+// unselected relation sum to q̃_s − q̃_u ≡ a + c < 2^{R+1} − 1, which must not
+// reach a wrapped negative difference (> P − 2^width). Top-1's 2^R ≤ P − 2^width
+// is not enough (the design's counterexample, R = 63 at width 43).
+fn compile_topk_routing(cl: &Claim, b: &mut Build, cfg: &Config) {
+    let ell = cfg.ell as usize;
+    let t = cl.scalar("T") as usize;
+    let e = cl.scalar("E") as usize;
+    let k = cl.scalar("k");
+    let l_bits = cl.scalar("L_bits") as u32;
+    let width = cl.scalar("width") as u32;
+    let r = cl.scalar("range_bits") as u32;
+    assert!(k >= 1 && (k as usize) < e, "topk: need 1 <= k < E");
+    assert!(l_bits < 32 && (e as u64 - 1) < (1u64 << l_bits), "topk: L_bits must hold E - 1");
+    assert!(width < 64 && r < 64 && r >= width, "topk: the range must cover the width");
+    assert!((1u128 << (r + 1)) - 1 <= (P as u128) - (1u128 << width),
+            "topk: threshold guard: a wrapped threshold can split between a selected and an unselected relation");
+    let l = t * e;
+    let (s, bias, m, qt) = (cl.var("s"), cl.var("b"), cl.var("m"), cl.var("qt"));
+    let (tau, d, md, v) = (cl.var("tau"), cl.var("d"), cl.var("md"), cl.var("v"));
+    assert!(s.length == l && bias.length == e && m.length == l && tau.length == t,
+            "topk: variable lengths");
+    let neg1 = P - 1;
+    let neg_two_l = P - (1u64 << l_bits) % P;
+    let ones: Vec<u64> = vec![1; e];
+    let base = b.nxt; b.nxt += 3 * l + t;
+    let mut cur = base;
+    // F1, expert-major: the bias fans out along its expert's block of T cids
+    b.emit_transpose_o2m(qt, cur, t, e, 1, 1, ell);
+    b.emit_transpose_o2m(s, cur, t, e, 1, neg_two_l, ell);
+    b.emit_stride_o2m(bias, cur, t, neg_two_l, ell);
+    let bonus: Vec<(usize, usize, u64)> =
+        (0..e - 1).map(|i| (i * t, t, (e - 1 - i) as u64)).collect();
+    b.add_rhs(cur, &bonus);
+    cur += l;
+    // F2: Σ_e m[t,e] = k
+    b.emit_rowsum(m, cur, e, &ones, ell);
+    b.add_rhs(cur, &[(0, t, k)]);
+    cur += t;
+    // Fd: d − q̃ + τ(broadcast over E) = 0
+    b.emit_id(d, cur, 1, ell);
+    b.emit_id(qt, cur, neg1, ell);
+    b.emit_stride_o2m(tau, cur, e, 1, ell);
+    cur += l;
+    // Fv: v − 2·md + d = 0
+    b.emit_id(v, cur, 1, ell);
+    b.emit_id(md, cur, P - 2, ell);
+    b.emit_id(d, cur, 1, ell);
+    b.emit_quad(m, m, m, neg1, 0, l, ell);
+    b.emit_quad(m, d, md, neg1, 0, l, ell);
+}
+
+// TopkSlotsClaim: the k-hot m split into k one-hot slot masks M_i, and the
+// slot scores ss[t,i] = Σ_e M_i[t,e]·s[t,e] (token-major). Mirrors
+// topk_routing.py slots_compile (design §3.3).
+//   Sb Σ_i M_i − m = 0  [T·E] · Sc Σ_e M_i = 1  [k·T, slot-major i·T + t] ·
+//   Sv Σ_e MS_i − ss = 0  [k·T, slot-major; ss transposed in]
+// Quads: M_i·M_i = M_i for each i, then M_i·s = MS_i for each i.
+fn compile_topk_slots(cl: &Claim, b: &mut Build, cfg: &Config) {
+    let ell = cfg.ell as usize;
+    let t = cl.scalar("T") as usize;
+    let e = cl.scalar("E") as usize;
+    let k = cl.scalar("k") as usize;
+    let (m, s, ss) = (cl.var("m"), cl.var("s"), cl.var("ss"));
+    let masks = cl.var_list("M");
+    let prods = cl.var_list("MS");
+    assert!(k >= 1 && masks.len() == k && prods.len() == k, "slots: k masks and k products");
+    assert!(m.length == t * e && s.length == t * e && ss.length == t * k
+            && masks.iter().chain(prods.iter()).all(|v| v.length == t * e),
+            "slots: variable lengths");
+    let neg1 = P - 1;
+    let ones: Vec<u64> = vec![1; e];
+    let base = b.nxt; b.nxt += t * e + 2 * k * t;
+    let mut cur = base;
+    for mi in &masks { b.emit_id(*mi, cur, 1, ell); }
+    b.emit_id(m, cur, neg1, ell);
+    cur += t * e;
+    for (i, mi) in masks.iter().enumerate() { b.emit_rowsum(*mi, cur + i * t, e, &ones, ell); }
+    b.add_rhs(cur, &[(0, k * t, 1)]);
+    cur += k * t;
+    for (i, x) in prods.iter().enumerate() { b.emit_rowsum(*x, cur + i * t, e, &ones, ell); }
+    b.emit_transpose_o2m(ss, cur, t, k, 1, neg1, ell);
+    for mi in &masks { b.emit_quad(*mi, *mi, *mi, neg1, 0, t * e, ell); }
+    for (i, mi) in masks.iter().enumerate() { b.emit_quad(*mi, s, prods[i], neg1, 0, t * e, ell); }
+}
+
+// GateBracketClaim: w[t,i] = ⌊C·ss[t,i] / Z[t]⌋, Z = Σ_i ss[t,i]. Mirrors
+// topk_routing.py bracket_compile (design §3.2).
+//   Bz Σ_i ss − Z = 0  [T] · Bb Zb − Z(bcast) = 0  [T·k] ·
+//   Bd wZ + rem − C·ss = 0  [T·k] · Bg gr − Zb + rem = −1  [T·k]
+// Quad: w·Zb = wZ. rem, gr and w are ranged by composed WordExtractionClaims.
+// Guard (fail closed): the division identity stays below P, so it is the
+// integer one, and a negative Z − 1 − rem cannot sit in its window; z_bits and
+// cs_bits are the statement's bounds on the scores (an upstream hypothesis).
+fn compile_gate_bracket(cl: &Claim, b: &mut Build, cfg: &Config) {
+    let ell = cfg.ell as usize;
+    let t = cl.scalar("T") as usize;
+    let k = cl.scalar("k") as usize;
+    let c = cl.scalar("C") % P;
+    let (zb_bits, cs_bits) = (cl.scalar("z_bits") as u32, cl.scalar("cs_bits") as u32);
+    let (rem_bits, w_bits) = (cl.scalar("rem_bits") as u32, cl.scalar("w_bits") as u32);
+    assert!(k >= 1 && zb_bits < 63 && cs_bits < 64 && rem_bits < 63 && w_bits < 63,
+            "bracket: parameters");
+    let pp = P as u128;
+    assert!((1u128 << (w_bits + zb_bits)) + (1u128 << rem_bits) < pp && (1u128 << cs_bits) < pp
+            && (1u128 << rem_bits) <= pp - (1u128 << rem_bits.max(zb_bits)) - 1,
+            "bracket: guard: the division identity must stay below P");
+    let (ss, z, zb) = (cl.var("ss"), cl.var("Z"), cl.var("Zb"));
+    let (w, wz, rem, gr) = (cl.var("w"), cl.var("wZ"), cl.var("rem"), cl.var("gr"));
+    assert!(ss.length == t * k && z.length == t, "bracket: variable lengths");
+    let neg1 = P - 1;
+    let ones: Vec<u64> = vec![1; k];
+    let base = b.nxt; b.nxt += t + 3 * t * k;
+    let mut cur = base;
+    b.emit_rowsum(ss, cur, k, &ones, ell);
+    b.emit_id(z, cur, neg1, ell);
+    cur += t;
+    b.emit_id(zb, cur, 1, ell);
+    b.emit_stride_o2m(z, cur, k, neg1, ell);
+    cur += t * k;
+    b.emit_id(wz, cur, 1, ell);
+    b.emit_id(rem, cur, 1, ell);
+    b.emit_id(ss, cur, (P - c) % P, ell);
+    cur += t * k;
+    b.emit_id(gr, cur, 1, ell);
+    b.emit_id(zb, cur, neg1, ell);
+    b.emit_id(rem, cur, 1, ell);
+    b.add_rhs(cur, &[(0, t * k, neg1)]);
+    b.emit_quad(w, zb, wz, neg1, 0, t * k, ell);
+}
+
+// SplitClaim: the ConcatClaim relation with the parts derived from the whole
+// (topk_routing.py split_compile): whole·(−1) + parts at their offsets = 0.
+fn compile_split(cl: &Claim, b: &mut Build, cfg: &Config) {
+    let ell = cfg.ell as usize;
+    let whole = cl.var("whole");
+    let parts = cl.var_list("parts");
+    let l = whole.length;
+    let base = b.nxt; b.nxt += l;
+    b.emit_id(whole, base, P - 1, ell);
+    let mut off = 0usize;
+    for p in parts {
+        b.emit_id(p, base + off, 1, ell);
+        off += p.length;
+    }
+    assert_eq!(off, l, "split parts must cover the whole");
+}
+
 // MaskedCombineClaim: y[t,:] = Σ_e m[t,e]·X_e[t,:]. Mirrors combine_compile.
 //   G1 m_rep_e[t,j] − m[t,e] = 0  [E·T·F] (one TransposeO2m on m covers every
 //      expert's pin block at base + e·T·F)
@@ -1321,5 +1480,115 @@ mod rope_scaling_tests {
         }
         assert_eq!(c, ec);
         assert_eq!(s, es);
+    }
+}
+
+#[cfg(test)]
+mod topk_tests {
+    //! The top-k routing compiles (prover/topk_routing.py twins): the guards
+    //! fail closed on the design's counterexample parameters, and the cid
+    //! layout, RHS runs and quad count are the ones the prover emits.
+    use super::*;
+    use crate::claim::parse_claim_set_value;
+    use serde_json::{json, Value};
+
+    fn var(row: usize, len: usize) -> Value { json!({"var": [row, len]}) }
+    fn sc(x: u64) -> Value { json!({"scalar": x}) }
+
+    fn build() -> Build {
+        Build { families: Vec::new(), rhs: Vec::new(), quad: Vec::new(), nxt: 0, nq: 0,
+                wc_pins: std::collections::HashMap::new() }
+    }
+
+    fn claim_set(op: &str, fields: Value) -> ClaimSet {
+        parse_claim_set_value(json!({
+            "cfg": {"ELL": 8, "K_DEG": 8, "N_LIG": 32, "T_QUERIES": 4},
+            "table_order": [],
+            "claims": [{"op": op, "fields": fields}],
+        }))
+    }
+
+    fn topk(width: u64, range_bits: u64) -> ClaimSet {
+        let (t, e) = (2usize, 8usize);
+        let l = t * e;
+        claim_set("TopkRoutingClaim", json!({
+            "s": var(0, l), "b": var(2, e), "m": var(3, l), "qt": var(5, l),
+            "tau": var(7, t), "d": var(8, l), "md": var(10, l), "v": var(12, l),
+            "T": sc(t as u64), "E": sc(e as u64), "k": sc(3), "L_bits": sc(3),
+            "width": sc(width), "range_bits": sc(range_bits),
+        }))
+    }
+
+    #[test]
+    #[should_panic(expected = "threshold guard")]
+    fn the_counterexample_parameters_are_refused() {
+        // B_q = 40, L = 3: width 43; three 21-bit words: R = 63. Top-1's guard
+        // (2^63 <= P - 2^43) would pass; the threshold guard must not.
+        let cs = topk(43, 63);
+        compile_topk_routing(&cs.claims[0], &mut build(), &cs.cfg);
+    }
+
+    #[test]
+    fn the_guard_admits_62_bits_and_the_layout_matches_the_prover() {
+        let cs = topk(43, 62);
+        compile_topk_routing(&cs.claims[0], &mut build(), &cs.cfg);
+        let cs = topk(14, 16);
+        let mut b = build();
+        compile_topk_routing(&cs.claims[0], &mut b, &cs.cfg);
+        let (t, l) = (2usize, 16usize);
+        assert_eq!(b.nxt, 3 * l + t, "F1 + F2 + Fd + Fv cids");
+        assert_eq!(b.families.len(), 3 + 1 + 3 + 3);
+        assert_eq!(b.quad.len(), 2);
+        // F1's bonus E-1-e over each expert's block of T cids (e = 7 is zero),
+        // then F2's k over the T cardinality cids
+        let mut want: Vec<(usize, usize, u64)> = (0..7).map(|e| (e * t, t, 7 - e as u64)).collect();
+        want.push((l, t, 3));
+        assert_eq!(b.rhs, want);
+    }
+
+    #[test]
+    #[should_panic(expected = "bracket: guard")]
+    fn an_unsound_bracket_is_refused() {
+        let cs = claim_set("GateBracketClaim", json!({
+            "ss": var(0, 6), "Z": var(1, 2), "Zb": var(2, 6), "w": var(3, 6),
+            "wZ": var(4, 6), "rem": var(5, 6), "gr": var(6, 6),
+            "T": sc(2), "k": sc(3), "C": sc(11579), "z_bits": sc(40), "cs_bits": sc(30),
+            "rem_bits": sc(40), "w_bits": sc(32),
+        }));
+        compile_gate_bracket(&cs.claims[0], &mut build(), &cs.cfg);
+    }
+
+    #[test]
+    fn the_bracket_slots_and_split_layouts() {
+        let cs = claim_set("GateBracketClaim", json!({
+            "ss": var(0, 6), "Z": var(1, 2), "Zb": var(2, 6), "w": var(3, 6),
+            "wZ": var(4, 6), "rem": var(5, 6), "gr": var(6, 6),
+            "T": sc(2), "k": sc(3), "C": sc(11579), "z_bits": sc(14), "cs_bits": sc(26),
+            "rem_bits": sc(16), "w_bits": sc(16),
+        }));
+        let mut b = build();
+        compile_gate_bracket(&cs.claims[0], &mut b, &cs.cfg);
+        assert_eq!(b.nxt, 2 + 3 * 6);
+        assert_eq!(b.rhs, vec![(2 + 6 + 6, 6, P - 1)]);
+        assert_eq!(b.quad.len(), 1);
+
+        let cs = claim_set("TopkSlotsClaim", json!({
+            "m": var(0, 16), "s": var(2, 16), "ss": var(4, 6),
+            "M": {"list": [var(5, 16), var(7, 16), var(9, 16)]},
+            "MS": {"list": [var(11, 16), var(13, 16), var(15, 16)]},
+            "T": sc(2), "E": sc(8), "k": sc(3),
+        }));
+        let mut b = build();
+        compile_topk_slots(&cs.claims[0], &mut b, &cs.cfg);
+        assert_eq!(b.nxt, 16 + 2 * 3 * 2);
+        assert_eq!(b.rhs, vec![(16, 6, 1)]);
+        assert_eq!(b.quad.len(), 6);
+
+        let cs = claim_set("SplitClaim", json!({
+            "whole": var(0, 12), "parts": {"list": [var(2, 4), var(3, 4), var(4, 4)]},
+        }));
+        let mut b = build();
+        compile_split(&cs.claims[0], &mut b, &cs.cfg);
+        assert_eq!((b.nxt, b.families.len()), (12, 4));
     }
 }
