@@ -40,7 +40,11 @@ keep the base frequency 50,000^(−2i/64) and pairs 20–31 divide it by 32,
 with no blended pair. The cos/sin factor m(32, 1)/m(32, 1) is exactly 1.
 (The reference class defaults to beta_fast = 32, `:271-277`; K2's
 degenerate ramp comes from its config, and the generator must follow the
-formula, not assume a smooth band.)
+formula, not assume a smooth band.) On K2's betas the step interpolates
+exactly the pairs whose wavelength exceeds the original context, which is
+the Llama-3 ramp with both frequency factors 1: pair 19's wavelength is
+about 3,890, pair 20's about 5,422. The YaRN tests use that coincidence as an
+independent cross-check of the tables.
 
 **Pairing.** `apply_rotary_pos_emb` views each 64-wide rotary vector as
 (32, 2) and transposes before `rotate_half` (`:364-370`): the stored order
