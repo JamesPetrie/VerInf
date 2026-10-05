@@ -17,6 +17,7 @@ SUITES=(
   prover/tests/test_bench_static_check.py
   prover/tests/test_topk_reference.py
   prover/tests/test_topk_claimcosts.py
+  prover/tests/test_head_interleave_layout.py
   prover/tests/test_word_extract_compute.py
   prover/tests/test_aes_trace.py
   prover/tests/test_demo_bridge_policy.py

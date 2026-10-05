@@ -131,6 +131,31 @@ class L2_TransposeO2MScalar:
     coef: int
 
 
+@dataclass(frozen=True, slots=True)
+class L2_BlockStrideScalar:
+    """Blocks of `inner` consecutive slots, each placed at a stride of `outer`
+    constraint ids and optionally fanned out, scalar coef:
+      flat[s]         = row_off · ELL + s
+      constraint_id   = base + (flat // inner) · outer + flat % inner
+                        + h · fan_stride,                h ∈ [0, fan)
+      coef            = scalar
+    Used by HeadInterleaveClaim (prover/head_interleave.py) to pin each
+    head's two parts into one (w1 + w2)-wide head vector: the first part with
+    inner = w1, outer = w1 + w2; the second, offset by w1 in `base`, per head
+    (inner = w2, outer = w1 + w2) or shared by all H heads (inner = w2,
+    outer = H · (w1 + w2), fan = H, fan_stride = w1 + w2). Lowers to the
+    fold's regular band descriptor (core._lower_geometry). Rust twin:
+    Expander::BlockStride."""
+    base: int
+    var_row_start: int
+    L: int
+    inner: int
+    outer: int
+    fan: int
+    fan_stride: int
+    coef: int
+
+
 # ---- Softmax causal patterns ----
 # Causal-softmax z-decomp has L_u = H · SEQ · (SEQ+1)/2 constraints
 # (unmasked cells only). For cell (b, j) with b = i_qry·H + h:

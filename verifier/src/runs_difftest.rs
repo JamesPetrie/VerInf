@@ -154,3 +154,16 @@ fn rope_x() {
     check(&Expander::RopeX { base: 60, h: 2, d_h: 6,
                              cos: Arc::new(vals(9, 9)), sin: Arc::new(vals(9, 10)) }, 36);
 }
+
+#[test]
+fn block_stride() {
+    // a head's first part (w1 = 5 of W = 8), its per-head second part
+    // (w2 = 3, offset 5), and a shared second part fanned out to H = 4 heads
+    check(&Expander::BlockStride { cid_base: 7, inner: 5, outer: 8, fan: 1, fan_stride: 0,
+                                   coef: 1 }, 2 * 4 * 5);
+    check(&Expander::BlockStride { cid_base: 12, inner: 3, outer: 8, fan: 1, fan_stride: 0,
+                                   coef: 1 }, 2 * 4 * 3);
+    check(&Expander::BlockStride { cid_base: 12, inner: 3, outer: 32, fan: 4, fan_stride: 8,
+                                   coef: 1 }, 2 * 3);
+}
+

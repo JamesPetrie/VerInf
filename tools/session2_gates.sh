@@ -92,6 +92,11 @@ need toy-repaired-verify 'rust_verify: ACCEPT'
 # them (analysis/topk-routing-design.md §3.1-3.3).
 gate topk-routing python3 prover/tests/run_tests.py test_topk_routing
 suite topk-routing 21
+# The multi-head latent attention assembly (analysis/mla-attention-design.md
+# 4.3): per-head and shared interleaves into a scores matmul, honest ACCEPT
+# and targeted REJECTs. The constraint map is checked on the CPU.
+gate head-interleave python3 prover/tests/run_tests.py test_head_interleave
+suite head-interleave 5
 gate toy-ab env LIGERO_SWEEP_TIMING=1 python3 analysis/bench/ab_routed_cache.py
 need toy-ab 'ab_routed_cache: counts as expected'
 # A small REAL-GGUF proof through the research driver, independently

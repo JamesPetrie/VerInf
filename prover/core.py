@@ -2154,6 +2154,10 @@ def _lower_geometry(pkt):
     if k == "L2_StrideOneToManyScalar":
         return (1, [pkt.L, 1, 1, 1], [pkt.stride, 0, 0, 0], pkt.stride, 1,
                 0, pkt.coef % P, Z4, None, Z4, None, pkt.L)
+    if k == "L2_BlockStrideScalar":
+        return (2, [_ceil_div(pkt.L, pkt.inner), pkt.inner, 1, 1],
+                [pkt.outer, 1, 0, 0], pkt.fan, pkt.fan_stride,
+                0, pkt.coef % P, Z4, None, Z4, None, pkt.L)
     if k == "L2_TransposeO2MScalar":
         return (2, [pkt.rows, pkt.cols, 1, 1],
                 [pkt.fan, pkt.rows * pkt.fan, 0, 0], pkt.fan, 1,
