@@ -31,7 +31,7 @@ import wc_bridge as wcb  # noqa: E402
 import _k2_toy as toy  # noqa: E402
 import demo_k2 as dk   # noqa: E402
 
-CFG = core.LigeroConfig(ELL=16, K_DEG=16, N_LIG=64, T_QUERIES=4)
+CFG = core.LigeroConfig(ELL=64, K_DEG=64, N_LIG=256, T_QUERIES=4)   # ELL >= every gain (one-row broadcast table)
 PARAMS = wcb.WcParams(B=48, lam=16, N_w=128, q_w=8)
 PROMPT, CONT = [3, 17, 0, 41], [9, 22, 30, 5]
 KK = toy.TOY["k"]

@@ -40,7 +40,7 @@ from _rust_verify import rust_verify_anchored  # noqa: E402
 from max_claim import to_signed           # noqa: E402
 from tape import Tape                     # noqa: E402
 
-CFG = core.LigeroConfig(ELL=16, K_DEG=16, N_LIG=64, T_QUERIES=4)
+CFG = core.LigeroConfig(ELL=64, K_DEG=64, N_LIG=256, T_QUERIES=4)   # ELL >= every gain (one-row broadcast table)
 V, D, DFF, E, IL = 32, 64, 64, 4, 1
 PROMPT, CONT = [3, 17], [9, 22]
 T = len(PROMPT) + len(CONT)
