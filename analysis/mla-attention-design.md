@@ -178,8 +178,15 @@ All but `head_interleave` and the YaRN tables are calls the tree makes today.
    Uniqueness: each dst slot equals exactly one source slot. Negative tests:
    a tampered dst slot in each segment, and a fanned-out slot that differs
    from its source in one head only.
-3. **The loader transforms of 4.1** and a K2 attention builder in the demo,
-   with a provenance check on each transformed variable.
+3. **The loader transforms of 4.1** (`prover/k2_attention.py`
+   `mla_weights_from_gguf`, from llama.cpp's split tensors or the legacy
+   `attn_kv_b`) and a K2 attention builder in the demo, with a provenance
+   check on each transformed variable. The same module holds the two float64
+   references of §6: a port of `DeepseekV3Attention.forward`, checked once
+   against the real module (9.3×10⁻⁸ relative at positions 0–6, the
+   reference's float32 frequencies), and composition A on the transformed
+   weights, which equals it to 10⁻¹⁰ at short and long positions
+   (`prover/tests/test_k2_attention.py`).
 
 ### 4.4 Ranges to confirm on the checkpoint
 
