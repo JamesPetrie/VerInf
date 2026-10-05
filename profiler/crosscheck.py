@@ -30,6 +30,12 @@ construction (expert matmuls 458 vs 9,674, two "unknown" types, combines
 Divergence = stale formula; trust the tape (synth.py docstring). A FLAG in
 the output is a finding, not necessarily a bug here.
 
+topk-toy builds the top-k expert chain of prover/topk_routing.py on committed
+toy inputs, at the production scale and K2's top-k parameters, and diffs it
+strictly (no UI chain) against synth.topk_toy at the same shape: the check
+of the top-k rows and of the chain the kimi-k2 builder repeats 60 times. It
+needs no GGUF.
+
 Requirements: CUDA (tape construction materializes LogUp tables eagerly).
 llama7b runs weight-free — random weights, identical tape structure.
 maverick needs a GGUF on disk (metadata is read eagerly; payloads stay lazy).
@@ -39,6 +45,7 @@ maverick needs a GGUF on disk (metadata is read eagerly; payloads stay lazy).
         --t-queries 54 --prompt-n 2 --cont-n 2 --layout
     python3 profiler/crosscheck.py maverick --from-gguf ... --t-queries 54 \
         --seq 1000 --layout                      # big-S extract + in-process layout
+    python3 profiler/crosscheck.py topk-toy --seq 6 --layout
 
 Exit 0: no FLAG lines. Exit 1: at least one FLAG — eyeball before trusting
 extracted manifests (README roadmap 1 is the gate).
@@ -69,7 +76,8 @@ from manifest import Manifest                  # noqa: E402
 KNOWN_EXTRACT_ONLY = {
     "table_settle": "LogUp settlement — synth doesn't model tables",
     "MaxClaim": "UI chain — synth omits it (README caveat)",
-    "ConcatClaim": "UI chain — synth omits it (README caveat)",
+    "concat": "UI chain — the Maverick builders omit it (README caveat); "
+              "the top-k layers model their own",
     "InfoFinalizeClaim": "UI chain — synth omits it (README caveat)",
 }
 
@@ -368,6 +376,41 @@ def build_maverick(gguf: str, prompt_n: int, cont_n: int, *, layers: int,
     return tape, model
 
 
+def build_topk_toy(seq: int, *, d: int, d_ff: int, E: int, k: int):
+    """The top-k expert chain as prover/topk_routing.topk_moe_ffn records it,
+    on committed inputs at the production activation scale (2^12, the
+    14-bit SiLU tables) with K2's top-k parameters (synth.K2_TOPK). Expert
+    weights are committed persistent, as an enrolled model's are."""
+    import torch
+    import claims as _C            # noqa: F401  (registry wiring)
+    import packets as _PK          # noqa: F401
+    import topk_routing as tr
+    from claims import SILU_14BIT
+    from tape import Tape
+    torch.manual_seed(5)
+    S = 1 << 12
+    u64 = lambda t: t.to(torch.int64).to(torch.uint64).cuda()
+    tape = Tape(_crosscheck_cfg(), silu_config=SILU_14BIT, lazy=True)
+    x = tape.commit("x", u64(torch.randint(-S, S, (seq * d,))), (seq, d))
+    s = tape.commit("s", u64(torch.randint(1, S, (seq * E,))), (seq, E))
+    b = tape.commit("b", u64(torch.randint(-64, 64, (E,))), (E,))
+    w = {n: [tape.commit(f"{n}{e}", u64(torch.randint(-8, 8, (K * J,))), (K, J),
+                         persistent=True) for e in range(E)]
+         for n, K, J in (("gate", d, d_ff), ("up", d, d_ff), ("down", d_ff, d))}
+    p = synth.K2_TOPK
+    tr.topk_moe_ffn(tape, x, s, b, w, T=seq, E=E, k=k, d=d, d_ff=d_ff, S=S,
+                    S_w=S, C=p["C"], score_bits=p["score_bits"], width=p["width"],
+                    output_width=26, select_word_bits=p["select_word_bits"],
+                    bracket_word_bits=p["bracket_word_bits"])
+    return tape, dict(name="topk-toy", d=d, d_ff_expert=d_ff, experts=E, top_k=k)
+
+
+def _crosscheck_cfg():
+    import core
+    return core.LigeroConfig(ELL=16, K_DEG=16, N_LIG=64,
+                             T_QUERIES=int(os.environ.get("LIGERO_T_QUERIES", 4)))
+
+
 def synth_builder_for(tape) -> str:
     """Which synth builder models this Maverick tape: the routed-projected
     protocol (RoutedProjectedMatmulClaim present) or the legacy all-E fan."""
@@ -503,7 +546,7 @@ def run_layout_probe(cmd: list, timeout: int) -> str:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
         description="extract a real demo tape and diff it against synth")
-    ap.add_argument("model", choices=["llama7b", "maverick"])
+    ap.add_argument("model", choices=["llama7b", "maverick", "topk-toy"])
     ap.add_argument("--seq", type=int, default=None,
                     help="llama7b context length (default 100)")
     ap.add_argument("--layers", type=int, default=None)
@@ -546,7 +589,13 @@ def main(argv=None) -> int:
 
     print("[2] building lazy tape (claim recording only — no witness "
           "compute, no weights load beyond metadata)")
-    if a.model == "llama7b":
+    if a.model == "topk-toy":
+        seq = a.seq or 6
+        tk = dict(d=16, d_ff=16, E=8, k=3)
+        tape, model = build_topk_toy(seq, **tk)
+        sy = synth.topk_toy(seq, t_queries=tape.cfg.T_QUERIES, **tk)
+        probe_cmd = None
+    elif a.model == "llama7b":
         seq = a.seq or 100
         layers = a.layers if a.layers is not None else 32
         tape, model = build_llama7b(seq, layers)
