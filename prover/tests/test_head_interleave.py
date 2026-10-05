@@ -18,6 +18,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
+import numpy as np
 import torch
 
 import core
@@ -36,12 +37,16 @@ S = 1 << 4
 
 
 def _u64(t):
-    return t.to(torch.int64).to(torch.uint64).cuda()
+    """Signed integers to Goldilocks field elements: v mod P, not the 2^64
+    wrap a uint64 cast gives a negative."""
+    return torch.from_numpy(np.array([int(v) % P for v in t.tolist()],
+                                     dtype=np.uint64)).cuda()
 
 
 def _signed(t):
-    return [v - (1 << 64) if v >= (1 << 63) else v for v in t.view(torch.uint64).cpu().tolist()] \
-        if t.dtype == torch.uint64 else t.tolist()
+    """Field elements back to signed integers: above P/2 means negative."""
+    vals = [v % (1 << 64) for v in t.contiguous().view(torch.int64).cpu().tolist()]
+    return [v - P if v > P // 2 else v for v in vals]
 
 
 _HITS = {}
@@ -93,12 +98,19 @@ def _attention_tape():
 def test_honest_latent_attention_assembly_accepts():
     tape, p, q, k, sc = _attention_tape()
     live = tape.run_engine_pass()
-    qv = torch.tensor(_signed(live[q.var].contiguous().view(-1))).view(T, H, W1 + W2)
-    kv = torch.tensor(_signed(live[k.var].contiguous().view(-1))).view(T, H, W1 + W2)
+    qv = torch.tensor(_signed(live[q.var])).view(T, H, W1 + W2)
+    kv = torch.tensor(_signed(live[k.var])).view(T, H, W1 + W2)
     want_q = torch.cat([p["q_nope"].view(T, H, W1), p["q_pe"].view(T, H, W2)], dim=2)
     want_k = torch.cat([p["k_nope"].view(T, H, W1),
                         p["k_pe"].view(T, 1, W2).expand(T, H, W2)], dim=2)
     assert torch.equal(qv, want_q) and torch.equal(kv, want_k)
+    # the scores directly: per head, query t against key u over all w1 + w2
+    # dimensions, rescaled by the signed floor of S·S -> S; layout (t, h, u)
+    raw = torch.einsum("thc,uhc->thu", want_q, want_k)
+    want_sc = torch.div(raw, S, rounding_mode="floor")
+    got_sc = torch.tensor(_signed(live[sc.var])).view(T, H, T)
+    assert torch.equal(got_sc, want_sc), (got_sc, want_sc)
+    assert want_sc.abs().max() < (1 << 15), "fixture scores outside the 16-bit output"
     acc, msg = _verdict(_attention_tape()[0])
     assert acc, f"honest assembly + scores: expected ACCEPT ({msg})"
     print("    per-head query, shared-key assembly, scores at head width 6: ACCEPT")

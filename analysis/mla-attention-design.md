@@ -1,4 +1,4 @@
-# Multi-head latent attention for Kimi K2: design note (2026-10-08)
+# Multi-head latent attention for Kimi K2: design note (2026-10-05)
 
 Kimi K2's attention is DeepSeek-V3's multi-head latent attention (MLA). This
 note fixes how the prover composes it, the first piece of item 5 in
@@ -162,7 +162,7 @@ All but `head_interleave` and the YaRN tables are calls the tree makes today.
    verifier use f64. That changes nothing a verifier checks, but it is not
    negligible at long context: at position 131,071 the pinned reference's
    float32 formula moves 19 of the 64 rounded cos/sin entries at scale
-   4,096, by up to 22 units (review of 2026-10-08), float32's error in
+   4,096, by up to 22 units (review of 2026-10-05), float32's error in
    position × frequency. The YaRN tests therefore compare the f64 tables with
    the reference formula at short and long positions under a stated
    tolerance, and the logit-level fidelity gate of §6 includes long
