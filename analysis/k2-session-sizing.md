@@ -43,12 +43,14 @@ per-proof pass decode every expert shard.
 
 ## 2. Host memory, against the cgroup
 
-Four parts share the container's limit: page cache (the GGUF pages read),
-anonymous memory (the process: torch and Python, decode temporaries, the
-opened-column sink of T_QUERIES × rows × 8 bytes, pre-sized on the host),
-pinned cache tiers, and temporary buffers. Session 6, Maverick at S = 1,000
-bridged: 32.7 GB anonymous at its peak beside 206 GB of the 232 GB model in
-page cache, under a 251 GB limit, with 29 s of memory-pressure stall.
+Three parts share the container's limit: page cache (the GGUF pages read),
+anonymous memory (the process: torch and Python, host-side decode
+temporaries, and the opened-column sink of T_QUERIES × rows × 8 bytes, which
+is pre-sized in ordinary host memory and so already counted here), and
+pinned cache tiers. Session 6, Maverick at S = 1,000 bridged: 32.7 GB
+anonymous at its peak beside 206 GB of the 232 GB model in page cache, under
+a 251 GB limit, with 29 s of memory-pressure stall. That is Maverick's
+measurement, a reference for K2 and not a ceiling; the gate measures K2's.
 Session 3 showed the cost of pinning beside a cgroup full of page cache:
 each pinned block forced reclaim, and evicted shards came back from disk
 every sweep. Both K2 runs therefore keep the caches' host tiers off
@@ -58,11 +60,12 @@ unless the cgroup has room left after the page cache.
 | | two-layer gate, S = 1,000 | full model, S = 1,000 |
 |---|---|---|
 | page cache | ≈ 12.2 GB | 587 GB to stay warm |
-| anonymous | ≤ 33 GB (Maverick's full peak as a ceiling) | ≈ 62 GB (33 × 1.9, the rows ratio; estimate) |
-| opened-column sink | 0.5 GB (54 × 1.23 M rows × 8 B) | 11–15 GB (54 × 25.8 M rows, × 1.37 for the model's row undercount at S = 1,000) |
+| anonymous, the column sink included | unmeasured for K2; Maverick's full-model 32.7 GB as a reference (its sink here: 0.5 GB, 54 × 1.23 M rows × 8 B) | ≈ 62 GB estimated (32.7 × 1.9, the rows ratio), of which the sink is 11–15 GB (54 × 25.8 M rows, × 1.37 for the model's row undercount at S = 1,000) |
 | pinned tiers | 0 (caches on the GPU) | 0, or + 43 GB if the routed cache must go to the host (§3) |
-| decode temporaries | on the GPU: the head decodes to 9.4 GB of field elements transiently | same |
-| **cgroup needed** | **≈ 50 GB; any pod's** | **≈ 700 GB warm, or the pod's usual ~250 GB disk-bound** |
+| **cgroup needed** | **≈ 50 GB estimated; any pod's** | **≈ 700 GB warm, or the pod's usual ~250 GB disk-bound** |
+
+Decode temporaries are on the GPU: the K-quant kernel decodes the head to
+9.4 GB of field elements transiently.
 
 ## 3. Caches: budgets and placement
 
@@ -77,16 +80,41 @@ outputs, 8 bytes per slot; GPU first, at 25 percent of free HBM. Two layers
 hold one MoE block: 0.72 GB at S = 1,000, 0.07 GB at S = 100. The full
 model's 60 blocks: 43.25 GB at S = 1,000, 4.33 GB at S = 100.
 
-**Placement.** The gate puts both on the GPU (12.7 GB). The full run's
-caches total 90 GB at S = 1,000; on a B200's 180 GB they fit only beside a
-working set of at most about 80 GB. Maverick's S = 1,000 peak was
-152.64 GiB with about 69 GB of caches, a working set near 95 GB, so K2's
-will likely not leave room for both. Filling order: the weight cache first
-(session 6: every dense load after R1 a hit), then the routed cache on the
-GPU as far as it fits; the rest recomputes, which under a disk-bound
-configuration means re-reading those expert shards. The gate's S = 1,000 arm
-measures the working set directly: the prover streams claim by claim, and
-two layers already contain every claim type at full width.
+**Witness cache** (on by default, `LIGERO_WITNESS_CACHE`): the softmax and
+SiLU outputs, on the GPU at 25 percent of the memory free at its start.
+Bounded above by those claims' witness slots at 8 bytes: two layers at
+S = 1,000 want at most about 23 GB (softmax 15.4, SiLU 7.4); the full model
+at most about 690 GB, so at full scale it always fills its budget and
+recomputes the rest (timing only).
+
+**Growing with the tape.** Two more GPU terms are not caches and do not
+self-limit: the routed claims' projections P = W·ρ, kept for the whole proof
+(E·K per routed claim at 8 bytes: 50 MB for the gate's one MoE layer, 3.0 GB
+for 60), and the fold's challenge buffers, cached per span for the whole
+fold. Both grow with the number of layers, so **the two-layer peak cannot by
+itself establish that the full model fits**: the gate records the CUDA
+allocation at each claim boundary in every sweep, and the growth per layer
+extrapolates to 61.
+
+| GPU | two-layer gate, S = 1,000 | full model, S = 1,000 |
+|---|---|---|
+| decoded-weight cache (40 % of free) | 12.0 GB | 46.9 GB wanted |
+| routed-output cache (25 % of free) | 0.72 GB | 43.25 GB wanted |
+| witness cache (25 % of free) | ≤ 23 GB | fills its budget |
+| projections | 0.05 GB | 3.0 GB |
+| challenge buffers | measured by the gate | extrapolated from the gate |
+| working set (per claim, streaming) | measured by the S = 1,000 arm | the same, if no claim is wider than two layers' |
+
+**Placement.** The gate fits everything on a B200. At full scale the three
+caches' fractions, each of the memory free at prove start, sum to 90
+percent and can all fill, leaving about 10 percent (18 GB) for the working
+set and the growing terms. Maverick's S = 1,000 peak was 152.64 GiB with
+about 69 GB of caches, a working set near 95 GB. So the full run sets the
+fractions explicitly from the gate's measurements rather than taking the
+defaults. Filling order: the weight cache first (session 6: every dense load
+after R1 a hit), then the routed cache as far as it fits; the routed claims
+that do not fit recompute, which under a disk-bound configuration means
+re-reading their expert shards (§4).
 
 ## 4. I/O and runtime, warm and disk-bound
 
@@ -95,8 +123,13 @@ expert shard; R1 computes the routed outputs from the active shards (at
 k = 8 and S = 1,000 nearly all 384 per layer); R2 walks every shard for the
 projection P = W·ρ; from R3 on no shard is read (with the routed cache). So
 about three passes over the expert bytes per proof, plus the enrollment's
-one: two layers 10.2 GB per pass, about 31 GB per proof; the full model
-579 GB per pass, about 1.74 TB per proof.
+one, **when every routed output stays cached**: two layers 10.2 GB per pass,
+about 31 GB per proof; the full model 579 GB per pass, about 1.74 TB per
+proof. A routed claim whose outputs do not fit the cache recomputes them in
+R3, the fold and the opening too, reading its active shards in each: six
+passes, not three. With a fraction f of the MoE layers' outputs cached, the
+full model reads about 579 × (6 − 3f) GB per proof: 1.74 TB at f = 1,
+3.47 TB at f = 0.
 
 **Maverick, measured warm (session 6, B200):**
 - **Before the prove:** the pull ran at 724 MB/s; streaming expert enrollment took 116.4 s and dense enrollment 138.7 s.
@@ -104,19 +137,22 @@ one: two layers 10.2 GB per pass, about 31 GB per proof; the full model
 - **The S = 1,000 prove:** 1,780.2 s, with loaders 123 s given the weight cache.
 - **After it:** the proof was 19.67 GB, written in 30.4 s; Rust verification took 5,385 s on 20 threads at 27.2 GB RSS.
 
-**K2 full model, warm (estimates):** the Ligero part scales with the rows,
-1.87 times Maverick's, and the expert work with the expert bytes, 2.6 times:
+**K2 full model, warm (estimates):** session 6's 1,780.2 s already
+contains its S = 1,000 bridge pass, 116.3 s (`mavp-s1000-bridge.log`), so the
+Ligero part is 1,663.9 s, scaled by the rows ratio, 1.87; the bridge pass
+scales separately with the expert bytes, 2.6 times:
 
 | step | estimate |
 |---|---|
-| prove | about 55 min, plus the bridge's pass (about 5–6 min) |
+| prove | about 52 min for the Ligero part (1,663.9 × 1.87 s), plus the bridge's pass, about 5 min (116.3 × 2.6 s) |
 | enrollment | about 5 min streaming, 2 min dense |
 | proof | about 37–45 GB, written in about a minute |
 | Rust verification | about 2.8 hours on 20 threads, at about 50 GB RSS |
 
-**Disk-bound** adds the expert bytes over the disk's read rate: per proof
-about 15 minutes at 2 GB/s or 41 minutes at 0.7 GB/s, plus 5–14 minutes for
-the enrollment. The container disk's read rate is unmeasured on these hosts;
+**Disk-bound** adds the expert bytes over the disk's read rate: per proof,
+with every routed output cached, about 15 minutes at 2 GB/s or 41 minutes at
+0.7 GB/s; with none cached about 29 or 83 minutes; plus 5–14 minutes for the
+enrollment. The container disk's read rate is unmeasured on these hosts;
 the gate measures it.
 
 **Two-layer gate (estimates):**
@@ -153,9 +189,9 @@ the gate measures it.
    - the router-logit and bias ranges, which fix the selection table's domain and `K2_TOPK`'s word counts.
 
    Each must fall inside its configured window, or the change it forces is made before the full run.
-3. **GPU working set.** The S = 1,000 arm's peak, less its caches, sets the full run's cache placement: the routed cache stays on the GPU only if working set + 46.9 GB + routed share + a 10 GB margin ≤ 180 GB.
+3. **GPU memory.** The S = 1,000 arm's per-claim working set, and the per-layer growth of the projections and challenge buffers extrapolated to 61 layers, set the full run's cache fractions explicitly: working set + growth to 61 layers + weight cache + routed share + witness share + a 10 GB margin ≤ 180 GB.
 4. **Time per layer.** The S = 1,000 arm's sweep time per layer and its bridge pass per MoE layer, extrapolated to 61 layers, give the full prove within its session budget.
-5. **Disk and memory.** The container disk's sequential read rate (O_DIRECT, bypassing the page cache) and the cgroup's file, anonymous and pressure counters during the arm decide warm (cgroup ≈ 700 GB) against disk-bound (the I/O time of §4 added).
+5. **Disk and memory.** The container disk's sequential read rate (O_DIRECT, bypassing the page cache), K2's anonymous peak, and the cgroup's file, anonymous and pressure counters during the arm decide warm (cgroup ≈ 700 GB) against disk-bound, with §4's I/O time added at the routed-cache fraction the GPU allows.
 6. **Proof and verification.** Proof size, Rust verification time and RSS at two layers, extrapolated by rows.
 
 **The full run, provisionally:** one B200; container disk ≥ 1 TB (the 587 GB GGUF, a 37–45 GB proof, working space). The cgroup is either ≈ 700 GB warm or the usual ~250 GB disk-bound. The pull is about 14 minutes at Maverick's rate, the enrollment 7–25 minutes, the prove 1–1.5 hours, the verification about 3 hours: about 6 hours, roughly $40 on a B200 before any disk-bound overhead. The gate's measurements replace every estimate here before it is provisioned.
