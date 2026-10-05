@@ -22,6 +22,7 @@ SUITES=(
   prover/tests/test_k2_attention.py
   prover/tests/test_k2_loader.py
   prover/tests/test_k2_int_reference.py
+  prover/tests/test_k2_driver_cpu.py
   prover/tests/test_word_extract_compute.py
   prover/tests/test_aes_trace.py
   prover/tests/test_demo_bridge_policy.py

@@ -49,13 +49,14 @@ def _gguf():
 def _exact(offset):
     rec = dk.check(_gguf(), PROMPT, CONT, cfg=toy.TOY_MLA, layers=2, kk=KK, offset=offset,
                    ligero=CFG)
+    assert not rec.get("reference_error"), rec.get("reference_error")
     bad = [r for r in rec["exact"] if not r["ok"]]
     assert not bad, bad[:3]
     names = {r["name"] for r in rec["exact"]}
     assert {"x0", "L0.query", "L0.key", "L0.sm", "L0.ffn", "L1.mask", "L1.gw", "L1.D",
             "L1.y", "L1.sh", "logits"} <= names
-    assert all(r["ok"] for r in rec["ranges"].values()), \
-        {n: r for n, r in rec["ranges"].items() if not r["ok"]}
+    assert not rec["range_violations"], rec["range_violations"]
+    assert rec["ok"]
 
 
 def test_engine_pass_equals_the_integer_reference_at_position_0():
@@ -75,8 +76,10 @@ def test_unbridged_proof_accepts_and_witness_tampers_reject():
     finally:
         core._CLAIM_MEM_ON = False
     assert rec["verify"]["accept"], rec["verify"].get("tail")
+    assert set(rec["negatives"]) == {"interleave", "yarn-witness"}
     for neg, row in rec["negatives"].items():
-        assert row["rejected"], (neg, row)
+        assert row["applied"] > 0 and row["rejected_by_rust"] and row["passed"], (neg, row)
+    assert rec["ok"]
     mem = rec["claim_memory"]
     assert mem and all({"0", "1"} <= set(r["at_layer"]) for r in mem.values()), mem
 
@@ -89,7 +92,7 @@ def test_bridged_proof_accepts_and_negatives_reject_against_the_honest_enrollmen
     negs = rec["negatives"]
     assert set(negs) == set(dk.NEGATIVES)
     for neg, row in negs.items():
-        assert row["rejected"], (neg, row)
+        assert row["applied"] > 0 and row["rejected_by_rust"] and row["passed"], (neg, row)
     assert negs["yarn-statement"]["accept_under_own_digest"], negs["yarn-statement"]
     assert not negs["yarn-statement"]["same_statement"]
-    assert negs["wrong-slice"]["by"] == "rust", negs["wrong-slice"]
+    assert rec["ok"]

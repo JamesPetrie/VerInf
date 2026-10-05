@@ -16,9 +16,11 @@ the routed experts are external inputs the streaming enrollment
 authenticates.
 
 Modes, in the order the gate runs them:
-  check     the engine pass, then the integer reference (k2_int_reference)
-            on the CPU from the same GGUF: every named intermediate must
-            agree EXACTLY. Prints and records the ranges of §6.2.
+  check     the integer reference (k2_int_reference) on the CPU from the
+            same GGUF, recording the ranges of §6.2, then the engine pass:
+            PASS needs every named intermediate EXACT and every range inside
+            its window. A reference stopped by an undefined value (a lookup
+            outside its table) ends the check with its ranges recorded.
   fidelity  CPU only: the integer reference against the float64 reference
             (k2_float_reference): relative errors, then routing differences,
             end to end and on the same router input.
@@ -34,7 +36,14 @@ Modes, in the order the gate runs them:
                               statement digest (and, for contrast, its own)
               wrong-slice     expert 0's gate shard decoded from expert 1's
                               rows (--bridge)
-            each must be rejected.
+            PASS needs the honest proof accepted and, for every planned
+            negative, its change applied (counted where the witness or the
+            claims change) and the proof rejected by the Rust verifier; the
+            statement without YaRN must also be accepted under its own
+            digest. A prover exception is a failure, never a rejection.
+
+The record (--record) is written on every exit, a failure's included, with
+whatever was measured before it.
 
     python3 demo/demo_k2.py --mode check --from-gguf <UD-Q4_K_XL dir> \\
         --prompt-n 50 --cont-n 50 --record /workspace/k2-s100-check.json
@@ -143,7 +152,16 @@ def _rows(t):
     return int(t.data.shape[0])
 
 
-def build_moe(tape, n2g, gguf, il, sig_tbl, *, T, d, kk, bridge, wrong_slice, trace):
+def _counted(load, counts, key):
+    """A loader that counts its runs in counts[key] (a tamper's applications)."""
+    def run():
+        counts[key] = counts.get(key, 0) + 1
+        return load()
+    run.provenance = load.provenance
+    return run
+
+
+def build_moe(tape, n2g, gguf, il, sig_tbl, *, T, d, kk, bridge, wrong_slice, trace, counts):
     """Router, sigmoid lookup, top-k MoE (topk_moe_ffn), shared expert."""
     from demo_maverick_full import _field_loader
     from k2_int_reference import topk_width
@@ -165,9 +183,18 @@ def build_moe(tape, n2g, gguf, il, sig_tbl, *, T, d, kk, bridge, wrong_slice, tr
                          (E,), E)
     width = topk_width(S_SEL, bias_ints(by, il, S_SEL), E)
 
+    info = dict(E=E, d_ff=d_ff, width=width)
+    if wrong_slice:
+        import numpy as np
+        from k2_loader import expert_float
+        info["slice_differs"] = not np.array_equal(expert_float(by, il, "gate", 0),
+                                                   expert_float(by, il, "gate", 1))
+
     def shard(kind, e, shape):
-        src = 1 if (wrong_slice and kind == "gate_exps" and e == 0) else e
-        ld = maverick_lazy_expert(gguf, il, kind, src, S)
+        if wrong_slice and kind == "gate_exps" and e == 0:     # expert 0 from expert 1's rows
+            ld = _counted(maverick_lazy_expert(gguf, il, kind, 1, S), counts, "wrong-slice")
+        else:
+            ld = maverick_lazy_expert(gguf, il, kind, e, S)
         name = f"{p}_{kind}{e}"
         if bridge:
             return tape.external_lazy(name, ld, shape, shape[0] * shape[1])
@@ -186,7 +213,7 @@ def build_moe(tape, n2g, gguf, il, sig_tbl, *, T, d, kk, bridge, wrong_slice, tr
     trace.update({f"{p}.router": r, f"{p}.s": s, f"{p}.mask": tr["m"], f"{p}.gw": tr["gw"],
                   f"{p}.g": tr["g"], f"{p}.h": tr["h"], f"{p}.D": tr["D"],
                   f"{p}.y_raw": tr["y_raw"], f"{p}.y": tr["y"], f"{p}.sh": sh})
-    return y, sh, dict(E=E, d_ff=d_ff, width=width)
+    return y, sh, info
 
 
 @dataclasses.dataclass
@@ -202,10 +229,12 @@ class Built:
 
 
 def build(gguf, prompt_ids, cont_ids, *, cfg=K2_MLA, layers=2, kk=8, offset=0, yarn=True,
-          bridge=False, tamper=None, ligero=None):
+          bridge=False, tamper=None, ligero=None, counts=None):
     """The K2 tape over `layers` layers. `tamper` = "yarn-statement" builds the
     claims without YaRN; "wrong-slice" decodes expert 0's gate shard from
-    expert 1's rows. Witness tampers are applied at prove time (tampering)."""
+    expert 1's rows, counting each decode in `counts`. Witness tampers are
+    applied at prove time (tampering)."""
+    counts = {} if counts is None else counts
     from demo_maverick_full import UI, _field_loader, build_inputs
     from demo_maverick_moe import CFG, SILU_CFG
     from k2_loader import by_name, sigmoid_table
@@ -238,7 +267,8 @@ def build(gguf, prompt_ids, cont_ids, *, cfg=K2_MLA, layers=2, kk=8, offset=0, y
                 keys, ty, _ = sigmoid_table(S, S_SEL, K2_INT["sig_bits"])
                 sig_tbl = tape.register_table("k2_sigmoid", T_data=keys, T_Y_data=ty)
             y, sh, li = build_moe(tape, n2g, gguf, il, sig_tbl, T=T, d=d, kk=kk, bridge=bridge,
-                                  wrong_slice=(tamper == "wrong-slice"), trace=trace)
+                                  wrong_slice=(tamper == "wrong-slice"), trace=trace,
+                                  counts=counts)
             x = (r1 + y) + sh
             info["layers"][il] = dict(kind="moe", **li)
         else:
@@ -310,60 +340,107 @@ def compare_exact(got: dict, ref: dict) -> list:
     return rows
 
 
-def check(gguf, prompt_ids, cont_ids, *, cfg=K2_MLA, layers=2, kk=8, offset=0, ligero=None):
-    """Engine pass against the integer reference. Returns the record."""
+def check_verdict(rec) -> bool:
+    """A check passes only with every intermediate exact, at least one
+    compared, and every recorded range inside its window."""
+    rows = rec.get("exact") or []
+    return (not rec.get("reference_error") and bool(rows) and all(r["ok"] for r in rows)
+            and not rec.get("range_violations")
+            and all(r["ok"] for r in (rec.get("ranges") or {}).values()))
+
+
+def _reference(gguf, ids, cfg, layers, kk, offset, rec):
+    """The integer reference, its ranges kept in `rec` even when it stops at
+    an undefined value. Returns its intermediates, or None if it stopped."""
     import k2_int_reference as ki
     from k2_loader import GgufWeights
+    ranges = ki.Ranges()
+    t0 = time.time()
+    try:
+        ref, _ = ki.forward(ids, GgufWeights(gguf, cfg=cfg), cfg, layers=layers, offset=offset,
+                            kk=kk, ranges=ranges)
+    except ki.UndefinedValue as e:
+        ref = None
+        rec["reference_error"] = str(e)
+        log(f"integer reference STOPPED: {e}")
+    rec["reference_s"] = time.time() - t0
+    rec["ranges"] = ranges.as_dict()
+    rec["range_violations"] = sorted(ranges.violations())
+    log(f"ranges: {len(ranges.rows)} recorded, {len(rec['range_violations'])} outside their "
+        f"window" + (f": {rec['range_violations']}" if rec["range_violations"] else ""))
+    return ref
+
+
+def check(gguf, prompt_ids, cont_ids, *, cfg=K2_MLA, layers=2, kk=8, offset=0, ligero=None,
+          rec=None):
+    """The integer reference first (CPU), recording every range; then the
+    engine pass, compared name by name. Fills and returns `rec`; rec["ok"]
+    only when every intermediate is exact and every range is inside its
+    window. A reference stopped by an undefined value (a lookup outside its
+    table, which the engine could not compute either) ends the check there,
+    its measurements kept."""
+    rec = {} if rec is None else rec
+    rec.update(mode="check", ok=False)
+    ref = _reference(gguf, list(prompt_ids) + list(cont_ids), cfg, layers, kk, offset, rec)
+    if ref is None:
+        return rec
     b = build(gguf, prompt_ids, cont_ids, cfg=cfg, layers=layers, kk=kk, offset=offset,
               ligero=ligero)
+    rec["info"] = b.info
     t0 = time.time()
     got, sz = engine_values(b)
-    t_engine = time.time() - t0
-    log(f"engine pass {t_engine:.1f}s, Sz={sz}")
-    t0 = time.time()
-    ref, ranges = ki.forward(list(prompt_ids) + list(cont_ids), GgufWeights(gguf, cfg=cfg), cfg,
-                             layers=layers, offset=offset, kk=kk)
-    t_ref = time.time() - t0
+    rec.update(engine_s=time.time() - t0, Sz=sz)
     rows = compare_exact(got, ref)
+    rec["exact"] = rows
+    rec["all_exact"] = all(r["ok"] for r in rows)
     first_bad = next((r for r in rows if not r["ok"]), None)
-    log(f"integer reference {t_ref:.1f}s: {sum(r['ok'] for r in rows)}/{len(rows)} "
+    log(f"engine pass {rec['engine_s']:.1f}s, Sz={sz}: {sum(r['ok'] for r in rows)}/{len(rows)} "
         f"intermediates EXACT" + (f"; first difference at {first_bad['name']}: {first_bad}"
                                   if first_bad else ""))
-    viol = ranges.violations()
-    log(f"ranges: {len(ranges.rows)} recorded, {len(viol)} outside their window"
-        + (f": {sorted(viol)}" if viol else ""))
-    return dict(mode="check", exact=rows, all_exact=first_bad is None, Sz=sz,
-                ranges=ranges.as_dict(), engine_s=t_engine, reference_s=t_ref, info=b.info)
+    rec["ok"] = check_verdict(rec)
+    return rec
 
 
-def fidelity(gguf, ids, *, cfg=K2_MLA, layers=2, kk=8, offset=0):
-    """CPU only: the integer reference against the float reference."""
+def fidelity(gguf, ids, *, cfg=K2_MLA, layers=2, kk=8, offset=0, rec=None):
+    """CPU only: the integer reference against the float reference. rec["ok"]
+    when the reference ran with every range inside its window; the
+    tolerances are read, not asserted."""
     import k2_float_reference as kf
     import k2_int_reference as ki
     from k2_loader import GgufWeights
+    rec = {} if rec is None else rec
+    rec.update(mode="fidelity", ok=False)
+    io = _reference(gguf, ids, cfg, layers, kk, offset, rec)
+    if io is None:
+        return rec
     t0 = time.time()
-    io, ranges = ki.forward(ids, GgufWeights(gguf, cfg=cfg), cfg, layers=layers,
-                            offset=offset, kk=kk)
     Wf = GgufWeights(gguf, ints=False, cfg=cfg)
     fo = kf.forward(ids, Wf, cfg, layers=layers, offset=offset, k=kk)
-    fid = kf.fidelity(io, fo, S, S_SEL)
-    rd = {il: kf.routing_differences(io, fo, Wf, il, k=kk, S=S)
-          for il in range(layers) if Wf.kind(il) == "moe"}
-    log(f"fidelity ({time.time() - t0:.1f}s): logits rel {fid['logits']['rel_l2']:.3g}, "
+    rec["fidelity"] = kf.fidelity(io, fo, S, S_SEL)
+    rec["routing"] = {il: kf.routing_differences(io, fo, Wf, il, k=kk, S=S)
+                      for il in range(layers) if Wf.kind(il) == "moe"}
+    rec["float_s"] = time.time() - t0
+    fid = rec["fidelity"]
+    log(f"fidelity: logits rel {fid['logits']['rel_l2']:.3g}, "
         f"top-1 agreement {fid['logits.top1_agree']:.3f}")
-    for il, r in rd.items():
+    for il, r in rec["routing"].items():
         log(f"routing L{il}: end to end {r['end_to_end']['tokens_differing']}/"
             f"{r['end_to_end']['tokens']} tokens differ; same input "
             f"{r['same_input']['tokens_differing']}/{r['same_input']['tokens']}")
-    return dict(mode="fidelity", fidelity=fid, routing=rd, ranges=ranges.as_dict())
+    rec["ok"] = not rec["range_violations"]
+    return rec
 
 
 # ---- prove: the honest proof, then the negatives against its enrollment -------------
 
 @contextlib.contextmanager
-def tampering(kind, cfg):
-    """Witness tampers, applied wherever the claim's witness is computed."""
+def tampering(kind, cfg, counts):
+    """Witness tampers, applied wherever the claim's witness is computed; each
+    application that changes a value is counted in counts[kind]."""
     import compute_fns
+
+    def hit():
+        counts[kind] = counts.get(kind, 0) + 1
     if kind == "interleave":
         import torch
         w1 = cfg["d_nope"]
@@ -371,6 +448,8 @@ def tampering(kind, cfg):
         def swap(t):
             u = t.contiguous().view(torch.int64).clone()
             a, c = int(u[0]), int(u[w1])
+            if a != c:
+                hit()
             u[0], u[w1] = c, a
             return u.view(torch.uint64)
         compute_fns.WITNESS_TAMPER[("HeadInterleaveClaim", "dst")] = swap
@@ -381,8 +460,14 @@ def tampering(kind, cfg):
     elif kind == "yarn-witness":
         import claims
         orig = compute_fns._rope_cos_sin
-        compute_fns._rope_cos_sin = lambda rc: claims._rope_cos_sin(dataclasses.replace(
-            rc, yarn=False, scale_factor=1.0, original_max_pos=0))
+
+        def stripped(rc):
+            got = claims._rope_cos_sin(dataclasses.replace(
+                rc, yarn=False, scale_factor=1.0, original_max_pos=0))
+            if got != orig(rc):
+                hit()
+            return got
+        compute_fns._rope_cos_sin = stripped
         try:
             yield
         finally:
@@ -406,24 +491,9 @@ def reveal(b: Built):
 
 
 def rust_verify_anchored(claims, proof, cfg, *, root_w, stmt, wc_identity):
-    """The Rust verifier under GIVEN anchors (not the proof's own)."""
-    import protocol as pr
-    from _rust_verify import _verify_proof_bin
-    from proof_dump import dump_proof
-    seeds = {k: v.hex() for k, v in proof.seeds.items()}
-    Q = list(pr.random_columns(proof.seeds["s_col"], cfg))
-    fd, path = tempfile.mkstemp(suffix=".json")
-    os.close(fd)
-    os.unlink(path)
-    argv = [_verify_proof_bin(), path, root_w.hex() if root_w else "-",
-            stmt.hex() if stmt else "-", wc_identity.hex() if wc_identity else "-"]
-    try:
-        dump_proof(path, pr.claims_to_json(claims, cfg), seeds, proof, Q, None)
-        r = subprocess.run(argv, capture_output=True, text=True)
-    finally:
-        if os.path.exists(path):
-            os.unlink(path)
-    return "rust_verify: ACCEPT" in r.stdout, (r.stdout + r.stderr).strip()
+    """The Rust verifier under GIVEN anchors (tests/_rust_verify.py)."""
+    from _rust_verify import rust_verify_anchored as verify
+    return verify(claims, proof, cfg, root_w=root_w, stmt=stmt, wc_identity=wc_identity)
 
 
 def claim_memory(b: Built):
@@ -441,20 +511,48 @@ def claim_memory(b: Built):
     return per
 
 
+def negative_passed(neg, row) -> bool:
+    """A planned negative counts only when its change was applied and the Rust
+    verifier rejected the proof under the honest anchors; the statement
+    without YaRN must also be accepted under its own digest, or its rejection
+    shows nothing about the digest."""
+    ok = row.get("applied", 0) > 0 and row.get("rejected_by_rust") is True
+    if neg == "yarn-statement":
+        ok = ok and row.get("accept_under_own_digest") is True
+    return ok
+
+
+def prove_verdict(rec, negatives) -> bool:
+    negs = rec.get("negatives") or {}
+    return (bool((rec.get("verify") or {}).get("accept"))
+            and all(n in negs and negs[n].get("passed") is True for n in negatives))
+
+
 def research_prove(gguf, prompt_ids, cont_ids, *, cfg=K2_MLA, layers=2, kk=8, offset=0,
-                   bridge=False, negatives=(), dump=None, ligero=None, wc_params=None):
+                   bridge=False, negatives=(), dump=None, ligero=None, wc_params=None,
+                   rec=None):
+    """The honest proof under its own anchors, then each negative on a fresh
+    tape, proved with the honest WeightCommitment and bridge enrollment and
+    checked under the honest weight root and enrollment identity. Fills and
+    returns `rec`; any exception (the prover's included) propagates."""
     import torch
     import core
-    from demo_maverick_moe import CFG
-    lig = ligero or CFG
+    if ligero is None:
+        from demo_maverick_moe import CFG as ligero
+    lig = ligero
+    if "wrong-slice" in negatives and not bridge:
+        raise SystemExit("wrong-slice needs --bridge: the bridge enrollment is its anchor")
     kw = dict(cfg=cfg, layers=layers, kk=kk, offset=offset, bridge=bridge, ligero=lig)
-    rec = dict(mode="prove", bridge=bridge, offset=offset, T=len(prompt_ids) + len(cont_ids))
+    rec = {} if rec is None else rec
+    rec.update(mode="prove", ok=False, bridge=bridge, offset=offset,
+               T=len(prompt_ids) + len(cont_ids), planned_negatives=list(negatives))
     t0 = time.time()
     hon = build(gguf, prompt_ids, cont_ids, **kw)
     rec["build_s"] = time.time() - t0
     t0 = time.time()
     wc = core.WeightCommitment.from_tape(hon.tape, lig)
     rec["enroll_s"] = time.time() - t0
+    log(f"enrolled {wc.m_w} weight rows in {rec['enroll_s']:.1f}s, root {wc.root.hex()[:16]}…")
     wc_enr = None
     if bridge:
         import wc_bridge as wcb
@@ -464,7 +562,6 @@ def research_prove(gguf, prompt_ids, cont_ids, *, cfg=K2_MLA, layers=2, kk=8, of
                                       wc_params or wcb.WcParams())
         rec["wc_enroll_s"] = time.time() - t0
         log(f"bridge enrollment {rec['wc_enroll_s']:.1f}s, identity {wc_enr.identity().hex()[:16]}…")
-    log(f"enrolled {wc.m_w} weight rows in {rec['enroll_s']:.1f}s, root {wc.root.hex()[:16]}…")
     t0 = time.time()
     rec["Sz"] = reveal(hon)
     rec["reveal_s"] = time.time() - t0
@@ -478,7 +575,8 @@ def research_prove(gguf, prompt_ids, cont_ids, *, cfg=K2_MLA, layers=2, kk=8, of
     log(f"PROVE {rec['prove_s']:.1f}s, peak GPU {rec['peak_gpu_GiB']:.2f} GiB")
     anchors = dict(root_w=proof.root_w, stmt=proof.statement_digest,
                    wc_identity=(proof.wc_bridge["identity"] if bridge else None))
-    assert anchors["root_w"] == wc.root, "the proof's weight root is not the enrollment's"
+    if anchors["root_w"] != wc.root:
+        raise RuntimeError("the proof's weight root is not the enrollment's")
     if dump:
         from instrumented_prove import write_dump_policy
         from proof_dump import dump_proof
@@ -499,38 +597,49 @@ def research_prove(gguf, prompt_ids, cont_ids, *, cfg=K2_MLA, layers=2, kk=8, of
     torch.cuda.empty_cache()
     rec["negatives"] = {}
     for neg in negatives:
-        if neg == "wrong-slice" and not bridge:
-            raise SystemExit("wrong-slice needs --bridge: the bridge enrollment is its anchor")
         t0 = time.time()
-        bt = build(gguf, prompt_ids, cont_ids, tamper=neg, **kw)
-        with tampering(neg, cfg):
+        counts = {}
+        bt = build(gguf, prompt_ids, cont_ids, tamper=neg, counts=counts, **kw)
+        with tampering(neg, cfg, counts):
             sz = reveal(bt)
-            try:
-                p = bt.tape.prove(weight_commitment=wc, weight_enrollment=wc_enr)
-            except Exception as e:                     # the prover refused: also a rejection
-                rec["negatives"][neg] = dict(rejected=True, by="prover",
-                                             why=f"{type(e).__name__}: {e}"[:2000])
-                log(f"negative {neg}: the prover refused ({type(e).__name__})")
-                continue
+            p = bt.tape.prove(weight_commitment=wc, weight_enrollment=wc_enr)
+        if neg == "yarn-statement":
+            counts[neg] = sum(1 for c in bt.tape.claims
+                              if type(c).__name__ == "RoPEClaim" and not c.config.yarn)
+        applied = counts.get(neg, 0)
+        if neg == "wrong-slice":
+            moe = [li for li in bt.info["layers"].values() if li["kind"] == "moe"]
+            if not (moe and moe[0].get("slice_differs")):
+                applied = 0                     # expert 1's rows equal expert 0's: no change
         stmt = anchors["stmt"] if neg == "yarn-statement" else p.statement_digest
         acc, msg = rust_verify_anchored(bt.tape.claims, p, lig, root_w=anchors["root_w"],
                                         stmt=stmt, wc_identity=anchors["wc_identity"])
-        row = dict(rejected=not acc, by="rust", Sz=sz, s=time.time() - t0,
-                   tail=msg[-1500:], same_statement=(p.statement_digest == anchors["stmt"]))
+        row = dict(applied=applied, rejected_by_rust=not acc, Sz=sz, s=time.time() - t0,
+                   same_statement=(p.statement_digest == anchors["stmt"]), tail=msg[-1500:])
         if neg == "yarn-statement":                    # contrast: its own digest
             own, _ = rust_verify_anchored(bt.tape.claims, p, lig, root_w=anchors["root_w"],
                                           stmt=p.statement_digest,
                                           wc_identity=anchors["wc_identity"])
             row["accept_under_own_digest"] = own
+        row["passed"] = negative_passed(neg, row)
         rec["negatives"][neg] = row
-        log(f"negative {neg}: {'REJECT' if not acc else 'ACCEPT (!)'} under the honest "
-            f"anchors in {row['s']:.1f}s")
+        log(f"negative {neg}: change applied {applied}x; Rust "
+            f"{'REJECT' if not acc else 'ACCEPT'} under the honest anchors"
+            + (f"; own digest {'ACCEPT' if row.get('accept_under_own_digest') else 'REJECT'}"
+               if neg == "yarn-statement" else "")
+            + f" -> {'ok' if row['passed'] else 'FAILED'} ({row['s']:.1f}s)")
         del p, bt
         torch.cuda.empty_cache()
+    rec["ok"] = prove_verdict(rec, negatives)
     return rec
 
 
 # ---- the command line ----------------------------------------------------------------
+
+MLA = K2_MLA            # the attention dimensions main() builds with (a test's toy swaps them)
+_ENV = ("LIGERO_T_QUERIES", "LIGERO_ELL", "LIGERO_K_DEG", "LIGERO_N_LIG", "LIGERO_PHASE_TIMING",
+        "LIGERO_SWEEP_TIMING", "LIGERO_ROUTED_Y_CACHE", "LIGERO_WEIGHT_CACHE", "LIGERO_CLAIM_MEM")
+
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
@@ -555,6 +664,8 @@ def main(argv=None):
     bad = [n for n in negs if n not in NEGATIVES]
     if bad:
         raise SystemExit(f"unknown negatives {bad}; choose from {NEGATIVES}")
+    if negs and a.mode != "prove":
+        raise SystemExit("--negatives belongs to --mode prove")
     if a.record and os.path.exists(a.record):
         raise SystemExit(f"{a.record} exists; name a new record")
     if a.dump_proof and os.path.exists(a.dump_proof):
@@ -575,31 +686,36 @@ def main(argv=None):
     os.environ["LIGERO_CLAIM_MEM"] = "1" if a.mode == "prove" else "0"
 
     from k2_loader import by_name
-    V = int(by_name(a.from_gguf)["token_embd.weight"].n_elements) // K2_MLA["d"]
+    V = int(by_name(a.from_gguf)["token_embd.weight"].n_elements) // MLA["d"]
     import numpy as np
     rng = np.random.default_rng(11)
     prompt_ids = rng.integers(0, V, a.prompt_n).tolist()
     cont_ids = rng.integers(0, V, a.cont_n).tolist()
     log(f"RESEARCH run, mode {a.mode}: T={a.prompt_n + a.cont_n} (synthetic token ids), "
         f"layers={a.layers}, k={a.top_k}, offset={a.offset}, T_QUERIES={a.t_queries}")
-    kw = dict(layers=a.layers, kk=a.top_k, offset=a.offset)
-    if a.mode == "check":
-        rec = check(a.from_gguf, prompt_ids, cont_ids, **kw)
-        ok = rec["all_exact"]
-    elif a.mode == "fidelity":
-        rec = fidelity(a.from_gguf, prompt_ids + cont_ids, **kw)
-        ok = True
+    kw = dict(cfg=MLA, layers=a.layers, kk=a.top_k, offset=a.offset)
+    rec = {"args": vars(a)}
+    try:
+        if a.mode == "check":
+            check(a.from_gguf, prompt_ids, cont_ids, rec=rec, **kw)
+        elif a.mode == "fidelity":
+            fidelity(a.from_gguf, prompt_ids + cont_ids, rec=rec, **kw)
+        else:
+            research_prove(a.from_gguf, prompt_ids, cont_ids, bridge=a.bridge, negatives=negs,
+                           dump=a.dump_proof, rec=rec, **kw)
+    except BaseException as e:          # the record keeps what was measured; the failure propagates
+        rec["ok"] = False
+        rec["error"] = f"{type(e).__name__}: {e}"
+        log(f"RESULT FAIL ({rec['error']})")
+        raise
     else:
-        rec = research_prove(a.from_gguf, prompt_ids, cont_ids, bridge=a.bridge,
-                             negatives=negs, dump=a.dump_proof, **kw)
-        ok = rec["verify"]["accept"] and all(r["rejected"] for r in rec.get("negatives", {}).values())
-    rec["args"] = vars(a)
-    if a.record:
-        with open(a.record, "x") as fh:
-            json.dump(rec, fh, indent=1, default=str)
-        log(f"record written to {a.record}")
-    log("RESULT " + ("PASS" if ok else "FAIL"))
-    return 0 if ok else 1
+        log("RESULT " + ("PASS" if rec.get("ok") else "FAIL"))
+    finally:
+        if a.record:
+            with open(a.record, "x") as fh:
+                json.dump(rec, fh, indent=1, default=str)
+            log(f"record written to {a.record}")
+    return 0 if rec.get("ok") else 1
 
 
 if __name__ == "__main__":

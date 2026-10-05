@@ -46,6 +46,12 @@ from topk_params import P, l_bits
 P_HALF = P // 2
 
 
+class UndefinedValue(ArithmeticError):
+    """A value the integer model does not define (a lookup outside its
+    table). Raised after its range is recorded, so the caller's Ranges keeps
+    every measurement up to that point."""
+
+
 # ---- exact integer arithmetic -------------------------------------------------------
 
 def _maxabs(a) -> int:
@@ -244,7 +250,9 @@ class Int:
         idx = np.asarray(r, dtype=np.int64) + shift
         self.ranges.note(f"{name}.logit", _maxabs(r), shift,
                          "router logit against the sigmoid table's half-domain")
-        assert idx.min() >= 0 and idx.max() < len(TY), "router logit outside the sigmoid table"
+        if idx.min() < 0 or idx.max() >= len(TY):
+            raise UndefinedValue(f"{name}: router logit {_maxabs(r)} outside the sigmoid "
+                                 f"table's half-domain {shift}")
         return TY[idx]
 
     # the public tables, built on first use
@@ -411,7 +419,8 @@ def forward(ids, W, cfg, *, layers, offset=0, yarn=True, k=K2_INT, kk=8,
             head_chunk=16384, ranges=None):
     """Token ids to logits through `layers` layers. `W` gives the integer
     weights (k2_loader.GgufWeights(ints=True), or a test's toy provider).
-    Returns ({name: int array}, Ranges)."""
+    Returns ({name: int array}, Ranges). Pass `ranges` to keep the
+    measurements made before an UndefinedValue."""
     op = Int(k, ranges)
     T = len(ids)
     out = {}
