@@ -389,7 +389,11 @@ def build_topk_toy(seq: int, *, d: int, d_ff: int, E: int, k: int):
     from tape import Tape
     torch.manual_seed(5)
     S = 1 << 12
-    u64 = lambda t: t.to(torch.int64).to(torch.uint64).cuda()
+    import numpy as np
+    import core
+    # signed values to field elements mod P (a uint64 cast would wrap mod 2^64)
+    u64 = lambda t: torch.from_numpy(np.array([int(v) % core.P for v in t.tolist()],
+                                              dtype=np.uint64)).cuda()
     tape = Tape(_crosscheck_cfg(), silu_config=SILU_14BIT, lazy=True)
     x = tape.commit("x", u64(torch.randint(-S, S, (seq * d,))), (seq, d))
     s = tape.commit("s", u64(torch.randint(1, S, (seq * E,))), (seq, E))

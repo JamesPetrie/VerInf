@@ -1759,7 +1759,7 @@ def _totals(man):
 
 def test_kimi_k2_weights_match_the_published_model():
     """The builder's weight slots against the Hugging Face listing of
-    moonshotai/Kimi-K2-Instruct at revision fd1984e2 (read 2026-10-08):
+    moonshotai/Kimi-K2-Instruct at revision fd1984e2 (read 2026-10-05):
     F8_E4M3 1,023,893,241,856, BF16 2,514,970,968, F32 23,040, total
     1,026,408,235,864. Every FP8 matrix is a shape this builder lays out
     (everything but the embedding, the head, the router and the biases), so
