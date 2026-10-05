@@ -153,15 +153,23 @@ All but `head_interleave` and the YaRN tables are calls the tree makes today.
    so existing tables stay byte-identical), `_rope_cos_sin` the YaRN
    frequencies and cos/sin factor, mirrored line-for-line in the Rust
    `rope_cos_sin` in the same f64 expression order, with golden vectors in
-   both suites, as the Llama-3 scaling was. The reference computes its
-   frequencies in float32; prover and verifier use f64, which changes
-   nothing a verifier checks and only fidelity, negligibly.
+   both suites, as the Llama-3 scaling was, including long positions. The
+   reference computes its frequencies and angles in float32; prover and
+   verifier use f64. That changes nothing a verifier checks, but it is not
+   negligible at long context: at position 131,071 the pinned reference's
+   float32 formula moves 19 of the 64 rounded cos/sin entries at scale
+   4,096, by up to 22 units (review of 2026-10-08), float32's error in
+   position × frequency. The YaRN tests therefore compare the f64 tables with
+   the reference formula at short and long positions under a stated
+   tolerance, and the logit-level fidelity gate of §6 includes long
+   positions with its own tolerance.
 2. **`HeadInterleaveClaim`.** dst (T, H, w₁ + w₂) pinned slot for slot to
    a (T, H, w₁) and to b, either (T, H, w₂) per head or (T, w₂) fanned out to
    every head: one linear constraint per dst slot, no quads, cost (L, L, 0)
    like a concat. In the prover it is a packet with two modes whose index
    maps are mixed-radix strides, so it lowers to the fold's existing band
-   descriptors (a `_band_key` case, no new kernel); in the Rust verifier it
+   descriptors (a case in `_lower_geometry`; `_band_key` is already generic;
+   no new kernel); in the Rust verifier it
    is one new `Expander` variant, as the F01 repair's `CausalMaskedId` was.
    Uniqueness: each dst slot equals exactly one source slot. Negative tests:
    a tampered dst slot in each segment, and a fanned-out slot that differs
@@ -171,11 +179,23 @@ All but `head_interleave` and the YaRN tables are calls the tree makes today.
 
 ### 4.4 Ranges to confirm on the checkpoint
 
-- **RMSNorm windows.** K2's ε is 10⁻⁶, so ε_int = round(10⁻⁶ · 2²⁴) = 17
-  against Maverick's 168. At d = 7,168, 1,536 and 512 the bracket's y window
-  is 22 bits, the most its guard allows (2·22 + 18 = 62 ≤ 63): every guard
-  holds, with no bit to spare. If the latents' measured range needs more,
-  the remedy is a larger ε_int or a different scale, decided before the
+- **RMSNorm: two separate limits.** K2's ε is 10⁻⁶, so ε_int =
+  round(10⁻⁶ · 2²⁴) = 17 against Maverick's 168.
+  - *The inverse-RMS window* is set by the scale and ε through the smallest
+    row sum, d·ε_int: at ε_int = 17 it is 22 bits at d = 7,168, 1,536 and
+    512, the most the limb guard allows (2·22 + 18 = 62 ≤ 63). Larger
+    latents only shrink the inverse RMS, so they cannot break it; it binds
+    only if ε_int fell or the scale rose.
+  - *The energy cap*: completeness needs Σx² + d·ε_int below 2⁵⁴, three
+    18-bit limbs, which at scale 2¹² means a real RMS below about 387, 836
+    and 1,448 at d = 7,168, 1,536 and 512 (458 at Maverick's 5,120, the
+    paper's completeness cap). A larger ε_int does not raise this cap; a
+    lower activation scale or a wider limb layout does, each a change to the
+    bracket's parameters in both languages.
+  - Raising ε_int is not a free knob either way: ε is part of the model, so
+    a different ε_int changes the modeled normalization, a fidelity change.
+
+  The measured latent magnitudes decide which, if any, applies, before the
   first proof.
 - **Softmax table.** With σ folded into the query, the score range sets
   Z_max; measured from the numpy reference.
@@ -191,12 +211,16 @@ exists. The model-wide S² coefficient, 81,984, is unchanged.
 
 ## 6. Gates
 
-On the CPU: YaRN golden vectors in both languages; the new claim's cost row
+On the CPU: YaRN golden vectors in both languages, at long positions too,
+and the f64 tables against the reference's float32 formula under a stated
+tolerance; the new claim's cost row
 against its compile, as `test_topk_claimcosts.py` does; the loader
 transforms against reshapes of random tensors; a numpy reference of one MLA
 layer against `modeling_deepseek.py` at small dimensions. On a GPU: a toy
 MLA layer with honest Rust ACCEPT and the targeted REJECTs of 4.3; then
-item 5's two-layer proof on the real GGUF.
+item 5's two-layer proof on the real GGUF. The logit-level fidelity check
+against llama.cpp covers long positions (up to 131,071) with a stated
+tolerance, since the rotary tables differ most there.
 
 ## 7. Open questions
 
@@ -204,4 +228,5 @@ item 5's two-layer proof on the real GGUF.
 - Whether llama.cpp's absorbed float computation and the integer model's
   non-absorbed one differ enough to matter for fidelity: the numpy reference
   compares both against llama.cpp's logits.
-- The RMSNorm margin of 4.4, if the measured latents need it.
+- Which RMSNorm limit of 4.4 the measured latents meet, if either, and the
+  remedy that limit calls for.
