@@ -404,7 +404,7 @@ def _ranged(b, x_name, L, n_words, il, label):
                inputs=[w], out=f"{label}.z{i}", out_len=L)
 
 
-def _topk_experts(b, x, s, bias, il, S, d, d_ff, E, k, prefix, *,
+def _topk_experts(b, x, s_sel, s, bias, il, S, d, d_ff, E, k, prefix, *,
                   width, select_word_bits, score_bits, C, bracket_word_bits,
                   bridge=False):
     """The claims topk_routing.topk_moe_ffn records, one for one: selection
@@ -413,10 +413,12 @@ def _topk_experts(b, x, s, bias, il, S, d, d_ff, E, k, prefix, *,
     and inputs (two concats), routed gate/up at T' = kT with their rescales,
     SiLU, the rescaled Hadamard, the routed down projection, the split into
     the k slot outputs, the gate-weighted combine and its one rescale.
-    Returns the FFN output variable (S x d)."""
+    Selection reads `s_sel` with the bias; the slot scores and gate weights
+    read `s` (the same variable when one score scale serves both, as on the
+    toy tape). Returns the FFN output variable (S x d)."""
     TE, Tk, Tp = S * E, S * k, k * S
     b.emit("topk_routing", dict(T=S, E=E, k=k), layer=il, label=f"{prefix}.topk",
-           inputs=[s, bias], out=f"{prefix}.mask", out_len=TE,
+           inputs=[s_sel, bias], out=f"{prefix}.mask", out_len=TE,
            more=[(f"{prefix}.topk.{n}", TE) for n in ("qt", "d", "md", "v")]
            + [(f"{prefix}.topk.tau", S)])
     _ranged(b, f"{prefix}.topk.v", TE, threshold_words(width, select_word_bits),
@@ -557,9 +559,8 @@ def _moe_ffn_topk(b, r1, n2g, il, S, d, d_ff, E, k, prefix, *, bridge=False,
                    inputs=[router], out=f"{prefix}.s_sel", out_len=TE)
     s_gate = b.emit("ptlookup", dict(L=TE), label=f"{prefix}.sigma", layer=il,
                     inputs=[router], out=f"{prefix}.s", out_len=TE)
-    ffn = _topk_experts(b, n2g, s_gate, bias, il, S, d, d_ff, E, k, prefix,
-                        bridge=bridge, **topk)
-    b.vars[s_sel].consumers.append(len(b.claims) - 1)   # selection reads s_sel
+    ffn = _topk_experts(b, n2g, s_sel, s_gate, bias, il, S, d, d_ff, E, k,
+                        prefix, bridge=bridge, **topk)
     sh = _dense_ffn_out(b, n2g, il, S, d, d_ff, f"{prefix}.sh")
     a1 = b.emit("add", dict(L=Ld), label=f"{prefix}.resid2a", layer=il,
                 inputs=[r1, ffn], out=f"{prefix}.r2a", out_len=Ld)
@@ -660,7 +661,7 @@ def topk_toy(seq: int, t_queries: int = 4, *, d: int = 16, d_ff: int = 16,
     x = b.input_var("x", seq * d)
     s = b.input_var("s", seq * E)
     bias = b.input_var("b", E)
-    _topk_experts(b, x, s, bias, 0, seq, d, d_ff, E, k, "L0", **params)
+    _topk_experts(b, x, s, s, bias, 0, seq, d, d_ff, E, k, "L0", **params)
     return Manifest(
         source=dict(kind="synth", generator="synth.topk_toy"),
         model=dict(name="topk-toy", d=d, d_ff_expert=d_ff, experts=E, top_k=k),

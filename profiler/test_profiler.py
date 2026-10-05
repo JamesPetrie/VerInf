@@ -1796,6 +1796,19 @@ def test_kimi_k2_structure():
     assert len(combines) == 60 and all(c.params["E"] == 8 for c in combines)
     # every claim type has a formula: no fallback pricing
     assert all(claimcosts.canonical(t) in claimcosts._FORMULAS for t in by)
+    # the DAG is wired both ways, and selection reads the finer scores while
+    # the slot scores read the gate-scale ones
+    _assert_io_consistency(m)
+    names = {c.idx: c for c in m.claims}
+    for c in by["topk_routing"]:
+        layer = c.label.split(".")[0]
+        assert c.inputs == [f"{layer}.s_sel", f"{layer}.bias"], c.inputs
+    for c in by["topk_slots"]:
+        assert c.inputs[1].endswith(".s"), c.inputs
+    for v in m.variables:
+        if v.name.endswith((".s_sel", ".s")) and v.producer is not None \
+                and names[v.producer].type == "ptlookup":
+            assert v.consumers, f"{v.name} feeds nothing"
 
 
 def test_kimi_k2_s2_term_is_attention():
@@ -1843,6 +1856,7 @@ def test_topk_word_counts_follow_the_prover():
 def test_topk_toy_and_the_cli():
     import synth
     m = synth.topk_toy(6)
+    _assert_io_consistency(m)
     types = [c.type for c in m.claims]
     assert types.count("routed_projected") == 3 and types.count("rescale_claim") == 3
     assert types.count("concat") == 2 and types.count("split") == 1
