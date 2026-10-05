@@ -37,6 +37,33 @@ class RopeScaling:
 
 
 @dataclass(frozen=True)
+class YarnScaling:
+    """YaRN RoPE frequency scaling (config.json `rope_scaling`, type "yarn"),
+    as DeepSeek-V3 and Kimi K2 use it: the factor, the original context, the
+    correction betas and the two mscale fields. tape.rope takes it in place
+    of a RopeScaling."""
+    factor: float
+    original_max_position_embeddings: int
+    beta_fast: float = 32.0
+    beta_slow: float = 1.0
+    mscale: float = 1.0
+    mscale_all_dim: float = 0.0
+
+    @classmethod
+    def from_config(cls, rope_scaling: dict) -> "YarnScaling":
+        kind = rope_scaling.get("type", rope_scaling.get("rope_type"))
+        if kind != "yarn":
+            raise ValueError(f"rope_scaling type {kind!r} is not yarn")
+        return cls(factor=float(rope_scaling["factor"]),
+                   original_max_position_embeddings=int(
+                       rope_scaling["original_max_position_embeddings"]),
+                   beta_fast=float(rope_scaling.get("beta_fast", 32.0)),
+                   beta_slow=float(rope_scaling.get("beta_slow", 1.0)),
+                   mscale=float(rope_scaling.get("mscale", 1.0)),
+                   mscale_all_dim=float(rope_scaling.get("mscale_all_dim", 0.0)))
+
+
+@dataclass(frozen=True)
 class ModelConfig:
     """Dense-Llama architecture parameters, as read from config.json."""
     d: int                      # hidden_size

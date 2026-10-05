@@ -173,6 +173,50 @@ def test_scaling_stripped_from_claim_rejects():
     assert not acc, "verifier ACCEPTed a proof whose rope_scaling was stripped"
 
 
+# ---- YaRN (test_rope_yarn.py pins the tables; these prove them end to end) ----
+
+YARN_E2E = RoPEConfig(SEQ=3, d_h=64, s_x=4096, base=50000.0, position_offset=131068,
+                      scale_factor=32.0, original_max_pos=4096, yarn=True,
+                      yarn_beta_fast=1.0, yarn_beta_slow=1.0, yarn_mscale=1.0,
+                      yarn_mscale_all_dim=1.0)   # Kimi K2's config, at its longest positions
+
+
+def test_honest_yarn_rope_rust_verifies():
+    """A RoPE claim with K2's YaRN tables at positions 131,068-131,070, proved
+    and verified by the Rust binary, which recomputes the tables from the
+    serialized config."""
+    from test_prover import prove
+    from _rust_verify import rust_verify
+    from claims import CFG
+    claims, inputs = _build_rope_claim(YARN_E2E, seed_val=45)
+    proof = prove(claims, inputs, seed=b"rope-yarn-h", cfg=CFG)
+    acc, msg = rust_verify(claims, proof, seed=b"rope-yarn-h", cfg=CFG)
+    assert acc, f"honest YaRN rope should ACCEPT: {msg}"
+
+
+def test_yarn_parameters_are_soundness_bearing():
+    """Prove with K2's YaRN tables, then present the claim with no scaling,
+    with the smooth-ramp betas, and with a different cos/sin factor: each changes
+    the tables the verifier recomputes, and each must REJECT."""
+    import dataclasses
+    from test_prover import prove
+    from _rust_verify import rust_verify
+    from claims import CFG
+    claims, inputs = _build_rope_claim(YARN_E2E, seed_val=46)
+    proof = prove(claims, inputs, seed=b"rope-yarn-t", cfg=CFG)
+    for label, changed in (
+            # yarn=False alone would leave factor 32 and context 4,096, the
+            # Llama-3 ramp, which on K2's betas gives the same tables
+            ("scaling stripped", dataclasses.replace(YARN_E2E, yarn=False, scale_factor=1.0,
+                                                     original_max_pos=0)),
+            ("beta_fast 32", dataclasses.replace(YARN_E2E, yarn_beta_fast=32.0)),
+            ("mscale_all_dim 0", dataclasses.replace(YARN_E2E, yarn_mscale_all_dim=0.0))):
+        assert _rope_cos_sin(changed) != _rope_cos_sin(YARN_E2E), f"{label}: vacuous"
+        tampered = [dataclasses.replace(claims[0], config=changed)]
+        acc, _ = rust_verify(tampered, proof, seed=b"rope-yarn-t", cfg=CFG)
+        assert not acc, f"verifier ACCEPTed a proof whose YaRN config changed ({label})"
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items())
            if k.startswith("test_") and callable(v)]
