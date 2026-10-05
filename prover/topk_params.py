@@ -50,3 +50,16 @@ def bracket_guard_ok(z_bits: int, rem_bits: int, w_bits: int, cs_bits: int) -> b
     lhs = (1 << (w_bits + z_bits)) + (1 << rem_bits)
     return (lhs < P and (1 << cs_bits) < P
             and (1 << rem_bits) <= P - (1 << max(rem_bits, z_bits)) - 1)
+
+
+def bracket_sizes(score_bits: int, k: int, C: int, word_bits: int) -> dict:
+    """The gate bracket's bounds and range words (topk_routing.gate_bracket):
+    slot scores below 2^score_bits give Z < 2^z_bits over k slots and
+    C·s < 2^cs_bits; rem and Z − 1 − rem take n_rem words, w takes n_w."""
+    z_bits = score_bits + max(1, math.ceil(math.log2(k + 1)))
+    cs_bits = C.bit_length() + score_bits
+    n_rem = max(1, math.ceil(z_bits / word_bits))
+    n_w = max(1, math.ceil(C.bit_length() / word_bits))
+    return dict(z_bits=z_bits, cs_bits=cs_bits, n_rem=n_rem, n_w=n_w,
+                rem_bits=n_rem * word_bits, w_bits=n_w * word_bits)
+

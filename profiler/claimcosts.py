@@ -171,6 +171,52 @@ def _freivalds_combine(p) -> Triple:
     return (T * F + 4 * ET + T, 3 * ET + 2 * T, ET)
 
 
+# ---- top-k routing (prover/topk_routing.py; analysis/topk-routing-design.md)
+# Each row counts the claim's own outputs (W), the cids its compile advances
+# over (cur - base), and the lengths of its quad families (Q). The ranges on
+# v, rem, Z-1-rem and w arrive as separate word_extract + range_word claims,
+# as route_top1's do; prover/tests/test_topk_claimcosts.py checks every row
+# against the prover's compile on a CPU.
+
+def _topk_routing(p) -> Triple:
+    # m, qt, d, md, v (TE each) + tau (T); F1 (TE, expert-major) + F2 (T) +
+    # Fd (TE) + Fv (TE); quads m*m and m*d over TE.
+    T, E = p["T"], p["E"]
+    TE = T * E
+    return (5.0 * TE + T, 3.0 * TE + T, 2.0 * TE)
+
+
+def _topk_slots(p) -> Triple:
+    # k slot masks M_i and k products MS_i (TE each) + ss (Tk); Sb (TE) +
+    # Sc (kT) + Sv (kT); quads M_i*M_i and M_i*s, k of each over TE.
+    T, E, k = p["T"], p["E"], p["k"]
+    TE = T * E
+    return (2.0 * k * TE + k * T, TE + 2.0 * k * T, 2.0 * k * TE)
+
+
+def _gate_bracket(p) -> Triple:
+    # Z (T) + Zb, w, wZ, rem, gr (Tk each); Bz (T) + Bb, Bd, Bg (Tk each);
+    # one quad family w*Zb over Tk.
+    T, k = p["T"], p["k"]
+    Tk = T * k
+    return (5.0 * Tk + T, T + 3.0 * Tk, float(Tk))
+
+
+def _concat(p) -> Triple:
+    # ConcatClaim: dst (L) pinned to the sources at their offsets — one cid
+    # per slot, no quads. The extractor records `length` (the claim's
+    # property, not a field).
+    L = _length(p)
+    return (float(L), float(L), 0.0)
+
+
+def _split(p) -> Triple:
+    # SplitClaim: the concat relation with the parts derived from the whole —
+    # the parts (L in all) are the claim's outputs.
+    L = _length(p)
+    return (float(L), float(L), 0.0)
+
+
 # Canonical name -> formula. Prover dataclass names are aliased below so the
 # tape extractor and the synthetic builders hit the same rows.
 def _routed_projected(p):
@@ -227,6 +273,11 @@ _FORMULAS = {
     "range_word": _range_word,
     "table_settle": _table_settle,
     "freivalds_combine": _freivalds_combine,
+    "topk_routing": _topk_routing,
+    "topk_slots": _topk_slots,
+    "gate_bracket": _gate_bracket,
+    "concat": _concat,
+    "split": _split,
 }
 
 _ALIASES = {
@@ -247,7 +298,14 @@ _ALIASES = {
     "RoutedProjectedMatmulClaim": "routed_projected",
     "RescaleClaim": "rescale_claim",
     "LinCombClaim": "lincomb",
+    "TopkRoutingClaim": "topk_routing",
+    "TopkSlotsClaim": "topk_slots",
+    "GateBracketClaim": "gate_bracket",
+    "ConcatClaim": "concat",
+    "SplitClaim": "split",
 }
+
+_SIZE_FROM_W = {"concat", "split"}
 
 _warned: set = set()
 
@@ -260,6 +318,13 @@ def cost(claim_type: str, params: Dict, w_hint: float = 0.0) -> Triple:
     """(W, cids, Q) for one claim. `w_hint` (e.g. exact slots from the tape)
     backs the fallback for types without a formula."""
     name = canonical(claim_type)
+    if name in _SIZE_FROM_W and "length" not in params and "L" not in params:
+        # Manifests extracted before the extractor recorded their length:
+        # a concat's or split's W is its length, so the tape's exact W is it.
+        if not w_hint:
+            raise ValueError(f"claimcosts: {claim_type} without a length or a "
+                             f"recorded W has no size to price")
+        params = dict(params, length=w_hint)
     fn = _FORMULAS.get(name)
     if fn is None:
         if name not in _warned:

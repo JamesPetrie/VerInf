@@ -55,7 +55,7 @@ from cuda_primitives import gl_add, gl_mul, gl_sub
 from max_claim import to_signed
 from packets import (L2_IdentityScalar, L2_RowSumPerSlotVector,
                      L2_StrideOneToManyScalar, L2_TransposeO2MScalar)
-from topk_params import bracket_guard_ok, l_bits, threshold_words
+from topk_params import bracket_guard_ok, bracket_sizes, l_bits, threshold_words
 
 NEG1 = (P - 1) % P
 
@@ -393,12 +393,9 @@ def gate_bracket(tape, ss, *, T, k, C, score_bits, word_bits=8):
     Z and C·ss; the ranges are sized from them and the bracket guard is
     checked here and again by the verifier."""
     from tape import WitnessTensor
-    import math
-    z_bits = score_bits + max(1, math.ceil(math.log2(k + 1)))
-    cs_bits = C.bit_length() + score_bits
-    n_rem = max(1, math.ceil(z_bits / word_bits))
-    n_w = max(1, math.ceil(C.bit_length() / word_bits))
-    rem_bits, w_bits = n_rem * word_bits, n_w * word_bits
+    sz = bracket_sizes(score_bits, k, C, word_bits)
+    z_bits, cs_bits, n_rem, n_w = sz["z_bits"], sz["cs_bits"], sz["n_rem"], sz["n_w"]
+    rem_bits, w_bits = sz["rem_bits"], sz["w_bits"]
     assert bracket_guard_ok(z_bits, rem_bits, w_bits, cs_bits), (
         f"unsound gate bracket: z {z_bits}, rem {rem_bits}, w {w_bits}, C·s {cs_bits} bits")
     _BUILD[0] += 1
