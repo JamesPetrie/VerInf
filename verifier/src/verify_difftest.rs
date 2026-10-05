@@ -173,6 +173,10 @@
             (Expander::Weighted { cid_base: 11, coefs: (0..53).map(|i| (i as u64 * 7 + 3) % P).collect() }, 53),
             (Expander::TransposeO2m { cid_base: 3, rows: 1, cols: 1, fan: 5, coef: 4 }, 23),  // ex-StrideO2m
             (Expander::TransposeO2m { cid_base: 3, rows: 4, cols: 3, fan: 5, coef: 4 }, 12),
+            (Expander::BlockStride { cid_base: 7, inner: 5, outer: 8, fan: 1, fan_stride: 0,
+                                     coef: 1 }, 40),
+            (Expander::BlockStride { cid_base: 12, inner: 3, outer: 32, fan: 4, fan_stride: 8,
+                                     coef: 1 }, 6),
             (Expander::CausalId { cid_base: 20, m: 4, h: 2, coef: 6 }, 32),
             (Expander::CausalMaskedId { cid_base: 20, m: 4, h: 2, coef: 6 }, 32),
             (Expander::CausalC2 { cid_base: 20, h: 2, coef: 6 }, 8),

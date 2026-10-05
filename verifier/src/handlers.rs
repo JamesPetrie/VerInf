@@ -63,6 +63,14 @@ impl Build {
             Expander::TransposeO2m { cid_base, rows: 1, cols: 1, fan: stride, coef });
     }
 
+    // Blocks of `inner` slots at a stride of `outer` cids, fanned out (packets.py
+    // L2_BlockStrideScalar).
+    fn emit_block_stride(&mut self, var: Var, cid_base: usize, inner: usize, outer: usize,
+                         fan: usize, fan_stride: usize, coef: u64, ell: usize) {
+        self.push_family(var, ell, Expander::BlockStride { cid_base, inner, outer, fan,
+                                                           fan_stride, coef });
+    }
+
     // _emit_transpose_o2m: transposed fan-out on a row-major (rows, cols) var.
     fn emit_transpose_o2m(&mut self, var: Var, cid_base: usize, rows: usize, cols: usize,
                           fan: usize, coef: u64, ell: usize) {
@@ -315,6 +323,7 @@ fn compile_op(cl: &Claim, ci: usize, s_op: &[u8], s_bind: Option<&[u8]>,
         "TopkSlotsClaim" => compile_topk_slots(cl, b, cfg),
         "GateBracketClaim" => compile_gate_bracket(cl, b, cfg),
         "SplitClaim" => compile_split(cl, b, cfg),
+        "HeadInterleaveClaim" => compile_head_interleave(cl, b, cfg),
         "MaskedCombineClaim" => compile_masked_combine(cl, b, cfg),
         "ConcatClaim" => compile_concat(cl, b, cfg),
         "FreivaldsCombineClaim" => compile_freivalds_combine(cl, ci, s_op, b, cfg),
@@ -1114,6 +1123,32 @@ fn compile_gate_bracket(cl: &Claim, b: &mut Build, cfg: &Config) {
     b.emit_quad(w, zb, wz, neg1, 0, t * k, ell);
 }
 
+// HeadInterleaveClaim: dst (T, H, w1 + w2) per head from a (T, H, w1) and b,
+// per head (T, H, w2) or shared (T, w2) fanned out to the heads. Mirrors
+// prover/head_interleave.py head_interleave_compile: one cid per dst slot,
+// base + (t·H + h)·W + c; dst −1, a and b +1 at their positions; no quads.
+fn compile_head_interleave(cl: &Claim, b: &mut Build, cfg: &Config) {
+    let ell = cfg.ell as usize;
+    let t = cl.scalar("T") as usize;
+    let h = cl.scalar("H") as usize;
+    let (w1, w2) = (cl.scalar("w1") as usize, cl.scalar("w2") as usize);
+    let shared = cl.scalar("shared");
+    let (a, bv, dst) = (cl.var("a"), cl.var("b"), cl.var("dst"));
+    let w = w1 + w2;
+    assert!(t >= 1 && h >= 1 && w1 >= 1 && w2 >= 1 && shared <= 1, "head_interleave: shape");
+    assert!(a.length == t * h * w1 && dst.length == t * h * w
+            && bv.length == if shared == 1 { t * w2 } else { t * h * w2 },
+            "head_interleave: variable lengths");
+    let base = b.nxt; b.nxt += dst.length;
+    b.emit_id(dst, base, P - 1, ell);
+    b.emit_block_stride(a, base, w1, w, 1, 0, 1, ell);
+    if shared == 1 {
+        b.emit_block_stride(bv, base + w1, w2, h * w, h, w, 1, ell);
+    } else {
+        b.emit_block_stride(bv, base + w1, w2, w, 1, 0, 1, ell);
+    }
+}
+
 // SplitClaim: the ConcatClaim relation with the parts derived from the whole
 // (topk_routing.py split_compile): whole·(−1) + parts at their offsets = 0.
 fn compile_split(cl: &Claim, b: &mut Build, cfg: &Config) {
@@ -1592,3 +1627,65 @@ mod topk_tests {
         assert_eq!((b.nxt, b.families.len()), (12, 4));
     }
 }
+
+#[cfg(test)]
+mod head_interleave_tests {
+    //! The compiled HeadInterleaveClaim maps every dst slot to exactly one
+    //! source slot, per head and shared (prover/tests/test_head_interleave_layout.py
+    //! checks the same map through the prover's descriptor lowering).
+    use super::*;
+    use crate::claim::parse_claim_set_value;
+    use serde_json::json;
+    use std::collections::BTreeMap;
+
+    const T: usize = 2; const H: usize = 3; const W1: usize = 2; const W2: usize = 1;
+
+    fn compiled(shared: bool) -> Build {
+        let blen = if shared { T * W2 } else { T * H * W2 };
+        let cs = parse_claim_set_value(json!({
+            "cfg": {"ELL": 4, "K_DEG": 8, "N_LIG": 32, "T_QUERIES": 4},
+            "table_order": [],
+            "claims": [{"op": "HeadInterleaveClaim", "fields": {
+                "a": {"var": [0, T * H * W1]}, "b": {"var": [10, blen]},
+                "dst": {"var": [20, T * H * (W1 + W2)]},
+                "T": {"scalar": T}, "H": {"scalar": H}, "w1": {"scalar": W1},
+                "w2": {"scalar": W2}, "shared": {"scalar": shared as u64}}}]}));
+        let mut b = Build { families: Vec::new(), rhs: Vec::new(), quad: Vec::new(), nxt: 0,
+                            nq: 0, wc_pins: std::collections::HashMap::new() };
+        compile_head_interleave(&cs.claims[0], &mut b, &cs.cfg);
+        b
+    }
+
+    // cid -> [(variable row_start, slot, coef)]
+    fn map(b: &Build) -> BTreeMap<usize, Vec<(usize, usize, u64)>> {
+        let mut m: BTreeMap<usize, Vec<(usize, usize, u64)>> = BTreeMap::new();
+        for fam in &b.families {
+            fam.exp.emit(0, fam.length, &mut |slot, cid, coef| {
+                m.entry(cid).or_default().push((fam.row_start, slot, coef));
+            });
+        }
+        m
+    }
+
+    fn check(shared: bool) {
+        let b = compiled(shared);
+        let w = W1 + W2;
+        assert_eq!(b.nxt, T * H * w);
+        assert!(b.quad.is_empty() && b.rhs.is_empty());
+        let m = map(&b);
+        assert_eq!(m.len(), T * H * w);
+        for t in 0..T { for h in 0..H { for c in 0..w {
+            let cid = (t * H + h) * w + c;
+            let src = if c < W1 { (0, (t * H + h) * W1 + c) }
+                      else if shared { (10, t * W2 + c - W1) }
+                      else { (10, (t * H + h) * W2 + c - W1) };
+            let mut got = m[&cid].clone(); got.sort();
+            let mut want = vec![(20, cid, P - 1), (src.0, src.1, 1)]; want.sort();
+            assert_eq!(got, want, "cid {cid}");
+        }}}
+    }
+
+    #[test] fn per_head_maps_every_dst_slot_to_one_source() { check(false); }
+    #[test] fn shared_fans_one_vector_to_every_head() { check(true); }
+}
+

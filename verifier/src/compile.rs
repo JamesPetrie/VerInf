@@ -55,6 +55,10 @@ pub enum Expander {
     /// consecutive cids in transposed order:
     ///   cid = cid_base + (f % cols)·rows·fan + (f / cols)·fan + k,  k ∈ [0, fan)
     TransposeO2m { cid_base: usize, rows: usize, cols: usize, fan: usize, coef: u64 },
+    // Blocks of `inner` slots placed at a stride of `outer` cids, each slot
+    // fanned out `fan` times at `fan_stride` (packets.py L2_BlockStrideScalar):
+    // cid = cid_base + (f / inner)·outer + f % inner + h·fan_stride.
+    BlockStride { cid_base: usize, inner: usize, outer: usize, fan: usize, fan_stride: usize, coef: u64 },
     CausalId { cid_base: usize, m: usize, h: usize, coef: u64 },
     /// The complement of CausalId: the masked cells (j > i_qry), ranked
     /// (b, j)-major among themselves; pins the masked softmax z to 0
@@ -152,6 +156,13 @@ impl Expander {
                     let flat = flat_lo + s;
                     let cid_lo = cid_base + (flat % cols) * (rows * fan) + (flat / cols) * fan;
                     for k in 0..*fan { f(s, cid_lo + k, *coef); }
+                }
+            }
+            Expander::BlockStride { cid_base, inner, outer, fan, fan_stride, coef } => {
+                for s in 0..n_slots {
+                    let flat = flat_lo + s;
+                    let cid0 = cid_base + (flat / inner) * outer + flat % inner;
+                    for h in 0..*fan { f(s, cid0 + h * fan_stride, *coef); }
                 }
             }
             Expander::CausalId { cid_base, m, h, coef } => {
@@ -283,6 +294,21 @@ impl Expander {
                     let flat = flat_lo + s;
                     let cid_lo = cid_base + (flat % cols) * (rows * fan) + (flat / cols) * fan;
                     f(Run::Fan { slot: s, cid_lo, len: *fan, coef: *coef });
+                }
+            }
+            Expander::BlockStride { cid_base, inner, outer, fan, fan_stride, coef } => {
+                // within a block the cids are consecutive: one run per block per fan copy
+                let mut s = 0usize;
+                while s < n_slots {
+                    let flat = flat_lo + s;
+                    let (q, r) = (flat / inner, flat % inner);
+                    let s_hi = ((q + 1) * inner - flat_lo).min(n_slots);
+                    for h in 0..*fan {
+                        f(Run::OneToOne { slot_lo: s, len: s_hi - s,
+                                          cid_lo: cid_base + q * outer + r + h * fan_stride,
+                                          cid_step: 1, coef: CoefSrc::Const(*coef) });
+                    }
+                    s = s_hi;
                 }
             }
             Expander::CausalId { cid_base, m, h, coef } => {

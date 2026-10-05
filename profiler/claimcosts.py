@@ -217,6 +217,13 @@ def _split(p) -> Triple:
     return (float(L), float(L), 0.0)
 
 
+def _head_interleave(p) -> Triple:
+    # HeadInterleaveClaim (prover/head_interleave.py): dst (T, H, w1 + w2)
+    # pinned slot for slot to its two parts — one cid per dst slot, no quads.
+    L = p["T"] * p["H"] * (p["w1"] + p["w2"])
+    return (float(L), float(L), 0.0)
+
+
 # Canonical name -> formula. Prover dataclass names are aliased below so the
 # tape extractor and the synthetic builders hit the same rows.
 def _routed_projected(p):
@@ -278,6 +285,7 @@ _FORMULAS = {
     "gate_bracket": _gate_bracket,
     "concat": _concat,
     "split": _split,
+    "head_interleave": _head_interleave,
 }
 
 _ALIASES = {
@@ -303,6 +311,7 @@ _ALIASES = {
     "GateBracketClaim": "gate_bracket",
     "ConcatClaim": "concat",
     "SplitClaim": "split",
+    "HeadInterleaveClaim": "head_interleave",
 }
 
 _SIZE_FROM_W = {"concat", "split"}
