@@ -95,6 +95,19 @@ def test_golden_vectors():
     assert _rope_cos_sin(RoPEConfig(SEQ=3, **RAMP)) == (RAMP_COS, RAMP_SIN)
 
 
+HALF = dict(RAMP, yarn_mscale=0.9996922335080182)   # cos(0)·m·4096 is exactly 5606.5
+
+
+def test_a_halfway_entry_rounds_to_even():
+    """At this mscale the position-0 cosines land exactly on 5606.5: Python's
+    round() gives 5606 (ties to even), and the Rust verifier's YaRN path must
+    too (rope_yarn_tests::a_halfway_entry_rounds_to_even_as_python_does);
+    ties away from zero would give 5607 and reject an honest proof."""
+    cfg = RoPEConfig(SEQ=1, **HALF)
+    assert 1.0 * _rope_yarn_mscale(cfg) * 4096 == 5606.5
+    assert _rope_cos_sin(cfg) == ([5606] * 4, [0] * 4)
+
+
 def test_k2_is_a_step():
     """K2's beta_fast = beta_slow = 1 put both correction bounds at 19 and 20:
     pairs 0-19 keep the base frequency, 20-31 divide it by 32, and the cos/sin

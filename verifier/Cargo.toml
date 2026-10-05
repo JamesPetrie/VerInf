@@ -2,6 +2,7 @@
 name = "ligero-verifier"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.77"   # f64::round_ties_even (the YaRN tables)
 
 # Bit-exact Rust port of the Python standalone Ligero verifier
 # (ligero/pipeline/protocol.py + verify.py). The TCB: field, domains, Merkle,

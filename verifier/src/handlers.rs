@@ -192,12 +192,19 @@ fn rope_cos_sin(seq: usize, d_h: usize, s_x: u64, base: f64, pos_off: usize,
                 "YaRN RoPE needs its factor and original context");
         let inv = rope_yarn_inv_freq(base, d_h, scale_factor, original_max_pos, y);
         let mfac = rope_yarn_mscale(scale_factor, y);
+        // Ties to even, as Python's round(): a cos/sin factor other than 1 can
+        // land exactly on a half (the HALF golden vector), where .round()
+        // would go away from zero and reject an honest proof. The legacy
+        // paths below keep .round(): their values are cos·s_x, which no
+        // integer position puts on a half, and their tables stay as dumped.
         for s in 0..seq {
             let p = (s + pos_off) as f64;
             for k in 0..half {
                 let theta = p * inv[k];
-                cos.push(((theta.cos() * mfac * s_x as f64).round() as i128).rem_euclid(P as i128) as u64);
-                sin.push(((theta.sin() * mfac * s_x as f64).round() as i128).rem_euclid(P as i128) as u64);
+                cos.push(((theta.cos() * mfac * s_x as f64).round_ties_even() as i128)
+                    .rem_euclid(P as i128) as u64);
+                sin.push(((theta.sin() * mfac * s_x as f64).round_ties_even() as i128)
+                    .rem_euclid(P as i128) as u64);
             }
         }
         return (cos, sin);
@@ -1727,6 +1734,18 @@ mod rope_yarn_tests {
         let (c, s) = rope_cos_sin(3, 8, 4096, 10000.0, 0, 40.0, 1.0, 1.0, 4096.0, Some(&ramp));
         assert_eq!(c, RAMP_COS.to_vec());
         assert_eq!(s, RAMP_SIN.to_vec());
+    }
+
+    #[test]
+    fn a_halfway_entry_rounds_to_even_as_python_does() {
+        // cos(0) · m · 4096 is exactly 5606.5 at this mscale; Python's round()
+        // gives 5606, and so must the verifier (ties away from zero gave 5607)
+        let half = Yarn { beta_fast: 32.0, beta_slow: 1.0, mscale: 0.9996922335080182,
+                          mscale_all_dim: 0.0 };
+        assert_eq!(1.0 * rope_yarn_mscale(40.0, &half) * 4096.0, 5606.5);
+        let (c, s) = rope_cos_sin(1, 8, 4096, 10000.0, 0, 40.0, 1.0, 1.0, 4096.0, Some(&half));
+        assert_eq!(c, vec![5606; 4]);
+        assert_eq!(s, vec![0; 4]);
     }
 
     #[test]
