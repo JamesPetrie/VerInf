@@ -139,16 +139,76 @@ fn rope_scaled_inv_freq(base: f64, d_h: usize, k: usize, scale_factor: f64,
     (1.0 - smooth) * inv_freq / scale_factor + smooth * inv_freq
 }
 
+// YaRN rope_scaling (type "yarn": DeepSeek-V3, Kimi K2). Mirrors claims.py
+// _yarn_correction_dim / _yarn_get_mscale / _rope_yarn_inv_freq /
+// _rope_yarn_mscale line for line, in the same f64 expression order (the
+// reference, K2's modeling_deepseek.py at Hugging Face fd1984e2, computes in
+// float32; both languages here use f64). Golden vectors: test_rope_yarn.py
+// and the yarn tests below.
+pub struct Yarn { pub beta_fast: f64, pub beta_slow: f64, pub mscale: f64, pub mscale_all_dim: f64 }
+
+fn yarn_correction_dim(num_rotations: f64, d_h: usize, base: f64, original_max_pos: f64) -> f64 {
+    (d_h as f64 * (original_max_pos / (num_rotations * 2.0 * std::f64::consts::PI)).ln())
+        / (2.0 * base.ln())
+}
+
+fn yarn_get_mscale(scale: f64, mscale: f64) -> f64 {
+    if scale <= 1.0 { 1.0 } else { 0.1 * mscale * scale.ln() + 1.0 }
+}
+
+fn rope_yarn_inv_freq(base: f64, d_h: usize, scale_factor: f64, original_max_pos: f64,
+                      y: &Yarn) -> Vec<f64> {
+    let low = std::cmp::max(
+        yarn_correction_dim(y.beta_fast, d_h, base, original_max_pos).floor() as i64, 0);
+    let high = std::cmp::min(
+        yarn_correction_dim(y.beta_slow, d_h, base, original_max_pos).ceil() as i64,
+        d_h as i64 - 1);
+    let hi = if low == high { high as f64 + 0.001 } else { high as f64 };
+    (0..d_h / 2).map(|k| {
+        let ramp = ((k as i64 - low) as f64 / (hi - low as f64)).max(0.0).min(1.0);
+        let mask = 1.0 - ramp;
+        let freq_extra = 1.0 / base.powf(2.0 * k as f64 / d_h as f64);
+        let freq_inter = 1.0 / (scale_factor * base.powf(2.0 * k as f64 / d_h as f64));
+        freq_inter * (1.0 - mask) + freq_extra * mask
+    }).collect()
+}
+
+fn rope_yarn_mscale(scale_factor: f64, y: &Yarn) -> f64 {
+    yarn_get_mscale(scale_factor, y.mscale) / yarn_get_mscale(scale_factor, y.mscale_all_dim)
+}
+
 // _rope_cos_sin mirror: c,s integer tables at scale s_x, indexed seq·(d_h/2)+k.
 // The unscaled path (original_max_pos == 0) keeps the original p/denominator
 // form untouched (NOT p·inv_freq, which rounds differently in the last ulp)
 // so tables from pre-scaling dumps stay identical.
 fn rope_cos_sin(seq: usize, d_h: usize, s_x: u64, base: f64, pos_off: usize,
                 scale_factor: f64, low_freq_factor: f64, high_freq_factor: f64,
-                original_max_pos: f64) -> (Vec<u64>, Vec<u64>) {
+                original_max_pos: f64, yarn: Option<&Yarn>) -> (Vec<u64>, Vec<u64>) {
     let half = d_h / 2;
     let mut cos = Vec::new();
     let mut sin = Vec::new();
+    if let Some(y) = yarn {
+        assert!(original_max_pos > 0.0 && scale_factor > 0.0,
+                "YaRN RoPE needs its factor and original context");
+        let inv = rope_yarn_inv_freq(base, d_h, scale_factor, original_max_pos, y);
+        let mfac = rope_yarn_mscale(scale_factor, y);
+        // Ties to even, as Python's round(): a cos/sin factor other than 1 can
+        // land exactly on a half (the HALF golden vector), where .round()
+        // would go away from zero and reject an honest proof. The legacy
+        // paths below keep .round(): their values are cos·s_x, which no
+        // integer position puts on a half, and their tables stay as dumped.
+        for s in 0..seq {
+            let p = (s + pos_off) as f64;
+            for k in 0..half {
+                let theta = p * inv[k];
+                cos.push(((theta.cos() * mfac * s_x as f64).round_ties_even() as i128)
+                    .rem_euclid(P as i128) as u64);
+                sin.push(((theta.sin() * mfac * s_x as f64).round_ties_even() as i128)
+                    .rem_euclid(P as i128) as u64);
+            }
+        }
+        return (cos, sin);
+    }
     for s in 0..seq {
         let p = (s + pos_off) as f64;
         for k in 0..half {
@@ -262,12 +322,20 @@ fn compile_op(cl: &Claim, ci: usize, s_op: &[u8], s_bind: Option<&[u8]>,
             // Llama-3 rope_scaling ramp; defaults (original_max_pos=0 = OFF)
             // match RoPEConfig's, so pre-scaling dumps verify unchanged.
             // (serde as_f64 reads the int-serialized original_max_pos fine.)
+            // YaRN (off unless the claim says so; absent in older dumps)
+            let yarn = (cl.cfg_f64_or("config", "yarn", 0.0) != 0.0).then(|| Yarn {
+                beta_fast: cl.cfg_f64_or("config", "yarn_beta_fast", 32.0),
+                beta_slow: cl.cfg_f64_or("config", "yarn_beta_slow", 1.0),
+                mscale: cl.cfg_f64_or("config", "yarn_mscale", 1.0),
+                mscale_all_dim: cl.cfg_f64_or("config", "yarn_mscale_all_dim", 0.0),
+            });
             let (cos, sin) = rope_cos_sin(
                 seq, d_h, s_x, rope_base, pos_off,
                 cl.cfg_f64_or("config", "scale_factor", 1.0),
                 cl.cfg_f64_or("config", "low_freq_factor", 1.0),
                 cl.cfg_f64_or("config", "high_freq_factor", 1.0),
-                cl.cfg_f64_or("config", "original_max_pos", 0.0));
+                cl.cfg_f64_or("config", "original_max_pos", 0.0),
+                yarn.as_ref());
             let (cos, sin) = (Arc::new(cos), Arc::new(sin));   // share one table across all rows
             b.push_family(target, ell, Expander::RopeXrot { base, h, d_h });
             let x = cl.var("x");
@@ -1455,10 +1523,10 @@ mod rope_scaling_tests {
 
     #[test]
     fn golden_vectors_match_python() {
-        let (c, s) = rope_cos_sin(3, 8, 4096, 500000.0, 0, SC.0, SC.1, SC.2, SC.3);
+        let (c, s) = rope_cos_sin(3, 8, 4096, 500000.0, 0, SC.0, SC.1, SC.2, SC.3, None);
         assert_eq!(c, A_COS.to_vec(), "config A cos drifted");
         assert_eq!(s, A_SIN.to_vec(), "config A sin drifted");
-        let (c, s) = rope_cos_sin(1, 64, 4096, 500000.0, 3, SC.0, SC.1, SC.2, SC.3);
+        let (c, s) = rope_cos_sin(1, 64, 4096, 500000.0, 3, SC.0, SC.1, SC.2, SC.3, None);
         assert_eq!(c, B_COS.to_vec(), "config B cos drifted");
         assert_eq!(s, B_SIN.to_vec(), "config B sin drifted");
     }
@@ -1468,7 +1536,7 @@ mod rope_scaling_tests {
         // original_max_pos=0 disables the ramp: must equal the ORIGINAL
         // p/denominator expression byte-for-byte (old dumps verify unchanged).
         let (seq, d_h, s_x, base, off) = (5usize, 8usize, 4096u64, 10000.0f64, 2usize);
-        let (c, s) = rope_cos_sin(seq, d_h, s_x, base, off, 1.0, 1.0, 1.0, 0.0);
+        let (c, s) = rope_cos_sin(seq, d_h, s_x, base, off, 1.0, 1.0, 1.0, 0.0, None);
         let (mut ec, mut es) = (Vec::new(), Vec::new());
         for sq in 0..seq {
             let p = (sq + off) as f64;
@@ -1590,5 +1658,118 @@ mod topk_tests {
         let mut b = build();
         compile_split(&cs.claims[0], &mut b, &cs.cfg);
         assert_eq!((b.nxt, b.families.len()), (12, 4));
+    }
+}
+
+#[cfg(test)]
+mod rope_yarn_tests {
+    //! Golden vectors shared bit-for-bit with prover/tests/test_rope_yarn.py
+    //! (generated from the Python implementation): Kimi K2's YaRN config at
+    //! positions 1, 4,095 and 131,071, and a smooth-ramp config with a cos/sin
+    //! factor other than 1. The compile-path test feeds the config as the
+    //! prover serializes it, so the field names and defaults are pinned too.
+    use super::*;
+    use crate::claim::parse_claim_set_value;
+    use serde_json::json;
+
+    const K2_1_COS: [u64; 32] = [
+        2213, 3098, 3578, 3830, 3960, 4027, 4061, 4078, 4087, 4091, 4094, 4095,
+        4095, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096,
+        4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096,
+    ];
+    const K2_1_SIN: [u64; 32] = [
+        3447, 2680, 1994, 1453, 1047, 751, 537, 384, 274, 195, 139, 99, 71, 51, 36,
+        26, 18, 13, 9, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ];
+    const K2_4095_COS: [u64; 32] = [
+        18446744069414584051, 325, 18446744069414580644, 18446744069414582028,
+        18446744069414580353, 1563, 18446744069414583232, 3008,
+        18446744069414580788, 3582, 2110, 1395, 18446744069414583784, 3983,
+        18446744069414583848, 3496, 3521, 3608, 18446744069414580251, 3836, 4051,
+        4073, 4084, 4090, 4093, 4094, 4095, 4096, 4096, 4096, 4096, 4096,
+    ];
+    const K2_4095_SIN: [u64; 32] = [
+        18446744069414580234, 18446744069414580238, 1804, 3394,
+        18446744069414583304, 3786, 18446744069414580372, 2780,
+        18446744069414582248, 1986, 3511, 18446744069414580470, 4061, 955,
+        18446744069414580252, 2135, 18446744069414582229, 1939, 457, 1435, 604, 431,
+        308, 220, 157, 112, 80, 57, 41, 29, 21, 15,
+    ];
+    const K2_131071_COS: [u64; 32] = [
+        18446744069414580971, 3630, 1607, 1625, 18446744069414580453, 3536,
+        18446744069414583596, 18446744069414584008, 4012, 1578,
+        18446744069414580833, 3150, 142, 18446744069414584096, 18446744069414580394,
+        1817, 18446744069414583267, 18446744069414580284, 18446744069414580501,
+        1993, 101, 18446744069414580339, 18446744069414581276, 18446744069414583721,
+        1388, 2630, 3327, 3698, 3892, 3992, 4043, 4069,
+    ];
+    const K2_131071_SIN: [u64; 32] = [
+        18446744069414581965, 18446744069414582424, 3768, 18446744069414580561,
+        18446744069414582973, 18446744069414582254, 4031, 4084, 824,
+        18446744069414580541, 2148, 18446744069414581703, 18446744069414580227,
+        4090, 1166, 18446744069414580650, 3958, 18446744069414583626, 1478,
+        18446744069414580743, 18446744069414580226, 18446744069414583362, 2740,
+        4052, 3854, 3140, 2390, 1760, 1276, 917, 657, 469,
+    ];
+    const RAMP_COS: [u64; 12] = [
+        5607, 5607, 5607, 5607, 3029, 5579, 5607, 5607, 18446744069414581988, 5495,
+        5607, 5607,
+    ];
+    const RAMP_SIN: [u64; 12] = [
+        0, 0, 0, 0, 4718, 560, 29, 0, 5098, 1114, 57, 0,
+    ];
+
+    fn k2() -> Yarn { Yarn { beta_fast: 1.0, beta_slow: 1.0, mscale: 1.0, mscale_all_dim: 1.0 } }
+
+    #[test]
+    fn golden_vectors_match_python() {
+        for (off, c0, s0) in [(1usize, &K2_1_COS[..], &K2_1_SIN[..]),
+                              (4095, &K2_4095_COS[..], &K2_4095_SIN[..]),
+                              (131071, &K2_131071_COS[..], &K2_131071_SIN[..])] {
+            let (c, s) = rope_cos_sin(1, 64, 4096, 50000.0, off, 32.0, 1.0, 1.0, 4096.0, Some(&k2()));
+            assert_eq!(c, c0.to_vec(), "K2 cos at {} drifted", off);
+            assert_eq!(s, s0.to_vec(), "K2 sin at {} drifted", off);
+        }
+        let ramp = Yarn { beta_fast: 32.0, beta_slow: 1.0, mscale: 1.0, mscale_all_dim: 0.0 };
+        let (c, s) = rope_cos_sin(3, 8, 4096, 10000.0, 0, 40.0, 1.0, 1.0, 4096.0, Some(&ramp));
+        assert_eq!(c, RAMP_COS.to_vec());
+        assert_eq!(s, RAMP_SIN.to_vec());
+    }
+
+    #[test]
+    fn a_halfway_entry_rounds_to_even_as_python_does() {
+        // cos(0) · m · 4096 is exactly 5606.5 at this mscale; Python's round()
+        // gives 5606, and so must the verifier (ties away from zero gave 5607)
+        let half = Yarn { beta_fast: 32.0, beta_slow: 1.0, mscale: 0.9996922335080182,
+                          mscale_all_dim: 0.0 };
+        assert_eq!(1.0 * rope_yarn_mscale(40.0, &half) * 4096.0, 5606.5);
+        let (c, s) = rope_cos_sin(1, 8, 4096, 10000.0, 0, 40.0, 1.0, 1.0, 4096.0, Some(&half));
+        assert_eq!(c, vec![5606; 4]);
+        assert_eq!(s, vec![0; 4]);
+    }
+
+    #[test]
+    fn the_compile_path_reads_the_serialized_config() {
+        let cs = parse_claim_set_value(json!({
+            "cfg": {"ELL": 8, "K_DEG": 8, "N_LIG": 32, "T_QUERIES": 4},
+            "table_order": [],
+            "claims": [{"op": "RoPEClaim", "fields": {
+                "x": {"var": [0, 64]}, "x_rot": {"var": [8, 64]},
+                "rescale_bits": {"scalar": 0}, "output_width": {"scalar": 16},
+                "config": {"config": {"SEQ": 1, "d_h": 64, "s_x": 4096, "base": 50000.0,
+                    "position_offset": 131071, "heads": 1, "scale_factor": 32.0,
+                    "low_freq_factor": 1.0, "high_freq_factor": 1.0, "original_max_pos": 4096,
+                    "yarn": 1, "yarn_beta_fast": 1.0, "yarn_beta_slow": 1.0,
+                    "yarn_mscale": 1.0, "yarn_mscale_all_dim": 1.0}}}}],
+        }));
+        let mut b = Build { families: Vec::new(), rhs: Vec::new(), quad: Vec::new(), nxt: 0,
+                            nq: 0, wc_pins: std::collections::HashMap::new() };
+        compile_op(&cs.claims[0], 0, &[], None, &mut b, &cs.cfg);
+        let tables = b.families.iter().find_map(|f| match &f.exp {
+            Expander::RopeX { cos, sin, .. } => Some((cos.to_vec(), sin.to_vec())),
+            _ => None,
+        }).expect("a RopeX family");
+        assert_eq!(tables.0, K2_131071_COS.to_vec());
+        assert_eq!(tables.1, K2_131071_SIN.to_vec());
     }
 }

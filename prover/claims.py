@@ -2233,6 +2233,15 @@ class RoPEConfig:
     low_freq_factor: float = 1.0
     high_freq_factor: float = 1.0
     original_max_pos: int = 0      # original_max_position_embeddings; 0 = off
+    # YaRN rope_scaling (type "yarn": DeepSeek-V3, Kimi K2). When `yarn` is
+    # set, scale_factor and original_max_pos are YaRN's factor and original
+    # context, and the low/high_freq_factor fields are unused. Off by default:
+    # every existing table stays byte-identical.
+    yarn: bool = False
+    yarn_beta_fast: float = 32.0
+    yarn_beta_slow: float = 1.0
+    yarn_mscale: float = 1.0
+    yarn_mscale_all_dim: float = 0.0
 
 
 def _rope_scaled_inv_freq(cfg: RoPEConfig, k: int) -> float:
@@ -2258,6 +2267,50 @@ def _rope_scaled_inv_freq(cfg: RoPEConfig, k: int) -> float:
     return (1.0 - smooth) * inv_freq / cfg.scale_factor + smooth * inv_freq
 
 
+def _yarn_correction_dim(num_rotations: float, cfg: RoPEConfig) -> float:
+    """yarn_find_correction_dim of the DeepSeek-V3 modeling code (K2's
+    modeling_deepseek.py at Hugging Face revision fd1984e2, :226-232), in f64.
+    MIRRORED in handlers.rs yarn_correction_dim, same expression order."""
+    return (cfg.d_h * math.log(cfg.original_max_pos / (num_rotations * 2 * math.pi))) / (
+        2 * math.log(cfg.base))
+
+
+def _yarn_get_mscale(scale: float, mscale: float) -> float:
+    """yarn_get_mscale (:247-250)."""
+    if scale <= 1:
+        return 1.0
+    return 0.1 * mscale * math.log(scale) + 1.0
+
+
+def _rope_yarn_inv_freq(cfg: RoPEConfig) -> List[float]:
+    """YaRN inverse frequency per dim-pair k (DeepseekV3YarnRotaryEmbedding.
+    _set_cos_sin_cache, :285-308), in f64 where the reference uses float32:
+    the base frequency (extrapolation) below the correction range, the
+    frequency divided by the factor (interpolation) above it, a linear ramp
+    between. The range is floor/ceil of the correction dimensions for
+    beta_fast and beta_slow, clamped to [0, d_h - 1]; equal bounds widen by
+    0.001, so the ramp degenerates to a step (Kimi K2: pairs 0-19 keep, 20-31
+    divide). MIRRORED in handlers.rs rope_yarn_inv_freq."""
+    low = max(math.floor(_yarn_correction_dim(cfg.yarn_beta_fast, cfg)), 0)
+    high = min(math.ceil(_yarn_correction_dim(cfg.yarn_beta_slow, cfg)), cfg.d_h - 1)
+    hi = high + 0.001 if low == high else high
+    out = []
+    for k in range(cfg.d_h // 2):
+        ramp = min(max((k - low) / (hi - low), 0.0), 1.0)
+        mask = 1.0 - ramp
+        freq_extra = 1.0 / (cfg.base ** (2 * k / cfg.d_h))
+        freq_inter = 1.0 / (cfg.scale_factor * cfg.base ** (2 * k / cfg.d_h))
+        out.append(freq_inter * (1 - mask) + freq_extra * mask)
+    return out
+
+
+def _rope_yarn_mscale(cfg: RoPEConfig) -> float:
+    """The factor YaRN applies to cos and sin (:316-319): exactly 1 when
+    mscale == mscale_all_dim, as in Kimi K2."""
+    return (_yarn_get_mscale(cfg.scale_factor, cfg.yarn_mscale)
+            / _yarn_get_mscale(cfg.scale_factor, cfg.yarn_mscale_all_dim))
+
+
 def _rope_cos_sin(cfg: RoPEConfig) -> Tuple[List[int], List[int]]:
     """Build c, s integer tables at scale s_x, indexed by seq·(d_h/2)+k.
     Both prover and verifier compute these identically; the cross-claim
@@ -2266,6 +2319,18 @@ def _rope_cos_sin(cfg: RoPEConfig) -> Tuple[List[int], List[int]]:
     which rounds differently in the last ulp) so old tables stay identical."""
     half = cfg.d_h // 2
     c_l, s_l = [], []
+    if cfg.yarn:
+        assert cfg.original_max_pos > 0 and cfg.scale_factor > 0, (
+            "YaRN RoPE needs its factor and original context")
+        inv = _rope_yarn_inv_freq(cfg)
+        mfac = _rope_yarn_mscale(cfg)
+        for seq in range(cfg.SEQ):
+            pos = seq + cfg.position_offset
+            for k in range(half):
+                theta_k = pos * inv[k]
+                c_l.append(int(round(math.cos(theta_k) * mfac * cfg.s_x)) % P)
+                s_l.append(int(round(math.sin(theta_k) * mfac * cfg.s_x)) % P)
+        return c_l, s_l
     for seq in range(cfg.SEQ):
         pos = seq + cfg.position_offset
         for k in range(half):
