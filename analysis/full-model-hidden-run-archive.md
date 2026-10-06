@@ -1,5 +1,17 @@
 # Full-model ALL-HIDDEN sound proof run — result archive (paper-critical)
 
+> **Model binding (annotated 2026-10-06).** The Maverick proofs in this archive
+> were built by `demo_maverick_full.build_model`, which committed every RMSNorm
+> gain and `g_out` as a plain input, outside the persistent weight block that an
+> enrollment's root authenticates, and left `bc_ones`, the operand that spreads
+> the MoE's sigmoid gate over the routed input, unconstrained. These proofs
+> bind the committed projection and expert weights but not the gains, and admit
+> a free per-element scale on the routed input: they lack complete model
+> binding. A toy built from the driver's own pieces was accepted with both
+> altered under the honest weight root (`analysis/b200-session-10-archive.md`).
+> The repaired driver enrolls every gain and pins every `bc_ones` entry to 1;
+> it needs a new enrollment, and these proofs do not verify under it.
+
 Recorded 2026-07-10. **Purpose:** preserve every metric from the sound
 full-model proof re-run on the hardened prover, with BOTH token streams
 hidden, so it can be cited without re-running (~14 h prove + ~18 h verify).

@@ -1,5 +1,17 @@
 # Blackwell session 1 — archive (2026-08-19)
 
+> **Model binding (annotated 2026-10-06).** The Maverick proofs in this archive
+> were built by `demo_maverick_full.build_model`, which committed every RMSNorm
+> gain and `g_out` as a plain input, outside the persistent weight block that an
+> enrollment's root authenticates, and left `bc_ones`, the operand that spreads
+> the MoE's sigmoid gate over the routed input, unconstrained. These proofs
+> bind the committed projection and expert weights but not the gains, and admit
+> a free per-element scale on the routed input: they lack complete model
+> binding. A toy built from the driver's own pieces was accepted with both
+> altered under the honest weight root (`analysis/b200-session-10-archive.md`).
+> The repaired driver enrolls every gain and pins every `bc_ones` entry to 1;
+> it needs a new enrollment, and these proofs do not verify under it.
+
 First run of the profiler tooling on the target hardware class: one rented
 NVIDIA B200 (RunPod secure cloud, US-NC-2, 183 GB HBM, host CUDA 13.0,
 `runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404`), ~100 minutes, ~$11.
