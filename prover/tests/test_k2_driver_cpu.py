@@ -147,7 +147,8 @@ def _fake_prover(monkeypatch, negative_prove, negative_verify=None):
         if not honest and negative_verify is not None:
             return negative_verify()
         verdict = "ACCEPT" if honest else "REJECT"
-        return dict(verdict=verdict, returncode=0, output=f"rust_verify: {verdict}")
+        return dict(verdict=verdict, returncode=0, output=f"rust_verify: {verdict}",
+                    checks=["[OK ] merkle"] + ([] if honest else ["[XX ] lin"]))
     monkeypatch.setattr(dk, "rust_verify_anchored", verify)
 
 
@@ -199,7 +200,7 @@ def test_an_applied_and_rejected_negative_passes(driver, monkeypatch):
     rc, rec = driver("prove", "--negatives", "interleave")
     row = rec["negatives"]["interleave"]
     assert row["applied"] == 1 and row["verdict"] == "REJECT" and row["exit_status"] == 0
-    assert row["passed"] and rc == 0 and rec["ok"] is True
+    assert row["passed"] and rc == 0 and rec["ok"] is True and row["failed_checks"] == ["[XX ] lin"]
     assert rec["verify"]["verdict"] == "ACCEPT" and rec["verify"]["exit_status"] == 0
     assert ("HeadInterleaveClaim", "dst") not in compute_fns.WITNESS_TAMPER
 

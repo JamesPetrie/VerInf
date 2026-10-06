@@ -594,6 +594,7 @@ def research_prove(gguf, prompt_ids, cont_ids, *, cfg=K2_MLA, layers=2, kk=8, of
     v = rust_verify_anchored(hon.tape.claims, proof, lig, **anchors)
     acc = v["verdict"] == "ACCEPT"
     rec["verify"] = dict(accept=acc, verdict=v["verdict"], exit_status=v["returncode"],
+                         failed_checks=[c for c in v["checks"] if c.startswith("[XX ]")],
                          s=time.time() - t0)
     log(f"rust verify_proof (honest, same-run anchors): {v['verdict']} (exit "
         f"{v['returncode']}) in {rec['verify']['s']:.1f}s")
@@ -623,6 +624,7 @@ def research_prove(gguf, prompt_ids, cont_ids, *, cfg=K2_MLA, layers=2, kk=8, of
         v = rust_verify_anchored(bt.tape.claims, p, lig, root_w=anchors["root_w"],
                                  stmt=stmt, wc_identity=anchors["wc_identity"])
         row = dict(applied=applied, verdict=v["verdict"], exit_status=v["returncode"],
+                   failed_checks=[c for c in v["checks"] if c.startswith("[XX ]")],
                    rejected_by_rust=v["verdict"] == "REJECT", Sz=sz, s=time.time() - t0,
                    same_statement=(p.statement_digest == anchors["stmt"]),
                    tail=v["output"][-1500:])
