@@ -16,14 +16,14 @@ Gates:
 
 Run on the Spark:  ~/venv-hf/bin/python run_tests.py test_empty_root_sentinel
 """
-import json, os, subprocess, sys, pathlib, tempfile
+import json, os, sys, pathlib, tempfile
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import torch
 import core
 import protocol as pr
 from tape import Tape
 from proof_dump import dump_proof
-from _rust_verify import _verify_proof_bin
+from _rust_verify import _verify_proof_bin, run_verify_proof
 
 CFG = core.LigeroConfig(ELL=8192, K_DEG=16384, N_LIG=65536, T_QUERIES=4)
 SEED = b"empty-root"
@@ -56,8 +56,7 @@ def _run(path, proof=None):
     if proof is not None:
         argv += [proof.root_w.hex() if proof.root_w else "-",
                  proof.statement_digest.hex()]
-    r = subprocess.run(argv, capture_output=True, text=True)
-    return "rust_verify: ACCEPT" in r.stdout
+    return run_verify_proof(argv)["verdict"] == "ACCEPT"     # VerifierFailure: no verdict
 
 
 def test_zero_root_sentinel():

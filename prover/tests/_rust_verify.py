@@ -35,13 +35,39 @@ def _verify_proof_bin():
         "or point LIGERO_VERIFY_PROOF at the binary.")
 
 
+class VerifierFailure(RuntimeError):
+    """verify_proof ended without a verdict: killed (a signal, or 137 from a
+    shell), panicked (101), exited non-zero, or printed no single
+    `rust_verify: ACCEPT|REJECT` line. Never a rejection: a negative counts
+    only on an explicit REJECT."""
+
+    def __init__(self, returncode, output):
+        self.returncode, self.output = returncode, output
+        super().__init__(f"verify_proof exit status {returncode} with no explicit verdict: "
+                         f"{output[-1500:]}")
+
+
+def run_verify_proof(argv):
+    """Run the binary. Returns {verdict: ACCEPT|REJECT, returncode, output}
+    only when it exited normally (status 0) printing exactly one verdict
+    line; raises VerifierFailure otherwise."""
+    r = subprocess.run(argv, capture_output=True, text=True)
+    out = (r.stdout + r.stderr).strip()
+    lines = [ln.strip() for ln in r.stdout.splitlines() if ln.strip().startswith("rust_verify:")]
+    if r.returncode != 0 or len(lines) != 1 or lines[0] not in (
+            "rust_verify: ACCEPT", "rust_verify: REJECT"):
+        raise VerifierFailure(r.returncode, out)
+    return dict(verdict=lines[0].split(": ", 1)[1], returncode=r.returncode, output=out)
+
+
 # (proof serialization is now the single block-driven writer proof_dump.dump_proof;
 #  rust_verify below calls it directly.)
 
 
 def rust_verify(claims, proof, seed, cfg):
     """Dump `proof` via the single writer (proof_dump.dump_proof) and check it
-    with the Rust verifier. Returns (accepted, output)."""
+    with the Rust verifier. Returns (accepted, output) for an explicit
+    verdict; raises VerifierFailure when the binary gives none."""
     from proof_dump import dump_proof
     # A Fiat-Shamir proof carries its own coins/columns (dump_proof prefers
     # them); the legacy test prover (tests/test_prover.prove) does not, so the
@@ -77,12 +103,11 @@ def rust_verify(claims, proof, seed, cfg):
             wc_identity.hex() if wc_identity else "-"]
     try:
         dump_proof(path, pr.claims_to_json(claims, cfg), seeds, proof, Q, None)
-        r = subprocess.run(argv, capture_output=True, text=True)
+        v = run_verify_proof(argv)
     finally:
         if os.path.exists(path):
             os.unlink(path)
-    accepted = "rust_verify: ACCEPT" in r.stdout
-    return accepted, (r.stdout + r.stderr).strip()
+    return v["verdict"] == "ACCEPT", v["output"]
 
 
 def rust_verify_tape(tape, proof, seed):
