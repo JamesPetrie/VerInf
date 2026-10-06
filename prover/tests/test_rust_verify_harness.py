@@ -48,6 +48,7 @@ def test_an_explicit_verdict_after_a_normal_exit(tmp_path, name):
     v = rv.run_verify_proof([_bin(tmp_path, "vp", body), "proof.json"])
     assert v["verdict"] == want and v["returncode"] == 0
     assert f"rust_verify: {want}" in v["output"]
+    assert v["checks"] == (["[OK ] merkle"] if want == "ACCEPT" else ["[XX ] lin"])
 
 
 @pytest.mark.parametrize("name", sorted(FAILURES))

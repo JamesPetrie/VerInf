@@ -48,16 +48,20 @@ class VerifierFailure(RuntimeError):
 
 
 def run_verify_proof(argv):
-    """Run the binary. Returns {verdict: ACCEPT|REJECT, returncode, output}
-    only when it exited normally (status 0) printing exactly one verdict
-    line; raises VerifierFailure otherwise."""
+    """Run the binary. Returns {verdict: ACCEPT|REJECT, returncode, output,
+    checks} only when it exited normally (status 0) printing exactly one
+    verdict line; raises VerifierFailure otherwise. `checks` are stdout's
+    `[OK ]`/`[XX ]` lines, kept apart because `output` ends in stderr's
+    progress lines, which a tail of it would show instead of the verdict."""
     r = subprocess.run(argv, capture_output=True, text=True)
     out = (r.stdout + r.stderr).strip()
     lines = [ln.strip() for ln in r.stdout.splitlines() if ln.strip().startswith("rust_verify:")]
     if r.returncode != 0 or len(lines) != 1 or lines[0] not in (
             "rust_verify: ACCEPT", "rust_verify: REJECT"):
         raise VerifierFailure(r.returncode, out)
-    return dict(verdict=lines[0].split(": ", 1)[1], returncode=r.returncode, output=out)
+    checks = [ln.strip() for ln in r.stdout.splitlines() if ln.strip().startswith(("[OK ]", "[XX ]"))]
+    return dict(verdict=lines[0].split(": ", 1)[1], returncode=r.returncode, output=out,
+                checks=checks)
 
 
 # (proof serialization is now the single block-driven writer proof_dump.dump_proof;
