@@ -1,0 +1,6 @@
+[demo_k2 +10.4s] RESEARCH run, mode fidelity: T=100 (synthetic token ids), layers=2, k=8, offset=130072, T_QUERIES=54
+[demo_k2 +157.6s] ranges: 139 recorded, 0 outside their window
+[demo_k2 +220.0s] fidelity: logits rel 0.0523, top-1 agreement 0.840
+[demo_k2 +220.0s] routing L1: end to end 40/100 tokens differ; same input 1/100
+[demo_k2 +220.0s] RESULT PASS
+[demo_k2 +220.0s] record written to /workspace/records/k2-fidelity-s100-long.json

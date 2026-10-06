@@ -1,0 +1,2 @@
+ded16f2 (tarball of the commit, no .git on the pod; verifier built from it)
+33feddd shipped for stage 1b (toy suites at ELL 64); verifier/ is unchanged since ded16f2, the binary is stage 1's

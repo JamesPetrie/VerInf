@@ -1,0 +1,3 @@
+switch: S=1000 prove running 23:29:18; stopping stage3.sh: 7218 7220 
+switch: stage3.sh left: 0; prove still running: 1
+switch: stage3b launched 23:29:20

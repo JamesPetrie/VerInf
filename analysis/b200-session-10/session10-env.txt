@@ -1,0 +1,48 @@
+== 2026-10-05T22:16:05Z on 2a9ccefd11ac
+== paths
+VERINF_GGUF=/workspace/gguf/UD-Q4_K_XL/Kimi-K2-Instruct-UD-Q4_K_XL-00001-of-00013.gguf
+VERINF_GGUF_DIR=/workspace/gguf
+VERINF_LOGS=/workspace/logs
+VERINF_PROOFS=/workspace/proofs
+VERINF_REC=/workspace/records
+VERINF_ROOT=/workspace
+== python / torch
+torch 2.8.0+cu128 cuda 12.8 NVIDIA B200 capability (10, 0)
+== nvcc
+Build cuda_12.8.r12.8/compiler.35583870_0
+== gpu
+name, memory.total [MiB], driver_version
+NVIDIA B200, 183359 MiB, 580.126.20
+== host
+               total        used        free      shared  buff/cache   available
+Mem:            2015         671         227         491        1624        1343
+Swap:              0           0           0
+cgroup memory.max: 250999996416
+visible CPUs: 192
+Model name:                           INTEL(R) XEON(R) PLATINUM 8568Y+
+Thread(s) per core:                   2
+Socket(s):                            2
+cgroup cpu.max: 2040000 100000
+nr_periods 350 nr_throttled 1 throttled_usec 71282 
+OMP_NUM_THREADS=20 MKL_NUM_THREADS=20 RAYON_NUM_THREADS=20 torch threads: 20
+== filesystems
+SOURCE  FSTYPE  TARGET  SIZE  AVAIL
+overlay overlay /       250G 229.3G
+SOURCE  FSTYPE  TARGET  SIZE  AVAIL
+overlay overlay /       250G 229.3G
+SOURCE  FSTYPE  TARGET  SIZE  AVAIL
+overlay overlay /       250G 229.3G
+Filesystem      Size  Used Avail Use% Mounted on
+overlay         250G   21G  230G   9% /
+overlay         250G   21G  230G   9% /
+== revision
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+== packages
+blake3                    1.0.10
+gguf                      0.19.0
+hf_transfer               0.1.9
+ninja                     1.13.2
+numpy                     2.1.2
+safetensors               0.8.0
+torch                     2.8.0+cu128
