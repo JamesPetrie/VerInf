@@ -46,6 +46,8 @@ maverick needs a GGUF on disk (metadata is read eagerly; payloads stay lazy).
     python3 profiler/crosscheck.py maverick --from-gguf ... --t-queries 54 \
         --seq 1000 --layout                      # big-S extract + in-process layout
     python3 profiler/crosscheck.py topk-toy --seq 6 --layout
+    python3 profiler/crosscheck.py kimi-k2 --from-gguf <shard 1> --t-queries 54 \
+        --prompt-n 50 --cont-n 50 --layers 2 --bridge --layout
 
 Exit 0: no FLAG lines. Exit 1: at least one FLAG — eyeball before trusting
 extracted manifests (README roadmap 1 is the gate).
@@ -163,6 +165,9 @@ def _ui_expected_extra(positions: int) -> dict:
         "embed_lookup": positions,
         "add": positions,               # (C-1) chain adds + 1 reveal pin
         "routing[+aux]": 6,
+        # build_inputs' indicator join and the UI's output select: extract-only
+        # for Maverick, but a modeled type where synth has the top-k concats
+        "concat": 2,
     }
 
 
@@ -376,6 +381,23 @@ def build_maverick(gguf: str, prompt_n: int, cont_n: int, *, layers: int,
     return tape, model
 
 
+def build_kimi_k2(gguf: str, prompt_n: int, cont_n: int, *, layers: int, bridge: bool):
+    """demo_k2.build up to the built tape (lazy: shard 1's metadata and the
+    selection bias are read, no payload is decoded)."""
+    import numpy as np
+    import demo_k2
+    from k2_attention import K2_MLA
+    from k2_loader import by_name
+    V = int(by_name(gguf)["token_embd.weight"].n_elements) // K2_MLA["d"]
+    rng = np.random.default_rng(11)
+    prompt_ids = rng.integers(0, V, prompt_n).tolist()
+    cont_ids = rng.integers(0, V, cont_n).tolist()
+    b = demo_k2.build(gguf, prompt_ids, cont_ids, layers=layers, bridge=bridge)
+    model = dict(name="kimi-k2", d=K2_MLA["d"], layers=layers, vocab=V,
+                 experts=synth.K2["experts"], top_k=synth.K2["top_k"])
+    return b.tape, model
+
+
 def build_topk_toy(seq: int, *, d: int, d_ff: int, E: int, k: int):
     """The top-k expert chain as prover/topk_routing.topk_moe_ffn records it,
     on committed inputs at the production activation scale (2^12, the
@@ -550,7 +572,7 @@ def run_layout_probe(cmd: list, timeout: int) -> str:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
         description="extract a real demo tape and diff it against synth")
-    ap.add_argument("model", choices=["llama7b", "maverick", "topk-toy"])
+    ap.add_argument("model", choices=["llama7b", "maverick", "topk-toy", "kimi-k2"])
     ap.add_argument("--seq", type=int, default=None,
                     help="llama7b context length (default 100)")
     ap.add_argument("--layers", type=int, default=None)
@@ -572,6 +594,8 @@ def main(argv=None) -> int:
                          "a demo subprocess for llama7b (validates the hand "
                          "mirror; keep --seq small)")
     ap.add_argument("--layout-timeout", type=int, default=3600)
+    ap.add_argument("--bridge", action="store_true",
+                    help="kimi-k2: the routed experts bridge-held, as the gate proves them")
     ap.add_argument("--skip-selftest", action="store_true")
     ap.add_argument("-o", "--out-dir", default="crosscheck-out")
     a = ap.parse_args(argv)
@@ -610,7 +634,7 @@ def main(argv=None) -> int:
                      "--engine"]
     else:
         if not a.from_gguf:
-            ap.error("maverick needs --from-gguf (metadata is read eagerly)")
+            ap.error(f"{a.model} needs --from-gguf (metadata is read eagerly)")
         if a.seq is not None:
             if a.prompt_n is not None or a.cont_n is not None:
                 # The split changes the tape (one embedding selection and an
@@ -624,6 +648,14 @@ def main(argv=None) -> int:
         if a.cont_n is None:
             a.cont_n = 2
         seq = a.prompt_n + a.cont_n
+    if a.model == "kimi-k2":
+        layers = a.layers if a.layers is not None else 2
+        tape, model = build_kimi_k2(a.from_gguf, a.prompt_n, a.cont_n, layers=layers,
+                                    bridge=a.bridge)
+        sy = synth.kimi_k2(seq, t_queries=tape.cfg.T_QUERIES, layers=layers,
+                           bridge=a.bridge)
+        probe_cmd = None      # in-process layout, as for maverick
+    elif a.model == "maverick":
         layers = a.layers if a.layers is not None else 48
         tape, model = build_maverick(a.from_gguf, a.prompt_n, a.cont_n,
                                      layers=layers, experts=a.experts,
@@ -651,7 +683,7 @@ def main(argv=None) -> int:
 
     if sy is not None:
         print("[4] diff vs synth")
-        ui_positions = a.cont_n if a.model == "maverick" else None
+        ui_positions = a.cont_n if a.model in ("maverick", "kimi-k2") else None
         flags += diff_report(sy, man, ui_positions=ui_positions)
 
     if a.layout:
