@@ -120,7 +120,7 @@ class _Tape:
         return self._prove()
 
 
-def _fake_prover(monkeypatch, negative_prove):
+def _fake_prover(monkeypatch, negative_prove, negative_verify=None):
     import core
     import torch
 
@@ -144,7 +144,10 @@ def _fake_prover(monkeypatch, negative_prove):
     def verify(claims, proof, cfg, *, root_w, stmt, wc_identity):
         honest = len(verdicts) == 0
         verdicts.append(stmt)
-        return (True, "rust_verify: ACCEPT") if honest else (False, "rust_verify: REJECT")
+        if not honest and negative_verify is not None:
+            return negative_verify()
+        verdict = "ACCEPT" if honest else "REJECT"
+        return dict(verdict=verdict, returncode=0, output=f"rust_verify: {verdict}")
     monkeypatch.setattr(dk, "rust_verify_anchored", verify)
 
 
@@ -155,6 +158,25 @@ def test_a_prover_exception_in_a_negative_propagates_with_the_record(driver, mon
     _, rec = driver("prove", "--negatives", "interleave", raises=RuntimeError)
     assert rec["ok"] is False and rec["error"] == "RuntimeError: CUDA out of memory"
     assert rec["verify"]["accept"] is True and rec["negatives"] == {}
+
+
+def test_a_killed_verifier_in_a_negative_propagates_and_never_counts(driver, monkeypatch):
+    """The reviewer's case: a verifier exiting 137 was a passing negative."""
+    import torch
+    import compute_fns
+    from _rust_verify import VerifierFailure
+
+    def tampered_prove():
+        hook = compute_fns.WITNESS_TAMPER[("HeadInterleaveClaim", "dst")]
+        hook(torch.arange(2 * toy.TOY_MLA["d_nope"], dtype=torch.int64).view(torch.uint64))
+        return _Proof()
+
+    def killed():
+        raise VerifierFailure(137, "partial output")
+    _fake_prover(monkeypatch, tampered_prove, killed)
+    _, rec = driver("prove", "--negatives", "interleave", raises=VerifierFailure)
+    assert rec["ok"] is False and "exit status 137" in rec["error"]
+    assert rec["negatives"] == {} and rec["verify"]["verdict"] == "ACCEPT"
 
 
 def test_a_negative_with_no_change_applied_fails(driver, monkeypatch):
@@ -176,18 +198,26 @@ def test_an_applied_and_rejected_negative_passes(driver, monkeypatch):
     _fake_prover(monkeypatch, tampered_prove)
     rc, rec = driver("prove", "--negatives", "interleave")
     row = rec["negatives"]["interleave"]
-    assert row["applied"] == 1 and row["rejected_by_rust"] and row["passed"]
-    assert rc == 0 and rec["ok"] is True
+    assert row["applied"] == 1 and row["verdict"] == "REJECT" and row["exit_status"] == 0
+    assert row["passed"] and rc == 0 and rec["ok"] is True
+    assert rec["verify"]["verdict"] == "ACCEPT" and rec["verify"]["exit_status"] == 0
     assert ("HeadInterleaveClaim", "dst") not in compute_fns.WITNESS_TAMPER
 
 
+REJ = dict(verdict="REJECT", exit_status=0)
+OWN = dict(own_digest_verdict="ACCEPT", own_digest_exit_status=0)
+
+
 @pytest.mark.parametrize("row,neg,want", [
-    (dict(applied=1, rejected_by_rust=True), "interleave", True),
-    (dict(applied=0, rejected_by_rust=True), "interleave", False),
-    (dict(applied=2, rejected_by_rust=False), "wrong-slice", False),
-    (dict(applied=4, rejected_by_rust=True, accept_under_own_digest=True), "yarn-statement", True),
-    (dict(applied=4, rejected_by_rust=True, accept_under_own_digest=False), "yarn-statement", False),
-    (dict(applied=4, rejected_by_rust=True), "yarn-statement", False),
+    (dict(applied=1, **REJ), "interleave", True),
+    (dict(applied=0, **REJ), "interleave", False),
+    (dict(applied=2, verdict="ACCEPT", exit_status=0), "wrong-slice", False),
+    (dict(applied=2, verdict="REJECT", exit_status=137), "wrong-slice", False),
+    (dict(applied=2, rejected_by_rust=True), "wrong-slice", False),       # no explicit verdict
+    (dict(applied=4, **REJ, **OWN), "yarn-statement", True),
+    (dict(applied=4, **REJ, own_digest_verdict="REJECT", own_digest_exit_status=0),
+     "yarn-statement", False),
+    (dict(applied=4, **REJ), "yarn-statement", False),
 ])
 def test_negative_verdicts(row, neg, want):
     assert dk.negative_passed(neg, row) is want

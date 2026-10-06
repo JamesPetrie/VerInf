@@ -38,9 +38,12 @@ Modes, in the order the gate runs them:
                               rows (--bridge)
             PASS needs the honest proof accepted and, for every planned
             negative, its change applied (counted where the witness or the
-            claims change) and the proof rejected by the Rust verifier; the
-            statement without YaRN must also be accepted under its own
-            digest. A prover exception is a failure, never a rejection.
+            claims change) and an explicit `rust_verify: REJECT` from a
+            verifier that exited normally; the statement without YaRN must
+            also get an explicit ACCEPT under its own digest. A prover
+            exception, and a verifier that dies or prints no verdict, are
+            failures, never rejections; verdicts and exit statuses are in the
+            record.
 
 The record (--record) is written on every exit, a failure's included, with
 whatever was measured before it.
@@ -491,7 +494,9 @@ def reveal(b: Built):
 
 
 def rust_verify_anchored(claims, proof, cfg, *, root_w, stmt, wc_identity):
-    """The Rust verifier under GIVEN anchors (tests/_rust_verify.py)."""
+    """The Rust verifier under GIVEN anchors (tests/_rust_verify.py):
+    {verdict, returncode, output} for an explicit ACCEPT or REJECT after a
+    normal exit; VerifierFailure (propagated) for anything else."""
     from _rust_verify import rust_verify_anchored as verify
     return verify(claims, proof, cfg, root_w=root_w, stmt=stmt, wc_identity=wc_identity)
 
@@ -513,12 +518,13 @@ def claim_memory(b: Built):
 
 def negative_passed(neg, row) -> bool:
     """A planned negative counts only when its change was applied and the Rust
-    verifier rejected the proof under the honest anchors; the statement
-    without YaRN must also be accepted under its own digest, or its rejection
-    shows nothing about the digest."""
-    ok = row.get("applied", 0) > 0 and row.get("rejected_by_rust") is True
+    verifier printed an explicit REJECT under the honest anchors after a
+    normal exit; the statement without YaRN must also get an explicit ACCEPT
+    under its own digest, or its rejection shows nothing about the digest."""
+    ok = (row.get("applied", 0) > 0 and row.get("verdict") == "REJECT"
+          and row.get("exit_status") == 0)
     if neg == "yarn-statement":
-        ok = ok and row.get("accept_under_own_digest") is True
+        ok = ok and row.get("own_digest_verdict") == "ACCEPT" and row.get("own_digest_exit_status") == 0
     return ok
 
 
@@ -585,13 +591,15 @@ def research_prove(gguf, prompt_ids, cont_ids, *, cfg=K2_MLA, layers=2, kk=8, of
         rec["dump"] = dict(path=dump, bytes=os.path.getsize(dump), s=time.time() - t0,
                            policy=write_dump_policy(dump, proof))
     t0 = time.time()
-    acc, msg = rust_verify_anchored(hon.tape.claims, proof, lig, **anchors)
-    rec["verify"] = dict(accept=acc, s=time.time() - t0)
-    log(f"rust verify_proof (honest, same-run anchors): {'ACCEPT' if acc else 'REJECT'} "
-        f"in {rec['verify']['s']:.1f}s")
+    v = rust_verify_anchored(hon.tape.claims, proof, lig, **anchors)
+    acc = v["verdict"] == "ACCEPT"
+    rec["verify"] = dict(accept=acc, verdict=v["verdict"], exit_status=v["returncode"],
+                         s=time.time() - t0)
+    log(f"rust verify_proof (honest, same-run anchors): {v['verdict']} (exit "
+        f"{v['returncode']}) in {rec['verify']['s']:.1f}s")
     if not acc:
-        log(msg[-3000:])
-        rec["verify"]["tail"] = msg[-3000:]
+        log(v["output"][-3000:])
+        rec["verify"]["tail"] = v["output"][-3000:]
         return rec
     del proof
     torch.cuda.empty_cache()
@@ -612,20 +620,23 @@ def research_prove(gguf, prompt_ids, cont_ids, *, cfg=K2_MLA, layers=2, kk=8, of
             if not (moe and moe[0].get("slice_differs")):
                 applied = 0                     # expert 1's rows equal expert 0's: no change
         stmt = anchors["stmt"] if neg == "yarn-statement" else p.statement_digest
-        acc, msg = rust_verify_anchored(bt.tape.claims, p, lig, root_w=anchors["root_w"],
-                                        stmt=stmt, wc_identity=anchors["wc_identity"])
-        row = dict(applied=applied, rejected_by_rust=not acc, Sz=sz, s=time.time() - t0,
-                   same_statement=(p.statement_digest == anchors["stmt"]), tail=msg[-1500:])
+        v = rust_verify_anchored(bt.tape.claims, p, lig, root_w=anchors["root_w"],
+                                 stmt=stmt, wc_identity=anchors["wc_identity"])
+        row = dict(applied=applied, verdict=v["verdict"], exit_status=v["returncode"],
+                   rejected_by_rust=v["verdict"] == "REJECT", Sz=sz, s=time.time() - t0,
+                   same_statement=(p.statement_digest == anchors["stmt"]),
+                   tail=v["output"][-1500:])
         if neg == "yarn-statement":                    # contrast: its own digest
-            own, _ = rust_verify_anchored(bt.tape.claims, p, lig, root_w=anchors["root_w"],
-                                          stmt=p.statement_digest,
-                                          wc_identity=anchors["wc_identity"])
-            row["accept_under_own_digest"] = own
+            own = rust_verify_anchored(bt.tape.claims, p, lig, root_w=anchors["root_w"],
+                                       stmt=p.statement_digest,
+                                       wc_identity=anchors["wc_identity"])
+            row.update(own_digest_verdict=own["verdict"], own_digest_exit_status=own["returncode"],
+                       accept_under_own_digest=own["verdict"] == "ACCEPT")
         row["passed"] = negative_passed(neg, row)
         rec["negatives"][neg] = row
-        log(f"negative {neg}: change applied {applied}x; Rust "
-            f"{'REJECT' if not acc else 'ACCEPT'} under the honest anchors"
-            + (f"; own digest {'ACCEPT' if row.get('accept_under_own_digest') else 'REJECT'}"
+        log(f"negative {neg}: change applied {applied}x; Rust {v['verdict']} (exit "
+            f"{v['returncode']}) under the honest anchors"
+            + (f"; own digest {row['own_digest_verdict']} (exit {row['own_digest_exit_status']})"
                if neg == "yarn-statement" else "")
             + f" -> {'ok' if row['passed'] else 'FAILED'} ({row['s']:.1f}s)")
         del p, bt

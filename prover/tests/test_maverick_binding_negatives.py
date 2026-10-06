@@ -145,11 +145,12 @@ def _against_the_honest_anchors(**tamper):
     tape, out = _build(**tamper)
     y = _output(tape, out)
     proof = tape.prove(weight_commitment=h["wc"])
-    acc, msg = rust_verify_anchored(tape.claims, proof, CFG, root_w=h["root_w"],
-                                    stmt=h["stmt"], wc_identity=None)
+    v = rust_verify_anchored(tape.claims, proof, CFG, root_w=h["root_w"],
+                             stmt=h["stmt"], wc_identity=None)     # VerifierFailure: no verdict
+    acc, msg = v["verdict"] == "ACCEPT", v["output"]
     same_stmt = proof.statement_digest == h["stmt"]
     changed = int((y != h["y"]).sum())
-    print(f"  [binding] {tamper or 'honest'}: Rust {'ACCEPT' if acc else 'REJECT'} under the "
+    print(f"  [binding] {tamper or 'honest'}: Rust {v['verdict']} (exit {v['returncode']}) under the "
           f"honest anchors; statement {'unchanged' if same_stmt else 'CHANGED'}; "
           f"{changed}/{y.size} output values differ from the honest run", flush=True)
     return acc, same_stmt, changed, msg

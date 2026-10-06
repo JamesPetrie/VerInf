@@ -119,7 +119,8 @@ def rust_verify_anchored(claims, proof, cfg, *, root_w, stmt, wc_identity):
     """The Rust verifier under GIVEN policy anchors (weight root, statement
     digest, bridge enrollment identity), not the proof's own: the check a
     negative needs, proved against an honest run's enrollment and statement.
-    Returns (accepted, output)."""
+    Returns run_verify_proof's {verdict, returncode, output}; raises
+    VerifierFailure when the binary gives no explicit verdict."""
     from proof_dump import dump_proof
     seeds = {k: v.hex() for k, v in proof.seeds.items()}
     Q = list(pr.random_columns(proof.seeds["s_col"], cfg))
@@ -130,8 +131,7 @@ def rust_verify_anchored(claims, proof, cfg, *, root_w, stmt, wc_identity):
             stmt.hex() if stmt else "-", wc_identity.hex() if wc_identity else "-"]
     try:
         dump_proof(path, pr.claims_to_json(claims, cfg), seeds, proof, Q, None)
-        r = subprocess.run(argv, capture_output=True, text=True)
+        return run_verify_proof(argv)
     finally:
         if os.path.exists(path):
             os.unlink(path)
-    return "rust_verify: ACCEPT" in r.stdout, (r.stdout + r.stderr).strip()

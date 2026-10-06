@@ -64,18 +64,21 @@ class _Proof:
 
 
 def _through(monkeypatch, tmp_path, body, fn):
-    """rust_verify with the dump stubbed and the stand-in binary on
-    LIGERO_VERIFY_PROOF: the path a negative takes."""
+    """rust_verify / rust_verify_anchored with the dump stubbed and the
+    stand-in binary on LIGERO_VERIFY_PROOF: the path a negative takes."""
     import core
     import proof_dump
     monkeypatch.setattr(proof_dump, "dump_proof",
                         lambda path, *a, **k: pathlib.Path(path).write_text("{}"))
     monkeypatch.setenv("LIGERO_VERIFY_PROOF", _bin(tmp_path, "vp", body))
     cfg = core.LigeroConfig(ELL=16, K_DEG=16, N_LIG=64, T_QUERIES=4)
+    if fn == "anchored":
+        return rv.rust_verify_anchored([], _Proof(), cfg, root_w=b"\x05" * 32,
+                                       stmt=b"\x06" * 32, wc_identity=None)
     return rv.rust_verify([], _Proof(), None, cfg)
 
 
-@pytest.mark.parametrize("fn", ["rust_verify"])
+@pytest.mark.parametrize("fn", ["anchored", "rust_verify"])
 def test_a_killed_verifier_raises_through_the_helpers(monkeypatch, tmp_path, fn):
     with pytest.raises(rv.VerifierFailure) as e:
         _through(monkeypatch, tmp_path, FAILURES["exit 137"][0], fn)
@@ -84,7 +87,7 @@ def test_a_killed_verifier_raises_through_the_helpers(monkeypatch, tmp_path, fn)
 
 
 def test_the_helpers_return_explicit_verdicts(monkeypatch, tmp_path):
-    acc, out = _through(monkeypatch, tmp_path, VERDICTS["reject"][0], "rust_verify")
-    assert acc is False and "rust_verify: REJECT" in out
+    v = _through(monkeypatch, tmp_path, VERDICTS["reject"][0], "anchored")
+    assert v["verdict"] == "REJECT" and v["returncode"] == 0
     acc, out = _through(monkeypatch, tmp_path, VERDICTS["accept"][0], "rust_verify")
     assert acc is True and "rust_verify: ACCEPT" in out
