@@ -15,7 +15,6 @@ And the two ways the composition can silently go wrong:
 import json
 import os
 import pathlib
-import subprocess
 import sys
 import tempfile
 
@@ -30,7 +29,7 @@ from tape import Tape
 from rescale_claim import rescale
 from routed_projected import routed_projected_matmul
 from proof_dump import dump_proof
-from _rust_verify import _verify_proof_bin
+from _rust_verify import _verify_proof_bin, run_verify_proof
 
 CFG = core.LigeroConfig(ELL=8, K_DEG=8, N_LIG=32, T_QUERIES=4)
 T, K, J, E = 3, 4, 4, 4
@@ -83,9 +82,9 @@ def _enroll(tape, path):
 
 
 def _verify(path, root_w_hex, stmt_hex):
-    r = subprocess.run([_verify_proof_bin(), path, root_w_hex, stmt_hex],
-                       capture_output=True, text=True)
-    return "rust_verify: ACCEPT" in r.stdout, (r.stdout + r.stderr).strip()
+    """(accepted, output) for an explicit verdict; VerifierFailure otherwise."""
+    v = run_verify_proof([_verify_proof_bin(), path, root_w_hex, stmt_hex])
+    return v["verdict"] == "ACCEPT", v["output"]
 
 
 def test_enroll_admit_prove_verify():
