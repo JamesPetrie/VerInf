@@ -42,6 +42,10 @@ _ANALYSIS = pathlib.Path(__file__).resolve().parents[1] / "analysis"
 # query count is a different (cheaper, weaker) proof.
 TARGET = dict(ELL=8192, K_DEG=16384, N_LIG=65536, T_QUERIES=54)
 
+class AdmissionError(SystemExit):
+    """Refusal to start. SystemExit so a driver aborts loudly."""
+
+
 # Stage caps, in seconds, COMPUTED from the admission model — not copied.
 # They were copied once, and drifted: the S4f compact proof wire moved
 # proof_egress from 879.63 s to 481.48 s in the model while the gate kept
@@ -50,9 +54,11 @@ TARGET = dict(ELL=8192, K_DEG=16384, N_LIG=65536, T_QUERIES=54)
 def _model_stage_caps() -> Dict[str, float]:
     import importlib.util
     path = _ANALYSIS / "routed_projected_4h_model.py"
+    if not path.is_file():
+        raise AdmissionError(f"admission model not found at {path}")
     spec = importlib.util.spec_from_file_location("_rp4h_model", path)
     if spec is None or spec.loader is None:          # pragma: no cover
-        raise AdmissionError(f"admission model not found at {path}")
+        raise AdmissionError(f"admission model not loadable at {path}")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     parts, _total = mod.seconds()
@@ -108,10 +114,6 @@ def min_runs_for(stage: str) -> int:
 # deliberately larger inode before proving so ENOSPC cannot be discovered four
 # hours later.  The writer truncates it to the actual length before rename.
 PROOF_RESERVE_BYTES = 64_000_000_000
-
-
-class AdmissionError(SystemExit):
-    """Refusal to start. SystemExit so a driver aborts loudly."""
 
 
 def check_config(cfg, *, allow_dev: bool = False) -> None:
