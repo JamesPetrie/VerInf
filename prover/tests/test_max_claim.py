@@ -71,10 +71,31 @@ def run_cheat(label, force_argmax):
     return ok
 
 
+def run_isolation():
+    """A forced argmax on one claim must not reach another claim's compute in
+    the same process: the override is keyed by the claim's A variable, not
+    process-global (it used to leak into every later max_compute)."""
+    core._COSET_POWERS_K_CACHE.clear()
+    tape = Tape(CFG, lazy=True)
+    logits = tape.commit("logits", _t(LOGITS), (T, V))
+    max_gap(tape, logits, TOKENS, T=T, V=V, gap_max=GAP_MAX, force_argmax=[2, 2])
+    tape2 = Tape(CFG, lazy=True)
+    l2 = tape2.commit("logits", _t(LOGITS), (T, V))
+    _, _, _, vstar = max_gap(tape2, l2, TOKENS, T=T, V=V, gap_max=GAP_MAX)
+    live = tape2.run_engine_pass()
+    vs_w = live[vstar.var].to(torch.int64).cpu().tolist()
+    exp_vs = [max(r) for r in LOGITS]
+    ok = vs_w == exp_vs
+    print(f"[{'OK ' if ok else 'XX '}] isolation: honest claim after a forced one has "
+          f"vstar={vs_w} (want {exp_vs})")
+    return ok
+
+
 def main():
     results = [
         run_positive(),
         run_cheat("cheat: v* = non-max token", force_argmax=[2, 2]),   # not the argmax
+        run_isolation(),
     ]
     ok = all(results)
     print(f"\n=== max_claim: {sum(results)}/{len(results)} {'PASS' if ok else 'FAIL'} ===")

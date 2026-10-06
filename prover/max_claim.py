@@ -60,7 +60,7 @@ class MaxClaim:
         return self.T * self.V
 
 
-TEST_TAMPER = {}     # "A" -> (T*V,) uint64: override the derived argmax one-hot
+TEST_TAMPER = {}     # A-variable name -> (T*V,) uint64: that claim's forced argmax one-hot
 
 
 def max_sample(c: MaxClaim, ci, s_op):
@@ -78,8 +78,9 @@ def max_aux(c: MaxClaim, witness, _ch):
 def max_compute(c: MaxClaim, live):
     T, V = c.T, c.V
     l = live[c.l].contiguous().view(T, V)
-    if "A" in TEST_TAMPER:
-        A = TEST_TAMPER["A"].to("cuda").view(T, V)
+    forced = TEST_TAMPER.get(c.A.name)
+    if forced is not None:
+        A = forced.to("cuda").view(T, V)
     else:
         am = to_signed(l.reshape(-1)).view(T, V).argmax(dim=1)
         Ai = torch.zeros(T, V, dtype=torch.int64, device="cuda")
@@ -224,15 +225,17 @@ def max_gap(tape, logits, tokens, *, T, V, gap_max, force_argmax=None, O_ext=Non
     _BUILD[0] += 1
     pfx = f"mx{_BUILD[0]}_"
     table = tape.register_table(f"{pfx}gap", T_data=list(range(gap_max)))
+    A = tape._alloc(f"{pfx}A", T * V)
     # A is ENGINE-DERIVED (argmax of signed logits at witness time — lazy
     # tapes have no logits.data at build). force_argmax (soundness tests)
-    # rides the tamper hook: a wrong one-hot must REJECT via gap >= 0.
+    # rides the tamper hook: a wrong one-hot must REJECT via gap >= 0. The
+    # override is keyed by THIS claim's A variable (unique per process via
+    # pfx), so it cannot reach another claim's compute in the same process.
     if force_argmax is not None:
         am = torch.tensor(force_argmax, device="cuda")
         A_data = torch.zeros(T, V, dtype=torch.int64, device="cuda")
         A_data[torch.arange(T, device="cuda"), am] = 1
-        TEST_TAMPER["A"] = A_data.reshape(-1).to(torch.uint64)
-    A = tape._alloc(f"{pfx}A", T * V)
+        TEST_TAMPER[A.name] = A_data.reshape(-1).to(torch.uint64)
     # Output committed AS TOKENS (length T), blinded like weights; O is its one-hot.
     tok_t = torch.tensor(list(tokens), dtype=torch.int64, device="cuda")
     tok = tape.commit(f"{pfx}tok", tok_t.to(torch.uint64), (T,))
