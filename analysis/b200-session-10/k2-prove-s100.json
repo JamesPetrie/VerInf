@@ -1,0 +1,199 @@
+{
+ "args": {
+  "mode": "prove",
+  "from_gguf": "/workspace/gguf/UD-Q4_K_XL/Kimi-K2-Instruct-UD-Q4_K_XL-00001-of-00013.gguf",
+  "prompt_n": 50,
+  "cont_n": 50,
+  "layers": 2,
+  "top_k": 8,
+  "offset": 0,
+  "t_queries": 54,
+  "bridge": true,
+  "weight_cache": true,
+  "routed_cache": true,
+  "sweep_timing": true,
+  "negatives": "interleave,yarn-witness,yarn-statement,wrong-slice",
+  "dump_proof": "/workspace/proofs/k2-s100.bin",
+  "record": "/workspace/records/k2-prove-s100.json",
+  "allow_env_geometry": false
+ },
+ "mode": "prove",
+ "ok": true,
+ "bridge": true,
+ "offset": 0,
+ "T": 100,
+ "planned_negatives": [
+  "interleave",
+  "yarn-witness",
+  "yarn-statement",
+  "wrong-slice"
+ ],
+ "build_s": 12.254358291625977,
+ "enroll_s": 11.219642877578735,
+ "wc_enroll_s": 5.217476844787598,
+ "Sz": 3137119,
+ "reveal_s": 12.270315170288086,
+ "prove_s": 80.56492018699646,
+ "peak_gpu_GiB": 50.372331619262695,
+ "claim_memory": {
+  "1": {
+   "label": "R1",
+   "peak": 24995244032,
+   "at_layer": {
+    "embed": {
+     "allocated": 1931032576,
+     "projections": 0
+    },
+    "0": {
+     "allocated": 16207886336,
+     "projections": 0
+    },
+    "1": {
+     "allocated": 9029322752,
+     "projections": 0
+    },
+    "tail": {
+     "allocated": 10006083584,
+     "projections": 0
+    }
+   }
+  },
+  "2": {
+   "label": "R2",
+   "peak": 34626709504,
+   "at_layer": {
+    "embed": {
+     "allocated": 14733938176,
+     "projections": 0
+    },
+    "0": {
+     "allocated": 33709460992,
+     "projections": 0
+    },
+    "1": {
+     "allocated": 14865731072,
+     "projections": 0
+    },
+    "tail": {
+     "allocated": 14968760320,
+     "projections": 50331648
+    }
+   }
+  },
+  "3": {
+   "label": "R3",
+   "peak": 34171422720,
+   "at_layer": {
+    "embed": {
+     "allocated": 14838771200,
+     "projections": 50331648
+    },
+    "0": {
+     "allocated": 33766059520,
+     "projections": 50331648
+    },
+    "1": {
+     "allocated": 14856793600,
+     "projections": 50331648
+    },
+    "tail": {
+     "allocated": 14868121600,
+     "projections": 50331648
+    }
+   }
+  },
+  "4": {
+   "label": "fold",
+   "peak": 35032758784,
+   "at_layer": {
+    "embed": {
+     "allocated": 15697743360,
+     "projections": 50331648
+    },
+    "0": {
+     "allocated": 34627931136,
+     "projections": 50331648
+    },
+    "1": {
+     "allocated": 15720423936,
+     "projections": 50331648
+    },
+    "tail": {
+     "allocated": 15728259072,
+     "projections": 50331648
+    }
+   }
+  },
+  "5": {
+   "label": "open",
+   "peak": 35033032192,
+   "at_layer": {
+    "embed": {
+     "allocated": 15704656896,
+     "projections": 50331648
+    },
+    "0": {
+     "allocated": 34631945216,
+     "projections": 50331648
+    },
+    "1": {
+     "allocated": 15722679296,
+     "projections": 50331648
+    },
+    "tail": {
+     "allocated": 15728748032,
+     "projections": 50331648
+    }
+   }
+  }
+ },
+ "dump": {
+  "path": "/workspace/proofs/k2-s100.bin",
+  "bytes": 837727157,
+  "s": 1.3914823532104492,
+  "policy": "/workspace/proofs/k2-s100.bin.policy.json"
+ },
+ "verify": {
+  "accept": true,
+  "s": 193.3760540485382
+ },
+ "negatives": {
+  "interleave": {
+   "applied": 24,
+   "rejected_by_rust": true,
+   "Sz": 3137718,
+   "s": 270.0851399898529,
+   "same_statement": false,
+   "tail": "fy]   quad_col 26722/43147 quads\n[verify]   quad_col 27153/43147 quads\n[verify]   quad_col 27584/43147 quads\n[verify]   quad_col 28015/43147 quads\n[verify]   quad_col 28446/43147 quads\n[verify]   quad_col 28877/43147 quads\n[verify]   quad_col 29308/43147 quads\n[verify]   quad_col 29739/43147 quads\n[verify]   quad_col 30170/43147 quads\n[verify]   quad_col 30601/43147 quads\n[verify]   quad_col 31032/43147 quads\n[verify]   quad_col 31463/43147 quads\n[verify]   quad_col 31894/43147 quads\n[verify]   quad_col 32325/43147 quads\n[verify]   quad_col 32756/43147 quads\n[verify]   quad_col 33187/43147 quads\n[verify]   quad_col 33618/43147 quads\n[verify]   quad_col 34049/43147 quads\n[verify]   quad_col 34480/43147 quads\n[verify]   quad_col 34911/43147 quads\n[verify]   quad_col 35342/43147 quads\n[verify]   quad_col 35773/43147 quads\n[verify]   quad_col 36204/43147 quads\n[verify]   quad_col 36635/43147 quads\n[verify]   quad_col 37066/43147 quads\n[verify]   quad_col 37497/43147 quads\n[verify]   quad_col 37928/43147 quads\n[verify]   quad_col 38359/43147 quads\n[verify]   quad_col 38790/43147 quads\n[verify]   quad_col 39221/43147 quads\n[verify]   quad_col 39652/43147 quads\n[verify]   quad_col 40083/43147 quads\n[verify]   quad_col 40514/43147 quads\n[verify]   quad_col 40945/43147 quads\n[verify]   quad_col 41376/43147 quads\n[verify]   quad_col 41807/43147 quads\n[verify]   quad_col 42238/43147 quads\n[verify]   quad_col 42669/43147 quads\n[verify]   quad_col 43100/43147 quads\n[verify] done @ 2.5 min",
+   "passed": true
+  },
+  "yarn-witness": {
+   "applied": 24,
+   "rejected_by_rust": true,
+   "Sz": 3139590,
+   "s": 271.6563413143158,
+   "same_statement": false,
+   "tail": "fy]   quad_col 26722/43147 quads\n[verify]   quad_col 27153/43147 quads\n[verify]   quad_col 27584/43147 quads\n[verify]   quad_col 28015/43147 quads\n[verify]   quad_col 28446/43147 quads\n[verify]   quad_col 28877/43147 quads\n[verify]   quad_col 29308/43147 quads\n[verify]   quad_col 29739/43147 quads\n[verify]   quad_col 30170/43147 quads\n[verify]   quad_col 30601/43147 quads\n[verify]   quad_col 31032/43147 quads\n[verify]   quad_col 31463/43147 quads\n[verify]   quad_col 31894/43147 quads\n[verify]   quad_col 32325/43147 quads\n[verify]   quad_col 32756/43147 quads\n[verify]   quad_col 33187/43147 quads\n[verify]   quad_col 33618/43147 quads\n[verify]   quad_col 34049/43147 quads\n[verify]   quad_col 34480/43147 quads\n[verify]   quad_col 34911/43147 quads\n[verify]   quad_col 35342/43147 quads\n[verify]   quad_col 35773/43147 quads\n[verify]   quad_col 36204/43147 quads\n[verify]   quad_col 36635/43147 quads\n[verify]   quad_col 37066/43147 quads\n[verify]   quad_col 37497/43147 quads\n[verify]   quad_col 37928/43147 quads\n[verify]   quad_col 38359/43147 quads\n[verify]   quad_col 38790/43147 quads\n[verify]   quad_col 39221/43147 quads\n[verify]   quad_col 39652/43147 quads\n[verify]   quad_col 40083/43147 quads\n[verify]   quad_col 40514/43147 quads\n[verify]   quad_col 40945/43147 quads\n[verify]   quad_col 41376/43147 quads\n[verify]   quad_col 41807/43147 quads\n[verify]   quad_col 42238/43147 quads\n[verify]   quad_col 42669/43147 quads\n[verify]   quad_col 43100/43147 quads\n[verify] done @ 2.5 min",
+   "passed": true
+  },
+  "yarn-statement": {
+   "applied": 4,
+   "rejected_by_rust": true,
+   "Sz": 3139590,
+   "s": 284.35632610321045,
+   "same_statement": false,
+   "tail": "fy]   quad_col 26722/43147 quads\n[verify]   quad_col 27153/43147 quads\n[verify]   quad_col 27584/43147 quads\n[verify]   quad_col 28015/43147 quads\n[verify]   quad_col 28446/43147 quads\n[verify]   quad_col 28877/43147 quads\n[verify]   quad_col 29308/43147 quads\n[verify]   quad_col 29739/43147 quads\n[verify]   quad_col 30170/43147 quads\n[verify]   quad_col 30601/43147 quads\n[verify]   quad_col 31032/43147 quads\n[verify]   quad_col 31463/43147 quads\n[verify]   quad_col 31894/43147 quads\n[verify]   quad_col 32325/43147 quads\n[verify]   quad_col 32756/43147 quads\n[verify]   quad_col 33187/43147 quads\n[verify]   quad_col 33618/43147 quads\n[verify]   quad_col 34049/43147 quads\n[verify]   quad_col 34480/43147 quads\n[verify]   quad_col 34911/43147 quads\n[verify]   quad_col 35342/43147 quads\n[verify]   quad_col 35773/43147 quads\n[verify]   quad_col 36204/43147 quads\n[verify]   quad_col 36635/43147 quads\n[verify]   quad_col 37066/43147 quads\n[verify]   quad_col 37497/43147 quads\n[verify]   quad_col 37928/43147 quads\n[verify]   quad_col 38359/43147 quads\n[verify]   quad_col 38790/43147 quads\n[verify]   quad_col 39221/43147 quads\n[verify]   quad_col 39652/43147 quads\n[verify]   quad_col 40083/43147 quads\n[verify]   quad_col 40514/43147 quads\n[verify]   quad_col 40945/43147 quads\n[verify]   quad_col 41376/43147 quads\n[verify]   quad_col 41807/43147 quads\n[verify]   quad_col 42238/43147 quads\n[verify]   quad_col 42669/43147 quads\n[verify]   quad_col 43100/43147 quads\n[verify] done @ 2.5 min",
+   "accept_under_own_digest": true,
+   "passed": true
+  },
+  "wrong-slice": {
+   "applied": 3,
+   "rejected_by_rust": true,
+   "Sz": 3135979,
+   "s": 135.1822543144226,
+   "same_statement": false,
+   "tail": "[OK ] statement_digest = H(claim bytes, block order)\n  [OK ] statement_digest = trusted policy digest\n  [OK ] seeds in file = recomputed transcript\n  [OK ] weight root = trusted enrolled root\n  [XX ] wc bridge REJECT: bridge equation fails at eta[0]\nrust_verify: REJECT",
+   "passed": true
+  }
+ }
+}

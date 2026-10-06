@@ -1762,18 +1762,20 @@ def test_kimi_k2_weights_match_the_published_model():
     moonshotai/Kimi-K2-Instruct at revision fd1984e2 (read 2026-10-05):
     F8_E4M3 1,023,893,241,856, BF16 2,514,970,968, F32 23,040, total
     1,026,408,235,864. Every FP8 matrix is a shape this builder lays out
-    (everything but the embedding, the head, the router and the biases), so
-    that count must match exactly; the total, which also holds the norm
-    gains the builder keeps as plain inputs, within 1e-8."""
+    (everything but the embedding, the head, the router, the biases and the
+    norm gains), so that count must match exactly; the total, the norm gains
+    now enrolled as the driver enrolls them, within 1e-8."""
     import synth
     m = synth.kimi_k2(10)
     weights = sum(v.length for v in m.variables if v.persistent)
-    gains = sum(v.length for v in m.variables if v.name.endswith(".gain"))
+    gains = [v for v in m.variables if v.name.endswith(".gain")]
+    assert gains and all(v.persistent for v in gains)
     d, V, E, moe_layers = 7168, 163840, 384, 60
-    bf16_or_f32 = 2 * V * d + moe_layers * E * d + moe_layers * E
+    bf16_or_f32 = (2 * V * d + moe_layers * E * d + moe_layers * E
+                   + sum(v.length for v in gains))
     assert weights - bf16_or_f32 == 1_023_893_241_856
     published = 1_026_408_235_864
-    assert abs(published - weights - gains) / published < 1e-8
+    assert abs(published - weights) / published < 1e-8
     biases = [v for v in m.variables if v.name.endswith(".bias")]
     assert len(biases) == moe_layers and sum(v.length for v in biases) == 23_040
 
@@ -1796,19 +1798,21 @@ def test_kimi_k2_structure():
     assert len(combines) == 60 and all(c.params["E"] == 8 for c in combines)
     # every claim type has a formula: no fallback pricing
     assert all(claimcosts.canonical(t) in claimcosts._FORMULAS for t in by)
-    # the DAG is wired both ways, and selection reads the finer scores while
-    # the slot scores read the gate-scale ones
+    # the DAG is wired both ways; one sigmoid lookup per MoE layer at the
+    # selection scale feeds the selection, the slot scores and the bracket
     _assert_io_consistency(m)
-    names = {c.idx: c for c in m.claims}
+    assert len(by["ptlookup"]) == 60
     for c in by["topk_routing"]:
         layer = c.label.split(".")[0]
-        assert c.inputs == [f"{layer}.s_sel", f"{layer}.bias"], c.inputs
+        assert c.inputs == [f"{layer}.s", f"{layer}.bias"], c.inputs
     for c in by["topk_slots"]:
         assert c.inputs[1].endswith(".s"), c.inputs
-    for v in m.variables:
-        if v.name.endswith((".s_sel", ".s")) and v.producer is not None \
-                and names[v.producer].type == "ptlookup":
-            assert v.consumers, f"{v.name} feeds nothing"
+    # the per-head assembly as the driver records it: two HeadInterleaveClaims
+    # per layer, the key's rope part shared
+    hi = by["head_interleave"]
+    assert len(hi) == 122 and sorted({c.params["shared"] for c in hi}) == [0, 1]
+    assert all(c.params["T"] == seq and c.params["H"] == 64 and c.params["w1"] == 128
+               and c.params["w2"] == 64 for c in hi)
 
 
 def test_kimi_k2_s2_term_is_attention():
@@ -1823,12 +1827,30 @@ def test_kimi_k2_s2_term_is_attention():
 
 
 def test_kimi_k2_bridge_marks_the_routed_experts_external():
+    """Bridge-held shards are external and outside the W block, as the tape
+    records them (extract.py), so the persistent slots compare exactly."""
     import synth
     m = synth.kimi_k2(4, bridge=True)
-    ext = sum(v.length for v in m.variables if getattr(v, "external", False))
-    assert ext == 60 * 384 * 3 * 7168 * 2048
+    ext = [v for v in m.variables if getattr(v, "external", False)]
+    assert sum(v.length for v in ext) == 60 * 384 * 3 * 7168 * 2048
+    assert not any(v.persistent for v in ext)
     plain = synth.kimi_k2(4)
     assert not any(getattr(v, "external", False) for v in plain.variables)
+    assert (sum(v.length for v in plain.variables if v.persistent)
+            - sum(v.length for v in m.variables if v.persistent)) == 60 * 384 * 3 * 7168 * 2048
+
+
+def test_kimi_k2_two_layers_is_the_gate():
+    """layers = 2 is the driver's two-layer gate: layer 0 dense, layer 1 MoE."""
+    import synth
+    m = synth.kimi_k2(5, layers=2)
+    by = {}
+    for c in m.claims:
+        by.setdefault(c.type, []).append(c)
+    assert len(by["softmax"]) == 2 and len(by["topk_routing"]) == 1
+    assert len(by["routed_projected"]) == 3 and len(by["head_interleave"]) == 4
+    assert m.model["layers"] == 2
+    _assert_io_consistency(m)
 
 
 def test_topk_word_counts_follow_the_prover():
@@ -1860,11 +1882,11 @@ def test_topk_toy_and_the_cli():
     types = [c.type for c in m.claims]
     assert types.count("routed_projected") == 3 and types.count("rescale_claim") == 3
     assert types.count("concat") == 2 and types.count("split") == 1
-    # K2_TOPK at k = 3: selection width 26 in two 13-bit words; the bracket's
-    # Z < 2^15 (13 score bits + 2) gives rem and Z - 1 - rem two 8-bit words
-    # each, and w < 2^14 two more
+    # K2_TOPK at k = 3: selection width 26 in two 13-bit words; scores below
+    # 2^17 (S_sel = 2^16) give the bracket's Z < 2^19 and rem and Z - 1 - rem
+    # three 8-bit words each, and w < 2^16 two
     words = [c.params["n_words"] for c in m.claims if c.type == "word_extract"]
-    assert words == [2, 2, 2, 2]
+    assert words == [2, 3, 3, 2]
     assert types.count("range_word") == sum(words)
     with tempfile.TemporaryDirectory() as td:
         out = os.path.join(td, "k2.json")
@@ -1903,6 +1925,7 @@ def main():
     test_kimi_k2_structure()
     test_kimi_k2_s2_term_is_attention()
     test_kimi_k2_bridge_marks_the_routed_experts_external()
+    test_kimi_k2_two_layers_is_the_gate()
     test_topk_word_counts_follow_the_prover()
     test_topk_toy_and_the_cli()
     print("profiler regression tests OK (no torch needed)")

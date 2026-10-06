@@ -1,0 +1,20 @@
+STAGE3B START 23:29:20
+prove-s1000 finished 23:46:00: RESULT PASS
+    enrolled 365514 weight rows in 11.3s, root d1dfb3fcfae3ee20…
+    bridge enrollment 5.9s, identity 732da5426bf2fedd…
+    PROVE 255.9s, peak GPU 72.67 GiB
+    rust verify_proof (honest, same-run anchors): ACCEPT in 681.7s
+    RESULT PASS
+prove-s100-long rc=0 23:50:43
+    enrolled 365514 weight rows in 10.2s, root 30aa9415693de9d6…
+    bridge enrollment 4.8s, identity 732da5426bf2fedd…
+    PROVE 64.1s, peak GPU 50.37 GiB
+    rust verify_proof (honest, same-run anchors): ACCEPT in 178.8s
+    RESULT PASS
+STAGE3B PROOFS DONE 23:50:45
+fidelity-s1000 rc=0 23:57:54
+    RESEARCH run, mode fidelity: T=1000 (synthetic token ids), layers=2, k=8, offset=0, T_QUERIES=54
+    fidelity: logits rel 0.0544, top-1 agreement 0.883
+    routing L1: end to end 440/1000 tokens differ; same input 11/1000
+    RESULT PASS
+STAGE3B DONE 23:57:54

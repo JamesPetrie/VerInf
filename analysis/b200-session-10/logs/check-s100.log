@@ -1,0 +1,14 @@
+[demo_k2 +11.9s] RESEARCH run, mode check: T=100 (synthetic token ids), layers=2, k=8, offset=0, T_QUERIES=54
+[demo_k2 +188.8s] ranges: 139 recorded, 0 outside their window
+[demo_k2 +198.9s] layer 0 built (dense): 40 claims so far
+[demo_k2 +200.9s] layer 1 built (moe): 106 claims so far
+[demo_k2 +201.1s] built: 216 claims, T=100, V=163840, offset=0, yarn=on, bridge=off
+W1005 22:40:59.158000 5268 torch/utils/cpp_extension.py:2425] TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
+W1005 22:40:59.158000 5268 torch/utils/cpp_extension.py:2425] If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'] to specific architectures.
+/workspace/verinf/demo/demo_maverick_full.py:105: UserWarning: The given NumPy array is not writable, and PyTorch does not support non-writable tensors. This means writing to this tensor will result in undefined behavior. You may want to copy the array to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at /pytorch/torch/csrc/utils/tensor_numpy.cpp:203.)
+  w = kquant_to_field(torch.from_numpy(
+W1005 22:40:59.471000 5268 torch/utils/cpp_extension.py:2425] TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
+W1005 22:40:59.471000 5268 torch/utils/cpp_extension.py:2425] If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'] to specific architectures.
+[demo_k2 +252.2s] engine pass 50.9s, Sz=3137119: 42/42 intermediates EXACT
+[demo_k2 +252.2s] RESULT PASS
+[demo_k2 +252.2s] record written to /workspace/records/k2-check-s100.json

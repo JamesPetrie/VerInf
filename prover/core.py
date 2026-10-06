@@ -1141,6 +1141,23 @@ _SWEEP_RECS: list = []             # one record per sweep of the current proof
 _SWEEP_CUR: Optional[dict] = None  # the sweep being recorded, or None
 _SWEEP_OUTSIDE: dict = {}          # loader counts outside any sweep (setup, enrollment)
 
+# Claim-boundary GPU allocation (LIGERO_CLAIM_MEM=1): one record per claim
+# group per sweep (sweep ordinal, its label when LIGERO_SWEEP_TIMING names
+# it, group index, claim type and id, torch's allocated bytes, the bytes of
+# the routed projections held), so a driver can read the per-layer growth of
+# what the proof keeps across a sweep (analysis/k2-session-sizing.md §3).
+_CLAIM_MEM_ON = _env_on("LIGERO_CLAIM_MEM")
+CLAIM_MEM_LOG: list = []
+_CLAIM_MEM_SWEEP = [0]
+
+
+def _claim_mem_note(i, claim):
+    rp = sys.modules.get('routed_projected')
+    held = sum(t.numel() * t.element_size() for t in rp._P_CACHE.values()) if rp else 0
+    CLAIM_MEM_LOG.append((_CLAIM_MEM_SWEEP[0], _SWEEP_CUR['label'] if _SWEEP_CUR else None,
+                          i, type(claim).__name__, id(claim),
+                          torch.cuda.memory_allocated(), held))
+
 
 @_contextmanager
 def _phase(name):
@@ -3454,10 +3471,13 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
     # Optional periodic allocator release during the sweep (LIGERO_SWEEP_GC=N):
     # diagnostic/workaround for sustained-churn faults on unified-memory GPUs.
     _sweep_gc = int(os.environ.get("LIGERO_SWEEP_GC", "0") or "0")
+    _CLAIM_MEM_SWEEP[0] += 1
     for i in range(len(groups)):
         if _sweep_gc and i and i % _sweep_gc == 0:
             torch.cuda.empty_cache()
         claim = groups[i][0]
+        if _CLAIM_MEM_ON:
+            _claim_mem_note(i, claim)
         input_vars, outs = (), {}
         if i < n_ops:
             _c, input_vars, side_effects = tape._deferred[i]

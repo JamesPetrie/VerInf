@@ -103,6 +103,12 @@ suite head-interleave 5
 # pinned on the CPU (test_rope_scaling's golden vectors, test_rope_yarn.py).
 gate rope-scaling python3 prover/tests/run_tests.py test_rope_scaling
 suite rope-scaling 8
+# The K2 driver on a toy GGUF with K2's names and types: the engine pass
+# equals the integer reference at every named intermediate (short and long
+# positions); the two-layer proof is accepted bridged and not; the negatives
+# proved against the honest enrollment are rejected (analysis/k2-session-sizing.md §5).
+gate k2-driver python3 prover/tests/run_tests.py test_k2_driver
+suite k2-driver 4
 gate toy-ab env LIGERO_SWEEP_TIMING=1 python3 analysis/bench/ab_routed_cache.py
 need toy-ab 'ab_routed_cache: counts as expected'
 # A small REAL-GGUF proof through the research driver, independently

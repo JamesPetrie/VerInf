@@ -1,0 +1,2135 @@
+== 22:16:05
+Mem:         2063985      688327      237493      503557     1658703     1375658
+anon 2066 MB; file 7625 MB; shmem 0 MB; file_mapped 6 MB; unevictable 0 MB; 
+memory.current 9745 MB
+nr_periods 310 nr_throttled 0 throttled_usec 0 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=34806; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=0; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=12026
+0 MiB, 0 %
+== 22:16:25
+Mem:         2063985      689925      213662      503557     1680935     1374059
+anon 2178 MB; file 31749 MB; shmem 0 MB; file_mapped 141 MB; unevictable 0 MB; 
+memory.current 34020 MB
+nr_periods 511 nr_throttled 18 throttled_usec 8998335 
+cpu.pressure some avg10=0.51 avg60=0.19 avg300=0.04 total=215830; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=0; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=30620
+0 MiB, 0 %
+== 22:16:45
+Mem:         2063985      690307      195240      503567     1698985     1373677
+anon 2316 MB; file 47991 MB; shmem 10 MB; file_mapped 59 MB; unevictable 0 MB; 
+memory.current 50359 MB
+nr_periods 712 nr_throttled 20 throttled_usec 9018461 
+cpu.pressure some avg10=0.06 avg60=0.13 avg300=0.04 total=243202; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=0; io.pressure some avg10=0.09 avg60=0.02 avg300=0.00 total=73744
+740 MiB, 0 %
+== 22:17:05
+Mem:         2063985      689769      194001      503567     1700762     1374215
+anon 2270 MB; file 48008 MB; shmem 10 MB; file_mapped 59 MB; unevictable 0 MB; 
+memory.current 50330 MB
+nr_periods 913 nr_throttled 20 throttled_usec 9018461 
+cpu.pressure some avg10=0.00 avg60=0.09 avg300=0.03 total=244079; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=0; io.pressure some avg10=0.01 avg60=0.01 avg300=0.00 total=73744
+740 MiB, 0 %
+== 22:17:25
+Mem:         2063985      687663      197948      503567     1698921     1376322
+anon 481 MB; file 48012 MB; shmem 10 MB; file_mapped 59 MB; unevictable 0 MB; 
+memory.current 48545 MB
+nr_periods 1114 nr_throttled 20 throttled_usec 9018461 
+cpu.pressure some avg10=0.00 avg60=0.06 avg300=0.03 total=245971; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=0; io.pressure some avg10=0.00 avg60=0.01 avg300=0.00 total=73744
+740 MiB, 0 %
+== 22:17:45
+Mem:         2063985      688051      195762      503567     1700718     1375933
+anon 1491 MB; file 48021 MB; shmem 10 MB; file_mapped 59 MB; unevictable 0 MB; 
+memory.current 49562 MB
+nr_periods 1315 nr_throttled 20 throttled_usec 9018461 
+cpu.pressure some avg10=0.00 avg60=0.04 avg300=0.02 total=248242; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=0; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=73744
+740 MiB, 0 %
+== 22:18:05
+Mem:         2063985      687860      197842      503567     1698830     1376125
+anon 979 MB; file 48051 MB; shmem 10 MB; file_mapped 59 MB; unevictable 0 MB; 
+memory.current 49078 MB
+nr_periods 1516 nr_throttled 20 throttled_usec 9018461 
+cpu.pressure some avg10=0.00 avg60=0.03 avg300=0.02 total=257405; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=0; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=75459
+724 MiB, 0 %
+== 22:18:25
+Mem:         2063985      688799      194987      503579     1700758     1375186
+anon 1480 MB; file 48120 MB; shmem 21 MB; file_mapped 94 MB; unevictable 0 MB; 
+memory.current 49654 MB
+nr_periods 1717 nr_throttled 20 throttled_usec 9018461 
+cpu.pressure some avg10=0.00 avg60=0.02 avg300=0.01 total=259070; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=0; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=76581
+1792 MiB, 0 %
+== 22:18:45
+Mem:         2063985      689254      192714      503579     1702575     1374731
+anon 1545 MB; file 48120 MB; shmem 21 MB; file_mapped 94 MB; unevictable 0 MB; 
+memory.current 49716 MB
+nr_periods 1918 nr_throttled 20 throttled_usec 9018461 
+cpu.pressure some avg10=0.00 avg60=0.01 avg300=0.01 total=261354; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=0; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=76625
+2052 MiB, 0 %
+== 22:19:06
+Mem:         2063985      689432      194446      503579     1700666     1374553
+anon 1163 MB; file 48137 MB; shmem 21 MB; file_mapped 97 MB; unevictable 0 MB; 
+memory.current 49356 MB
+nr_periods 2119 nr_throttled 20 throttled_usec 9018461 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=265005; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=0; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=76903
+1508 MiB, 1 %
+== 22:19:26
+Mem:         2063985      689942      192070      503579     1702531     1374042
+anon 1560 MB; file 48137 MB; shmem 21 MB; file_mapped 97 MB; unevictable 0 MB; 
+memory.current 49749 MB
+nr_periods 2320 nr_throttled 20 throttled_usec 9018461 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=266598; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=0; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=76904
+2058 MiB, 0 %
+== 22:19:46
+Mem:         2063985      689069      194884      503579     1700590     1374916
+anon 886 MB; file 48137 MB; shmem 21 MB; file_mapped 97 MB; unevictable 0 MB; 
+memory.current 49071 MB
+nr_periods 2521 nr_throttled 20 throttled_usec 9018461 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=269401; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=0; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=76908
+2316 MiB, 82 %
+== 22:20:06
+Mem:         2063985      688060      194030      503579     1702453     1375924
+anon 731 MB; file 48198 MB; shmem 21 MB; file_mapped 95 MB; unevictable 0 MB; 
+memory.current 48985 MB
+nr_periods 2722 nr_throttled 21 throttled_usec 9019435 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=274808; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=0; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=77517
+984 MiB, 9 %
+== 22:20:26
+Mem:         2063985      688895      191307      503577     1704340     1375090
+anon 2377 MB; file 48224 MB; shmem 19 MB; file_mapped 70 MB; unevictable 0 MB; 
+memory.current 50657 MB
+nr_periods 2923 nr_throttled 21 throttled_usec 9019435 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=282315; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=0; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=78362
+742 MiB, 0 %
+== 22:20:46
+Mem:         2063985      689588      192495      503579     1702461     1374396
+anon 3478 MB; file 48238 MB; shmem 21 MB; file_mapped 106 MB; unevictable 0 MB; 
+memory.current 51770 MB
+nr_periods 3124 nr_throttled 21 throttled_usec 9019435 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=283479; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=0; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=78362
+2350 MiB, 0 %
+== 22:21:06
+Mem:         2063985      690219      190183      503579     1704141     1373765
+anon 3839 MB; file 48238 MB; shmem 21 MB; file_mapped 106 MB; unevictable 0 MB; 
+memory.current 52132 MB
+nr_periods 3325 nr_throttled 21 throttled_usec 9019435 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=286825; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=0; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=78362
+4114 MiB, 0 %
+== 22:21:26
+Mem:         2063985      688850      193941      503579     1701753     1375135
+anon 1618 MB; file 48238 MB; shmem 21 MB; file_mapped 106 MB; unevictable 0 MB; 
+memory.current 49881 MB
+nr_periods 3526 nr_throttled 21 throttled_usec 9019435 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=288509; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=0; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=78362
+5722 MiB, 1 %
+== 22:21:46
+Mem:         2063985      691430      189532      503579     1703581     1372554
+anon 4002 MB; file 48238 MB; shmem 21 MB; file_mapped 106 MB; unevictable 0 MB; 
+memory.current 52294 MB
+nr_periods 3727 nr_throttled 21 throttled_usec 9019435 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=290461; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=0; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=78362
+5772 MiB, 0 %
+== 22:22:07
+Mem:         2063985      687050      192106      503557     1705366     1376934
+anon 5 MB; file 48217 MB; shmem 0 MB; file_mapped 0 MB; unevictable 0 MB; 
+memory.current 48262 MB
+nr_periods 3888 nr_throttled 21 throttled_usec 9019435 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=292900; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=0; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=78362
+0 MiB, 0 %
+== 22:22:27
+Mem:         2063985      686722      194301      503557     1703499     1377263
+anon 5 MB; file 48217 MB; shmem 0 MB; file_mapped 0 MB; unevictable 0 MB; 
+memory.current 48263 MB
+nr_periods 3930 nr_throttled 21 throttled_usec 9019435 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=294544; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=0; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=78362
+0 MiB, 0 %
+== 22:22:47
+Mem:         2063985      686926      192310      503557     1705286     1377059
+anon 5 MB; file 48217 MB; shmem 0 MB; file_mapped 0 MB; unevictable 0 MB; 
+memory.current 48262 MB
+nr_periods 3935 nr_throttled 21 throttled_usec 9019435 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=294743; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=0; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=78362
+0 MiB, 0 %
+== 22:23:07
+Mem:         2063985      686262      194895      503557     1703365     1377723
+anon 5 MB; file 48217 MB; shmem 0 MB; file_mapped 0 MB; unevictable 0 MB; 
+memory.current 48262 MB
+nr_periods 3938 nr_throttled 21 throttled_usec 9019435 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=295064; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=0; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=78362
+0 MiB, 0 %
+== 22:23:27
+Mem:         2063985      686417      192835      503557     1705270     1377568
+anon 5 MB; file 48217 MB; shmem 0 MB; file_mapped 0 MB; unevictable 0 MB; 
+memory.current 48262 MB
+nr_periods 3943 nr_throttled 21 throttled_usec 9019435 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=295347; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=0; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=78362
+0 MiB, 0 %
+== 22:23:47
+Mem:         2063985      686890      190481      503557     1707151     1377095
+anon 5 MB; file 48217 MB; shmem 0 MB; file_mapped 0 MB; unevictable 0 MB; 
+memory.current 48262 MB
+nr_periods 3948 nr_throttled 21 throttled_usec 9019435 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=295795; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=0; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=78362
+0 MiB, 0 %
+== 22:24:07
+Mem:         2063985      687268      191908      503557     1705346     1376717
+anon 9 MB; file 48220 MB; shmem 0 MB; file_mapped 0 MB; unevictable 0 MB; 
+memory.current 48270 MB
+nr_periods 4000 nr_throttled 21 throttled_usec 9019435 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=297334; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=0; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=78362
+0 MiB, 0 %
+== 22:24:27
+Mem:         2063985      689206      188035      503577     1707300     1374778
+anon 430 MB; file 48245 MB; shmem 19 MB; file_mapped 70 MB; unevictable 0 MB; 
+memory.current 48729 MB
+nr_periods 4176 nr_throttled 21 throttled_usec 9019435 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=303258; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=0; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=79432
+1770 MiB, 0 %
+== 22:24:47
+Mem:         2063985      690957      188151      503577     1705433     1373027
+anon 636 MB; file 48291 MB; shmem 19 MB; file_mapped 71 MB; unevictable 0 MB; 
+memory.current 48976 MB
+nr_periods 4377 nr_throttled 21 throttled_usec 9019435 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=304641; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=0; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=79432
+2346 MiB, 0 %
+== 22:25:07
+Mem:         2063985      690785      186090      503577     1707666     1373200
+anon 955 MB; file 48294 MB; shmem 19 MB; file_mapped 71 MB; unevictable 0 MB; 
+memory.current 49302 MB
+nr_periods 4578 nr_throttled 21 throttled_usec 9019435 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=306142; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=0; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=79432
+2346 MiB, 0 %
+== 22:25:27
+Mem:         2063985      690570      184427      503577     1709544     1373414
+anon 1111 MB; file 48303 MB; shmem 19 MB; file_mapped 71 MB; unevictable 0 MB; 
+memory.current 49463 MB
+nr_periods 4779 nr_throttled 21 throttled_usec 9019435 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=307364; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=0; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=79441
+2346 MiB, 0 %
+== 22:25:48
+Mem:         2063985      693364      231442      503587     1659746     1370621
+anon 3848 MB; file 48247 MB; shmem 21 MB; file_mapped 106 MB; unevictable 0 MB; 
+memory.current 52149 MB
+nr_periods 4980 nr_throttled 21 throttled_usec 9019435 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=309361; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=0; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=79441
+2350 MiB, 0 %
+== 22:26:08
+Mem:         2063985      691426      223514      503587     1669612     1372558
+anon 1170 MB; file 48247 MB; shmem 21 MB; file_mapped 106 MB; unevictable 0 MB; 
+memory.current 49471 MB
+nr_periods 5181 nr_throttled 21 throttled_usec 9019435 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=320226; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=0; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=79441
+5174 MiB, 22 %
+== 22:26:28
+Mem:         2063985      692175      214189      503587     1678188     1371810
+anon 2277 MB; file 48281 MB; shmem 21 MB; file_mapped 107 MB; unevictable 0 MB; 
+memory.current 50614 MB
+nr_periods 5382 nr_throttled 21 throttled_usec 9019435 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=322168; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=0; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=79725
+5174 MiB, 0 %
+== 22:26:48
+Mem:         2063985      694314      200246      503587     1689991     1369670
+anon 3559 MB; file 48247 MB; shmem 21 MB; file_mapped 106 MB; unevictable 0 MB; 
+memory.current 51860 MB
+nr_periods 5583 nr_throttled 21 throttled_usec 9019435 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=325701; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=0; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=79915
+4190 MiB, 0 %
+== 22:27:08
+Mem:         2063985      691581      195770      503587     1697201     1372404
+anon 1621 MB; file 48247 MB; shmem 21 MB; file_mapped 106 MB; unevictable 0 MB; 
+memory.current 49925 MB
+nr_periods 5784 nr_throttled 21 throttled_usec 9019435 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=326747; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=0; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=80471
+6780 MiB, 7 %
+== 22:27:28
+Mem:         2063985      693389      183123      503587     1708038     1370595
+anon 2085 MB; file 48281 MB; shmem 21 MB; file_mapped 107 MB; unevictable 0 MB; 
+memory.current 50422 MB
+nr_periods 5985 nr_throttled 21 throttled_usec 9019435 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=329898; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=0; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=81007
+6780 MiB, 0 %
+== 22:27:48
+Mem:         2063985      693064      188676      503589     1702813     1370920
+anon 3628 MB; file 48247 MB; shmem 21 MB; file_mapped 106 MB; unevictable 0 MB; 
+memory.current 51930 MB
+nr_periods 6186 nr_throttled 23 throttled_usec 9026756 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=332939; memory.pressure some avg10=0.12 avg60=0.02 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=81074
+5796 MiB, 0 %
+== 22:28:08
+Mem:         2063985      692569      186001      503589     1705984     1371416
+anon 957 MB; file 48247 MB; shmem 21 MB; file_mapped 106 MB; unevictable 0 MB; 
+memory.current 49253 MB
+nr_periods 6387 nr_throttled 23 throttled_usec 9026756 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=338208; memory.pressure some avg10=0.01 avg60=0.02 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=81167
+8386 MiB, 67 %
+== 22:28:28
+Mem:         2063985      693360      181107      503589     1710086     1370624
+anon 1094 MB; file 48259 MB; shmem 21 MB; file_mapped 106 MB; unevictable 0 MB; 
+memory.current 49405 MB
+nr_periods 6589 nr_throttled 23 throttled_usec 9026756 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=341817; memory.pressure some avg10=0.00 avg60=0.01 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=81167
+8386 MiB, 0 %
+== 22:28:49
+Mem:         2063985      695308      178493      503589     1710753     1368677
+anon 1779 MB; file 48247 MB; shmem 21 MB; file_mapped 106 MB; unevictable 0 MB; 
+memory.current 50082 MB
+nr_periods 6789 nr_throttled 23 throttled_usec 9026756 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=343536; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=81249
+7402 MiB, 0 %
+== 22:29:09
+Mem:         2063985      695348      176050      503600     1713167     1368637
+anon 967 MB; file 48247 MB; shmem 21 MB; file_mapped 106 MB; unevictable 0 MB; 
+memory.current 49263 MB
+nr_periods 6990 nr_throttled 23 throttled_usec 9026756 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=345913; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=81249
+9970 MiB, 69 %
+== 22:29:29
+Mem:         2063985      694039      178929      503600     1711596     1369946
+anon 1096 MB; file 48259 MB; shmem 21 MB; file_mapped 106 MB; unevictable 0 MB; 
+memory.current 49404 MB
+nr_periods 7191 nr_throttled 23 throttled_usec 9026756 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=348083; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=81249
+9972 MiB, 1 %
+== 22:29:49
+Mem:         2063985      694980      175954      503600     1713630     1369005
+anon 2056 MB; file 48281 MB; shmem 21 MB; file_mapped 107 MB; unevictable 0 MB; 
+memory.current 50393 MB
+nr_periods 7392 nr_throttled 23 throttled_usec 9026756 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=351292; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=81592
+9972 MiB, 0 %
+== 22:30:09
+Mem:         2063985      697724      175026      503664     1711880     1366261
+anon 3517 MB; file 48247 MB; shmem 21 MB; file_mapped 106 MB; unevictable 0 MB; 
+memory.current 51817 MB
+nr_periods 7593 nr_throttled 24 throttled_usec 9048437 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=354340; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=81592
+9632 MiB, 0 %
+== 22:30:29
+Mem:         2063985      693306      177305      503600     1713954     1370679
+anon 1185 MB; file 48247 MB; shmem 21 MB; file_mapped 106 MB; unevictable 0 MB; 
+memory.current 49490 MB
+nr_periods 7795 nr_throttled 24 throttled_usec 9048437 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=359149; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=81815
+6598 MiB, 4 %
+== 22:30:49
+Mem:         2063985      696630      174946      503600     1712989     1367355
+anon 3770 MB; file 48247 MB; shmem 21 MB; file_mapped 106 MB; unevictable 0 MB; 
+memory.current 52071 MB
+nr_periods 7996 nr_throttled 24 throttled_usec 9048437 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=360740; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=81867
+5798 MiB, 0 %
+== 22:31:09
+Mem:         2063985      695103      173839      503600     1715622     1368881
+anon 1629 MB; file 48247 MB; shmem 21 MB; file_mapped 106 MB; unevictable 0 MB; 
+memory.current 49935 MB
+nr_periods 8197 nr_throttled 24 throttled_usec 9048437 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=362063; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=81867
+8426 MiB, 0 %
+== 22:31:29
+Mem:         2063985      694312      172307      503600     1717946     1369673
+anon 941 MB; file 48247 MB; shmem 21 MB; file_mapped 106 MB; unevictable 0 MB; 
+memory.current 49237 MB
+nr_periods 8398 nr_throttled 24 throttled_usec 9048437 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=363627; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=81867
+8386 MiB, 81 %
+== 22:31:49
+Mem:         2063985      696938      171160      503600     1716467     1367047
+anon 3541 MB; file 48247 MB; shmem 21 MB; file_mapped 106 MB; unevictable 0 MB; 
+memory.current 51843 MB
+nr_periods 8599 nr_throttled 24 throttled_usec 9048437 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=366154; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=82119
+5822 MiB, 0 %
+== 22:32:10
+Mem:         2063985      697220      168728      503600     1718617     1366765
+anon 3521 MB; file 48247 MB; shmem 21 MB; file_mapped 106 MB; unevictable 0 MB; 
+memory.current 51822 MB
+nr_periods 8800 nr_throttled 24 throttled_usec 9048437 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=367684; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=82119
+7402 MiB, 0 %
+== 22:32:30
+Mem:         2063985      696375      171171      503600     1717018     1367610
+anon 3618 MB; file 48247 MB; shmem 21 MB; file_mapped 106 MB; unevictable 0 MB; 
+memory.current 51920 MB
+nr_periods 9001 nr_throttled 24 throttled_usec 9048437 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=371944; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=82119
+8432 MiB, 0 %
+== 22:32:50
+Mem:         2063985      696832      168608      503600     1719124     1367152
+anon 3902 MB; file 48247 MB; shmem 21 MB; file_mapped 106 MB; unevictable 0 MB; 
+memory.current 52213 MB
+nr_periods 9202 nr_throttled 24 throttled_usec 9048437 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=374620; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=82185
+4322 MiB, 0 %
+== 22:33:10
+Mem:         2063985      694290      172641      503600     1717634     1369694
+anon 1723 MB; file 48247 MB; shmem 21 MB; file_mapped 106 MB; unevictable 0 MB; 
+memory.current 50022 MB
+nr_periods 9403 nr_throttled 24 throttled_usec 9048437 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=377312; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=82185
+5858 MiB, 0 %
+== 22:33:30
+Mem:         2063985      695968      168907      503600     1719689     1368017
+anon 3620 MB; file 48247 MB; shmem 21 MB; file_mapped 106 MB; unevictable 0 MB; 
+memory.current 51924 MB
+nr_periods 9604 nr_throttled 24 throttled_usec 9048437 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=379268; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=82744
+8426 MiB, 0 %
+== 22:33:50
+Mem:         2063985      692801      169854      503579     1721888     1371183
+anon 282 MB; file 48226 MB; shmem 0 MB; file_mapped 43 MB; unevictable 0 MB; 
+memory.current 48552 MB
+nr_periods 9805 nr_throttled 24 throttled_usec 9048437 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=383807; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=82756
+4 MiB, 0 %
+== 22:34:10
+Mem:         2063985      695904      168411      503600     1720249     1368080
+anon 3391 MB; file 48252 MB; shmem 21 MB; file_mapped 94 MB; unevictable 0 MB; 
+memory.current 51697 MB
+nr_periods 10009 nr_throttled 24 throttled_usec 9048437 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=387818; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=82757
+2352 MiB, 0 %
+== 22:34:31
+Mem:         2063985      696161      166273      503600     1722130     1367824
+anon 3695 MB; file 48252 MB; shmem 21 MB; file_mapped 94 MB; unevictable 0 MB; 
+memory.current 52001 MB
+nr_periods 10210 nr_throttled 24 throttled_usec 9048437 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=398264; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=82824
+4144 MiB, 0 %
+== 22:34:51
+Mem:         2063985      695574      168769      503600     1720222     1368411
+anon 3695 MB; file 48253 MB; shmem 21 MB; file_mapped 94 MB; unevictable 0 MB; 
+memory.current 52001 MB
+nr_periods 10411 nr_throttled 24 throttled_usec 9048437 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=404785; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83090
+5172 MiB, 0 %
+== 22:35:11
+Mem:         2063985      645004      217467      261892     1480386     1418981
+anon 3389 MB; file 48253 MB; shmem 21 MB; file_mapped 94 MB; unevictable 0 MB; 
+memory.current 51699 MB
+nr_periods 10612 nr_throttled 24 throttled_usec 9048437 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=410948; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83242
+5172 MiB, 0 %
+== 22:35:31
+Mem:         2063985      464071      399640        7186     1224441     1599914
+anon 1135 MB; file 48253 MB; shmem 21 MB; file_mapped 94 MB; unevictable 0 MB; 
+memory.current 49435 MB
+nr_periods 10725 nr_throttled 24 throttled_usec 9048437 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=413394; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83242
+5172 MiB, 4 %
+== 22:36:26
+Mem:         2063985      139214      766098        6712     1182366     1924771
+anon 1767 MB; file 48272 MB; shmem 21 MB; file_mapped 95 MB; unevictable 0 MB; 
+memory.current 50089 MB
+nr_periods 11009 nr_throttled 24 throttled_usec 9048437 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=423837; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83295
+6216 MiB, 0 %
+== 22:36:46
+Mem:         2063985      141328      777779        6712     1168570     1922656
+anon 3695 MB; file 48253 MB; shmem 21 MB; file_mapped 94 MB; unevictable 0 MB; 
+memory.current 52001 MB
+nr_periods 11210 nr_throttled 24 throttled_usec 9048437 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=425829; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83295
+6216 MiB, 0 %
+== 22:37:06
+Mem:         2063985      141069      966441        6712      980168     1922916
+anon 3695 MB; file 48253 MB; shmem 21 MB; file_mapped 94 MB; unevictable 0 MB; 
+memory.current 52006 MB
+nr_periods 11411 nr_throttled 24 throttled_usec 9048437 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=427007; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83295
+7244 MiB, 0 %
+== 22:37:27
+Mem:         2063985      141916     1091019        6712      854614     1922068
+anon 4187 MB; file 48253 MB; shmem 21 MB; file_mapped 94 MB; unevictable 0 MB; 
+memory.current 52494 MB
+nr_periods 11612 nr_throttled 24 throttled_usec 9048437 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=428176; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83295
+8290 MiB, 0 %
+== 22:37:47
+Mem:         2063985      139242     1091786        6691      856500     1924743
+anon 655 MB; file 48231 MB; shmem 0 MB; file_mapped 46 MB; unevictable 0 MB; 
+memory.current 48931 MB
+nr_periods 11813 nr_throttled 24 throttled_usec 9048437 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=433275; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83393
+4 MiB, 0 %
+== 22:38:07
+Mem:         2063985      142579     1089916        6691      855030     1921406
+anon 3792 MB; file 48231 MB; shmem 0 MB; file_mapped 541 MB; unevictable 0 MB; 
+memory.current 52094 MB
+nr_periods 12014 nr_throttled 24 throttled_usec 9048437 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=434245; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83394
+4 MiB, 0 %
+== 22:38:27
+Mem:         2063985      142264     1088377        6691      856884     1921721
+anon 3646 MB; file 48231 MB; shmem 0 MB; file_mapped 1182 MB; unevictable 0 MB; 
+memory.current 51931 MB
+nr_periods 12215 nr_throttled 25 throttled_usec 9049143 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=436072; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83394
+4 MiB, 0 %
+== 22:38:47
+Mem:         2063985      141819     1090321        6691      855385     1922165
+anon 3788 MB; file 48231 MB; shmem 0 MB; file_mapped 1798 MB; unevictable 0 MB; 
+memory.current 52088 MB
+nr_periods 12416 nr_throttled 25 throttled_usec 9049143 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=437532; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83394
+4 MiB, 0 %
+== 22:39:07
+Mem:         2063985      142010     1089622        6691      855893     1921975
+anon 3814 MB; file 48231 MB; shmem 0 MB; file_mapped 2392 MB; unevictable 0 MB; 
+memory.current 52103 MB
+nr_periods 12617 nr_throttled 25 throttled_usec 9049143 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=439202; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83394
+4 MiB, 0 %
+== 22:39:27
+Mem:         2063985      141859     1087646        6691      858020     1922125
+anon 3727 MB; file 48231 MB; shmem 0 MB; file_mapped 3022 MB; unevictable 0 MB; 
+memory.current 52016 MB
+nr_periods 12818 nr_throttled 25 throttled_usec 9049143 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=441114; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83394
+4 MiB, 0 %
+== 22:39:47
+Mem:         2063985      142625     1085173        6691      859726     1921359
+anon 3861 MB; file 48231 MB; shmem 0 MB; file_mapped 3843 MB; unevictable 0 MB; 
+memory.current 52180 MB
+nr_periods 13019 nr_throttled 25 throttled_usec 9049143 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=442656; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83394
+4 MiB, 0 %
+== 22:40:07
+Mem:         2063985      142450     1086325        6691      858750     1921535
+anon 3942 MB; file 48231 MB; shmem 0 MB; file_mapped 4667 MB; unevictable 0 MB; 
+memory.current 52179 MB
+nr_periods 13220 nr_throttled 25 throttled_usec 9049143 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=444187; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83394
+4 MiB, 0 %
+== 22:40:27
+Mem:         2063985      142739     1083829        6691      860957     1921246
+anon 4204 MB; file 48231 MB; shmem 0 MB; file_mapped 5398 MB; unevictable 0 MB; 
+memory.current 52519 MB
+nr_periods 13421 nr_throttled 25 throttled_usec 9049143 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=445837; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83396
+4 MiB, 0 %
+== 22:40:47
+Mem:         2063985      141514     1085921        6710      860108     1922471
+anon 1918 MB; file 48250 MB; shmem 19 MB; file_mapped 6158 MB; unevictable 0 MB; 
+memory.current 50239 MB
+nr_periods 13622 nr_throttled 25 throttled_usec 9049143 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=446564; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83402
+990 MiB, 0 %
+== 22:41:08
+Mem:         2063985      142559     1084373        6712      860612     1921425
+anon 3149 MB; file 48283 MB; shmem 21 MB; file_mapped 6794 MB; unevictable 0 MB; 
+memory.current 51502 MB
+nr_periods 13823 nr_throttled 25 throttled_usec 9049143 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=447523; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83402
+4176 MiB, 0 %
+== 22:41:28
+Mem:         2063985      141219     1081602        6712      864723     1922766
+anon 1281 MB; file 48302 MB; shmem 21 MB; file_mapped 6794 MB; unevictable 0 MB; 
+memory.current 49649 MB
+nr_periods 14024 nr_throttled 25 throttled_usec 9049143 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=448512; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83402
+4176 MiB, 0 %
+== 22:41:48
+Mem:         2063985      142074     1076782        6712      868688     1921911
+anon 2167 MB; file 48256 MB; shmem 21 MB; file_mapped 6817 MB; unevictable 0 MB; 
+memory.current 50492 MB
+nr_periods 14225 nr_throttled 25 throttled_usec 9049143 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=450935; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83402
+13144 MiB, 74 %
+== 22:42:08
+Mem:         2063985      143644     1071008        6691      872870     1920341
+anon 3568 MB; file 48235 MB; shmem 0 MB; file_mapped 329 MB; unevictable 0 MB; 
+memory.current 51870 MB
+nr_periods 14425 nr_throttled 25 throttled_usec 9049143 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=453843; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83402
+4 MiB, 0 %
+== 22:42:28
+Mem:         2063985      143318     1067659        6691      876545     1920667
+anon 3809 MB; file 48235 MB; shmem 0 MB; file_mapped 1035 MB; unevictable 0 MB; 
+memory.current 52120 MB
+nr_periods 14626 nr_throttled 25 throttled_usec 9049143 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=455930; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83440
+4 MiB, 0 %
+== 22:42:48
+Mem:         2063985      142527     1064552        6691      880443     1921457
+anon 3845 MB; file 48235 MB; shmem 0 MB; file_mapped 1865 MB; unevictable 0 MB; 
+memory.current 52135 MB
+nr_periods 14827 nr_throttled 26 throttled_usec 9050237 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=457498; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83440
+4 MiB, 0 %
+== 22:43:08
+Mem:         2063985      141927     1061687        6691      883909     1922058
+anon 3718 MB; file 48235 MB; shmem 0 MB; file_mapped 2682 MB; unevictable 0 MB; 
+memory.current 52009 MB
+nr_periods 15028 nr_throttled 26 throttled_usec 9050237 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=458988; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83440
+4 MiB, 0 %
+== 22:43:28
+Mem:         2063985      141842     1059201        6691      886478     1922143
+anon 3774 MB; file 48235 MB; shmem 0 MB; file_mapped 3504 MB; unevictable 0 MB; 
+memory.current 52093 MB
+nr_periods 15229 nr_throttled 29 throttled_usec 9051785 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=460713; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83440
+4 MiB, 0 %
+== 22:43:48
+Mem:         2063985      141563     1055696        6691      890262     1922422
+anon 3989 MB; file 48235 MB; shmem 0 MB; file_mapped 4327 MB; unevictable 0 MB; 
+memory.current 52304 MB
+nr_periods 15430 nr_throttled 31 throttled_usec 9061086 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=462670; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83441
+4 MiB, 0 %
+== 22:44:08
+Mem:         2063985      141079     1052767        6691      893674     1922906
+anon 3646 MB; file 48235 MB; shmem 0 MB; file_mapped 5212 MB; unevictable 0 MB; 
+memory.current 51943 MB
+nr_periods 15631 nr_throttled 32 throttled_usec 9061620 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=464384; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83461
+4 MiB, 0 %
+== 22:44:28
+Mem:         2063985      141078     1048579        6710      897881     1922906
+anon 3373 MB; file 48254 MB; shmem 19 MB; file_mapped 6184 MB; unevictable 0 MB; 
+memory.current 51693 MB
+nr_periods 15832 nr_throttled 32 throttled_usec 9061620 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=465170; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83461
+990 MiB, 0 %
+== 22:44:49
+Mem:         2063985      138789     1048402        6691      900329     1925196
+anon 384 MB; file 48235 MB; shmem 0 MB; file_mapped 44 MB; unevictable 0 MB; 
+memory.current 48665 MB
+nr_periods 16032 nr_throttled 32 throttled_usec 9061620 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=467845; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83461
+4 MiB, 0 %
+== 22:45:09
+Mem:         2063985      141743     1043284        6691      902492     1922242
+anon 3236 MB; file 48235 MB; shmem 0 MB; file_mapped 173 MB; unevictable 0 MB; 
+memory.current 51521 MB
+nr_periods 16233 nr_throttled 32 throttled_usec 9061620 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=469031; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83461
+4 MiB, 0 %
+== 22:45:29
+Mem:         2063985      146780     1036036        6691      904703     1917205
+anon 7837 MB; file 48235 MB; shmem 0 MB; file_mapped 444 MB; unevictable 0 MB; 
+memory.current 56133 MB
+nr_periods 16436 nr_throttled 33 throttled_usec 9062985 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=470109; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83516
+4 MiB, 0 %
+== 22:45:49
+Mem:         2063985      145841     1034788        6691      906889     1918143
+anon 7353 MB; file 48235 MB; shmem 0 MB; file_mapped 1030 MB; unevictable 0 MB; 
+memory.current 55673 MB
+nr_periods 16637 nr_throttled 33 throttled_usec 9062985 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=471596; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83516
+4 MiB, 0 %
+== 22:46:09
+Mem:         2063985      146079     1032349        6691      909090     1917906
+anon 7914 MB; file 48235 MB; shmem 0 MB; file_mapped 1969 MB; unevictable 0 MB; 
+memory.current 55999 MB
+nr_periods 16838 nr_throttled 35 throttled_usec 9064185 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=473549; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83516
+4 MiB, 0 %
+== 22:46:29
+Mem:         2063985      146054     1030161        6691      911302     1917930
+anon 7996 MB; file 48235 MB; shmem 0 MB; file_mapped 3053 MB; unevictable 0 MB; 
+memory.current 56319 MB
+nr_periods 17039 nr_throttled 35 throttled_usec 9064185 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=475455; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83516
+4 MiB, 0 %
+== 22:46:49
+Mem:         2063985      147864     1026129        6691      913524     1916120
+anon 8306 MB; file 48235 MB; shmem 0 MB; file_mapped 4073 MB; unevictable 0 MB; 
+memory.current 56610 MB
+nr_periods 17240 nr_throttled 35 throttled_usec 9064185 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=477303; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83528
+4 MiB, 0 %
+== 22:47:09
+Mem:         2063985      147921     1023787        6691      915810     1916064
+anon 8380 MB; file 48235 MB; shmem 0 MB; file_mapped 4884 MB; unevictable 0 MB; 
+memory.current 56685 MB
+nr_periods 17441 nr_throttled 37 throttled_usec 9067297 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=479384; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83529
+4 MiB, 0 %
+== 22:47:29
+Mem:         2063985      147650     1021817        6691      918050     1916334
+anon 8790 MB; file 48235 MB; shmem 0 MB; file_mapped 5889 MB; unevictable 0 MB; 
+memory.current 57114 MB
+nr_periods 17642 nr_throttled 37 throttled_usec 9067297 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=481203; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83530
+4 MiB, 0 %
+== 22:47:50
+Mem:         2063985      147609     1019649        6691      920259     1916375
+anon 8773 MB; file 48235 MB; shmem 0 MB; file_mapped 6919 MB; unevictable 0 MB; 
+memory.current 57084 MB
+nr_periods 17842 nr_throttled 39 throttled_usec 9069203 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=483200; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83530
+4 MiB, 0 %
+== 22:48:10
+Mem:         2063985      147449     1017614        6691      922454     1916535
+anon 9060 MB; file 48235 MB; shmem 0 MB; file_mapped 7972 MB; unevictable 0 MB; 
+memory.current 57394 MB
+nr_periods 18043 nr_throttled 39 throttled_usec 9069203 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=484988; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83530
+4 MiB, 0 %
+== 22:48:30
+Mem:         2063985      147373     1015444        6691      924701     1916612
+anon 9125 MB; file 48235 MB; shmem 0 MB; file_mapped 9021 MB; unevictable 0 MB; 
+memory.current 57471 MB
+nr_periods 18244 nr_throttled 42 throttled_usec 9071003 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=486975; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83530
+4 MiB, 0 %
+== 22:48:50
+Mem:         2063985      148396     1012208        6691      926914     1915589
+anon 9290 MB; file 48235 MB; shmem 0 MB; file_mapped 9259 MB; unevictable 0 MB; 
+memory.current 57621 MB
+nr_periods 18445 nr_throttled 43 throttled_usec 9082478 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=490834; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83530
+4 MiB, 0 %
+== 22:49:10
+Mem:         2063985      149601     1008899        6691      929018     1914384
+anon 10178 MB; file 48235 MB; shmem 0 MB; file_mapped 9902 MB; unevictable 0 MB; 
+memory.current 58500 MB
+nr_periods 18646 nr_throttled 43 throttled_usec 9082478 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=493692; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=83555
+4 MiB, 0 %
+== 22:49:30
+Mem:         2063985      146525     1009919        6710      931093     1917460
+anon 6577 MB; file 48254 MB; shmem 19 MB; file_mapped 10112 MB; unevictable 0 MB; 
+memory.current 54912 MB
+nr_periods 18847 nr_throttled 43 throttled_usec 9082478 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=495007; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84015
+3246 MiB, 0 %
+== 22:49:50
+Mem:         2063985      147477     1006911        6712      933151     1916507
+anon 7198 MB; file 48256 MB; shmem 21 MB; file_mapped 10714 MB; unevictable 0 MB; 
+memory.current 55541 MB
+nr_periods 19048 nr_throttled 43 throttled_usec 9082478 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=498416; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84015
+22608 MiB, 71 %
+== 22:50:10
+Mem:         2063985      139890     1012398        6691      935230     1924095
+anon 381 MB; file 48235 MB; shmem 0 MB; file_mapped 44 MB; unevictable 0 MB; 
+memory.current 48662 MB
+nr_periods 19249 nr_throttled 43 throttled_usec 9082478 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=502318; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84015
+4 MiB, 0 %
+== 22:50:30
+Mem:         2063985      142851     1007251        6691      937415     1921133
+anon 3016 MB; file 48235 MB; shmem 0 MB; file_mapped 259 MB; unevictable 0 MB; 
+memory.current 51306 MB
+nr_periods 19450 nr_throttled 43 throttled_usec 9082478 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=503410; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84015
+4 MiB, 0 %
+== 22:50:50
+Mem:         2063985      146870     1001107        6691      939540     1917115
+anon 7886 MB; file 48235 MB; shmem 0 MB; file_mapped 444 MB; unevictable 0 MB; 
+memory.current 56196 MB
+nr_periods 19651 nr_throttled 43 throttled_usec 9082478 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=505496; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84015
+4 MiB, 0 %
+== 22:51:10
+Mem:         2063985      145991      999871        6691      941656     1917994
+anon 7551 MB; file 48235 MB; shmem 0 MB; file_mapped 953 MB; unevictable 0 MB; 
+memory.current 55868 MB
+nr_periods 19852 nr_throttled 43 throttled_usec 9082478 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=507244; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84023
+4 MiB, 0 %
+== 22:51:31
+Mem:         2063985      146219      997465        6691      943833     1917765
+anon 7586 MB; file 48235 MB; shmem 0 MB; file_mapped 1588 MB; unevictable 0 MB; 
+memory.current 55900 MB
+nr_periods 20053 nr_throttled 43 throttled_usec 9082478 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=508789; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84063
+4 MiB, 0 %
+== 22:51:51
+Mem:         2063985      146115      995419        6691      945983     1917870
+anon 7709 MB; file 48235 MB; shmem 0 MB; file_mapped 2163 MB; unevictable 0 MB; 
+memory.current 56008 MB
+nr_periods 20254 nr_throttled 43 throttled_usec 9082478 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=510529; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84063
+4 MiB, 0 %
+== 22:52:11
+Mem:         2063985      146125      993364        6691      948029     1917859
+anon 8058 MB; file 48235 MB; shmem 0 MB; file_mapped 2740 MB; unevictable 0 MB; 
+memory.current 56135 MB
+nr_periods 20455 nr_throttled 44 throttled_usec 9083440 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=512454; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84063
+4 MiB, 0 %
+== 22:52:31
+Mem:         2063985      146523      990768        6691      950226     1917461
+anon 8251 MB; file 48235 MB; shmem 0 MB; file_mapped 3416 MB; unevictable 0 MB; 
+memory.current 56554 MB
+nr_periods 20656 nr_throttled 45 throttled_usec 9083838 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=513771; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84063
+4 MiB, 0 %
+== 22:52:51
+Mem:         2063985      147861      987241        6691      952415     1916123
+anon 8495 MB; file 48235 MB; shmem 0 MB; file_mapped 4112 MB; unevictable 0 MB; 
+memory.current 56818 MB
+nr_periods 20857 nr_throttled 45 throttled_usec 9083838 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=515308; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84063
+4 MiB, 0 %
+== 22:53:11
+Mem:         2063985      147742      985110        6691      954666     1916243
+anon 8660 MB; file 48235 MB; shmem 0 MB; file_mapped 5034 MB; unevictable 0 MB; 
+memory.current 56816 MB
+nr_periods 21058 nr_throttled 46 throttled_usec 9084773 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=517225; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84064
+4 MiB, 0 %
+== 22:53:31
+Mem:         2063985      147988      982319        6691      957211     1915997
+anon 8801 MB; file 48235 MB; shmem 0 MB; file_mapped 5879 MB; unevictable 0 MB; 
+memory.current 57006 MB
+nr_periods 21259 nr_throttled 46 throttled_usec 9084773 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=518837; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84064
+4 MiB, 0 %
+== 22:53:51
+Mem:         2063985      148891      978362        6691      960264     1915093
+anon 8955 MB; file 48235 MB; shmem 0 MB; file_mapped 6524 MB; unevictable 0 MB; 
+memory.current 57281 MB
+nr_periods 21460 nr_throttled 46 throttled_usec 9084773 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=520564; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84064
+4 MiB, 0 %
+== 22:54:11
+Mem:         2063985      148758      976230        6691      962529     1915227
+anon 8848 MB; file 48235 MB; shmem 0 MB; file_mapped 7187 MB; unevictable 0 MB; 
+memory.current 57161 MB
+nr_periods 21661 nr_throttled 46 throttled_usec 9084773 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=522250; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84064
+4 MiB, 0 %
+== 22:54:31
+Mem:         2063985      148388      974283        6691      964847     1915597
+anon 8976 MB; file 48235 MB; shmem 0 MB; file_mapped 7810 MB; unevictable 0 MB; 
+memory.current 57309 MB
+nr_periods 21862 nr_throttled 47 throttled_usec 9120710 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=525463; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84064
+4 MiB, 0 %
+== 22:54:52
+Mem:         2063985      149180      971215        6691      967122     1914804
+anon 8975 MB; file 48235 MB; shmem 0 MB; file_mapped 8415 MB; unevictable 0 MB; 
+memory.current 57289 MB
+nr_periods 22063 nr_throttled 48 throttled_usec 9121173 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=527129; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84128
+4 MiB, 0 %
+== 22:55:12
+Mem:         2063985      148671      970210        6691      968636     1915313
+anon 9079 MB; file 48235 MB; shmem 0 MB; file_mapped 9115 MB; unevictable 0 MB; 
+memory.current 57395 MB
+nr_periods 22264 nr_throttled 49 throttled_usec 9121593 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=528547; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84131
+4 MiB, 0 %
+== 22:55:32
+Mem:         2063985      150573      966008        6691      970936     1913412
+anon 10798 MB; file 48235 MB; shmem 0 MB; file_mapped 9601 MB; unevictable 0 MB; 
+memory.current 59136 MB
+nr_periods 22465 nr_throttled 50 throttled_usec 9121977 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=530873; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84263
+4 MiB, 0 %
+== 22:55:52
+Mem:         2063985      147804      966490        6710      973242     1916181
+anon 8795 MB; file 48254 MB; shmem 19 MB; file_mapped 10087 MB; unevictable 0 MB; 
+memory.current 57135 MB
+nr_periods 22666 nr_throttled 50 throttled_usec 9121977 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=531473; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84279
+3242 MiB, 0 %
+== 22:56:12
+Mem:         2063985      146145      965750        6712      975644     1917840
+anon 7198 MB; file 48256 MB; shmem 21 MB; file_mapped 10689 MB; unevictable 0 MB; 
+memory.current 55540 MB
+nr_periods 22867 nr_throttled 50 throttled_usec 9121977 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=534446; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84279
+22608 MiB, 76 %
+== 22:56:32
+Mem:         2063985      139171      970319        6691      978026     1924813
+anon 5 MB; file 48235 MB; shmem 0 MB; file_mapped 0 MB; unevictable 0 MB; 
+memory.current 48282 MB
+nr_periods 23021 nr_throttled 50 throttled_usec 9121977 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=535855; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84279
+0 MiB, 0 %
+== 22:56:52
+Mem:         2063985      138916      968366        6691      980235     1925069
+anon 7 MB; file 48235 MB; shmem 0 MB; file_mapped 0 MB; unevictable 0 MB; 
+memory.current 48283 MB
+nr_periods 23041 nr_throttled 50 throttled_usec 9121977 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=536643; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84279
+0 MiB, 0 %
+== 22:57:12
+Mem:         2063985      139319      965781        6691      982417     1924666
+anon 454 MB; file 48235 MB; shmem 0 MB; file_mapped 45 MB; unevictable 0 MB; 
+memory.current 48735 MB
+nr_periods 23127 nr_throttled 50 throttled_usec 9121977 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=538343; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84279
+4 MiB, 0 %
+== 22:57:32
+Mem:         2063985      143097      959821        6691      984599     1920887
+anon 3806 MB; file 48235 MB; shmem 0 MB; file_mapped 525 MB; unevictable 0 MB; 
+memory.current 52106 MB
+nr_periods 23328 nr_throttled 50 throttled_usec 9121977 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=540096; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84281
+4 MiB, 0 %
+== 22:57:52
+Mem:         2063985      142981      957794        6691      986742     1921004
+anon 3773 MB; file 48235 MB; shmem 0 MB; file_mapped 1314 MB; unevictable 0 MB; 
+memory.current 52062 MB
+nr_periods 23529 nr_throttled 50 throttled_usec 9121977 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=541672; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84335
+4 MiB, 0 %
+== 22:58:13
+Mem:         2063985      142472      956090        6691      988955     1921513
+anon 3814 MB; file 48235 MB; shmem 0 MB; file_mapped 2417 MB; unevictable 0 MB; 
+memory.current 52117 MB
+nr_periods 23730 nr_throttled 52 throttled_usec 9127112 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=543787; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84335
+4 MiB, 0 %
+== 22:58:33
+Mem:         2063985      142461      952220        6691      992837     1921524
+anon 3913 MB; file 48235 MB; shmem 0 MB; file_mapped 3504 MB; unevictable 0 MB; 
+memory.current 52220 MB
+nr_periods 23931 nr_throttled 56 throttled_usec 9129769 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=545688; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84335
+4 MiB, 0 %
+== 22:58:53
+Mem:         2063985      142592      950144        6691      994782     1921393
+anon 4034 MB; file 48235 MB; shmem 0 MB; file_mapped 4463 MB; unevictable 0 MB; 
+memory.current 52234 MB
+nr_periods 24132 nr_throttled 56 throttled_usec 9129769 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=547382; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84388
+4 MiB, 0 %
+== 22:59:13
+Mem:         2063985      142594      947752        6691      997171     1921390
+anon 3897 MB; file 48235 MB; shmem 0 MB; file_mapped 5143 MB; unevictable 0 MB; 
+memory.current 52194 MB
+nr_periods 24333 nr_throttled 59 throttled_usec 9131388 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=548969; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84388
+4 MiB, 0 %
+== 22:59:33
+Mem:         2063985      144514      944153        6691      998850     1919471
+anon 5279 MB; file 48235 MB; shmem 0 MB; file_mapped 5857 MB; unevictable 0 MB; 
+memory.current 53594 MB
+nr_periods 24534 nr_throttled 59 throttled_usec 9131388 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=550480; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84388
+4 MiB, 0 %
+== 22:59:53
+Mem:         2063985      144009      942130        6691     1001378     1919975
+anon 4713 MB; file 48235 MB; shmem 0 MB; file_mapped 6132 MB; unevictable 0 MB; 
+memory.current 53015 MB
+nr_periods 24735 nr_throttled 59 throttled_usec 9131388 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=551754; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84405
+4 MiB, 0 %
+== 23:00:13
+Mem:         2063985      145002      938672        6691     1003843     1918982
+anon 4713 MB; file 48235 MB; shmem 0 MB; file_mapped 6132 MB; unevictable 0 MB; 
+memory.current 53014 MB
+nr_periods 24936 nr_throttled 60 throttled_usec 9131783 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=555767; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84405
+4 MiB, 0 %
+== 23:00:34
+Mem:         2063985      143388      937997        6691     1006132     1920597
+anon 4937 MB; file 48235 MB; shmem 0 MB; file_mapped 6158 MB; unevictable 0 MB; 
+memory.current 53239 MB
+nr_periods 25145 nr_throttled 63 throttled_usec 9171436 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=559088; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84405
+4 MiB, 0 %
+== 23:00:54
+Mem:         2063985      139502      939708        6691     1008308     1924483
+anon 361 MB; file 48235 MB; shmem 0 MB; file_mapped 43 MB; unevictable 0 MB; 
+memory.current 48643 MB
+nr_periods 25346 nr_throttled 64 throttled_usec 9174383 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=560750; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84456
+4 MiB, 0 %
+== 23:01:14
+Mem:         2063985      143253      933783        6691     1010481     1920732
+anon 3906 MB; file 48235 MB; shmem 0 MB; file_mapped 465 MB; unevictable 0 MB; 
+memory.current 52209 MB
+nr_periods 25547 nr_throttled 64 throttled_usec 9174383 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=561824; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84456
+4 MiB, 0 %
+== 23:01:34
+Mem:         2063985      143770      931025        6691     1012722     1920214
+anon 3898 MB; file 48235 MB; shmem 0 MB; file_mapped 1297 MB; unevictable 0 MB; 
+memory.current 52211 MB
+nr_periods 25748 nr_throttled 66 throttled_usec 9182217 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=563539; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84458
+4 MiB, 0 %
+== 23:01:54
+Mem:         2063985      144298      928240        6691     1014979     1919686
+anon 3698 MB; file 48235 MB; shmem 0 MB; file_mapped 2124 MB; unevictable 0 MB; 
+memory.current 51988 MB
+nr_periods 25949 nr_throttled 71 throttled_usec 9189237 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=565824; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84458
+4 MiB, 0 %
+== 23:02:14
+Mem:         2063985      144818      925510        6691     1017189     1919167
+anon 3948 MB; file 48235 MB; shmem 0 MB; file_mapped 3036 MB; unevictable 0 MB; 
+memory.current 52259 MB
+nr_periods 26149 nr_throttled 72 throttled_usec 9189603 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=567497; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84458
+4 MiB, 0 %
+== 23:02:35
+Mem:         2063985      144289      923797        6691     1019432     1919696
+anon 3753 MB; file 48235 MB; shmem 0 MB; file_mapped 3853 MB; unevictable 0 MB; 
+memory.current 52047 MB
+nr_periods 26350 nr_throttled 72 throttled_usec 9189603 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=569285; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84515
+4 MiB, 0 %
+== 23:02:55
+Mem:         2063985      143476      921060        6691     1022981     1920508
+anon 3775 MB; file 48235 MB; shmem 0 MB; file_mapped 4674 MB; unevictable 0 MB; 
+memory.current 52072 MB
+nr_periods 26551 nr_throttled 73 throttled_usec 9192582 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=570860; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84515
+4 MiB, 0 %
+== 23:03:15
+Mem:         2063985      144255      917738        6691     1025524     1919730
+anon 3789 MB; file 48235 MB; shmem 0 MB; file_mapped 5608 MB; unevictable 0 MB; 
+memory.current 52087 MB
+nr_periods 26752 nr_throttled 73 throttled_usec 9192582 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=572039; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84515
+4 MiB, 0 %
+== 23:03:35
+Mem:         2063985      144772      915079        6691     1027666     1919212
+anon 4857 MB; file 48235 MB; shmem 0 MB; file_mapped 6158 MB; unevictable 0 MB; 
+memory.current 53162 MB
+nr_periods 26953 nr_throttled 74 throttled_usec 9204524 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=573726; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84539
+4 MiB, 0 %
+== 23:03:55
+Mem:         2063985      143712      914377        6691     1029429     1920273
+anon 4834 MB; file 48235 MB; shmem 0 MB; file_mapped 6158 MB; unevictable 0 MB; 
+memory.current 53135 MB
+nr_periods 27154 nr_throttled 74 throttled_usec 9204524 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=575017; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84539
+4 MiB, 0 %
+== 23:04:15
+Mem:         2063985      143367      912365        6691     1031785     1920618
+anon 4905 MB; file 48235 MB; shmem 0 MB; file_mapped 6183 MB; unevictable 0 MB; 
+memory.current 53225 MB
+nr_periods 27355 nr_throttled 74 throttled_usec 9204524 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=576227; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84539
+4 MiB, 0 %
+== 23:04:35
+Mem:         2063985      139235      914801        6691     1033481     1924750
+anon 356 MB; file 48235 MB; shmem 0 MB; file_mapped 43 MB; unevictable 0 MB; 
+memory.current 48645 MB
+nr_periods 27556 nr_throttled 75 throttled_usec 9204787 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=577942; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84539
+4 MiB, 0 %
+== 23:04:55
+Mem:         2063985      140621      910966        6710     1035949     1923363
+anon 432 MB; file 48254 MB; shmem 19 MB; file_mapped 710 MB; unevictable 0 MB; 
+memory.current 48736 MB
+nr_periods 27757 nr_throttled 75 throttled_usec 9204787 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=579824; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84539
+15182 MiB, 99 %
+== 23:05:15
+Mem:         2063985      142389      906847        6712     1038302     1921596
+anon 1992 MB; file 48256 MB; shmem 21 MB; file_mapped 11762 MB; unevictable 0 MB; 
+memory.current 50326 MB
+nr_periods 27958 nr_throttled 75 throttled_usec 9204787 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=582212; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84539
+42130 MiB, 0 %
+== 23:05:35
+Mem:         2063985      142840      904173        6712     1040525     1921145
+anon 2567 MB; file 48256 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 50905 MB
+nr_periods 28159 nr_throttled 75 throttled_usec 9204787 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=583525; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84539
+3056 MiB, 0 %
+== 23:05:55
+Mem:         2063985      141841      902955        6712     1042742     1922143
+anon 1951 MB; file 48256 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 50283 MB
+nr_periods 28359 nr_throttled 75 throttled_usec 9204787 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=587601; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84539
+44002 MiB, 91 %
+== 23:06:16
+Mem:         2063985      142381      900215        6712     1044942     1921603
+anon 2544 MB; file 48256 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 50879 MB
+nr_periods 28560 nr_throttled 75 throttled_usec 9204787 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=591318; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84539
+17948 MiB, 0 %
+== 23:06:36
+Mem:         2063985      141614      898695        6712     1047229     1922370
+anon 2545 MB; file 48256 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 50880 MB
+nr_periods 28761 nr_throttled 75 throttled_usec 9204787 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=593034; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=84539
+54180 MiB, 88 %
+== 23:06:56
+Mem:         2063985      144424      893013        6712     1050101     1919560
+anon 5057 MB; file 49055 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 54195 MB
+nr_periods 28962 nr_throttled 75 throttled_usec 9204787 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=594097; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=85138
+54180 MiB, 0 %
+== 23:07:16
+Mem:         2063985      141985      891949        6712     1053605     1922000
+anon 2603 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 53258 MB
+nr_periods 29163 nr_throttled 75 throttled_usec 9204787 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=596023; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=85527
+54180 MiB, 0 %
+== 23:07:36
+Mem:         2063985      144542      887478        6712     1055518     1919443
+anon 4958 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55615 MB
+nr_periods 29364 nr_throttled 75 throttled_usec 9204787 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=597261; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=85527
+54180 MiB, 0 %
+== 23:07:56
+Mem:         2063985      144122      885690        6712     1057726     1919863
+anon 4958 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55616 MB
+nr_periods 29567 nr_throttled 77 throttled_usec 9208421 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=598727; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=85527
+54180 MiB, 0 %
+== 23:08:16
+Mem:         2063985      143838      883782        6712     1059918     1920147
+anon 4958 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55619 MB
+nr_periods 29768 nr_throttled 78 throttled_usec 9213831 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=601086; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=85527
+54180 MiB, 0 %
+== 23:08:36
+Mem:         2063985      143665      881834        6712     1062038     1920319
+anon 4958 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55618 MB
+nr_periods 29969 nr_throttled 78 throttled_usec 9213831 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=604222; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=85527
+54180 MiB, 0 %
+== 23:08:56
+Mem:         2063985      144690      879347        6712     1063500     1919295
+anon 4958 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55615 MB
+nr_periods 30169 nr_throttled 79 throttled_usec 9215813 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=610419; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=85527
+54180 MiB, 0 %
+== 23:09:17
+Mem:         2063985      144953      878244        6712     1064341     1919032
+anon 4958 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55616 MB
+nr_periods 30370 nr_throttled 81 throttled_usec 9216510 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=613475; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=85527
+54180 MiB, 0 %
+== 23:09:37
+Mem:         2063985      144889      877973        6712     1064676     1919095
+anon 4958 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55617 MB
+nr_periods 30571 nr_throttled 82 throttled_usec 9221600 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=614235; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=85527
+54180 MiB, 0 %
+== 23:09:57
+Mem:         2063985      144683      877774        6712     1065081     1919302
+anon 4958 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55616 MB
+nr_periods 30772 nr_throttled 83 throttled_usec 9223143 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=615530; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=85527
+54180 MiB, 0 %
+== 23:10:17
+Mem:         2063985      142801      881088        6712     1063648     1921183
+anon 2484 MB; file 49055 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 51631 MB
+nr_periods 30973 nr_throttled 83 throttled_usec 9223143 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=618455; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=85527
+16096 MiB, 0 %
+== 23:10:37
+Mem:         2063985      143013      880787        6712     1063737     1920971
+anon 2267 MB; file 49055 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 51401 MB
+nr_periods 31174 nr_throttled 83 throttled_usec 9223143 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=620273; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=85527
+37180 MiB, 0 %
+== 23:10:57
+Mem:         2063985      143272      880446        6712     1063819     1920712
+anon 2852 MB; file 49055 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 51988 MB
+nr_periods 31375 nr_throttled 83 throttled_usec 9223143 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=623333; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=85527
+55102 MiB, 0 %
+== 23:11:17
+Mem:         2063985      144247      879126        6712     1064164     1919737
+anon 2548 MB; file 49055 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 51681 MB
+nr_periods 31575 nr_throttled 83 throttled_usec 9223143 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=626099; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=85527
+63446 MiB, 96 %
+== 23:11:37
+Mem:         2063985      144935      878265        6712     1064337     1919049
+anon 3254 MB; file 49055 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 52389 MB
+nr_periods 31776 nr_throttled 83 throttled_usec 9223143 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=629096; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=85527
+63446 MiB, 0 %
+== 23:11:57
+Mem:         2063985      146091      875335        6712     1066111     1917893
+anon 4668 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55328 MB
+nr_periods 31977 nr_throttled 83 throttled_usec 9223143 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=632711; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=95523
+63446 MiB, 0 %
+== 23:12:17
+Mem:         2063985      146368      874768        6712     1066402     1917617
+anon 4970 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55632 MB
+nr_periods 32178 nr_throttled 83 throttled_usec 9223143 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=636330; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=95533
+63446 MiB, 0 %
+== 23:12:37
+Mem:         2063985      145686      875131        6712     1066721     1918299
+anon 4970 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55630 MB
+nr_periods 32379 nr_throttled 87 throttled_usec 9240769 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=637210; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=95535
+63446 MiB, 0 %
+== 23:12:57
+Mem:         2063985      145311      875193        6712     1067033     1918674
+anon 4971 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55630 MB
+nr_periods 32580 nr_throttled 91 throttled_usec 9255636 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=641988; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=95540
+63446 MiB, 0 %
+== 23:13:18
+Mem:         2063985      145000      875177        6712     1067359     1918984
+anon 4971 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55629 MB
+nr_periods 32781 nr_throttled 91 throttled_usec 9255636 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=645973; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=96088
+63446 MiB, 0 %
+== 23:13:38
+Mem:         2063985      144926      874877        6712     1067734     1919058
+anon 4971 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55629 MB
+nr_periods 32982 nr_throttled 92 throttled_usec 9278254 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=652191; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=96128
+63446 MiB, 0 %
+== 23:13:58
+Mem:         2063985      144706      874752        6712     1068079     1919279
+anon 4971 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55629 MB
+nr_periods 33182 nr_throttled 93 throttled_usec 9280882 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=652683; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=96147
+63446 MiB, 0 %
+== 23:14:18
+Mem:         2063985      144642      874265        6712     1068630     1919343
+anon 4971 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55630 MB
+nr_periods 33383 nr_throttled 94 throttled_usec 9282062 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=653847; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=96197
+63446 MiB, 0 %
+== 23:14:38
+Mem:         2063985      142871      877015        6712     1067652     1921114
+anon 2970 MB; file 49055 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 52104 MB
+nr_periods 33584 nr_throttled 95 throttled_usec 9282925 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=655794; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=98166
+7098 MiB, 0 %
+== 23:14:58
+Mem:         2063985      145506      873922        6712     1068109     1918479
+anon 4831 MB; file 49055 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 53969 MB
+nr_periods 33785 nr_throttled 95 throttled_usec 9282925 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=664639; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=98167
+7492 MiB, 0 %
+== 23:15:18
+Mem:         2063985      142465      876322        6712     1068749     1921519
+anon 2206 MB; file 49055 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 51338 MB
+nr_periods 33986 nr_throttled 95 throttled_usec 9282925 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=670912; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=98167
+48262 MiB, 0 %
+== 23:15:38
+Mem:         2063985      142796      875204        6712     1069536     1921188
+anon 2556 MB; file 49055 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 51689 MB
+nr_periods 34187 nr_throttled 95 throttled_usec 9282925 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=677089; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=98167
+56072 MiB, 97 %
+== 23:15:58
+Mem:         2063985      142775      874517        6712     1070246     1921210
+anon 2556 MB; file 49055 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 51689 MB
+nr_periods 34388 nr_throttled 95 throttled_usec 9282925 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=681780; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=98167
+56084 MiB, 88 %
+== 23:16:18
+Mem:         2063985      143899      871569        6712     1072069     1920086
+anon 2559 MB; file 50251 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 52895 MB
+nr_periods 34589 nr_throttled 95 throttled_usec 9282925 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=685679; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=98167
+56084 MiB, 0 %
+== 23:16:38
+Mem:         2063985      146538      868210        6712     1072790     1917447
+anon 4988 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55645 MB
+nr_periods 34789 nr_throttled 95 throttled_usec 9282925 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=686832; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=99227
+56084 MiB, 0 %
+== 23:16:59
+Mem:         2063985      146190      868049        6712     1073298     1917795
+anon 4986 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55645 MB
+nr_periods 34990 nr_throttled 97 throttled_usec 9284062 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=687589; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=99778
+56084 MiB, 0 %
+== 23:17:19
+Mem:         2063985      147944      865729        6712     1073864     1916040
+anon 4986 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55645 MB
+nr_periods 35191 nr_throttled 99 throttled_usec 9286372 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=689263; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=100335
+56084 MiB, 0 %
+== 23:17:39
+Mem:         2063985      147072      865873        6712     1074592     1916912
+anon 4986 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55646 MB
+nr_periods 35392 nr_throttled 99 throttled_usec 9286372 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=692806; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=100362
+56084 MiB, 0 %
+== 23:17:59
+Mem:         2063985      147257      865046        6712     1075234     1916727
+anon 4986 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55646 MB
+nr_periods 35593 nr_throttled 102 throttled_usec 9288928 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=698886; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=100369
+56084 MiB, 0 %
+== 23:18:19
+Mem:         2063985      147031      864691        6712     1075816     1916954
+anon 4986 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55646 MB
+nr_periods 35794 nr_throttled 103 throttled_usec 9290491 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=701853; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=100418
+56084 MiB, 0 %
+== 23:18:39
+Mem:         2063985      145984      865272        6712     1076281     1918000
+anon 4986 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55646 MB
+nr_periods 35995 nr_throttled 105 throttled_usec 9301368 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=702930; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=100452
+56084 MiB, 0 %
+== 23:18:59
+Mem:         2063985      145688      865319        6712     1076530     1918297
+anon 4986 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55644 MB
+nr_periods 36196 nr_throttled 106 throttled_usec 9302009 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=704454; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=101286
+56084 MiB, 0 %
+== 23:19:19
+Mem:         2063985      143325      868619        6712     1075593     1920659
+anon 2256 MB; file 49055 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 51389 MB
+nr_periods 36396 nr_throttled 106 throttled_usec 9302009 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=706041; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=101548
+18228 MiB, 0 %
+== 23:19:39
+Mem:         2063985      143153      866941        6712     1077444     1920832
+anon 2032 MB; file 49055 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 51163 MB
+nr_periods 36597 nr_throttled 106 throttled_usec 9302009 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=708129; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=101548
+39370 MiB, 0 %
+== 23:19:59
+Mem:         2063985      136676      872758        6691     1078082     1927308
+anon 2218 MB; file 49055 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 51350 MB
+nr_periods 36798 nr_throttled 106 throttled_usec 9302009 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=710162; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=101548
+57296 MiB, 71 %
+== 23:20:19
+Mem:         2063985      137270      871386        6691     1078860     1926715
+anon 2558 MB; file 49055 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 51691 MB
+nr_periods 36999 nr_throttled 106 throttled_usec 9302009 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=711445; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=101548
+56004 MiB, 91 %
+== 23:20:39
+Mem:         2063985      140206      868393        6691     1078916     1923779
+anon 5070 MB; file 49055 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 54208 MB
+nr_periods 37200 nr_throttled 106 throttled_usec 9302009 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=712534; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=101548
+56004 MiB, 0 %
+== 23:21:00
+Mem:         2063985      138181      868263        6691     1081072     1925803
+anon 2560 MB; file 50194 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 52832 MB
+nr_periods 37401 nr_throttled 106 throttled_usec 9302009 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=713287; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=101548
+56004 MiB, 0 %
+== 23:21:20
+Mem:         2063985      140475      864918        6691     1082123     1923510
+anon 4987 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55644 MB
+nr_periods 37602 nr_throttled 106 throttled_usec 9302009 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=714335; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=101769
+56004 MiB, 0 %
+== 23:21:40
+Mem:         2063985      140092      864647        6691     1082777     1923892
+anon 4987 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55647 MB
+nr_periods 37802 nr_throttled 107 throttled_usec 9303060 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=715179; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=102390
+56004 MiB, 0 %
+== 23:22:00
+Mem:         2063985      139823      864080        6691     1083613     1924162
+anon 4987 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55648 MB
+nr_periods 38003 nr_throttled 109 throttled_usec 9304049 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=716400; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=102735
+56004 MiB, 0 %
+== 23:22:20
+Mem:         2063985      139391      863718        6691     1084407     1924594
+anon 4987 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55646 MB
+nr_periods 38204 nr_throttled 109 throttled_usec 9304049 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=720201; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=102735
+56004 MiB, 0 %
+== 23:22:40
+Mem:         2063985      139241      863056        6691     1085219     1924744
+anon 4987 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55646 MB
+nr_periods 38405 nr_throttled 109 throttled_usec 9304049 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=727176; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=102754
+56004 MiB, 0 %
+== 23:23:00
+Mem:         2063985      138882      862711        6691     1085923     1925103
+anon 4987 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55645 MB
+nr_periods 38606 nr_throttled 109 throttled_usec 9304049 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=730469; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=102754
+56004 MiB, 0 %
+== 23:23:20
+Mem:         2063985      138612      862387        6691     1086517     1925373
+anon 4987 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55646 MB
+nr_periods 38807 nr_throttled 110 throttled_usec 9316283 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=731528; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=102777
+56004 MiB, 0 %
+== 23:23:40
+Mem:         2063985      138380      862045        6691     1087090     1925605
+anon 4987 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55645 MB
+nr_periods 39007 nr_throttled 111 throttled_usec 9316647 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=732728; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=102866
+56004 MiB, 0 %
+== 23:24:00
+Mem:         2063985      136957      864285        6691     1086273     1927027
+anon 2995 MB; file 49055 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 52111 MB
+nr_periods 39208 nr_throttled 111 throttled_usec 9316647 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=733733; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=104108
+56004 MiB, 0 %
+== 23:24:20
+Mem:         2063985      137671      861232        6691     1088613     1926314
+anon 3542 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 54199 MB
+nr_periods 39409 nr_throttled 111 throttled_usec 9316647 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=738685; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.08 avg60=0.02 avg300=0.00 total=132916
+56004 MiB, 0 %
+== 23:24:40
+Mem:         2063985      139466      858785        6691     1089264     1924518
+anon 4987 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55646 MB
+nr_periods 39610 nr_throttled 111 throttled_usec 9316647 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=740132; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.01 avg300=0.00 total=133165
+56004 MiB, 0 %
+== 23:25:01
+Mem:         2063985      139033      858899        6691     1089583     1924951
+anon 4987 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55646 MB
+nr_periods 39811 nr_throttled 113 throttled_usec 9329158 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=741511; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.01 avg300=0.00 total=133173
+56004 MiB, 0 %
+== 23:25:21
+Mem:         2063985      139071      858685        6691     1089759     1924913
+anon 4987 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55646 MB
+nr_periods 40012 nr_throttled 115 throttled_usec 9330822 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=746944; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=133173
+56004 MiB, 0 %
+== 23:25:41
+Mem:         2063985      140342      857697        6691     1089476     1923642
+anon 4987 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55646 MB
+nr_periods 40212 nr_throttled 117 throttled_usec 9334339 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=752965; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=133273
+56004 MiB, 0 %
+== 23:26:01
+Mem:         2063985      139744      858000        6691     1089771     1924240
+anon 4987 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55645 MB
+nr_periods 40413 nr_throttled 117 throttled_usec 9334339 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=760977; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=133382
+56004 MiB, 0 %
+== 23:26:21
+Mem:         2063985      139480      857782        6691     1090253     1924505
+anon 4987 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55645 MB
+nr_periods 40614 nr_throttled 120 throttled_usec 9354354 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=762069; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=133393
+56004 MiB, 0 %
+== 23:26:41
+Mem:         2063985      139404      856954        6691     1091157     1924580
+anon 4987 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55646 MB
+nr_periods 40815 nr_throttled 122 throttled_usec 9355509 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=762850; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=133461
+56004 MiB, 0 %
+== 23:27:01
+Mem:         2063985      143521      902658        6699     1041332     1920463
+anon 2434 MB; file 49055 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 51545 MB
+nr_periods 41016 nr_throttled 123 throttled_usec 9357193 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=764085; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=133560
+8380 MiB, 0 %
+== 23:27:21
+Mem:         2063985      145838      889793        6699     1051881     1918147
+anon 4825 MB; file 49055 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 53962 MB
+nr_periods 41217 nr_throttled 123 throttled_usec 9357193 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=768102; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=133560
+8388 MiB, 0 %
+== 23:27:41
+Mem:         2063985      142413      881485        6699     1063615     1921572
+anon 2319 MB; file 49055 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 51451 MB
+nr_periods 41418 nr_throttled 123 throttled_usec 9357193 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=771232; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=133560
+57424 MiB, 57 %
+== 23:28:01
+Mem:         2063985      142914      870025        6699     1074574     1921070
+anon 2565 MB; file 49055 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 51697 MB
+nr_periods 41619 nr_throttled 123 throttled_usec 9357193 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=772625; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=133560
+56210 MiB, 95 %
+== 23:28:21
+Mem:         2063985      141629      861610        6699     1084273     1922355
+anon 2565 MB; file 49055 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 51698 MB
+nr_periods 41820 nr_throttled 123 throttled_usec 9357193 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=773400; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=133560
+56220 MiB, 82 %
+== 23:28:42
+Mem:         2063985      142162      852259        6699     1093092     1921823
+anon 2680 MB; file 49055 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 51817 MB
+nr_periods 42021 nr_throttled 123 throttled_usec 9357193 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=777847; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=133560
+56222 MiB, 0 %
+== 23:29:02
+Mem:         2063985      144465      849601        6701     1093446     1919519
+anon 3179 MB; file 50574 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 53832 MB
+nr_periods 42221 nr_throttled 123 throttled_usec 9357193 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=779757; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=135037
+56222 MiB, 0 %
+== 23:29:22
+Mem:         2063985      146224      845581        6699     1095705     1917761
+anon 3045 MB; file 49054 MB; shmem 19 MB; file_mapped 76 MB; unevictable 0 MB; 
+memory.current 52152 MB
+nr_periods 42422 nr_throttled 123 throttled_usec 9357193 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=782444; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=135041
+3242 MiB, 0 %
+== 23:29:42
+Mem:         2063985      144471      843462        6699     1099577     1919513
+anon 1390 MB; file 49054 MB; shmem 19 MB; file_mapped 2000 MB; unevictable 0 MB; 
+memory.current 50498 MB
+nr_periods 42623 nr_throttled 123 throttled_usec 9357193 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=784592; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=135041
+34264 MiB, 99 %
+== 23:30:02
+Mem:         2063985      143953      843295        6712     1100275     1920032
+anon 2155 MB; file 49056 MB; shmem 21 MB; file_mapped 11763 MB; unevictable 0 MB; 
+memory.current 51287 MB
+nr_periods 42824 nr_throttled 123 throttled_usec 9357193 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=798354; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=135041
+34276 MiB, 0 %
+== 23:30:22
+Mem:         2063985      143500      843440        6712     1100582     1920484
+anon 2329 MB; file 49056 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 51464 MB
+nr_periods 43025 nr_throttled 123 throttled_usec 9357193 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=801201; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=135041
+4156 MiB, 0 %
+== 23:30:42
+Mem:         2063985      143243      843199        6712     1101081     1920742
+anon 1994 MB; file 49056 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 51124 MB
+nr_periods 43226 nr_throttled 123 throttled_usec 9357193 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=802897; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=135041
+45422 MiB, 69 %
+== 23:31:02
+Mem:         2063985      145252      840693        6712     1101578     1918733
+anon 1994 MB; file 49056 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 51123 MB
+nr_periods 43427 nr_throttled 123 throttled_usec 9357193 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=803956; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=135041
+63344 MiB, 95 %
+== 23:31:22
+Mem:         2063985      144120      841259        6712     1102142     1919864
+anon 2033 MB; file 49056 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 51163 MB
+nr_periods 43628 nr_throttled 123 throttled_usec 9357193 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=804858; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=135041
+72528 MiB, 100 %
+== 23:31:42
+Mem:         2063985      144739      840038        6712     1102746     1919246
+anon 2574 MB; file 49056 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 51705 MB
+nr_periods 43829 nr_throttled 123 throttled_usec 9357193 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=806479; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=135041
+72528 MiB, 0 %
+== 23:32:02
+Mem:         2063985      159158      825909        6712     1102448     1904827
+anon 17425 MB; file 49056 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 66588 MB
+nr_periods 44029 nr_throttled 123 throttled_usec 9357193 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=807591; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=135041
+72528 MiB, 0 %
+== 23:32:23
+Mem:         2063985      143656      848301        6712     1095385     1920329
+anon 2597 MB; file 49056 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 51728 MB
+nr_periods 44230 nr_throttled 123 throttled_usec 9357193 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=811282; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=135041
+46676 MiB, 97 %
+== 23:32:43
+Mem:         2063985      143500      848405        6712     1095435     1920485
+anon 2597 MB; file 49056 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 51728 MB
+nr_periods 44431 nr_throttled 123 throttled_usec 9357193 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=812652; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=135041
+82526 MiB, 98 %
+== 23:33:03
+Mem:         2063985      143665      848008        6712     1095604     1920319
+anon 2597 MB; file 49056 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 51728 MB
+nr_periods 44632 nr_throttled 123 throttled_usec 9357193 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=813253; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=135041
+82528 MiB, 100 %
+== 23:33:23
+Mem:         2063985      143591      847788        6712     1095887     1920393
+anon 2597 MB; file 49056 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 51727 MB
+nr_periods 44833 nr_throttled 123 throttled_usec 9357193 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=813443; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=135041
+82528 MiB, 98 %
+== 23:33:43
+Mem:         2063985      144812      846282        6712     1096172     1919173
+anon 2598 MB; file 49056 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 51729 MB
+nr_periods 45034 nr_throttled 123 throttled_usec 9357193 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=814411; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=135041
+82528 MiB, 94 %
+== 23:34:03
+Mem:         2063985      145154      845867        6712     1096245     1918830
+anon 2839 MB; file 49056 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 51977 MB
+nr_periods 45235 nr_throttled 123 throttled_usec 9357193 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=815490; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=135041
+82534 MiB, 96 %
+== 23:34:23
+Mem:         2063985      145370      845410        6712     1096487     1918615
+anon 2990 MB; file 49056 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 52121 MB
+nr_periods 45436 nr_throttled 123 throttled_usec 9357193 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=815984; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=135041
+82534 MiB, 94 %
+== 23:34:43
+Mem:         2063985      145883      843366        6712     1098017     1918101
+anon 2986 MB; file 50497 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 53561 MB
+nr_periods 45636 nr_throttled 123 throttled_usec 9357193 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=817597; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=148139
+82534 MiB, 0 %
+== 23:35:03
+Mem:         2063985      145903      840280        6712     1101083     1918082
+anon 3209 MB; file 53245 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 56533 MB
+nr_periods 45837 nr_throttled 123 throttled_usec 9357193 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=819792; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=149261
+82534 MiB, 0 %
+== 23:35:23
+Mem:         2063985      153082      833037        6712     1101148     1910903
+anon 9065 MB; file 53245 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 62346 MB
+nr_periods 46038 nr_throttled 123 throttled_usec 9357193 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=820279; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=149261
+82534 MiB, 0 %
+== 23:35:43
+Mem:         2063985      152441      833642        6712     1101183     1911544
+anon 9476 MB; file 53245 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 62815 MB
+nr_periods 46239 nr_throttled 123 throttled_usec 9357193 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=820987; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=149261
+82534 MiB, 0 %
+== 23:36:03
+Mem:         2063985      153177      832865        6712     1101224     1910808
+anon 9476 MB; file 53245 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 62814 MB
+nr_periods 46440 nr_throttled 123 throttled_usec 9357193 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=821482; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=149262
+82534 MiB, 0 %
+== 23:36:24
+Mem:         2063985      152727      832970        6712     1101570     1911258
+anon 9478 MB; file 53245 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 62818 MB
+nr_periods 46641 nr_throttled 126 throttled_usec 9372968 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=822682; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=149269
+82534 MiB, 0 %
+== 23:36:44
+Mem:         2063985      152555      833083        6712     1101628     1911430
+anon 9477 MB; file 53245 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 62816 MB
+nr_periods 46842 nr_throttled 128 throttled_usec 9380154 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=823441; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=149303
+82534 MiB, 0 %
+== 23:37:04
+Mem:         2063985      152548      833025        6712     1101694     1911437
+anon 9477 MB; file 53245 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 62814 MB
+nr_periods 47043 nr_throttled 129 throttled_usec 9388555 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=824389; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=149303
+82534 MiB, 0 %
+== 23:37:24
+Mem:         2063985      153083      832463        6712     1101720     1910902
+anon 9477 MB; file 53245 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 62813 MB
+nr_periods 47244 nr_throttled 130 throttled_usec 9388924 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=825028; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=149318
+82534 MiB, 0 %
+== 23:37:44
+Mem:         2063985      152845      832116        6712     1102305     1911140
+anon 9477 MB; file 53245 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 62814 MB
+nr_periods 47444 nr_throttled 131 throttled_usec 9393805 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=825789; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=149322
+82534 MiB, 0 %
+== 23:38:04
+Mem:         2063985      152529      832157        6712     1102579     1911455
+anon 9477 MB; file 53245 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 62813 MB
+nr_periods 47645 nr_throttled 133 throttled_usec 9405299 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=828426; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=149516
+82534 MiB, 0 %
+== 23:38:24
+Mem:         2063985      152158      832284        6712     1102823     1911827
+anon 9477 MB; file 53245 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 62813 MB
+nr_periods 47846 nr_throttled 134 throttled_usec 9405727 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=829773; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=149516
+82534 MiB, 0 %
+== 23:38:44
+Mem:         2063985      151726      832419        6712     1103121     1912259
+anon 9477 MB; file 53245 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 62815 MB
+nr_periods 48047 nr_throttled 135 throttled_usec 9414703 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=830770; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=149523
+82534 MiB, 0 %
+== 23:39:04
+Mem:         2063985      151393      832384        6712     1103489     1912591
+anon 9477 MB; file 53245 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 62814 MB
+nr_periods 48248 nr_throttled 136 throttled_usec 9417254 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=831440; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=149528
+82534 MiB, 0 %
+== 23:39:24
+Mem:         2063985      151257      832172        6712     1103837     1912728
+anon 9477 MB; file 53245 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 62814 MB
+nr_periods 48449 nr_throttled 142 throttled_usec 9431946 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=833240; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=149547
+82534 MiB, 0 %
+== 23:39:44
+Mem:         2063985      151527      831243        6712     1104496     1912458
+anon 9477 MB; file 53245 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 62814 MB
+nr_periods 48650 nr_throttled 143 throttled_usec 9441394 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=834541; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=149551
+82534 MiB, 0 %
+== 23:40:05
+Mem:         2063985      151533      830500        6712     1105232     1912451
+anon 9477 MB; file 53245 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 62814 MB
+nr_periods 48851 nr_throttled 147 throttled_usec 9452254 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=835944; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=149582
+82534 MiB, 0 %
+== 23:40:25
+Mem:         2063985      152495      828807        6712     1105964     1911490
+anon 9478 MB; file 53245 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 62816 MB
+nr_periods 49051 nr_throttled 149 throttled_usec 9456079 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=837919; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=149582
+82534 MiB, 0 %
+== 23:40:45
+Mem:         2063985      152174      828431        6712     1106661     1911811
+anon 9477 MB; file 53245 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 62814 MB
+nr_periods 49252 nr_throttled 152 throttled_usec 9461610 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=839511; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=149592
+82534 MiB, 0 %
+== 23:41:05
+Mem:         2063985      152024      827879        6712     1107362     1911960
+anon 9477 MB; file 53245 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 62814 MB
+nr_periods 49453 nr_throttled 156 throttled_usec 9463689 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=840360; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=149648
+82534 MiB, 0 %
+== 23:41:25
+Mem:         2063985      151774      827517        6712     1107974     1912210
+anon 9477 MB; file 53245 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 62813 MB
+nr_periods 49654 nr_throttled 158 throttled_usec 9465929 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=841277; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=149649
+82534 MiB, 0 %
+== 23:41:45
+Mem:         2063985      151524      827268        6712     1108473     1912460
+anon 9477 MB; file 53245 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 62813 MB
+nr_periods 49855 nr_throttled 162 throttled_usec 9471895 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=842609; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=149668
+82534 MiB, 0 %
+== 23:42:05
+Mem:         2063985      151500      826639        6712     1109126     1912485
+anon 9477 MB; file 53245 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 62813 MB
+nr_periods 50056 nr_throttled 163 throttled_usec 9474522 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=845641; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=149670
+82534 MiB, 0 %
+== 23:42:25
+Mem:         2063985      152275      825153        6712     1109837     1911709
+anon 9477 MB; file 53245 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 62813 MB
+nr_periods 50257 nr_throttled 167 throttled_usec 9488306 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=847363; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=149671
+82534 MiB, 0 %
+== 23:42:45
+Mem:         2063985      152409      824282        6712     1110574     1911575
+anon 9478 MB; file 53245 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 62816 MB
+nr_periods 50458 nr_throttled 171 throttled_usec 9495792 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=848723; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=149671
+82534 MiB, 0 %
+== 23:43:05
+Mem:         2063985      152472      823484        6712     1111309     1911513
+anon 9477 MB; file 53245 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 62813 MB
+nr_periods 50659 nr_throttled 175 throttled_usec 9501379 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=850925; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=149825
+82534 MiB, 0 %
+== 23:43:25
+Mem:         2063985      152196      823091        6712     1111978     1911788
+anon 9477 MB; file 53245 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 62814 MB
+nr_periods 50859 nr_throttled 180 throttled_usec 9505145 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=851905; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=149837
+82534 MiB, 0 %
+== 23:43:46
+Mem:         2063985      150988      823619        6712     1112658     1912997
+anon 9477 MB; file 53245 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 62814 MB
+nr_periods 51060 nr_throttled 182 throttled_usec 9510960 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=852968; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=149851
+82534 MiB, 0 %
+== 23:44:06
+Mem:         2063985      150641      823335        6712     1113289     1913344
+anon 9477 MB; file 53245 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 62813 MB
+nr_periods 51261 nr_throttled 187 throttled_usec 9514483 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=853498; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=149851
+82534 MiB, 0 %
+== 23:44:26
+Mem:         2063985      150268      823016        6712     1113981     1913716
+anon 9477 MB; file 53245 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 62814 MB
+nr_periods 51462 nr_throttled 187 throttled_usec 9514483 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=853856; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=149853
+82534 MiB, 0 %
+== 23:44:46
+Mem:         2063985      150225      822348        6712     1114692     1913759
+anon 9477 MB; file 53245 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 62814 MB
+nr_periods 51663 nr_throttled 191 throttled_usec 9521413 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=854709; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=149965
+82534 MiB, 0 %
+== 23:45:06
+Mem:         2063985      150644      821264        6712     1115357     1913340
+anon 9478 MB; file 53245 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 62816 MB
+nr_periods 51864 nr_throttled 194 throttled_usec 9529932 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=855427; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=149965
+82534 MiB, 0 %
+== 23:45:28
+Mem:         2063985      150332      820349        6712     1116585     1913652
+anon 9477 MB; file 53245 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 62814 MB
+nr_periods 52085 nr_throttled 196 throttled_usec 9533516 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=856068; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=150025
+82534 MiB, 0 %
+== 23:45:48
+Mem:         2063985      150243      819564        6712     1117459     1913742
+anon 9477 MB; file 53245 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 62814 MB
+nr_periods 52286 nr_throttled 199 throttled_usec 9541919 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=857663; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=150030
+82534 MiB, 0 %
+== 23:46:08
+Mem:         2063985      140962      830919        6691     1115363     1923023
+anon 801 MB; file 50476 MB; shmem 0 MB; file_mapped 48 MB; unevictable 0 MB; 
+memory.current 51324 MB
+nr_periods 52395 nr_throttled 199 throttled_usec 9541919 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=859232; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=150116
+4 MiB, 0 %
+== 23:46:28
+Mem:         2063985      142285      829066        6710     1115912     1921699
+anon 1403 MB; file 50495 MB; shmem 19 MB; file_mapped 5733 MB; unevictable 0 MB; 
+memory.current 51960 MB
+nr_periods 52595 nr_throttled 199 throttled_usec 9541919 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=862036; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=150116
+42126 MiB, 73 %
+== 23:46:48
+Mem:         2063985      143353      827527        6712     1116385     1920632
+anon 1838 MB; file 50497 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 52411 MB
+nr_periods 52796 nr_throttled 199 throttled_usec 9541919 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=863468; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=150116
+7524 MiB, 0 %
+== 23:47:08
+Mem:         2063985      144104      826481        6712     1116680     1919880
+anon 2084 MB; file 50497 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 52657 MB
+nr_periods 52997 nr_throttled 199 throttled_usec 9541919 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=867662; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=150116
+53184 MiB, 70 %
+== 23:47:29
+Mem:         2063985      145396      824732        6712     1117138     1918589
+anon 2542 MB; file 50497 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 53114 MB
+nr_periods 53198 nr_throttled 199 throttled_usec 9541919 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=871571; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=150116
+54180 MiB, 96 %
+== 23:47:49
+Mem:         2063985      147177      822582        6712     1117506     1916808
+anon 5056 MB; file 50497 MB; shmem 21 MB; file_mapped 11773 MB; unevictable 0 MB; 
+memory.current 55633 MB
+nr_periods 53399 nr_throttled 199 throttled_usec 9541919 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=875869; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=150116
+54180 MiB, 0 %
+== 23:48:09
+Mem:         2063985      146250      821699        6712     1119316     1917734
+anon 3396 MB; file 52016 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 55493 MB
+nr_periods 53600 nr_throttled 199 throttled_usec 9541919 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=879193; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=150239
+54180 MiB, 0 %
+== 23:48:29
+Mem:         2063985      147078      820508        6712     1119679     1916906
+anon 4956 MB; file 52016 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 57054 MB
+nr_periods 53801 nr_throttled 199 throttled_usec 9541919 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=883091; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=150315
+54180 MiB, 0 %
+== 23:48:49
+Mem:         2063985      146293      820967        6712     1120005     1917691
+anon 4956 MB; file 52016 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 57053 MB
+nr_periods 54002 nr_throttled 202 throttled_usec 9553971 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=884485; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=152472
+54180 MiB, 0 %
+== 23:49:09
+Mem:         2063985      145855      820944        6712     1120467     1918130
+anon 4957 MB; file 52016 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 57056 MB
+nr_periods 54203 nr_throttled 205 throttled_usec 9565993 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=889243; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=152904
+54180 MiB, 0 %
+== 23:49:29
+Mem:         2063985      145471      821031        6712     1120764     1918514
+anon 4956 MB; file 52016 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 57053 MB
+nr_periods 54403 nr_throttled 206 throttled_usec 9577332 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=893566; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=153455
+54180 MiB, 0 %
+== 23:49:49
+Mem:         2063985      145531      820760        6712     1120974     1918453
+anon 4956 MB; file 52016 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 57054 MB
+nr_periods 54604 nr_throttled 206 throttled_usec 9577332 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=898539; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=153712
+54180 MiB, 0 %
+== 23:50:09
+Mem:         2063985      145434      820571        6712     1121259     1918550
+anon 4956 MB; file 52016 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 57052 MB
+nr_periods 54805 nr_throttled 208 throttled_usec 9578560 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=898965; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=153712
+54180 MiB, 0 %
+== 23:50:29
+Mem:         2063985      146615      819165        6712     1121486     1917370
+anon 4956 MB; file 52016 MB; shmem 21 MB; file_mapped 11774 MB; unevictable 0 MB; 
+memory.current 57054 MB
+nr_periods 55006 nr_throttled 212 throttled_usec 9591644 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=900510; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=154405
+54180 MiB, 0 %
+== 23:50:49
+Mem:         2063985      141660      825355        6691     1120228     1922324
+anon 388 MB; file 50476 MB; shmem 0 MB; file_mapped 44 MB; unevictable 0 MB; 
+memory.current 50911 MB
+nr_periods 55207 nr_throttled 213 throttled_usec 9597228 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=904021; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=155846
+4 MiB, 0 %
+== 23:51:09
+Mem:         2063985      144329      822488        6691     1120427     1919656
+anon 3222 MB; file 50476 MB; shmem 0 MB; file_mapped 173 MB; unevictable 0 MB; 
+memory.current 53763 MB
+nr_periods 55408 nr_throttled 213 throttled_usec 9597228 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=910183; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=155846
+4 MiB, 0 %
+== 23:51:30
+Mem:         2063985      149238      817383        6691     1120623     1914747
+anon 7915 MB; file 50476 MB; shmem 0 MB; file_mapped 444 MB; unevictable 0 MB; 
+memory.current 58454 MB
+nr_periods 55609 nr_throttled 213 throttled_usec 9597228 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=915704; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=155846
+4 MiB, 0 %
+== 23:51:50
+Mem:         2063985      148379      818048        6691     1120817     1915606
+anon 7521 MB; file 50476 MB; shmem 0 MB; file_mapped 1004 MB; unevictable 0 MB; 
+memory.current 58080 MB
+nr_periods 55810 nr_throttled 214 throttled_usec 9597612 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=920358; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=155902
+4 MiB, 0 %
+== 23:52:10
+Mem:         2063985      148743      817494        6691     1121006     1915241
+anon 7621 MB; file 50476 MB; shmem 0 MB; file_mapped 1794 MB; unevictable 0 MB; 
+memory.current 58162 MB
+nr_periods 56011 nr_throttled 215 throttled_usec 9601294 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=921889; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=155902
+4 MiB, 0 %
+== 23:52:30
+Mem:         2063985      148714      817319        6691     1121211     1915270
+anon 7830 MB; file 50476 MB; shmem 0 MB; file_mapped 2541 MB; unevictable 0 MB; 
+memory.current 58372 MB
+nr_periods 56212 nr_throttled 215 throttled_usec 9601294 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=923247; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=155902
+4 MiB, 0 %
+== 23:52:50
+Mem:         2063985      150243      815591        6691     1121410     1913742
+anon 8019 MB; file 50476 MB; shmem 0 MB; file_mapped 3293 MB; unevictable 0 MB; 
+memory.current 58562 MB
+nr_periods 56412 nr_throttled 216 throttled_usec 9601671 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=924788; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=155906
+4 MiB, 0 %
+== 23:53:10
+Mem:         2063985      150087      815554        6691     1121602     1913897
+anon 8452 MB; file 50476 MB; shmem 0 MB; file_mapped 4273 MB; unevictable 0 MB; 
+memory.current 59001 MB
+nr_periods 56613 nr_throttled 217 throttled_usec 9602062 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=926634; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=155908
+4 MiB, 0 %
+== 23:53:30
+Mem:         2063985      150628      814811        6691     1121805     1913357
+anon 8660 MB; file 50476 MB; shmem 0 MB; file_mapped 5255 MB; unevictable 0 MB; 
+memory.current 59233 MB
+nr_periods 56814 nr_throttled 218 throttled_usec 9602456 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=928291; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=155908
+4 MiB, 0 %
+== 23:53:50
+Mem:         2063985      150230      814964        6691     1122050     1913754
+anon 8858 MB; file 50476 MB; shmem 0 MB; file_mapped 6227 MB; unevictable 0 MB; 
+memory.current 59411 MB
+nr_periods 57015 nr_throttled 218 throttled_usec 9602456 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=930048; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=155908
+4 MiB, 0 %
+== 23:54:10
+Mem:         2063985      150303      814570        6691     1122371     1913681
+anon 8949 MB; file 50476 MB; shmem 0 MB; file_mapped 7184 MB; unevictable 0 MB; 
+memory.current 59391 MB
+nr_periods 57216 nr_throttled 218 throttled_usec 9602456 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=931801; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=155908
+4 MiB, 0 %
+== 23:54:30
+Mem:         2063985      150042      814347        6691     1122855     1913943
+anon 9140 MB; file 50476 MB; shmem 0 MB; file_mapped 8124 MB; unevictable 0 MB; 
+memory.current 59717 MB
+nr_periods 57417 nr_throttled 221 throttled_usec 9604499 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=933534; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=155910
+4 MiB, 0 %
+== 23:54:50
+Mem:         2063985      150014      813857        6691     1123374     1913971
+anon 9237 MB; file 50476 MB; shmem 0 MB; file_mapped 9064 MB; unevictable 0 MB; 
+memory.current 59795 MB
+nr_periods 57618 nr_throttled 221 throttled_usec 9604499 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=935274; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=155910
+4 MiB, 0 %
+== 23:55:11
+Mem:         2063985      152690      810610        6691     1123945     1911295
+anon 10203 MB; file 50476 MB; shmem 0 MB; file_mapped 9535 MB; unevictable 0 MB; 
+memory.current 60781 MB
+nr_periods 57819 nr_throttled 221 throttled_usec 9604499 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=936848; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=155910
+4 MiB, 0 %
+== 23:55:31
+Mem:         2063985      150230      812462        6691     1124552     1913755
+anon 8190 MB; file 50476 MB; shmem 0 MB; file_mapped 10086 MB; unevictable 0 MB; 
+memory.current 58752 MB
+nr_periods 58020 nr_throttled 221 throttled_usec 9604499 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=937734; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=155910
+4 MiB, 0 %
+== 23:55:51
+Mem:         2063985      153644      808402        6691     1125198     1910341
+anon 11500 MB; file 50476 MB; shmem 0 MB; file_mapped 10086 MB; unevictable 0 MB; 
+memory.current 62065 MB
+nr_periods 58221 nr_throttled 221 throttled_usec 9604499 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=940889; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=155974
+4 MiB, 0 %
+== 23:56:11
+Mem:         2063985      152302      809064        6691     1125878     1911683
+anon 10185 MB; file 50476 MB; shmem 0 MB; file_mapped 10111 MB; unevictable 0 MB; 
+memory.current 60764 MB
+nr_periods 58422 nr_throttled 221 throttled_usec 9604499 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=942034; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=155974
+4 MiB, 0 %
+== 23:56:31
+Mem:         2063985      152315      808449        6691     1126480     1911669
+anon 10376 MB; file 50476 MB; shmem 0 MB; file_mapped 10136 MB; unevictable 0 MB; 
+memory.current 60946 MB
+nr_periods 58623 nr_throttled 221 throttled_usec 9604499 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=943099; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=155974
+4 MiB, 0 %
+== 23:56:51
+Mem:         2063985      154953      805224        6691     1127067     1909031
+anon 10183 MB; file 50476 MB; shmem 0 MB; file_mapped 10161 MB; unevictable 0 MB; 
+memory.current 60760 MB
+nr_periods 58823 nr_throttled 221 throttled_usec 9604499 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=944444; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=155979
+4 MiB, 0 %
+== 23:57:11
+Mem:         2063985      154231      805375        6691     1127638     1909753
+anon 10491 MB; file 50476 MB; shmem 0 MB; file_mapped 10161 MB; unevictable 0 MB; 
+memory.current 61053 MB
+nr_periods 59024 nr_throttled 221 throttled_usec 9604499 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=945721; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=155980
+4 MiB, 0 %
+== 23:57:31
+Mem:         2063985      155352      803640        6691     1128252     1908632
+anon 10441 MB; file 50476 MB; shmem 0 MB; file_mapped 10187 MB; unevictable 0 MB; 
+memory.current 61027 MB
+nr_periods 59225 nr_throttled 222 throttled_usec 9607601 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=946981; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=155980
+4 MiB, 0 %
+== 23:57:51
+Mem:         2063985      154438      803955        6691     1128852     1909547
+anon 9104 MB; file 50476 MB; shmem 0 MB; file_mapped 10212 MB; unevictable 0 MB; 
+memory.current 59668 MB
+nr_periods 59426 nr_throttled 223 throttled_usec 9612999 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=948315; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=156078
+4 MiB, 0 %
+== 23:58:11
+Mem:         2063985      144435      813391        6691     1129418     1919549
+anon 5 MB; file 50476 MB; shmem 0 MB; file_mapped 0 MB; unevictable 0 MB; 
+memory.current 50523 MB
+nr_periods 59459 nr_throttled 223 throttled_usec 9612999 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=948756; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=156078
+0 MiB, 0 %
+== 23:58:31
+Mem:         2063985      144183      812968        6691     1130094     1919802
+anon 7 MB; file 50476 MB; shmem 0 MB; file_mapped 0 MB; unevictable 0 MB; 
+memory.current 50526 MB
+nr_periods 59505 nr_throttled 223 throttled_usec 9612999 
+cpu.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=950419; memory.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=21495; io.pressure some avg10=0.00 avg60=0.00 avg300=0.00 total=156078
+0 MiB, 0 %

@@ -1,0 +1,1453 @@
+{
+ "args": {
+  "mode": "check",
+  "from_gguf": "/workspace/gguf/UD-Q4_K_XL/Kimi-K2-Instruct-UD-Q4_K_XL-00001-of-00013.gguf",
+  "prompt_n": 500,
+  "cont_n": 500,
+  "layers": 2,
+  "top_k": 8,
+  "offset": 0,
+  "t_queries": 54,
+  "bridge": false,
+  "weight_cache": false,
+  "routed_cache": false,
+  "sweep_timing": false,
+  "negatives": "",
+  "dump_proof": null,
+  "record": "/workspace/records/k2-check-s1000.json",
+  "allow_env_geometry": false
+ },
+ "mode": "check",
+ "ok": true,
+ "reference_s": 263.6984441280365,
+ "ranges": {
+  "L0.n1.S_tot": {
+   "observed": 31887330,
+   "limit": 18014398509481984,
+   "bits": 25,
+   "limit_bits": 55,
+   "ok": true,
+   "what": "row energy against the 2^54 limb cap (d = 7168)"
+  },
+  "L0.n1.y": {
+   "observed": 1293786,
+   "limit": 4069074,
+   "bits": 21,
+   "limit_bits": 22,
+   "ok": true,
+   "what": "inverse RMS against y_max = 4069073, the \u03b5 floor (d = 7168)"
+  },
+  "L0.n1.full": {
+   "observed": 133008480,
+   "limit": 9223372034707292161,
+   "bits": 27,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L0.n1.out": {
+   "observed": 32472,
+   "limit": 33554432,
+   "bits": 15,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L0.n1g.full": {
+   "observed": 11365200,
+   "limit": 9223372034707292161,
+   "bits": 24,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L0.n1g.out": {
+   "observed": 2774,
+   "limit": 33554432,
+   "bits": 12,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L0.qa.full": {
+   "observed": 45921621,
+   "limit": 9223372034707292161,
+   "bits": 26,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L0.qa.out": {
+   "observed": 11211,
+   "limit": 33554432,
+   "bits": 14,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L0.aq.S_tot": {
+   "observed": 1473146770,
+   "limit": 18014398509481984,
+   "bits": 31,
+   "limit_bits": 55,
+   "ok": true,
+   "what": "row energy against the 2^54 limb cap (d = 1536)"
+  },
+  "L0.aq.y": {
+   "observed": 49417,
+   "limit": 4069074,
+   "bits": 16,
+   "limit_bits": 22,
+   "ok": true,
+   "what": "inverse RMS against y_max = 4069073, the \u03b5 floor (d = 1536)"
+  },
+  "L0.aq.full": {
+   "observed": 203334573,
+   "limit": 9223372034707292161,
+   "bits": 28,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L0.aq.out": {
+   "observed": 49642,
+   "limit": 33554432,
+   "bits": 16,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L0.aqg.full": {
+   "observed": 172357024,
+   "limit": 9223372034707292161,
+   "bits": 28,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L0.aqg.out": {
+   "observed": 42079,
+   "limit": 33554432,
+   "bits": 16,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L0.ckv_raw.full": {
+   "observed": 153675797,
+   "limit": 9223372034707292161,
+   "bits": 28,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L0.ckv_raw.out": {
+   "observed": 37519,
+   "limit": 33554432,
+   "bits": 16,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L0.ckv.S_tot": {
+   "observed": 4312308358,
+   "limit": 18014398509481984,
+   "bits": 33,
+   "limit_bits": 55,
+   "ok": true,
+   "what": "row energy against the 2^54 limb cap (d = 512)"
+  },
+  "L0.ckv.y": {
+   "observed": 31664,
+   "limit": 4069074,
+   "bits": 15,
+   "limit_bits": 22,
+   "ok": true,
+   "what": "inverse RMS against y_max = 4069073, the \u03b5 floor (d = 512)"
+  },
+  "L0.ckv.full": {
+   "observed": 242418355,
+   "limit": 9223372034707292161,
+   "bits": 28,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L0.ckv.out": {
+   "observed": 59184,
+   "limit": 33554432,
+   "bits": 16,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L0.ckvg.full": {
+   "observed": 1272640,
+   "limit": 9223372034707292161,
+   "bits": 21,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L0.ckvg.out": {
+   "observed": 310,
+   "limit": 33554432,
+   "bits": 9,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L0.q_nope.full": {
+   "observed": 55260788,
+   "limit": 9223372034707292161,
+   "bits": 26,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L0.q_nope.out": {
+   "observed": 13492,
+   "limit": 33554432,
+   "bits": 14,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L0.q_pe_raw.full": {
+   "observed": 31899929,
+   "limit": 9223372034707292161,
+   "bits": 25,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L0.q_pe_raw.out": {
+   "observed": 7788,
+   "limit": 33554432,
+   "bits": 13,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L0.q_pe.full": {
+   "observed": 36161496,
+   "limit": 9223372034707292161,
+   "bits": 26,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L0.q_pe.out": {
+   "observed": 8828,
+   "limit": 33554432,
+   "bits": 14,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L0.k_pe_raw.full": {
+   "observed": 202813105,
+   "limit": 9223372034707292161,
+   "bits": 28,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L0.k_pe_raw.out": {
+   "observed": 49515,
+   "limit": 33554432,
+   "bits": 16,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L0.k_pe.full": {
+   "observed": 203593986,
+   "limit": 9223372034707292161,
+   "bits": 28,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L0.k_pe.out": {
+   "observed": 49706,
+   "limit": 33554432,
+   "bits": 16,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L0.k_nope.full": {
+   "observed": 8057938,
+   "limit": 9223372034707292161,
+   "bits": 23,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L0.k_nope.out": {
+   "observed": 1968,
+   "limit": 33554432,
+   "bits": 11,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L0.v.full": {
+   "observed": 1320996,
+   "limit": 9223372034707292161,
+   "bits": 21,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L0.v.out": {
+   "observed": 322,
+   "limit": 33554432,
+   "bits": 9,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L0.scores.full": {
+   "observed": 705108434,
+   "limit": 9223372034707292161,
+   "bits": 30,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L0.scores.out": {
+   "observed": 172146,
+   "limit": 33554432,
+   "bits": 18,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L0.sm.spread": {
+   "observed": 185131,
+   "limit": 2621440000,
+   "bits": 18,
+   "limit_bits": 32,
+   "ok": true,
+   "what": "c2 \u2212 min x against Z_max\u00b72^Z_high_width (the saturating window)"
+  },
+  "L0.sm.c2": {
+   "observed": 63791,
+   "limit": 8388608,
+   "bits": 16,
+   "limit_bits": 24,
+   "ok": true,
+   "what": "|c2| against the signed 24-bit aux chunk (aux_chunk_width 24)"
+  },
+  "L0.sm.keys_past_table": {
+   "observed": 948,
+   "limit": 1001,
+   "bits": 10,
+   "limit_bits": 10,
+   "ok": true,
+   "what": "most keys in a row beyond Z_max (weight 0); informational"
+  },
+  "L0.att.full": {
+   "observed": 886149,
+   "limit": 9223372034707292161,
+   "bits": 20,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L0.att.out": {
+   "observed": 217,
+   "limit": 33554432,
+   "bits": 8,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L0.proj.full": {
+   "observed": 15370655,
+   "limit": 9223372034707292161,
+   "bits": 24,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L0.proj.out": {
+   "observed": 3752,
+   "limit": 33554432,
+   "bits": 12,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L0.n2.S_tot": {
+   "observed": 53083430,
+   "limit": 18014398509481984,
+   "bits": 26,
+   "limit_bits": 55,
+   "ok": true,
+   "what": "row energy against the 2^54 limb cap (d = 7168)"
+  },
+  "L0.n2.y": {
+   "observed": 513652,
+   "limit": 4069074,
+   "bits": 19,
+   "limit_bits": 22,
+   "ok": true,
+   "what": "inverse RMS against y_max = 4069073, the \u03b5 floor (d = 7168)"
+  },
+  "L0.n2.full": {
+   "observed": 895954774,
+   "limit": 9223372034707292161,
+   "bits": 30,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L0.n2.out": {
+   "observed": 218738,
+   "limit": 33554432,
+   "bits": 18,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L0.n2g.full": {
+   "observed": 48921384,
+   "limit": 9223372034707292161,
+   "bits": 26,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L0.n2g.out": {
+   "observed": 11944,
+   "limit": 33554432,
+   "bits": 14,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L0.ffn.g.full": {
+   "observed": 14350084,
+   "limit": 9223372034707292161,
+   "bits": 24,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L0.ffn.g.out": {
+   "observed": 3503,
+   "limit": 33554432,
+   "bits": 12,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L0.ffn.u.full": {
+   "observed": 9999706,
+   "limit": 9223372034707292161,
+   "bits": 24,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L0.ffn.u.out": {
+   "observed": 2442,
+   "limit": 33554432,
+   "bits": 12,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L0.ffn.h.full": {
+   "observed": 5906628,
+   "limit": 9223372034707292161,
+   "bits": 23,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L0.ffn.h.out": {
+   "observed": 1442,
+   "limit": 33554432,
+   "bits": 11,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L0.ffn.out.full": {
+   "observed": 10342391,
+   "limit": 9223372034707292161,
+   "bits": 24,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L0.ffn.out.out": {
+   "observed": 2525,
+   "limit": 33554432,
+   "bits": 12,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L1.n1.S_tot": {
+   "observed": 184678699,
+   "limit": 18014398509481984,
+   "bits": 28,
+   "limit_bits": 55,
+   "ok": true,
+   "what": "row energy against the 2^54 limb cap (d = 7168)"
+  },
+  "L1.n1.y": {
+   "observed": 329131,
+   "limit": 4069074,
+   "bits": 19,
+   "limit_bits": 22,
+   "ok": true,
+   "what": "inverse RMS against y_max = 4069073, the \u03b5 floor (d = 7168)"
+  },
+  "L1.n1.full": {
+   "observed": 907510572,
+   "limit": 9223372034707292161,
+   "bits": 30,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L1.n1.out": {
+   "observed": 221560,
+   "limit": 33554432,
+   "bits": 18,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L1.n1g.full": {
+   "observed": 21936440,
+   "limit": 9223372034707292161,
+   "bits": 25,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L1.n1g.out": {
+   "observed": 5355,
+   "limit": 33554432,
+   "bits": 13,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L1.qa.full": {
+   "observed": 46044794,
+   "limit": 9223372034707292161,
+   "bits": 26,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L1.qa.out": {
+   "observed": 11241,
+   "limit": 33554432,
+   "bits": 14,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L1.aq.S_tot": {
+   "observed": 1001386477,
+   "limit": 18014398509481984,
+   "bits": 30,
+   "limit_bits": 55,
+   "ok": true,
+   "what": "row energy against the 2^54 limb cap (d = 1536)"
+  },
+  "L1.aq.y": {
+   "observed": 36456,
+   "limit": 4069074,
+   "bits": 16,
+   "limit_bits": 22,
+   "ok": true,
+   "what": "inverse RMS against y_max = 4069073, the \u03b5 floor (d = 1536)"
+  },
+  "L1.aq.full": {
+   "observed": 347913936,
+   "limit": 9223372034707292161,
+   "bits": 29,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L1.aq.out": {
+   "observed": 84939,
+   "limit": 33554432,
+   "bits": 17,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L1.aqg.full": {
+   "observed": 201135552,
+   "limit": 9223372034707292161,
+   "bits": 28,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L1.aqg.out": {
+   "observed": 49105,
+   "limit": 33554432,
+   "bits": 16,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L1.ckv_raw.full": {
+   "observed": 127743247,
+   "limit": 9223372034707292161,
+   "bits": 27,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L1.ckv_raw.out": {
+   "observed": 31187,
+   "limit": 33554432,
+   "bits": 15,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L1.ckv.S_tot": {
+   "observed": 2985046805,
+   "limit": 18014398509481984,
+   "bits": 32,
+   "limit_bits": 55,
+   "ok": true,
+   "what": "row energy against the 2^54 limb cap (d = 512)"
+  },
+  "L1.ckv.y": {
+   "observed": 20183,
+   "limit": 4069074,
+   "bits": 15,
+   "limit_bits": 22,
+   "ok": true,
+   "what": "inverse RMS against y_max = 4069073, the \u03b5 floor (d = 512)"
+  },
+  "L1.ckv.full": {
+   "observed": 219997476,
+   "limit": 9223372034707292161,
+   "bits": 28,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L1.ckv.out": {
+   "observed": 53711,
+   "limit": 33554432,
+   "bits": 16,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L1.ckvg.full": {
+   "observed": 745690,
+   "limit": 9223372034707292161,
+   "bits": 20,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L1.ckvg.out": {
+   "observed": 182,
+   "limit": 33554432,
+   "bits": 8,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L1.q_nope.full": {
+   "observed": 50097436,
+   "limit": 9223372034707292161,
+   "bits": 26,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L1.q_nope.out": {
+   "observed": 12231,
+   "limit": 33554432,
+   "bits": 14,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L1.q_pe_raw.full": {
+   "observed": 33655042,
+   "limit": 9223372034707292161,
+   "bits": 26,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L1.q_pe_raw.out": {
+   "observed": 8216,
+   "limit": 33554432,
+   "bits": 14,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L1.q_pe.full": {
+   "observed": 38142003,
+   "limit": 9223372034707292161,
+   "bits": 26,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L1.q_pe.out": {
+   "observed": 9313,
+   "limit": 33554432,
+   "bits": 14,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L1.k_pe_raw.full": {
+   "observed": 205072435,
+   "limit": 9223372034707292161,
+   "bits": 28,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L1.k_pe_raw.out": {
+   "observed": 50066,
+   "limit": 33554432,
+   "bits": 16,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L1.k_pe.full": {
+   "observed": 204992536,
+   "limit": 9223372034707292161,
+   "bits": 28,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L1.k_pe.out": {
+   "observed": 50047,
+   "limit": 33554432,
+   "bits": 16,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L1.k_nope.full": {
+   "observed": 4278146,
+   "limit": 9223372034707292161,
+   "bits": 23,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L1.k_nope.out": {
+   "observed": 1045,
+   "limit": 33554432,
+   "bits": 11,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L1.v.full": {
+   "observed": 1061624,
+   "limit": 9223372034707292161,
+   "bits": 21,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L1.v.out": {
+   "observed": 260,
+   "limit": 33554432,
+   "bits": 9,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L1.scores.full": {
+   "observed": 565131628,
+   "limit": 9223372034707292161,
+   "bits": 30,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L1.scores.out": {
+   "observed": 137972,
+   "limit": 33554432,
+   "bits": 18,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L1.sm.spread": {
+   "observed": 158795,
+   "limit": 2621440000,
+   "bits": 18,
+   "limit_bits": 32,
+   "ok": true,
+   "what": "c2 \u2212 min x against Z_max\u00b72^Z_high_width (the saturating window)"
+  },
+  "L1.sm.c2": {
+   "observed": 72667,
+   "limit": 8388608,
+   "bits": 17,
+   "limit_bits": 24,
+   "ok": true,
+   "what": "|c2| against the signed 24-bit aux chunk (aux_chunk_width 24)"
+  },
+  "L1.sm.keys_past_table": {
+   "observed": 993,
+   "limit": 1001,
+   "bits": 10,
+   "limit_bits": 10,
+   "ok": true,
+   "what": "most keys in a row beyond Z_max (weight 0); informational"
+  },
+  "L1.att.full": {
+   "observed": 727068,
+   "limit": 9223372034707292161,
+   "bits": 20,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L1.att.out": {
+   "observed": 177,
+   "limit": 33554432,
+   "bits": 8,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L1.proj.full": {
+   "observed": 3471273,
+   "limit": 9223372034707292161,
+   "bits": 22,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L1.proj.out": {
+   "observed": 848,
+   "limit": 33554432,
+   "bits": 10,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L1.n2.S_tot": {
+   "observed": 184027711,
+   "limit": 18014398509481984,
+   "bits": 28,
+   "limit_bits": 55,
+   "ok": true,
+   "what": "row energy against the 2^54 limb cap (d = 7168)"
+  },
+  "L1.n2.y": {
+   "observed": 302745,
+   "limit": 4069074,
+   "bits": 19,
+   "limit_bits": 22,
+   "ok": true,
+   "what": "inverse RMS against y_max = 4069073, the \u03b5 floor (d = 7168)"
+  },
+  "L1.n2.full": {
+   "observed": 893411093,
+   "limit": 9223372034707292161,
+   "bits": 30,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L1.n2.out": {
+   "observed": 218117,
+   "limit": 33554432,
+   "bits": 18,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L1.n2g.full": {
+   "observed": 4972454,
+   "limit": 9223372034707292161,
+   "bits": 23,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L1.n2g.out": {
+   "observed": 1213,
+   "limit": 33554432,
+   "bits": 11,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L1.router.full": {
+   "observed": 79218218,
+   "limit": 9223372034707292161,
+   "bits": 27,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L1.router.out": {
+   "observed": 19341,
+   "limit": 33554432,
+   "bits": 15,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L1.router.logit": {
+   "observed": 19341,
+   "limit": 262144,
+   "bits": 15,
+   "limit_bits": 19,
+   "ok": true,
+   "what": "router logit against the sigmoid table's half-domain"
+  },
+  "L1.g.full": {
+   "observed": 21229118,
+   "limit": 9223372034707292161,
+   "bits": 25,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L1.g.out": {
+   "observed": 5183,
+   "limit": 33554432,
+   "bits": 13,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L1.u.full": {
+   "observed": 14086766,
+   "limit": 9223372034707292161,
+   "bits": 24,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L1.u.out": {
+   "observed": 3439,
+   "limit": 33554432,
+   "bits": 12,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L1.h.full": {
+   "observed": 6385886,
+   "limit": 9223372034707292161,
+   "bits": 23,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L1.h.out": {
+   "observed": 1560,
+   "limit": 33554432,
+   "bits": 11,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L1.D": {
+   "observed": 5303652,
+   "limit": 9223372034707292161,
+   "bits": 23,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "routed down output, field representative"
+  },
+  "L1.y.full": {
+   "observed": 15999577857,
+   "limit": 9223372034707292161,
+   "bits": 34,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L1.y.out": {
+   "observed": 953,
+   "limit": 33554432,
+   "bits": 10,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L1.sh.g.full": {
+   "observed": 30397709,
+   "limit": 9223372034707292161,
+   "bits": 25,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L1.sh.g.out": {
+   "observed": 7422,
+   "limit": 33554432,
+   "bits": 13,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L1.sh.u.full": {
+   "observed": 18404263,
+   "limit": 9223372034707292161,
+   "bits": 25,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L1.sh.u.out": {
+   "observed": 4494,
+   "limit": 33554432,
+   "bits": 13,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L1.sh.h.full": {
+   "observed": 4682748,
+   "limit": 9223372034707292161,
+   "bits": 23,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L1.sh.h.out": {
+   "observed": 1143,
+   "limit": 33554432,
+   "bits": 11,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L1.sh.out.full": {
+   "observed": 3087302,
+   "limit": 9223372034707292161,
+   "bits": 22,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "L1.sh.out.out": {
+   "observed": 754,
+   "limit": 33554432,
+   "bits": 10,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "L1.topk_width": {
+   "observed": 26,
+   "limit": 64,
+   "bits": 5,
+   "limit_bits": 7,
+   "ok": true,
+   "what": "q\u0303 difference width from the bias span 44754 at S_sel"
+  },
+  "final.n.S_tot": {
+   "observed": 182673808,
+   "limit": 18014398509481984,
+   "bits": 28,
+   "limit_bits": 55,
+   "ok": true,
+   "what": "row energy against the 2^54 limb cap (d = 7168)"
+  },
+  "final.n.y": {
+   "observed": 265889,
+   "limit": 4069074,
+   "bits": 19,
+   "limit_bits": 22,
+   "ok": true,
+   "what": "inverse RMS against y_max = 4069073, the \u03b5 floor (d = 7168)"
+  },
+  "final.n.full": {
+   "observed": 879801442,
+   "limit": 9223372034707292161,
+   "bits": 30,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "final.n.out": {
+   "observed": 214795,
+   "limit": 33554432,
+   "bits": 18,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "final.ng.full": {
+   "observed": 485852224,
+   "limit": 9223372034707292161,
+   "bits": 29,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "final.ng.out": {
+   "observed": 118617,
+   "limit": 33554432,
+   "bits": 17,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  },
+  "logits.full": {
+   "observed": 332981307,
+   "limit": 9223372034707292161,
+   "bits": 29,
+   "limit_bits": 63,
+   "ok": true,
+   "what": "field representative"
+  },
+  "logits.out": {
+   "observed": 81294,
+   "limit": 33554432,
+   "bits": 17,
+   "limit_bits": 26,
+   "ok": true,
+   "what": "26-bit output"
+  }
+ },
+ "range_violations": [],
+ "info": {
+  "V": 163840,
+  "T": 1000,
+  "layers": {
+   "0": {
+    "kind": "dense",
+    "d_ff": 18432
+   },
+   "1": {
+    "kind": "moe",
+    "E": 384,
+    "d_ff": 2048,
+    "width": 26
+   }
+  }
+ },
+ "engine_s": 28.48552966117859,
+ "Sz": 30688889,
+ "exact": [
+  {
+   "name": "x0",
+   "ok": true,
+   "n": 7168000,
+   "mismatches": 0,
+   "max_abs": 352
+  },
+  {
+   "name": "L0.n1g",
+   "ok": true,
+   "n": 7168000,
+   "mismatches": 0,
+   "max_abs": 2774
+  },
+  {
+   "name": "L0.aqg",
+   "ok": true,
+   "n": 1536000,
+   "mismatches": 0,
+   "max_abs": 42079
+  },
+  {
+   "name": "L0.ckvg",
+   "ok": true,
+   "n": 512000,
+   "mismatches": 0,
+   "max_abs": 310
+  },
+  {
+   "name": "L0.q_pe",
+   "ok": true,
+   "n": 4096000,
+   "mismatches": 0,
+   "max_abs": 8828
+  },
+  {
+   "name": "L0.k_pe",
+   "ok": true,
+   "n": 64000,
+   "mismatches": 0,
+   "max_abs": 49706
+  },
+  {
+   "name": "L0.query",
+   "ok": true,
+   "n": 12288000,
+   "mismatches": 0,
+   "max_abs": 13492
+  },
+  {
+   "name": "L0.key",
+   "ok": true,
+   "n": 12288000,
+   "mismatches": 0,
+   "max_abs": 49706
+  },
+  {
+   "name": "L0.v",
+   "ok": true,
+   "n": 8192000,
+   "mismatches": 0,
+   "max_abs": 322
+  },
+  {
+   "name": "L0.scores",
+   "ok": true,
+   "n": 64000000,
+   "mismatches": 0,
+   "max_abs": 172146
+  },
+  {
+   "name": "L0.sm",
+   "ok": true,
+   "n": 64000000,
+   "mismatches": 0,
+   "max_abs": 4096
+  },
+  {
+   "name": "L0.att",
+   "ok": true,
+   "n": 8192000,
+   "mismatches": 0,
+   "max_abs": 217
+  },
+  {
+   "name": "L0.r1",
+   "ok": true,
+   "n": 7168000,
+   "mismatches": 0,
+   "max_abs": 4069
+  },
+  {
+   "name": "L0.n2g",
+   "ok": true,
+   "n": 7168000,
+   "mismatches": 0,
+   "max_abs": 11944
+  },
+  {
+   "name": "L0.ffn",
+   "ok": true,
+   "n": 7168000,
+   "mismatches": 0,
+   "max_abs": 2525
+  },
+  {
+   "name": "L0.out",
+   "ok": true,
+   "n": 7168000,
+   "mismatches": 0,
+   "max_abs": 3995
+  },
+  {
+   "name": "L1.n1g",
+   "ok": true,
+   "n": 7168000,
+   "mismatches": 0,
+   "max_abs": 5355
+  },
+  {
+   "name": "L1.aqg",
+   "ok": true,
+   "n": 1536000,
+   "mismatches": 0,
+   "max_abs": 49105
+  },
+  {
+   "name": "L1.ckvg",
+   "ok": true,
+   "n": 512000,
+   "mismatches": 0,
+   "max_abs": 182
+  },
+  {
+   "name": "L1.q_pe",
+   "ok": true,
+   "n": 4096000,
+   "mismatches": 0,
+   "max_abs": 9313
+  },
+  {
+   "name": "L1.k_pe",
+   "ok": true,
+   "n": 64000,
+   "mismatches": 0,
+   "max_abs": 50047
+  },
+  {
+   "name": "L1.query",
+   "ok": true,
+   "n": 12288000,
+   "mismatches": 0,
+   "max_abs": 12231
+  },
+  {
+   "name": "L1.key",
+   "ok": true,
+   "n": 12288000,
+   "mismatches": 0,
+   "max_abs": 50047
+  },
+  {
+   "name": "L1.v",
+   "ok": true,
+   "n": 8192000,
+   "mismatches": 0,
+   "max_abs": 260
+  },
+  {
+   "name": "L1.scores",
+   "ok": true,
+   "n": 64000000,
+   "mismatches": 0,
+   "max_abs": 137972
+  },
+  {
+   "name": "L1.sm",
+   "ok": true,
+   "n": 64000000,
+   "mismatches": 0,
+   "max_abs": 4096
+  },
+  {
+   "name": "L1.att",
+   "ok": true,
+   "n": 8192000,
+   "mismatches": 0,
+   "max_abs": 177
+  },
+  {
+   "name": "L1.r1",
+   "ok": true,
+   "n": 7168000,
+   "mismatches": 0,
+   "max_abs": 4654
+  },
+  {
+   "name": "L1.n2g",
+   "ok": true,
+   "n": 7168000,
+   "mismatches": 0,
+   "max_abs": 1213
+  },
+  {
+   "name": "L1.router",
+   "ok": true,
+   "n": 384000,
+   "mismatches": 0,
+   "max_abs": 19341
+  },
+  {
+   "name": "L1.s",
+   "ok": true,
+   "n": 384000,
+   "mismatches": 0,
+   "max_abs": 55914
+  },
+  {
+   "name": "L1.mask",
+   "ok": true,
+   "n": 384000,
+   "mismatches": 0,
+   "max_abs": 1
+  },
+  {
+   "name": "L1.gw",
+   "ok": true,
+   "n": 8000,
+   "mismatches": 0,
+   "max_abs": 3806
+  },
+  {
+   "name": "L1.g",
+   "ok": true,
+   "n": 16384000,
+   "mismatches": 0,
+   "max_abs": 5183
+  },
+  {
+   "name": "L1.h",
+   "ok": true,
+   "n": 16384000,
+   "mismatches": 0,
+   "max_abs": 1560
+  },
+  {
+   "name": "L1.D",
+   "ok": true,
+   "n": 57344000,
+   "mismatches": 0,
+   "max_abs": 5303652
+  },
+  {
+   "name": "L1.y_raw",
+   "ok": true,
+   "n": 7168000,
+   "mismatches": 0,
+   "max_abs": 15999577857
+  },
+  {
+   "name": "L1.y",
+   "ok": true,
+   "n": 7168000,
+   "mismatches": 0,
+   "max_abs": 953
+  },
+  {
+   "name": "L1.sh",
+   "ok": true,
+   "n": 7168000,
+   "mismatches": 0,
+   "max_abs": 754
+  },
+  {
+   "name": "L1.out",
+   "ok": true,
+   "n": 7168000,
+   "mismatches": 0,
+   "max_abs": 4694
+  },
+  {
+   "name": "final.ng",
+   "ok": true,
+   "n": 7168000,
+   "mismatches": 0,
+   "max_abs": 118617
+  },
+  {
+   "name": "logits",
+   "ok": true,
+   "n": 163840000,
+   "mismatches": 0,
+   "max_abs": 81294
+  }
+ ],
+ "all_exact": true
+}

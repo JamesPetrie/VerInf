@@ -1,0 +1,1791 @@
+[demo_k2 +10.7s] RESEARCH run, mode prove: T=100 (synthetic token ids), layers=2, k=8, offset=0, T_QUERIES=54
+[demo_k2 +20.8s] layer 0 built (dense): 40 claims so far
+[demo_k2 +22.9s] layer 1 built (moe): 106 claims so far
+[demo_k2 +23.0s] built: 216 claims, T=100, V=163840, offset=0, yarn=on, bridge=on
+/workspace/verinf/prover/core.py:644: UserWarning: The given buffer is not writable, and PyTorch does not support non-writable tensors. This means you can write to the underlying (supposedly non-writable) buffer using the tensor. You may want to copy the buffer to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at /pytorch/torch/csrc/utils/tensor_new.cpp:1578.)
+  return torch.frombuffer(bytes(master_seed), dtype=torch.uint8).cuda()
+W1005 23:04:55.106000 7890 torch/utils/cpp_extension.py:2425] TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
+W1005 23:04:55.106000 7890 torch/utils/cpp_extension.py:2425] If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'] to specific architectures.
+/workspace/verinf/demo/demo_maverick_full.py:105: UserWarning: The given NumPy array is not writable, and PyTorch does not support non-writable tensors. This means writing to this tensor will result in undefined behavior. You may want to copy the array to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at /pytorch/torch/csrc/utils/tensor_numpy.cpp:203.)
+  w = kquant_to_field(torch.from_numpy(
+W1005 23:04:55.315000 7890 torch/utils/cpp_extension.py:2425] TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
+W1005 23:04:55.315000 7890 torch/utils/cpp_extension.py:2425] If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'] to specific architectures.
+[demo_k2 +34.2s] enrolled 365514 weight rows in 11.2s, root b52f1926af2f1cb5…
+[demo_k2 +39.5s] bridge enrollment 5.2s, identity 732da5426bf2fedd…
+[sweep] op 1/246 (0%) elapsed=0.0m eta=0.3m cur=2.6GB
+[sweep] op 5/246 (2%) elapsed=0.0m eta=0.2m cur=2.7GB
+[sweep] op 9/246 (4%) elapsed=0.0m eta=1.2m cur=6.9GB
+[sweep] op 13/246 (5%) elapsed=0.0m eta=0.8m cur=6.8GB
+[sweep] op 17/246 (7%) elapsed=0.0m eta=0.7m cur=6.7GB
+[sweep] op 21/246 (9%) elapsed=0.1m eta=0.6m cur=6.8GB
+[sweep] op 25/246 (10%) elapsed=0.1m eta=0.5m cur=6.9GB
+[sweep] op 29/246 (12%) elapsed=0.1m eta=0.4m cur=7.1GB
+[sweep] op 33/246 (13%) elapsed=0.1m eta=0.6m cur=7.2GB
+[sweep] op 37/246 (15%) elapsed=0.1m eta=0.5m cur=10.1GB
+[sweep] op 41/246 (17%) elapsed=0.1m eta=0.5m cur=9.2GB
+[sweep] op 45/246 (18%) elapsed=0.1m eta=0.6m cur=9.1GB
+[sweep] op 49/246 (20%) elapsed=0.1m eta=0.5m cur=9.1GB
+[sweep] op 53/246 (22%) elapsed=0.1m eta=0.5m cur=9.3GB
+[sweep] op 57/246 (23%) elapsed=0.1m eta=0.5m cur=9.4GB
+[sweep] op 61/246 (25%) elapsed=0.1m eta=0.4m cur=9.4GB
+[sweep] op 65/246 (26%) elapsed=0.2m eta=0.5m cur=9.5GB
+[sweep] op 69/246 (28%) elapsed=0.2m eta=0.4m cur=9.5GB
+[sweep] op 73/246 (30%) elapsed=0.2m eta=0.4m cur=9.5GB
+[sweep] op 77/246 (31%) elapsed=0.2m eta=0.4m cur=9.5GB
+[sweep] op 81/246 (33%) elapsed=0.2m eta=0.4m cur=9.5GB
+[sweep] op 85/246 (35%) elapsed=0.2m eta=0.3m cur=9.5GB
+[sweep] op 89/246 (36%) elapsed=0.2m eta=0.3m cur=9.9GB
+[sweep] op 93/246 (38%) elapsed=0.2m eta=0.3m cur=9.8GB
+[sweep] op 97/246 (39%) elapsed=0.2m eta=0.3m cur=10.2GB
+[sweep] op 101/246 (41%) elapsed=0.2m eta=0.3m cur=10.1GB
+[sweep] op 105/246 (43%) elapsed=0.2m eta=0.3m cur=10.0GB
+[sweep] op 109/246 (44%) elapsed=0.2m eta=0.3m cur=10.2GB
+[sweep] op 113/246 (46%) elapsed=0.2m eta=0.3m cur=15.4GB
+[sweep] op 117/246 (48%) elapsed=0.2m eta=0.3m cur=14.6GB
+[sweep] op 121/246 (49%) elapsed=0.2m eta=0.2m cur=14.6GB
+[sweep] op 125/246 (51%) elapsed=0.2m eta=0.2m cur=14.6GB
+[sweep] op 129/246 (52%) elapsed=0.2m eta=0.2m cur=14.7GB
+[sweep] op 133/246 (54%) elapsed=0.2m eta=0.2m cur=14.7GB
+[sweep] op 137/246 (56%) elapsed=0.2m eta=0.2m cur=14.7GB
+[sweep] op 141/246 (57%) elapsed=0.2m eta=0.2m cur=14.7GB
+[sweep] op 145/246 (59%) elapsed=0.2m eta=0.2m cur=14.7GB
+[sweep] op 149/246 (61%) elapsed=0.2m eta=0.2m cur=14.7GB
+[sweep] op 153/246 (62%) elapsed=0.2m eta=0.1m cur=14.7GB
+[sweep] op 157/246 (64%) elapsed=0.2m eta=0.1m cur=14.7GB
+[sweep] op 161/246 (65%) elapsed=0.2m eta=0.1m cur=14.7GB
+[sweep] op 165/246 (67%) elapsed=0.2m eta=0.1m cur=14.7GB
+[sweep] op 169/246 (69%) elapsed=0.2m eta=0.1m cur=14.7GB
+[sweep] op 173/246 (70%) elapsed=0.2m eta=0.1m cur=14.7GB
+[sweep] op 177/246 (72%) elapsed=0.2m eta=0.1m cur=14.7GB
+[sweep] op 181/246 (74%) elapsed=0.2m eta=0.1m cur=14.7GB
+[sweep] op 185/246 (75%) elapsed=0.2m eta=0.1m cur=14.7GB
+[sweep] op 189/246 (77%) elapsed=0.3m eta=0.1m cur=14.7GB
+[sweep] op 193/246 (78%) elapsed=0.3m eta=0.1m cur=14.7GB
+[sweep] op 197/246 (80%) elapsed=0.3m eta=0.1m cur=14.7GB
+[sweep] op 201/246 (82%) elapsed=0.3m eta=0.1m cur=14.7GB
+[sweep] op 205/246 (83%) elapsed=0.3m eta=0.1m cur=14.7GB
+[sweep] op 209/246 (85%) elapsed=0.3m eta=0.0m cur=14.6GB
+[sweep] op 213/246 (87%) elapsed=0.3m eta=0.0m cur=14.6GB
+[sweep] op 217/246 (88%) elapsed=0.3m eta=0.0m cur=14.6GB
+[sweep] op 221/246 (90%) elapsed=0.3m eta=0.0m cur=14.7GB
+[sweep] op 225/246 (91%) elapsed=0.3m eta=0.0m cur=14.7GB
+[sweep] op 229/246 (93%) elapsed=0.3m eta=0.0m cur=14.7GB
+[sweep] op 233/246 (95%) elapsed=0.3m eta=0.0m cur=14.7GB
+[sweep] op 237/246 (96%) elapsed=0.3m eta=0.0m cur=14.7GB
+[sweep] op 241/246 (98%) elapsed=0.3m eta=0.0m cur=15.2GB
+[sweep] op 245/246 (100%) elapsed=0.3m eta=0.0m cur=14.7GB
+[sweep] op 246/246 (100%) elapsed=0.3m eta=0.0m cur=14.6GB
+[sweep] op 1/246 (0%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 5/246 (2%) elapsed=0.0m eta=0.1m cur=15.5GB
+[sweep] op 9/246 (4%) elapsed=0.0m eta=0.2m cur=14.9GB
+[sweep] op 13/246 (5%) elapsed=0.0m eta=0.1m cur=14.8GB
+[sweep] op 17/246 (7%) elapsed=0.0m eta=0.1m cur=14.8GB
+[sweep] op 21/246 (9%) elapsed=0.0m eta=0.1m cur=14.8GB
+[sweep] op 25/246 (10%) elapsed=0.0m eta=0.1m cur=14.9GB
+[sweep] op 29/246 (12%) elapsed=0.0m eta=0.1m cur=14.9GB
+[sweep] op 33/246 (13%) elapsed=0.0m eta=0.1m cur=14.9GB
+[sweep] op 37/246 (15%) elapsed=0.0m eta=0.1m cur=17.2GB
+[sweep] op 41/246 (17%) elapsed=0.0m eta=0.1m cur=14.9GB
+[sweep] op 45/246 (18%) elapsed=0.0m eta=0.1m cur=14.8GB
+[sweep] op 49/246 (20%) elapsed=0.0m eta=0.1m cur=14.8GB
+[sweep] op 53/246 (22%) elapsed=0.0m eta=0.1m cur=14.9GB
+[sweep] op 57/246 (23%) elapsed=0.0m eta=0.1m cur=15.0GB
+[sweep] op 61/246 (25%) elapsed=0.0m eta=0.1m cur=14.9GB
+[sweep] op 65/246 (26%) elapsed=0.0m eta=0.1m cur=14.9GB
+[sweep] op 69/246 (28%) elapsed=0.0m eta=0.1m cur=14.8GB
+[sweep] op 73/246 (30%) elapsed=0.0m eta=0.1m cur=14.8GB
+[sweep] op 77/246 (31%) elapsed=0.0m eta=0.0m cur=14.8GB
+[sweep] op 81/246 (33%) elapsed=0.0m eta=0.0m cur=14.8GB
+[sweep] op 85/246 (35%) elapsed=0.0m eta=0.0m cur=14.8GB
+[sweep] op 89/246 (36%) elapsed=0.0m eta=0.0m cur=14.8GB
+[sweep] op 93/246 (38%) elapsed=0.1m eta=0.1m cur=15.1GB
+[sweep] op 97/246 (39%) elapsed=0.1m eta=0.1m cur=15.1GB
+[sweep] op 101/246 (41%) elapsed=0.1m eta=0.1m cur=15.0GB
+[sweep] op 105/246 (43%) elapsed=0.1m eta=0.1m cur=15.0GB
+[sweep] op 109/246 (44%) elapsed=0.1m eta=0.1m cur=14.9GB
+[sweep] op 113/246 (46%) elapsed=0.1m eta=0.1m cur=15.6GB
+[sweep] op 117/246 (48%) elapsed=0.1m eta=0.1m cur=14.8GB
+[sweep] op 121/246 (49%) elapsed=0.1m eta=0.1m cur=14.8GB
+[sweep] op 125/246 (51%) elapsed=0.1m eta=0.1m cur=14.8GB
+[sweep] op 129/246 (52%) elapsed=0.1m eta=0.1m cur=14.8GB
+[sweep] op 133/246 (54%) elapsed=0.1m eta=0.1m cur=14.8GB
+[sweep] op 137/246 (56%) elapsed=0.1m eta=0.1m cur=14.8GB
+[sweep] op 141/246 (57%) elapsed=0.1m eta=0.1m cur=14.8GB
+[sweep] op 145/246 (59%) elapsed=0.1m eta=0.1m cur=14.8GB
+[sweep] op 149/246 (61%) elapsed=0.1m eta=0.1m cur=14.8GB
+[sweep] op 153/246 (62%) elapsed=0.1m eta=0.0m cur=14.8GB
+[sweep] op 157/246 (64%) elapsed=0.1m eta=0.0m cur=14.8GB
+[sweep] op 161/246 (65%) elapsed=0.1m eta=0.0m cur=14.8GB
+[sweep] op 165/246 (67%) elapsed=0.1m eta=0.0m cur=14.8GB
+[sweep] op 169/246 (69%) elapsed=0.1m eta=0.0m cur=14.8GB
+[sweep] op 173/246 (70%) elapsed=0.1m eta=0.0m cur=14.8GB
+[sweep] op 177/246 (72%) elapsed=0.1m eta=0.0m cur=14.8GB
+[sweep] op 181/246 (74%) elapsed=0.1m eta=0.0m cur=14.8GB
+[sweep] op 185/246 (75%) elapsed=0.1m eta=0.0m cur=14.8GB
+[sweep] op 189/246 (77%) elapsed=0.1m eta=0.0m cur=14.8GB
+[sweep] op 193/246 (78%) elapsed=0.1m eta=0.0m cur=14.8GB
+[sweep] op 197/246 (80%) elapsed=0.1m eta=0.0m cur=14.8GB
+[sweep] op 201/246 (82%) elapsed=0.1m eta=0.0m cur=14.8GB
+[sweep] op 205/246 (83%) elapsed=0.1m eta=0.0m cur=14.8GB
+[sweep] op 209/246 (85%) elapsed=0.1m eta=0.0m cur=14.8GB
+[sweep] op 213/246 (87%) elapsed=0.1m eta=0.0m cur=14.8GB
+[sweep] op 217/246 (88%) elapsed=0.1m eta=0.0m cur=14.8GB
+[sweep] op 221/246 (90%) elapsed=0.1m eta=0.0m cur=14.9GB
+[sweep] op 225/246 (91%) elapsed=0.1m eta=0.0m cur=14.9GB
+[sweep] op 229/246 (93%) elapsed=0.1m eta=0.0m cur=14.9GB
+[sweep] op 233/246 (95%) elapsed=0.1m eta=0.0m cur=14.8GB
+[sweep] op 237/246 (96%) elapsed=0.1m eta=0.0m cur=14.8GB
+[sweep] op 241/246 (98%) elapsed=0.1m eta=0.0m cur=15.4GB
+[sweep] op 245/246 (100%) elapsed=0.1m eta=0.0m cur=14.9GB
+[sweep] op 246/246 (100%) elapsed=0.1m eta=0.0m cur=14.8GB
+  [wc-bridge] the bridge's per-proof pass took 5.5 s outside the sweeps; stages: ntt 1.8 s/411; shard decode 1.5 s/1154; masks 0.5 s/411; pi masks 0.5 s/411; columns concat 0.3 s/1; columns gather 0.2 s/411; pi matvec 0.2 s/411; pack 0.2 s/411; columns to host 0.2 s/411; aggregate c 0.0 s/1; eval v 0.0 s/1; columns drift check 0.0 s/1
+[sweep] op 1/246 (0%) elapsed=0.0m eta=0.0m cur=15.0GB
+[sweep] op 5/246 (2%) elapsed=0.0m eta=0.0m cur=15.1GB
+[sweep] op 9/246 (4%) elapsed=0.0m eta=0.2m cur=14.9GB
+[sweep] op 13/246 (5%) elapsed=0.0m eta=0.1m cur=14.9GB
+[sweep] op 17/246 (7%) elapsed=0.0m eta=0.1m cur=14.9GB
+[sweep] op 21/246 (9%) elapsed=0.0m eta=0.1m cur=14.9GB
+[sweep] op 25/246 (10%) elapsed=0.0m eta=0.1m cur=14.9GB
+[sweep] op 29/246 (12%) elapsed=0.0m eta=0.1m cur=14.9GB
+[sweep] op 33/246 (13%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 37/246 (15%) elapsed=0.0m eta=0.1m cur=17.0GB
+[sweep] op 41/246 (17%) elapsed=0.0m eta=0.1m cur=14.9GB
+[sweep] op 45/246 (18%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 49/246 (20%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 53/246 (22%) elapsed=0.0m eta=0.0m cur=15.0GB
+[sweep] op 57/246 (23%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 61/246 (25%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 65/246 (26%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 69/246 (28%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 73/246 (30%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 77/246 (31%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 81/246 (33%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 85/246 (35%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 89/246 (36%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 93/246 (38%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 97/246 (39%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 101/246 (41%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 105/246 (43%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 109/246 (44%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 113/246 (46%) elapsed=0.0m eta=0.0m cur=15.1GB
+[sweep] op 117/246 (48%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 121/246 (49%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 125/246 (51%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 129/246 (52%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 133/246 (54%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 137/246 (56%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 141/246 (57%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 145/246 (59%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 149/246 (61%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 153/246 (62%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 157/246 (64%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 161/246 (65%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 165/246 (67%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 169/246 (69%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 173/246 (70%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 177/246 (72%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 181/246 (74%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 185/246 (75%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 189/246 (77%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 193/246 (78%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 197/246 (80%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 201/246 (82%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 205/246 (83%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 209/246 (85%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 213/246 (87%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 217/246 (88%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 221/246 (90%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 225/246 (91%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 229/246 (93%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 233/246 (95%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 237/246 (96%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 241/246 (98%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 245/246 (100%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 246/246 (100%) elapsed=0.0m eta=0.0m cur=14.9GB
+[sweep] op 1/246 (0%) elapsed=0.0m eta=0.3m cur=15.8GB
+[sweep] op 5/246 (2%) elapsed=0.0m eta=1.0m cur=16.0GB
+[sweep] op 9/246 (4%) elapsed=0.1m eta=1.8m cur=15.7GB
+[sweep] op 13/246 (5%) elapsed=0.1m eta=1.3m cur=15.7GB
+[sweep] op 17/246 (7%) elapsed=0.1m eta=1.0m cur=15.7GB
+[sweep] op 21/246 (9%) elapsed=0.1m eta=0.8m cur=15.7GB
+[sweep] op 25/246 (10%) elapsed=0.1m eta=0.7m cur=15.7GB
+[sweep] op 29/246 (12%) elapsed=0.1m eta=0.6m cur=15.7GB
+[sweep] op 33/246 (13%) elapsed=0.1m eta=0.6m cur=15.7GB
+[sweep] op 37/246 (15%) elapsed=0.1m eta=0.6m cur=17.9GB
+[sweep] op 41/246 (17%) elapsed=0.1m eta=0.6m cur=15.7GB
+[sweep] op 45/246 (18%) elapsed=0.1m eta=0.5m cur=15.7GB
+[sweep] op 49/246 (20%) elapsed=0.1m eta=0.5m cur=15.7GB
+[sweep] op 53/246 (22%) elapsed=0.1m eta=0.5m cur=15.8GB
+[sweep] op 57/246 (23%) elapsed=0.1m eta=0.4m cur=15.8GB
+[sweep] op 61/246 (25%) elapsed=0.1m eta=0.4m cur=15.8GB
+[sweep] op 65/246 (26%) elapsed=0.1m eta=0.4m cur=15.7GB
+[sweep] op 69/246 (28%) elapsed=0.1m eta=0.4m cur=15.8GB
+[sweep] op 73/246 (30%) elapsed=0.1m eta=0.3m cur=15.7GB
+[sweep] op 77/246 (31%) elapsed=0.1m eta=0.3m cur=15.7GB
+[sweep] op 81/246 (33%) elapsed=0.1m eta=0.3m cur=15.7GB
+[sweep] op 85/246 (35%) elapsed=0.1m eta=0.3m cur=15.7GB
+[sweep] op 89/246 (36%) elapsed=0.1m eta=0.3m cur=15.8GB
+[sweep] op 93/246 (38%) elapsed=0.2m eta=0.3m cur=15.8GB
+[sweep] op 97/246 (39%) elapsed=0.2m eta=0.2m cur=15.8GB
+[sweep] op 101/246 (41%) elapsed=0.2m eta=0.2m cur=15.8GB
+[sweep] op 105/246 (43%) elapsed=0.2m eta=0.2m cur=15.7GB
+[sweep] op 109/246 (44%) elapsed=0.2m eta=0.2m cur=15.7GB
+[sweep] op 113/246 (46%) elapsed=0.3m eta=0.3m cur=16.0GB
+[sweep] op 117/246 (48%) elapsed=0.3m eta=0.3m cur=15.7GB
+[sweep] op 121/246 (49%) elapsed=0.3m eta=0.3m cur=15.7GB
+[sweep] op 125/246 (51%) elapsed=0.3m eta=0.2m cur=15.7GB
+[sweep] op 129/246 (52%) elapsed=0.3m eta=0.2m cur=15.7GB
+[sweep] op 133/246 (54%) elapsed=0.3m eta=0.2m cur=15.7GB
+[sweep] op 137/246 (56%) elapsed=0.3m eta=0.2m cur=15.7GB
+[sweep] op 141/246 (57%) elapsed=0.3m eta=0.2m cur=15.7GB
+[sweep] op 145/246 (59%) elapsed=0.3m eta=0.2m cur=15.7GB
+[sweep] op 149/246 (61%) elapsed=0.3m eta=0.2m cur=15.7GB
+[sweep] op 153/246 (62%) elapsed=0.3m eta=0.2m cur=15.7GB
+[sweep] op 157/246 (64%) elapsed=0.3m eta=0.1m cur=15.7GB
+[sweep] op 161/246 (65%) elapsed=0.3m eta=0.1m cur=15.7GB
+[sweep] op 165/246 (67%) elapsed=0.3m eta=0.1m cur=15.7GB
+[sweep] op 169/246 (69%) elapsed=0.3m eta=0.1m cur=15.7GB
+[sweep] op 173/246 (70%) elapsed=0.3m eta=0.1m cur=15.7GB
+[sweep] op 177/246 (72%) elapsed=0.3m eta=0.1m cur=15.7GB
+[sweep] op 181/246 (74%) elapsed=0.3m eta=0.1m cur=15.7GB
+[sweep] op 185/246 (75%) elapsed=0.3m eta=0.1m cur=15.7GB
+[sweep] op 189/246 (77%) elapsed=0.3m eta=0.1m cur=15.7GB
+[sweep] op 193/246 (78%) elapsed=0.3m eta=0.1m cur=15.7GB
+[sweep] op 197/246 (80%) elapsed=0.3m eta=0.1m cur=15.7GB
+[sweep] op 201/246 (82%) elapsed=0.3m eta=0.1m cur=15.7GB
+[sweep] op 205/246 (83%) elapsed=0.3m eta=0.1m cur=15.7GB
+[sweep] op 209/246 (85%) elapsed=0.3m eta=0.0m cur=15.7GB
+[sweep] op 213/246 (87%) elapsed=0.3m eta=0.0m cur=15.7GB
+[sweep] op 217/246 (88%) elapsed=0.3m eta=0.0m cur=15.7GB
+[sweep] op 221/246 (90%) elapsed=0.3m eta=0.0m cur=15.7GB
+[sweep] op 225/246 (91%) elapsed=0.3m eta=0.0m cur=15.7GB
+[sweep] op 229/246 (93%) elapsed=0.3m eta=0.0m cur=15.7GB
+[sweep] op 233/246 (95%) elapsed=0.3m eta=0.0m cur=15.7GB
+[sweep] op 237/246 (96%) elapsed=0.3m eta=0.0m cur=15.7GB
+[sweep] op 241/246 (98%) elapsed=0.3m eta=0.0m cur=15.7GB
+[sweep] op 245/246 (100%) elapsed=0.3m eta=0.0m cur=15.7GB
+[sweep] op 246/246 (100%) elapsed=0.3m eta=0.0m cur=15.7GB
+[sweep] op 1/246 (0%) elapsed=0.0m eta=0.2m cur=15.8GB
+[sweep] op 5/246 (2%) elapsed=0.0m eta=0.2m cur=16.0GB
+[sweep] op 9/246 (4%) elapsed=0.0m eta=1.2m cur=15.7GB
+[sweep] op 13/246 (5%) elapsed=0.0m eta=0.9m cur=15.7GB
+[sweep] op 17/246 (7%) elapsed=0.0m eta=0.7m cur=15.7GB
+[sweep] op 21/246 (9%) elapsed=0.1m eta=0.6m cur=15.7GB
+[sweep] op 25/246 (10%) elapsed=0.1m eta=0.5m cur=15.7GB
+[sweep] op 29/246 (12%) elapsed=0.1m eta=0.4m cur=15.7GB
+[sweep] op 33/246 (13%) elapsed=0.1m eta=0.4m cur=15.7GB
+[sweep] op 37/246 (15%) elapsed=0.1m eta=0.4m cur=17.9GB
+[sweep] op 41/246 (17%) elapsed=0.1m eta=0.4m cur=15.7GB
+[sweep] op 45/246 (18%) elapsed=0.1m eta=0.4m cur=15.7GB
+[sweep] op 49/246 (20%) elapsed=0.1m eta=0.3m cur=15.7GB
+[sweep] op 53/246 (22%) elapsed=0.1m eta=0.3m cur=15.8GB
+[sweep] op 57/246 (23%) elapsed=0.1m eta=0.3m cur=15.8GB
+[sweep] op 61/246 (25%) elapsed=0.1m eta=0.3m cur=15.8GB
+[sweep] op 65/246 (26%) elapsed=0.1m eta=0.2m cur=15.7GB
+[sweep] op 69/246 (28%) elapsed=0.1m eta=0.2m cur=15.8GB
+[sweep] op 73/246 (30%) elapsed=0.1m eta=0.2m cur=15.7GB
+[sweep] op 77/246 (31%) elapsed=0.1m eta=0.2m cur=15.7GB
+[sweep] op 81/246 (33%) elapsed=0.1m eta=0.2m cur=15.7GB
+[sweep] op 85/246 (35%) elapsed=0.1m eta=0.2m cur=15.7GB
+[sweep] op 89/246 (36%) elapsed=0.1m eta=0.2m cur=15.8GB
+[sweep] op 93/246 (38%) elapsed=0.1m eta=0.2m cur=15.8GB
+[sweep] op 97/246 (39%) elapsed=0.1m eta=0.2m cur=15.8GB
+[sweep] op 101/246 (41%) elapsed=0.1m eta=0.1m cur=15.8GB
+[sweep] op 105/246 (43%) elapsed=0.1m eta=0.1m cur=15.7GB
+[sweep] op 109/246 (44%) elapsed=0.1m eta=0.1m cur=15.7GB
+[sweep] op 113/246 (46%) elapsed=0.2m eta=0.2m cur=16.0GB
+[sweep] op 117/246 (48%) elapsed=0.2m eta=0.2m cur=15.7GB
+[sweep] op 121/246 (49%) elapsed=0.2m eta=0.2m cur=15.7GB
+[sweep] op 125/246 (51%) elapsed=0.2m eta=0.2m cur=15.7GB
+[sweep] op 129/246 (52%) elapsed=0.2m eta=0.1m cur=15.7GB
+[sweep] op 133/246 (54%) elapsed=0.2m eta=0.1m cur=15.7GB
+[sweep] op 137/246 (56%) elapsed=0.2m eta=0.1m cur=15.7GB
+[sweep] op 141/246 (57%) elapsed=0.2m eta=0.1m cur=15.7GB
+[sweep] op 145/246 (59%) elapsed=0.2m eta=0.1m cur=15.7GB
+[sweep] op 149/246 (61%) elapsed=0.2m eta=0.1m cur=15.7GB
+[sweep] op 153/246 (62%) elapsed=0.2m eta=0.1m cur=15.7GB
+[sweep] op 157/246 (64%) elapsed=0.2m eta=0.1m cur=15.7GB
+[sweep] op 161/246 (65%) elapsed=0.2m eta=0.1m cur=15.7GB
+[sweep] op 165/246 (67%) elapsed=0.2m eta=0.1m cur=15.7GB
+[sweep] op 169/246 (69%) elapsed=0.2m eta=0.1m cur=15.7GB
+[sweep] op 173/246 (70%) elapsed=0.2m eta=0.1m cur=15.7GB
+[sweep] op 177/246 (72%) elapsed=0.2m eta=0.1m cur=15.7GB
+[sweep] op 181/246 (74%) elapsed=0.2m eta=0.1m cur=15.7GB
+[sweep] op 185/246 (75%) elapsed=0.2m eta=0.1m cur=15.7GB
+[sweep] op 189/246 (77%) elapsed=0.2m eta=0.1m cur=15.7GB
+[sweep] op 193/246 (78%) elapsed=0.2m eta=0.0m cur=15.7GB
+[sweep] op 197/246 (80%) elapsed=0.2m eta=0.0m cur=15.7GB
+[sweep] op 201/246 (82%) elapsed=0.2m eta=0.0m cur=15.7GB
+[sweep] op 205/246 (83%) elapsed=0.2m eta=0.0m cur=15.7GB
+[sweep] op 209/246 (85%) elapsed=0.2m eta=0.0m cur=15.7GB
+[sweep] op 213/246 (87%) elapsed=0.2m eta=0.0m cur=15.7GB
+[sweep] op 217/246 (88%) elapsed=0.2m eta=0.0m cur=15.7GB
+[sweep] op 221/246 (90%) elapsed=0.2m eta=0.0m cur=15.7GB
+[sweep] op 225/246 (91%) elapsed=0.2m eta=0.0m cur=15.7GB
+[sweep] op 229/246 (93%) elapsed=0.2m eta=0.0m cur=15.7GB
+[sweep] op 233/246 (95%) elapsed=0.2m eta=0.0m cur=15.7GB
+[sweep] op 237/246 (96%) elapsed=0.2m eta=0.0m cur=15.7GB
+[sweep] op 241/246 (98%) elapsed=0.2m eta=0.0m cur=15.7GB
+[sweep] op 245/246 (100%) elapsed=0.2m eta=0.0m cur=15.7GB
+[sweep] op 246/246 (100%) elapsed=0.2m eta=0.0m cur=15.7GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 365514; W-ref True; Wnew rows 0; p3 rows 9; peak 54.09 GB
+  [phase] prove-time breakdown (cuda-synced buckets; shares, not absolute — syncs remove overlap):
+    encode         20.5s   38.7%
+    fetch          12.3s   23.2%
+    witness         6.6s   12.6%
+    quad            3.9s    7.3%
+    fold_qlin       3.8s    7.2%
+    qlin_polymul      1.9s    3.6%
+    qlin_rTA        1.0s    1.8%
+    aux             0.9s    1.7%
+    cols            0.5s    1.0%
+    qlin_interp      0.5s    1.0%
+    fold_qirs       0.4s    0.7%
+    qlin_rowsum      0.2s    0.4%
+    compile         0.2s    0.4%
+    merkle          0.1s    0.2%
+    cache_r         0.0s    0.0%
+    cache_w         0.0s    0.0%
+    BUCKETED       52.8s  (vs total prove wall-clock; remainder = setup + un-bucketed)
+  [sweep] per-sweep breakdown (LIGERO_SWEEP_TIMING; cuda-synced seconds, so an instrumented wall; fetch = whole loader calls — storage read, decode and transfer together — taken out of the bucket they ran in; load_GB = decoded field bytes the loaders returned, not packed or disk bytes):
+    sweep          wall   witness     fetch       aux   compile    encode    merkle fold_qirs fold_qlin      cols      quad   cache_r   cache_w     loads   load_GB  cache_rd  cache_wr routed_rd routed_wr      proj
+    R1             15.6       2.2      10.4       0.0       0.0       2.7       0.1       0.0       0.0       0.0       0.0       0.0       0.0       599     90.19         0         5         0         3         0
+              loader calls by kind: weight 9.0 s / 35; shard 1.4 s / 564
+    R2              5.2       1.9       1.6       0.2       0.0       1.4       0.0       0.0       0.0       0.0       0.0       0.0       0.0      1212    183.20         5         0         3         0         3
+              loader calls by kind: shard 2.5 s / 1,152; weight-cache hits 60
+    R3              1.2       0.8       0.1       0.2       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0        60     47.91         5         0         3         0         0
+              loader calls by kind: weight-cache hits 60
+    fold           16.9       0.9       0.1       0.2       0.2       7.2       0.0       0.4       3.8       0.0       3.9       0.0       0.0        95     71.86         5         0         3         0         0
+              loader calls by kind: weight-cache hits 95
+    open           11.1       0.9       0.1       0.2       0.0       9.1       0.0       0.0       0.0       0.5       0.0       0.0       0.0        95     71.86         5         0         3         0         0
+              loader calls by kind: weight-cache hits 95
+    ALL            50.0       6.6      12.3       0.9       0.2      20.5       0.1       0.4       3.8       0.5       3.9       0.0       0.0      2061    465.02        20         5        12         3         3
+              loader calls by kind: weight 9.0 s / 35; shard 3.9 s / 1,716; weight-cache hits 310, stores 35
+    proof wall 80.5s; sweeps 50.0s; outside the sweeps 30.5s with 0 loader calls (0.00 GB); first fill (cache_w in R1) 0.0s
+  [weight-cache] 35 weights decoded once (12.0 GB packed: 12.0 GB on the GPU, 0.0 GB pinned host after the allocator's power-of-two rounding; host allocator reserved 0.0 GB), 310 resolutions served from the cache, 0 resolutions refused by the budget
+[demo_k2 +132.3s] PROVE 80.6s, peak GPU 50.37 GiB
+/workspace/verinf/prover/protocol.py:313: UserWarning: The use of `x.T` on tensors of dimension other than 2 to reverse their shape is deprecated and it will throw an error in a future release. Consider `x.mT` to transpose batches of matrices or `x.permute(*torch.arange(x.ndim - 1, -1, -1))` to reverse the dimensions of a tensor. (Triggered internally at /pytorch/aten/src/ATen/native/TensorShape.cpp:4421.)
+  if hasattr(v, "T") and hasattr(v, "mult_var") and id(v) not in seen:
+[demo_k2 +327.1s] rust verify_proof (honest, same-run anchors): ACCEPT in 193.4s
+[demo_k2 +338.3s] layer 0 built (dense): 40 claims so far
+[demo_k2 +340.4s] layer 1 built (moe): 106 claims so far
+[demo_k2 +340.6s] built: 216 claims, T=100, V=163840, offset=0, yarn=on, bridge=on, tamper=interleave
+[sweep] op 1/246 (0%) elapsed=0.0m eta=0.2m cur=4.5GB
+[sweep] op 5/246 (2%) elapsed=0.0m eta=0.2m cur=4.6GB
+[sweep] op 9/246 (4%) elapsed=0.0m eta=0.7m cur=8.7GB
+[sweep] op 13/246 (5%) elapsed=0.0m eta=0.5m cur=8.6GB
+[sweep] op 17/246 (7%) elapsed=0.0m eta=0.4m cur=8.6GB
+[sweep] op 21/246 (9%) elapsed=0.0m eta=0.4m cur=8.7GB
+[sweep] op 25/246 (10%) elapsed=0.0m eta=0.3m cur=8.8GB
+[sweep] op 29/246 (12%) elapsed=0.0m eta=0.3m cur=9.0GB
+[sweep] op 33/246 (13%) elapsed=0.1m eta=0.3m cur=9.0GB
+[sweep] op 37/246 (15%) elapsed=0.1m eta=0.3m cur=11.9GB
+[sweep] op 41/246 (17%) elapsed=0.1m eta=0.3m cur=11.1GB
+[sweep] op 45/246 (18%) elapsed=0.1m eta=0.3m cur=11.0GB
+[sweep] op 49/246 (20%) elapsed=0.1m eta=0.3m cur=11.0GB
+[sweep] op 53/246 (22%) elapsed=0.1m eta=0.3m cur=11.1GB
+[sweep] op 57/246 (23%) elapsed=0.1m eta=0.3m cur=11.3GB
+[sweep] op 61/246 (25%) elapsed=0.1m eta=0.2m cur=11.2GB
+[sweep] op 65/246 (26%) elapsed=0.1m eta=0.3m cur=11.3GB
+[sweep] op 69/246 (28%) elapsed=0.1m eta=0.3m cur=11.3GB
+[sweep] op 73/246 (30%) elapsed=0.1m eta=0.2m cur=11.3GB
+[sweep] op 77/246 (31%) elapsed=0.1m eta=0.2m cur=11.3GB
+[sweep] op 81/246 (33%) elapsed=0.1m eta=0.2m cur=11.3GB
+[sweep] op 85/246 (35%) elapsed=0.1m eta=0.2m cur=11.3GB
+[sweep] op 89/246 (36%) elapsed=0.1m eta=0.2m cur=11.7GB
+[sweep] op 93/246 (38%) elapsed=0.1m eta=0.2m cur=11.7GB
+[sweep] op 97/246 (39%) elapsed=0.1m eta=0.2m cur=12.0GB
+[sweep] op 101/246 (41%) elapsed=0.1m eta=0.2m cur=12.0GB
+[sweep] op 105/246 (43%) elapsed=0.1m eta=0.2m cur=11.9GB
+[sweep] op 109/246 (44%) elapsed=0.1m eta=0.2m cur=12.0GB
+[sweep] op 113/246 (46%) elapsed=0.1m eta=0.2m cur=17.3GB
+[sweep] op 117/246 (48%) elapsed=0.1m eta=0.2m cur=16.5GB
+[sweep] op 121/246 (49%) elapsed=0.1m eta=0.2m cur=16.5GB
+[sweep] op 125/246 (51%) elapsed=0.1m eta=0.1m cur=16.5GB
+[sweep] op 129/246 (52%) elapsed=0.2m eta=0.1m cur=16.5GB
+[sweep] op 133/246 (54%) elapsed=0.2m eta=0.1m cur=16.5GB
+[sweep] op 137/246 (56%) elapsed=0.2m eta=0.1m cur=16.5GB
+[sweep] op 141/246 (57%) elapsed=0.2m eta=0.1m cur=16.5GB
+[sweep] op 145/246 (59%) elapsed=0.2m eta=0.1m cur=16.5GB
+[sweep] op 149/246 (61%) elapsed=0.2m eta=0.1m cur=16.5GB
+[sweep] op 153/246 (62%) elapsed=0.2m eta=0.1m cur=16.5GB
+[sweep] op 157/246 (64%) elapsed=0.2m eta=0.1m cur=16.5GB
+[sweep] op 161/246 (65%) elapsed=0.2m eta=0.1m cur=16.5GB
+[sweep] op 165/246 (67%) elapsed=0.2m eta=0.1m cur=16.5GB
+[sweep] op 169/246 (69%) elapsed=0.2m eta=0.1m cur=16.5GB
+[sweep] op 173/246 (70%) elapsed=0.2m eta=0.1m cur=16.5GB
+[sweep] op 177/246 (72%) elapsed=0.2m eta=0.1m cur=16.5GB
+[sweep] op 181/246 (74%) elapsed=0.2m eta=0.1m cur=16.5GB
+[sweep] op 185/246 (75%) elapsed=0.2m eta=0.1m cur=16.5GB
+[sweep] op 189/246 (77%) elapsed=0.2m eta=0.0m cur=16.5GB
+[sweep] op 193/246 (78%) elapsed=0.2m eta=0.0m cur=16.5GB
+[sweep] op 197/246 (80%) elapsed=0.2m eta=0.0m cur=16.5GB
+[sweep] op 201/246 (82%) elapsed=0.2m eta=0.0m cur=16.6GB
+[sweep] op 205/246 (83%) elapsed=0.2m eta=0.0m cur=16.6GB
+[sweep] op 209/246 (85%) elapsed=0.2m eta=0.0m cur=16.5GB
+[sweep] op 213/246 (87%) elapsed=0.2m eta=0.0m cur=16.5GB
+[sweep] op 217/246 (88%) elapsed=0.2m eta=0.0m cur=16.5GB
+[sweep] op 221/246 (90%) elapsed=0.2m eta=0.0m cur=16.5GB
+[sweep] op 225/246 (91%) elapsed=0.2m eta=0.0m cur=16.5GB
+[sweep] op 229/246 (93%) elapsed=0.2m eta=0.0m cur=16.5GB
+[sweep] op 233/246 (95%) elapsed=0.2m eta=0.0m cur=16.5GB
+[sweep] op 237/246 (96%) elapsed=0.2m eta=0.0m cur=16.5GB
+[sweep] op 241/246 (98%) elapsed=0.2m eta=0.0m cur=17.0GB
+[sweep] op 245/246 (100%) elapsed=0.2m eta=0.0m cur=16.5GB
+[sweep] op 246/246 (100%) elapsed=0.2m eta=0.0m cur=16.5GB
+[sweep] op 1/246 (0%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 5/246 (2%) elapsed=0.0m eta=0.1m cur=17.4GB
+[sweep] op 9/246 (4%) elapsed=0.0m eta=0.2m cur=16.8GB
+[sweep] op 13/246 (5%) elapsed=0.0m eta=0.1m cur=16.7GB
+[sweep] op 17/246 (7%) elapsed=0.0m eta=0.1m cur=16.6GB
+[sweep] op 21/246 (9%) elapsed=0.0m eta=0.1m cur=16.7GB
+[sweep] op 25/246 (10%) elapsed=0.0m eta=0.1m cur=16.8GB
+[sweep] op 29/246 (12%) elapsed=0.0m eta=0.1m cur=16.8GB
+[sweep] op 33/246 (13%) elapsed=0.0m eta=0.1m cur=16.7GB
+[sweep] op 37/246 (15%) elapsed=0.0m eta=0.1m cur=19.0GB
+[sweep] op 41/246 (17%) elapsed=0.0m eta=0.1m cur=16.8GB
+[sweep] op 45/246 (18%) elapsed=0.0m eta=0.1m cur=16.7GB
+[sweep] op 49/246 (20%) elapsed=0.0m eta=0.1m cur=16.6GB
+[sweep] op 53/246 (22%) elapsed=0.0m eta=0.1m cur=16.8GB
+[sweep] op 57/246 (23%) elapsed=0.0m eta=0.1m cur=16.9GB
+[sweep] op 61/246 (25%) elapsed=0.0m eta=0.1m cur=16.8GB
+[sweep] op 65/246 (26%) elapsed=0.0m eta=0.1m cur=16.8GB
+[sweep] op 69/246 (28%) elapsed=0.0m eta=0.1m cur=16.7GB
+[sweep] op 73/246 (30%) elapsed=0.0m eta=0.1m cur=16.6GB
+[sweep] op 77/246 (31%) elapsed=0.0m eta=0.0m cur=16.6GB
+[sweep] op 81/246 (33%) elapsed=0.0m eta=0.0m cur=16.6GB
+[sweep] op 85/246 (35%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 89/246 (36%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 93/246 (38%) elapsed=0.0m eta=0.1m cur=17.0GB
+[sweep] op 97/246 (39%) elapsed=0.1m eta=0.1m cur=17.0GB
+[sweep] op 101/246 (41%) elapsed=0.1m eta=0.1m cur=16.8GB
+[sweep] op 105/246 (43%) elapsed=0.1m eta=0.1m cur=16.8GB
+[sweep] op 109/246 (44%) elapsed=0.1m eta=0.1m cur=16.8GB
+[sweep] op 113/246 (46%) elapsed=0.1m eta=0.1m cur=17.4GB
+[sweep] op 117/246 (48%) elapsed=0.1m eta=0.1m cur=16.7GB
+[sweep] op 121/246 (49%) elapsed=0.1m eta=0.1m cur=16.7GB
+[sweep] op 125/246 (51%) elapsed=0.1m eta=0.1m cur=16.7GB
+[sweep] op 129/246 (52%) elapsed=0.1m eta=0.1m cur=16.7GB
+[sweep] op 133/246 (54%) elapsed=0.1m eta=0.1m cur=16.7GB
+[sweep] op 137/246 (56%) elapsed=0.1m eta=0.1m cur=16.7GB
+[sweep] op 141/246 (57%) elapsed=0.1m eta=0.1m cur=16.7GB
+[sweep] op 145/246 (59%) elapsed=0.1m eta=0.1m cur=16.7GB
+[sweep] op 149/246 (61%) elapsed=0.1m eta=0.0m cur=16.7GB
+[sweep] op 153/246 (62%) elapsed=0.1m eta=0.0m cur=16.7GB
+[sweep] op 157/246 (64%) elapsed=0.1m eta=0.0m cur=16.7GB
+[sweep] op 161/246 (65%) elapsed=0.1m eta=0.0m cur=16.7GB
+[sweep] op 165/246 (67%) elapsed=0.1m eta=0.0m cur=16.7GB
+[sweep] op 169/246 (69%) elapsed=0.1m eta=0.0m cur=16.7GB
+[sweep] op 173/246 (70%) elapsed=0.1m eta=0.0m cur=16.7GB
+[sweep] op 177/246 (72%) elapsed=0.1m eta=0.0m cur=16.7GB
+[sweep] op 181/246 (74%) elapsed=0.1m eta=0.0m cur=16.7GB
+[sweep] op 185/246 (75%) elapsed=0.1m eta=0.0m cur=16.7GB
+[sweep] op 189/246 (77%) elapsed=0.1m eta=0.0m cur=16.7GB
+[sweep] op 193/246 (78%) elapsed=0.1m eta=0.0m cur=16.7GB
+[sweep] op 197/246 (80%) elapsed=0.1m eta=0.0m cur=16.7GB
+[sweep] op 201/246 (82%) elapsed=0.1m eta=0.0m cur=16.7GB
+[sweep] op 205/246 (83%) elapsed=0.1m eta=0.0m cur=16.7GB
+[sweep] op 209/246 (85%) elapsed=0.1m eta=0.0m cur=16.7GB
+[sweep] op 213/246 (87%) elapsed=0.1m eta=0.0m cur=16.7GB
+[sweep] op 217/246 (88%) elapsed=0.1m eta=0.0m cur=16.7GB
+[sweep] op 221/246 (90%) elapsed=0.1m eta=0.0m cur=16.7GB
+[sweep] op 225/246 (91%) elapsed=0.1m eta=0.0m cur=16.7GB
+[sweep] op 229/246 (93%) elapsed=0.1m eta=0.0m cur=16.7GB
+[sweep] op 233/246 (95%) elapsed=0.1m eta=0.0m cur=16.7GB
+[sweep] op 237/246 (96%) elapsed=0.1m eta=0.0m cur=16.7GB
+[sweep] op 241/246 (98%) elapsed=0.1m eta=0.0m cur=17.2GB
+[sweep] op 245/246 (100%) elapsed=0.1m eta=0.0m cur=16.7GB
+[sweep] op 246/246 (100%) elapsed=0.1m eta=0.0m cur=16.7GB
+  [wc-bridge] the bridge's per-proof pass took 5.1 s outside the sweeps; stages: ntt 1.8 s/411; shard decode 1.2 s/1154; masks 0.5 s/411; pi masks 0.5 s/411; columns concat 0.3 s/1; columns gather 0.2 s/411; pi matvec 0.2 s/411; pack 0.2 s/411; columns to host 0.1 s/411; aggregate c 0.0 s/1; eval v 0.0 s/1; columns drift check 0.0 s/1
+[sweep] op 1/246 (0%) elapsed=0.0m eta=0.0m cur=16.8GB
+[sweep] op 5/246 (2%) elapsed=0.0m eta=0.0m cur=17.0GB
+[sweep] op 9/246 (4%) elapsed=0.0m eta=0.2m cur=16.7GB
+[sweep] op 13/246 (5%) elapsed=0.0m eta=0.1m cur=16.7GB
+[sweep] op 17/246 (7%) elapsed=0.0m eta=0.1m cur=16.7GB
+[sweep] op 21/246 (9%) elapsed=0.0m eta=0.1m cur=16.7GB
+[sweep] op 25/246 (10%) elapsed=0.0m eta=0.1m cur=16.7GB
+[sweep] op 29/246 (12%) elapsed=0.0m eta=0.1m cur=16.7GB
+[sweep] op 33/246 (13%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 37/246 (15%) elapsed=0.0m eta=0.1m cur=18.9GB
+[sweep] op 41/246 (17%) elapsed=0.0m eta=0.1m cur=16.7GB
+[sweep] op 45/246 (18%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 49/246 (20%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 53/246 (22%) elapsed=0.0m eta=0.0m cur=16.8GB
+[sweep] op 57/246 (23%) elapsed=0.0m eta=0.0m cur=16.8GB
+[sweep] op 61/246 (25%) elapsed=0.0m eta=0.0m cur=16.8GB
+[sweep] op 65/246 (26%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 69/246 (28%) elapsed=0.0m eta=0.0m cur=16.8GB
+[sweep] op 73/246 (30%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 77/246 (31%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 81/246 (33%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 85/246 (35%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 89/246 (36%) elapsed=0.0m eta=0.0m cur=16.8GB
+[sweep] op 93/246 (38%) elapsed=0.0m eta=0.0m cur=16.8GB
+[sweep] op 97/246 (39%) elapsed=0.0m eta=0.0m cur=16.8GB
+[sweep] op 101/246 (41%) elapsed=0.0m eta=0.0m cur=16.8GB
+[sweep] op 105/246 (43%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 109/246 (44%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 113/246 (46%) elapsed=0.0m eta=0.0m cur=17.0GB
+[sweep] op 117/246 (48%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 121/246 (49%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 125/246 (51%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 129/246 (52%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 133/246 (54%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 137/246 (56%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 141/246 (57%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 145/246 (59%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 149/246 (61%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 153/246 (62%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 157/246 (64%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 161/246 (65%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 165/246 (67%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 169/246 (69%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 173/246 (70%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 177/246 (72%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 181/246 (74%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 185/246 (75%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 189/246 (77%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 193/246 (78%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 197/246 (80%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 201/246 (82%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 205/246 (83%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 209/246 (85%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 213/246 (87%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 217/246 (88%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 221/246 (90%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 225/246 (91%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 229/246 (93%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 233/246 (95%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 237/246 (96%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 241/246 (98%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 245/246 (100%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 246/246 (100%) elapsed=0.0m eta=0.0m cur=16.7GB
+[sweep] op 1/246 (0%) elapsed=0.0m eta=0.3m cur=17.7GB
+[sweep] op 5/246 (2%) elapsed=0.0m eta=1.0m cur=17.8GB
+[sweep] op 9/246 (4%) elapsed=0.1m eta=1.8m cur=17.6GB
+[sweep] op 13/246 (5%) elapsed=0.1m eta=1.3m cur=17.6GB
+[sweep] op 17/246 (7%) elapsed=0.1m eta=1.0m cur=17.6GB
+[sweep] op 21/246 (9%) elapsed=0.1m eta=0.8m cur=17.6GB
+[sweep] op 25/246 (10%) elapsed=0.1m eta=0.7m cur=17.6GB
+[sweep] op 29/246 (12%) elapsed=0.1m eta=0.6m cur=17.6GB
+[sweep] op 33/246 (13%) elapsed=0.1m eta=0.6m cur=17.6GB
+[sweep] op 37/246 (15%) elapsed=0.1m eta=0.6m cur=19.8GB
+[sweep] op 41/246 (17%) elapsed=0.1m eta=0.6m cur=17.6GB
+[sweep] op 45/246 (18%) elapsed=0.1m eta=0.5m cur=17.6GB
+[sweep] op 49/246 (20%) elapsed=0.1m eta=0.5m cur=17.6GB
+[sweep] op 53/246 (22%) elapsed=0.1m eta=0.4m cur=17.7GB
+[sweep] op 57/246 (23%) elapsed=0.1m eta=0.4m cur=17.7GB
+[sweep] op 61/246 (25%) elapsed=0.1m eta=0.4m cur=17.6GB
+[sweep] op 65/246 (26%) elapsed=0.1m eta=0.4m cur=17.6GB
+[sweep] op 69/246 (28%) elapsed=0.1m eta=0.4m cur=17.6GB
+[sweep] op 73/246 (30%) elapsed=0.1m eta=0.3m cur=17.6GB
+[sweep] op 77/246 (31%) elapsed=0.1m eta=0.3m cur=17.6GB
+[sweep] op 81/246 (33%) elapsed=0.1m eta=0.3m cur=17.6GB
+[sweep] op 85/246 (35%) elapsed=0.1m eta=0.3m cur=17.6GB
+[sweep] op 89/246 (36%) elapsed=0.1m eta=0.3m cur=17.6GB
+[sweep] op 93/246 (38%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 97/246 (39%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 101/246 (41%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 105/246 (43%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 109/246 (44%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 113/246 (46%) elapsed=0.2m eta=0.3m cur=17.8GB
+[sweep] op 117/246 (48%) elapsed=0.2m eta=0.3m cur=17.6GB
+[sweep] op 121/246 (49%) elapsed=0.2m eta=0.3m cur=17.6GB
+[sweep] op 125/246 (51%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 129/246 (52%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 133/246 (54%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 137/246 (56%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 141/246 (57%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 145/246 (59%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 149/246 (61%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 153/246 (62%) elapsed=0.3m eta=0.2m cur=17.6GB
+[sweep] op 157/246 (64%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 161/246 (65%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 165/246 (67%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 169/246 (69%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 173/246 (70%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 177/246 (72%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 181/246 (74%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 185/246 (75%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 189/246 (77%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 193/246 (78%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 197/246 (80%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 201/246 (82%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 205/246 (83%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 209/246 (85%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 213/246 (87%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 217/246 (88%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 221/246 (90%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 225/246 (91%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 229/246 (93%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 233/246 (95%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 237/246 (96%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 241/246 (98%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 245/246 (100%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 246/246 (100%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 1/246 (0%) elapsed=0.0m eta=0.2m cur=17.7GB
+[sweep] op 5/246 (2%) elapsed=0.0m eta=0.2m cur=17.8GB
+[sweep] op 9/246 (4%) elapsed=0.0m eta=1.2m cur=17.6GB
+[sweep] op 13/246 (5%) elapsed=0.0m eta=0.8m cur=17.6GB
+[sweep] op 17/246 (7%) elapsed=0.0m eta=0.7m cur=17.6GB
+[sweep] op 21/246 (9%) elapsed=0.1m eta=0.5m cur=17.6GB
+[sweep] op 25/246 (10%) elapsed=0.1m eta=0.5m cur=17.6GB
+[sweep] op 29/246 (12%) elapsed=0.1m eta=0.4m cur=17.6GB
+[sweep] op 33/246 (13%) elapsed=0.1m eta=0.4m cur=17.6GB
+[sweep] op 37/246 (15%) elapsed=0.1m eta=0.4m cur=19.8GB
+[sweep] op 41/246 (17%) elapsed=0.1m eta=0.4m cur=17.6GB
+[sweep] op 45/246 (18%) elapsed=0.1m eta=0.3m cur=17.6GB
+[sweep] op 49/246 (20%) elapsed=0.1m eta=0.3m cur=17.6GB
+[sweep] op 53/246 (22%) elapsed=0.1m eta=0.3m cur=17.7GB
+[sweep] op 57/246 (23%) elapsed=0.1m eta=0.3m cur=17.7GB
+[sweep] op 61/246 (25%) elapsed=0.1m eta=0.3m cur=17.6GB
+[sweep] op 65/246 (26%) elapsed=0.1m eta=0.2m cur=17.6GB
+[sweep] op 69/246 (28%) elapsed=0.1m eta=0.2m cur=17.6GB
+[sweep] op 73/246 (30%) elapsed=0.1m eta=0.2m cur=17.6GB
+[sweep] op 77/246 (31%) elapsed=0.1m eta=0.2m cur=17.6GB
+[sweep] op 81/246 (33%) elapsed=0.1m eta=0.2m cur=17.6GB
+[sweep] op 85/246 (35%) elapsed=0.1m eta=0.2m cur=17.6GB
+[sweep] op 89/246 (36%) elapsed=0.1m eta=0.2m cur=17.6GB
+[sweep] op 93/246 (38%) elapsed=0.1m eta=0.2m cur=17.6GB
+[sweep] op 97/246 (39%) elapsed=0.1m eta=0.1m cur=17.6GB
+[sweep] op 101/246 (41%) elapsed=0.1m eta=0.1m cur=17.6GB
+[sweep] op 105/246 (43%) elapsed=0.1m eta=0.1m cur=17.6GB
+[sweep] op 109/246 (44%) elapsed=0.1m eta=0.1m cur=17.6GB
+[sweep] op 113/246 (46%) elapsed=0.1m eta=0.2m cur=17.8GB
+[sweep] op 117/246 (48%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 121/246 (49%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 125/246 (51%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 129/246 (52%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 133/246 (54%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 137/246 (56%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 141/246 (57%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 145/246 (59%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 149/246 (61%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 153/246 (62%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 157/246 (64%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 161/246 (65%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 165/246 (67%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 169/246 (69%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 173/246 (70%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 177/246 (72%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 181/246 (74%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 185/246 (75%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 189/246 (77%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 193/246 (78%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 197/246 (80%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 201/246 (82%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 205/246 (83%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 209/246 (85%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 213/246 (87%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 217/246 (88%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 221/246 (90%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 225/246 (91%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 229/246 (93%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 233/246 (95%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 237/246 (96%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 241/246 (98%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 245/246 (100%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 246/246 (100%) elapsed=0.2m eta=0.0m cur=17.6GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 365514; W-ref True; Wnew rows 0; p3 rows 9; peak 55.95 GB
+  [phase] prove-time breakdown (cuda-synced buckets; shares, not absolute — syncs remove overlap):
+    encode         20.4s   44.1%
+    fetch           6.7s   14.4%
+    witness         6.5s   14.0%
+    quad            3.8s    8.1%
+    fold_qlin       3.6s    7.8%
+    qlin_polymul      1.9s    4.1%
+    qlin_rTA        0.9s    2.0%
+    aux             0.8s    1.8%
+    qlin_interp      0.5s    1.1%
+    fold_qirs       0.4s    0.8%
+    cols            0.3s    0.7%
+    qlin_rowsum      0.2s    0.5%
+    compile         0.2s    0.4%
+    merkle          0.1s    0.3%
+    cache_r         0.0s    0.0%
+    cache_w         0.0s    0.0%
+    BUCKETED       46.4s  (vs total prove wall-clock; remainder = setup + un-bucketed)
+  [sweep] per-sweep breakdown (LIGERO_SWEEP_TIMING; cuda-synced seconds, so an instrumented wall; fetch = whole loader calls — storage read, decode and transfer together — taken out of the bucket they ran in; load_GB = decoded field bytes the loaders returned, not packed or disk bytes):
+    sweep          wall   witness     fetch       aux   compile    encode    merkle fold_qirs fold_qlin      cols      quad   cache_r   cache_w     loads   load_GB  cache_rd  cache_wr routed_rd routed_wr      proj
+    R1             10.2       2.1       5.1       0.0       0.0       2.7       0.1       0.0       0.0       0.0       0.0       0.0       0.0       602     90.54         0         5         0         3         0
+              loader calls by kind: weight 4.5 s / 35; shard 0.6 s / 567
+    R2              4.9       1.9       1.3       0.2       0.0       1.4       0.0       0.0       0.0       0.0       0.0       0.0       0.0      1212    183.20         5         0         3         0         3
+              loader calls by kind: shard 2.3 s / 1,152; weight-cache hits 60
+    R3              1.2       0.8       0.1       0.2       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0        60     47.91         5         0         3         0         0
+              loader calls by kind: weight-cache hits 60
+    fold           16.5       0.8       0.1       0.2       0.2       7.2       0.0       0.4       3.6       0.0       3.8       0.0       0.0        95     71.86         5         0         3         0         0
+              loader calls by kind: weight-cache hits 95
+    open           10.7       0.8       0.1       0.2       0.0       9.1       0.0       0.0       0.0       0.3       0.0       0.0       0.0        95     71.86         5         0         3         0         0
+              loader calls by kind: weight-cache hits 95
+    ALL            43.5       6.5       6.7       0.8       0.2      20.4       0.1       0.4       3.6       0.3       3.8       0.0       0.0      2064    465.37        20         5        12         3         3
+              loader calls by kind: weight 4.5 s / 35; shard 2.9 s / 1,719; weight-cache hits 310, stores 35
+    proof wall 67.4s; sweeps 43.5s; outside the sweeps 23.9s with 0 loader calls (0.00 GB); first fill (cache_w in R1) 0.0s
+  [weight-cache] 35 weights decoded once (12.0 GB packed: 12.0 GB on the GPU, 0.0 GB pinned host after the allocator's power-of-two rounding; host allocator reserved 0.0 GB), 310 resolutions served from the cache, 0 resolutions refused by the budget
+[demo_k2 +597.3s] negative interleave: change applied 24x; Rust REJECT under the honest anchors -> ok (270.1s)
+[demo_k2 +607.2s] layer 0 built (dense): 40 claims so far
+[demo_k2 +609.2s] layer 1 built (moe): 106 claims so far
+[demo_k2 +609.4s] built: 216 claims, T=100, V=163840, offset=0, yarn=on, bridge=on, tamper=yarn-witness
+[sweep] op 1/246 (0%) elapsed=0.0m eta=2.6m cur=6.3GB
+[sweep] op 5/246 (2%) elapsed=0.0m eta=0.8m cur=6.5GB
+[sweep] op 9/246 (4%) elapsed=0.0m eta=1.3m cur=10.6GB
+[sweep] op 13/246 (5%) elapsed=0.1m eta=0.9m cur=10.5GB
+[sweep] op 17/246 (7%) elapsed=0.1m eta=0.7m cur=10.5GB
+[sweep] op 21/246 (9%) elapsed=0.1m eta=0.6m cur=10.6GB
+[sweep] op 25/246 (10%) elapsed=0.1m eta=0.5m cur=10.7GB
+[sweep] op 29/246 (12%) elapsed=0.1m eta=0.4m cur=10.8GB
+[sweep] op 33/246 (13%) elapsed=0.1m eta=0.5m cur=10.9GB
+[sweep] op 37/246 (15%) elapsed=0.1m eta=0.5m cur=13.8GB
+[sweep] op 41/246 (17%) elapsed=0.1m eta=0.4m cur=13.0GB
+[sweep] op 45/246 (18%) elapsed=0.1m eta=0.5m cur=12.9GB
+[sweep] op 49/246 (20%) elapsed=0.1m eta=0.4m cur=12.8GB
+[sweep] op 53/246 (22%) elapsed=0.1m eta=0.4m cur=13.0GB
+[sweep] op 57/246 (23%) elapsed=0.1m eta=0.4m cur=13.1GB
+[sweep] op 61/246 (25%) elapsed=0.1m eta=0.3m cur=13.1GB
+[sweep] op 65/246 (26%) elapsed=0.1m eta=0.4m cur=13.2GB
+[sweep] op 69/246 (28%) elapsed=0.1m eta=0.3m cur=13.2GB
+[sweep] op 73/246 (30%) elapsed=0.1m eta=0.3m cur=13.2GB
+[sweep] op 77/246 (31%) elapsed=0.1m eta=0.3m cur=13.2GB
+[sweep] op 81/246 (33%) elapsed=0.1m eta=0.3m cur=13.2GB
+[sweep] op 85/246 (35%) elapsed=0.1m eta=0.3m cur=13.2GB
+[sweep] op 89/246 (36%) elapsed=0.1m eta=0.2m cur=13.6GB
+[sweep] op 93/246 (38%) elapsed=0.2m eta=0.3m cur=13.6GB
+[sweep] op 97/246 (39%) elapsed=0.2m eta=0.3m cur=13.9GB
+[sweep] op 101/246 (41%) elapsed=0.2m eta=0.2m cur=13.9GB
+[sweep] op 105/246 (43%) elapsed=0.2m eta=0.2m cur=13.8GB
+[sweep] op 109/246 (44%) elapsed=0.2m eta=0.2m cur=13.9GB
+[sweep] op 113/246 (46%) elapsed=0.2m eta=0.2m cur=19.2GB
+[sweep] op 117/246 (48%) elapsed=0.2m eta=0.2m cur=18.4GB
+[sweep] op 121/246 (49%) elapsed=0.2m eta=0.2m cur=18.4GB
+[sweep] op 125/246 (51%) elapsed=0.2m eta=0.2m cur=18.4GB
+[sweep] op 129/246 (52%) elapsed=0.2m eta=0.2m cur=18.4GB
+[sweep] op 133/246 (54%) elapsed=0.2m eta=0.2m cur=18.4GB
+[sweep] op 137/246 (56%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 141/246 (57%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 145/246 (59%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 149/246 (61%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 153/246 (62%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 157/246 (64%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 161/246 (65%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 165/246 (67%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 169/246 (69%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 173/246 (70%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 177/246 (72%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 181/246 (74%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 185/246 (75%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 189/246 (77%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 193/246 (78%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 197/246 (80%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 201/246 (82%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 205/246 (83%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 209/246 (85%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 213/246 (87%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 217/246 (88%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 221/246 (90%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 225/246 (91%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 229/246 (93%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 233/246 (95%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 237/246 (96%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 241/246 (98%) elapsed=0.2m eta=0.0m cur=18.9GB
+[sweep] op 245/246 (100%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 246/246 (100%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 1/246 (0%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 5/246 (2%) elapsed=0.0m eta=0.1m cur=19.3GB
+[sweep] op 9/246 (4%) elapsed=0.0m eta=0.2m cur=18.6GB
+[sweep] op 13/246 (5%) elapsed=0.0m eta=0.2m cur=18.5GB
+[sweep] op 17/246 (7%) elapsed=0.0m eta=0.1m cur=18.5GB
+[sweep] op 21/246 (9%) elapsed=0.0m eta=0.1m cur=18.5GB
+[sweep] op 25/246 (10%) elapsed=0.0m eta=0.1m cur=18.6GB
+[sweep] op 29/246 (12%) elapsed=0.0m eta=0.1m cur=18.6GB
+[sweep] op 33/246 (13%) elapsed=0.0m eta=0.1m cur=18.6GB
+[sweep] op 37/246 (15%) elapsed=0.0m eta=0.1m cur=20.9GB
+[sweep] op 41/246 (17%) elapsed=0.0m eta=0.1m cur=18.7GB
+[sweep] op 45/246 (18%) elapsed=0.0m eta=0.1m cur=18.5GB
+[sweep] op 49/246 (20%) elapsed=0.0m eta=0.1m cur=18.5GB
+[sweep] op 53/246 (22%) elapsed=0.0m eta=0.1m cur=18.7GB
+[sweep] op 57/246 (23%) elapsed=0.0m eta=0.1m cur=18.7GB
+[sweep] op 61/246 (25%) elapsed=0.0m eta=0.1m cur=18.7GB
+[sweep] op 65/246 (26%) elapsed=0.0m eta=0.1m cur=18.6GB
+[sweep] op 69/246 (28%) elapsed=0.0m eta=0.1m cur=18.5GB
+[sweep] op 73/246 (30%) elapsed=0.0m eta=0.1m cur=18.5GB
+[sweep] op 77/246 (31%) elapsed=0.0m eta=0.1m cur=18.5GB
+[sweep] op 81/246 (33%) elapsed=0.0m eta=0.0m cur=18.5GB
+[sweep] op 85/246 (35%) elapsed=0.0m eta=0.0m cur=18.5GB
+[sweep] op 89/246 (36%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 93/246 (38%) elapsed=0.0m eta=0.1m cur=18.9GB
+[sweep] op 97/246 (39%) elapsed=0.1m eta=0.1m cur=18.8GB
+[sweep] op 101/246 (41%) elapsed=0.1m eta=0.1m cur=18.7GB
+[sweep] op 105/246 (43%) elapsed=0.1m eta=0.1m cur=18.7GB
+[sweep] op 109/246 (44%) elapsed=0.1m eta=0.1m cur=18.6GB
+[sweep] op 113/246 (46%) elapsed=0.1m eta=0.1m cur=19.3GB
+[sweep] op 117/246 (48%) elapsed=0.1m eta=0.1m cur=18.6GB
+[sweep] op 121/246 (49%) elapsed=0.1m eta=0.1m cur=18.6GB
+[sweep] op 125/246 (51%) elapsed=0.1m eta=0.1m cur=18.6GB
+[sweep] op 129/246 (52%) elapsed=0.1m eta=0.1m cur=18.6GB
+[sweep] op 133/246 (54%) elapsed=0.1m eta=0.1m cur=18.6GB
+[sweep] op 137/246 (56%) elapsed=0.1m eta=0.1m cur=18.6GB
+[sweep] op 141/246 (57%) elapsed=0.1m eta=0.1m cur=18.6GB
+[sweep] op 145/246 (59%) elapsed=0.1m eta=0.1m cur=18.6GB
+[sweep] op 149/246 (61%) elapsed=0.1m eta=0.1m cur=18.6GB
+[sweep] op 153/246 (62%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 157/246 (64%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 161/246 (65%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 165/246 (67%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 169/246 (69%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 173/246 (70%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 177/246 (72%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 181/246 (74%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 185/246 (75%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 189/246 (77%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 193/246 (78%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 197/246 (80%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 201/246 (82%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 205/246 (83%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 209/246 (85%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 213/246 (87%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 217/246 (88%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 221/246 (90%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 225/246 (91%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 229/246 (93%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 233/246 (95%) elapsed=0.1m eta=0.0m cur=18.5GB
+[sweep] op 237/246 (96%) elapsed=0.1m eta=0.0m cur=18.5GB
+[sweep] op 241/246 (98%) elapsed=0.1m eta=0.0m cur=19.1GB
+[sweep] op 245/246 (100%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 246/246 (100%) elapsed=0.1m eta=0.0m cur=18.5GB
+  [wc-bridge] the bridge's per-proof pass took 5.6 s outside the sweeps; stages: ntt 1.8 s/411; shard decode 1.3 s/1154; masks 0.5 s/411; pi masks 0.5 s/411; columns concat 0.4 s/1; columns gather 0.2 s/411; columns to host 0.2 s/411; pi matvec 0.2 s/411; pack 0.2 s/411; aggregate c 0.0 s/1; eval v 0.0 s/1; columns drift check 0.0 s/1
+[sweep] op 1/246 (0%) elapsed=0.0m eta=0.0m cur=18.7GB
+[sweep] op 5/246 (2%) elapsed=0.0m eta=0.0m cur=18.8GB
+[sweep] op 9/246 (4%) elapsed=0.0m eta=0.2m cur=18.6GB
+[sweep] op 13/246 (5%) elapsed=0.0m eta=0.1m cur=18.6GB
+[sweep] op 17/246 (7%) elapsed=0.0m eta=0.1m cur=18.6GB
+[sweep] op 21/246 (9%) elapsed=0.0m eta=0.1m cur=18.6GB
+[sweep] op 25/246 (10%) elapsed=0.0m eta=0.1m cur=18.6GB
+[sweep] op 29/246 (12%) elapsed=0.0m eta=0.1m cur=18.6GB
+[sweep] op 33/246 (13%) elapsed=0.0m eta=0.1m cur=18.6GB
+[sweep] op 37/246 (15%) elapsed=0.0m eta=0.1m cur=20.8GB
+[sweep] op 41/246 (17%) elapsed=0.0m eta=0.1m cur=18.6GB
+[sweep] op 45/246 (18%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 49/246 (20%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 53/246 (22%) elapsed=0.0m eta=0.0m cur=18.7GB
+[sweep] op 57/246 (23%) elapsed=0.0m eta=0.0m cur=18.7GB
+[sweep] op 61/246 (25%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 65/246 (26%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 69/246 (28%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 73/246 (30%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 77/246 (31%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 81/246 (33%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 85/246 (35%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 89/246 (36%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 93/246 (38%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 97/246 (39%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 101/246 (41%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 105/246 (43%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 109/246 (44%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 113/246 (46%) elapsed=0.0m eta=0.0m cur=18.8GB
+[sweep] op 117/246 (48%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 121/246 (49%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 125/246 (51%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 129/246 (52%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 133/246 (54%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 137/246 (56%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 141/246 (57%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 145/246 (59%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 149/246 (61%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 153/246 (62%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 157/246 (64%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 161/246 (65%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 165/246 (67%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 169/246 (69%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 173/246 (70%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 177/246 (72%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 181/246 (74%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 185/246 (75%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 189/246 (77%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 193/246 (78%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 197/246 (80%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 201/246 (82%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 205/246 (83%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 209/246 (85%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 213/246 (87%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 217/246 (88%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 221/246 (90%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 225/246 (91%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 229/246 (93%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 233/246 (95%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 237/246 (96%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 241/246 (98%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 245/246 (100%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 246/246 (100%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 1/246 (0%) elapsed=0.0m eta=0.3m cur=17.7GB
+[sweep] op 5/246 (2%) elapsed=0.0m eta=1.0m cur=17.8GB
+[sweep] op 9/246 (4%) elapsed=0.1m eta=1.8m cur=17.6GB
+[sweep] op 13/246 (5%) elapsed=0.1m eta=1.3m cur=17.6GB
+[sweep] op 17/246 (7%) elapsed=0.1m eta=1.0m cur=17.6GB
+[sweep] op 21/246 (9%) elapsed=0.1m eta=0.8m cur=17.6GB
+[sweep] op 25/246 (10%) elapsed=0.1m eta=0.7m cur=17.6GB
+[sweep] op 29/246 (12%) elapsed=0.1m eta=0.6m cur=17.6GB
+[sweep] op 33/246 (13%) elapsed=0.1m eta=0.6m cur=17.6GB
+[sweep] op 37/246 (15%) elapsed=0.1m eta=0.6m cur=19.8GB
+[sweep] op 41/246 (17%) elapsed=0.1m eta=0.6m cur=17.6GB
+[sweep] op 45/246 (18%) elapsed=0.1m eta=0.5m cur=17.6GB
+[sweep] op 49/246 (20%) elapsed=0.1m eta=0.5m cur=17.6GB
+[sweep] op 53/246 (22%) elapsed=0.1m eta=0.5m cur=17.7GB
+[sweep] op 57/246 (23%) elapsed=0.1m eta=0.4m cur=17.7GB
+[sweep] op 61/246 (25%) elapsed=0.1m eta=0.4m cur=17.6GB
+[sweep] op 65/246 (26%) elapsed=0.1m eta=0.4m cur=17.6GB
+[sweep] op 69/246 (28%) elapsed=0.1m eta=0.4m cur=17.6GB
+[sweep] op 73/246 (30%) elapsed=0.1m eta=0.3m cur=17.6GB
+[sweep] op 77/246 (31%) elapsed=0.1m eta=0.3m cur=17.6GB
+[sweep] op 81/246 (33%) elapsed=0.1m eta=0.3m cur=17.6GB
+[sweep] op 85/246 (35%) elapsed=0.1m eta=0.3m cur=17.6GB
+[sweep] op 89/246 (36%) elapsed=0.1m eta=0.3m cur=17.6GB
+[sweep] op 93/246 (38%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 97/246 (39%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 101/246 (41%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 105/246 (43%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 109/246 (44%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 113/246 (46%) elapsed=0.2m eta=0.3m cur=17.8GB
+[sweep] op 117/246 (48%) elapsed=0.2m eta=0.3m cur=17.6GB
+[sweep] op 121/246 (49%) elapsed=0.2m eta=0.3m cur=17.6GB
+[sweep] op 125/246 (51%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 129/246 (52%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 133/246 (54%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 137/246 (56%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 141/246 (57%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 145/246 (59%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 149/246 (61%) elapsed=0.3m eta=0.2m cur=17.6GB
+[sweep] op 153/246 (62%) elapsed=0.3m eta=0.2m cur=17.6GB
+[sweep] op 157/246 (64%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 161/246 (65%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 165/246 (67%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 169/246 (69%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 173/246 (70%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 177/246 (72%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 181/246 (74%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 185/246 (75%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 189/246 (77%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 193/246 (78%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 197/246 (80%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 201/246 (82%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 205/246 (83%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 209/246 (85%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 213/246 (87%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 217/246 (88%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 221/246 (90%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 225/246 (91%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 229/246 (93%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 233/246 (95%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 237/246 (96%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 241/246 (98%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 245/246 (100%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 246/246 (100%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 1/246 (0%) elapsed=0.0m eta=0.2m cur=17.7GB
+[sweep] op 5/246 (2%) elapsed=0.0m eta=0.2m cur=17.8GB
+[sweep] op 9/246 (4%) elapsed=0.0m eta=1.2m cur=17.6GB
+[sweep] op 13/246 (5%) elapsed=0.0m eta=0.8m cur=17.6GB
+[sweep] op 17/246 (7%) elapsed=0.0m eta=0.7m cur=17.6GB
+[sweep] op 21/246 (9%) elapsed=0.1m eta=0.5m cur=17.6GB
+[sweep] op 25/246 (10%) elapsed=0.1m eta=0.5m cur=17.6GB
+[sweep] op 29/246 (12%) elapsed=0.1m eta=0.4m cur=17.6GB
+[sweep] op 33/246 (13%) elapsed=0.1m eta=0.4m cur=17.6GB
+[sweep] op 37/246 (15%) elapsed=0.1m eta=0.4m cur=19.8GB
+[sweep] op 41/246 (17%) elapsed=0.1m eta=0.4m cur=17.6GB
+[sweep] op 45/246 (18%) elapsed=0.1m eta=0.3m cur=17.6GB
+[sweep] op 49/246 (20%) elapsed=0.1m eta=0.3m cur=17.6GB
+[sweep] op 53/246 (22%) elapsed=0.1m eta=0.3m cur=17.7GB
+[sweep] op 57/246 (23%) elapsed=0.1m eta=0.3m cur=17.7GB
+[sweep] op 61/246 (25%) elapsed=0.1m eta=0.3m cur=17.6GB
+[sweep] op 65/246 (26%) elapsed=0.1m eta=0.2m cur=17.6GB
+[sweep] op 69/246 (28%) elapsed=0.1m eta=0.2m cur=17.6GB
+[sweep] op 73/246 (30%) elapsed=0.1m eta=0.2m cur=17.6GB
+[sweep] op 77/246 (31%) elapsed=0.1m eta=0.2m cur=17.6GB
+[sweep] op 81/246 (33%) elapsed=0.1m eta=0.2m cur=17.6GB
+[sweep] op 85/246 (35%) elapsed=0.1m eta=0.2m cur=17.6GB
+[sweep] op 89/246 (36%) elapsed=0.1m eta=0.2m cur=17.6GB
+[sweep] op 93/246 (38%) elapsed=0.1m eta=0.2m cur=17.6GB
+[sweep] op 97/246 (39%) elapsed=0.1m eta=0.1m cur=17.6GB
+[sweep] op 101/246 (41%) elapsed=0.1m eta=0.1m cur=17.6GB
+[sweep] op 105/246 (43%) elapsed=0.1m eta=0.1m cur=17.6GB
+[sweep] op 109/246 (44%) elapsed=0.1m eta=0.1m cur=17.6GB
+[sweep] op 113/246 (46%) elapsed=0.1m eta=0.2m cur=17.8GB
+[sweep] op 117/246 (48%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 121/246 (49%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 125/246 (51%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 129/246 (52%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 133/246 (54%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 137/246 (56%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 141/246 (57%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 145/246 (59%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 149/246 (61%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 153/246 (62%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 157/246 (64%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 161/246 (65%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 165/246 (67%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 169/246 (69%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 173/246 (70%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 177/246 (72%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 181/246 (74%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 185/246 (75%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 189/246 (77%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 193/246 (78%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 197/246 (80%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 201/246 (82%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 205/246 (83%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 209/246 (85%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 213/246 (87%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 217/246 (88%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 221/246 (90%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 225/246 (91%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 229/246 (93%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 233/246 (95%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 237/246 (96%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 241/246 (98%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 245/246 (100%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 246/246 (100%) elapsed=0.2m eta=0.0m cur=17.6GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 365514; W-ref True; Wnew rows 0; p3 rows 9; peak 55.95 GB
+  [phase] prove-time breakdown (cuda-synced buckets; shares, not absolute — syncs remove overlap):
+    encode         20.8s   42.9%
+    fetch           7.9s   16.4%
+    witness         6.8s   13.9%
+    quad            3.8s    7.8%
+    fold_qlin       3.7s    7.5%
+    qlin_polymul      1.9s    3.9%
+    qlin_rTA        0.9s    1.9%
+    aux             0.9s    1.9%
+    qlin_interp      0.5s    1.0%
+    fold_qirs       0.4s    0.8%
+    cols            0.3s    0.7%
+    merkle          0.2s    0.5%
+    qlin_rowsum      0.2s    0.4%
+    compile         0.2s    0.4%
+    cache_r         0.0s    0.0%
+    cache_w         0.0s    0.0%
+    BUCKETED       48.5s  (vs total prove wall-clock; remainder = setup + un-bucketed)
+  [sweep] per-sweep breakdown (LIGERO_SWEEP_TIMING; cuda-synced seconds, so an instrumented wall; fetch = whole loader calls — storage read, decode and transfer together — taken out of the bucket they ran in; load_GB = decoded field bytes the loaders returned, not packed or disk bytes):
+    sweep          wall   witness     fetch       aux   compile    encode    merkle fold_qirs fold_qlin      cols      quad   cache_r   cache_w     loads   load_GB  cache_rd  cache_wr routed_rd routed_wr      proj
+    R1             12.3       2.3       6.3       0.0       0.0       3.1       0.2       0.0       0.0       0.0       0.0       0.0       0.0       608     91.25         0         5         0         3         0
+              loader calls by kind: weight 5.6 s / 35; shard 0.7 s / 573
+    R2              5.1       1.9       1.4       0.2       0.0       1.4       0.0       0.0       0.0       0.0       0.0       0.0       0.0      1212    183.20         5         0         3         0         3
+              loader calls by kind: shard 2.3 s / 1,152; weight-cache hits 60
+    R3              1.3       0.9       0.1       0.2       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0        60     47.91         5         0         3         0         0
+              loader calls by kind: weight-cache hits 60
+    fold           16.5       0.8       0.1       0.2       0.2       7.2       0.0       0.4       3.7       0.0       3.8       0.0       0.0        95     71.86         5         0         3         0         0
+              loader calls by kind: weight-cache hits 95
+    open           10.8       0.8       0.1       0.2       0.0       9.1       0.0       0.0       0.0       0.3       0.0       0.0       0.0        95     71.86         5         0         3         0         0
+              loader calls by kind: weight-cache hits 95
+    ALL            46.0       6.8       7.9       0.9       0.2      20.8       0.2       0.4       3.7       0.3       3.8       0.0       0.0      2070    466.08        20         5        12         3         3
+              loader calls by kind: weight 5.6 s / 35; shard 3.0 s / 1,725; weight-cache hits 310, stores 35
+    proof wall 74.5s; sweeps 46.0s; outside the sweeps 28.5s with 0 loader calls (0.00 GB); first fill (cache_w in R1) 0.0s
+  [weight-cache] 35 weights decoded once (12.0 GB packed: 12.0 GB on the GPU, 0.0 GB pinned host after the allocator's power-of-two rounding; host allocator reserved 0.0 GB), 310 resolutions served from the cache, 0 resolutions refused by the budget
+[demo_k2 +869.1s] negative yarn-witness: change applied 24x; Rust REJECT under the honest anchors -> ok (271.7s)
+[demo_k2 +879.5s] layer 0 built (dense): 40 claims so far
+[demo_k2 +881.6s] layer 1 built (moe): 106 claims so far
+[demo_k2 +881.7s] built: 216 claims, T=100, V=163840, offset=0, yarn=off, bridge=on, tamper=yarn-statement
+[sweep] op 1/246 (0%) elapsed=0.0m eta=0.2m cur=6.3GB
+[sweep] op 5/246 (2%) elapsed=0.0m eta=0.2m cur=6.5GB
+[sweep] op 9/246 (4%) elapsed=0.0m eta=0.9m cur=10.6GB
+[sweep] op 13/246 (5%) elapsed=0.0m eta=0.6m cur=10.5GB
+[sweep] op 17/246 (7%) elapsed=0.0m eta=0.5m cur=10.5GB
+[sweep] op 21/246 (9%) elapsed=0.0m eta=0.4m cur=10.6GB
+[sweep] op 25/246 (10%) elapsed=0.0m eta=0.4m cur=10.7GB
+[sweep] op 29/246 (12%) elapsed=0.0m eta=0.3m cur=10.8GB
+[sweep] op 33/246 (13%) elapsed=0.1m eta=0.4m cur=10.9GB
+[sweep] op 37/246 (15%) elapsed=0.1m eta=0.4m cur=13.8GB
+[sweep] op 41/246 (17%) elapsed=0.1m eta=0.3m cur=13.0GB
+[sweep] op 45/246 (18%) elapsed=0.1m eta=0.4m cur=12.9GB
+[sweep] op 49/246 (20%) elapsed=0.1m eta=0.4m cur=12.8GB
+[sweep] op 53/246 (22%) elapsed=0.1m eta=0.3m cur=13.0GB
+[sweep] op 57/246 (23%) elapsed=0.1m eta=0.3m cur=13.1GB
+[sweep] op 61/246 (25%) elapsed=0.1m eta=0.3m cur=13.1GB
+[sweep] op 65/246 (26%) elapsed=0.1m eta=0.3m cur=13.2GB
+[sweep] op 69/246 (28%) elapsed=0.1m eta=0.3m cur=13.2GB
+[sweep] op 73/246 (30%) elapsed=0.1m eta=0.3m cur=13.2GB
+[sweep] op 77/246 (31%) elapsed=0.1m eta=0.3m cur=13.2GB
+[sweep] op 81/246 (33%) elapsed=0.1m eta=0.2m cur=13.2GB
+[sweep] op 85/246 (35%) elapsed=0.1m eta=0.2m cur=13.2GB
+[sweep] op 89/246 (36%) elapsed=0.1m eta=0.2m cur=13.6GB
+[sweep] op 93/246 (38%) elapsed=0.1m eta=0.2m cur=13.6GB
+[sweep] op 97/246 (39%) elapsed=0.2m eta=0.2m cur=13.9GB
+[sweep] op 101/246 (41%) elapsed=0.2m eta=0.2m cur=13.9GB
+[sweep] op 105/246 (43%) elapsed=0.2m eta=0.2m cur=13.8GB
+[sweep] op 109/246 (44%) elapsed=0.2m eta=0.2m cur=13.9GB
+[sweep] op 113/246 (46%) elapsed=0.2m eta=0.2m cur=19.2GB
+[sweep] op 117/246 (48%) elapsed=0.2m eta=0.2m cur=18.4GB
+[sweep] op 121/246 (49%) elapsed=0.2m eta=0.2m cur=18.4GB
+[sweep] op 125/246 (51%) elapsed=0.2m eta=0.2m cur=18.4GB
+[sweep] op 129/246 (52%) elapsed=0.2m eta=0.2m cur=18.4GB
+[sweep] op 133/246 (54%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 137/246 (56%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 141/246 (57%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 145/246 (59%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 149/246 (61%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 153/246 (62%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 157/246 (64%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 161/246 (65%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 165/246 (67%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 169/246 (69%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 173/246 (70%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 177/246 (72%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 181/246 (74%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 185/246 (75%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 189/246 (77%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 193/246 (78%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 197/246 (80%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 201/246 (82%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 205/246 (83%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 209/246 (85%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 213/246 (87%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 217/246 (88%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 221/246 (90%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 225/246 (91%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 229/246 (93%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 233/246 (95%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 237/246 (96%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 241/246 (98%) elapsed=0.2m eta=0.0m cur=18.9GB
+[sweep] op 245/246 (100%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 246/246 (100%) elapsed=0.2m eta=0.0m cur=18.3GB
+[sweep] op 1/246 (0%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 5/246 (2%) elapsed=0.0m eta=0.1m cur=19.3GB
+[sweep] op 9/246 (4%) elapsed=0.0m eta=0.2m cur=18.6GB
+[sweep] op 13/246 (5%) elapsed=0.0m eta=0.2m cur=18.5GB
+[sweep] op 17/246 (7%) elapsed=0.0m eta=0.1m cur=18.5GB
+[sweep] op 21/246 (9%) elapsed=0.0m eta=0.1m cur=18.5GB
+[sweep] op 25/246 (10%) elapsed=0.0m eta=0.1m cur=18.6GB
+[sweep] op 29/246 (12%) elapsed=0.0m eta=0.1m cur=18.6GB
+[sweep] op 33/246 (13%) elapsed=0.0m eta=0.1m cur=18.6GB
+[sweep] op 37/246 (15%) elapsed=0.0m eta=0.1m cur=20.9GB
+[sweep] op 41/246 (17%) elapsed=0.0m eta=0.1m cur=18.7GB
+[sweep] op 45/246 (18%) elapsed=0.0m eta=0.1m cur=18.5GB
+[sweep] op 49/246 (20%) elapsed=0.0m eta=0.1m cur=18.5GB
+[sweep] op 53/246 (22%) elapsed=0.0m eta=0.1m cur=18.7GB
+[sweep] op 57/246 (23%) elapsed=0.0m eta=0.1m cur=18.7GB
+[sweep] op 61/246 (25%) elapsed=0.0m eta=0.1m cur=18.7GB
+[sweep] op 65/246 (26%) elapsed=0.0m eta=0.1m cur=18.6GB
+[sweep] op 69/246 (28%) elapsed=0.0m eta=0.1m cur=18.5GB
+[sweep] op 73/246 (30%) elapsed=0.0m eta=0.1m cur=18.5GB
+[sweep] op 77/246 (31%) elapsed=0.0m eta=0.1m cur=18.5GB
+[sweep] op 81/246 (33%) elapsed=0.0m eta=0.0m cur=18.5GB
+[sweep] op 85/246 (35%) elapsed=0.0m eta=0.0m cur=18.5GB
+[sweep] op 89/246 (36%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 93/246 (38%) elapsed=0.0m eta=0.1m cur=18.9GB
+[sweep] op 97/246 (39%) elapsed=0.1m eta=0.1m cur=18.8GB
+[sweep] op 101/246 (41%) elapsed=0.1m eta=0.1m cur=18.7GB
+[sweep] op 105/246 (43%) elapsed=0.1m eta=0.1m cur=18.7GB
+[sweep] op 109/246 (44%) elapsed=0.1m eta=0.1m cur=18.6GB
+[sweep] op 113/246 (46%) elapsed=0.1m eta=0.1m cur=19.3GB
+[sweep] op 117/246 (48%) elapsed=0.1m eta=0.1m cur=18.6GB
+[sweep] op 121/246 (49%) elapsed=0.1m eta=0.1m cur=18.6GB
+[sweep] op 125/246 (51%) elapsed=0.1m eta=0.1m cur=18.6GB
+[sweep] op 129/246 (52%) elapsed=0.1m eta=0.1m cur=18.6GB
+[sweep] op 133/246 (54%) elapsed=0.1m eta=0.1m cur=18.6GB
+[sweep] op 137/246 (56%) elapsed=0.1m eta=0.1m cur=18.6GB
+[sweep] op 141/246 (57%) elapsed=0.1m eta=0.1m cur=18.6GB
+[sweep] op 145/246 (59%) elapsed=0.1m eta=0.1m cur=18.6GB
+[sweep] op 149/246 (61%) elapsed=0.1m eta=0.1m cur=18.6GB
+[sweep] op 153/246 (62%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 157/246 (64%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 161/246 (65%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 165/246 (67%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 169/246 (69%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 173/246 (70%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 177/246 (72%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 181/246 (74%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 185/246 (75%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 189/246 (77%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 193/246 (78%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 197/246 (80%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 201/246 (82%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 205/246 (83%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 209/246 (85%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 213/246 (87%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 217/246 (88%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 221/246 (90%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 225/246 (91%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 229/246 (93%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 233/246 (95%) elapsed=0.1m eta=0.0m cur=18.5GB
+[sweep] op 237/246 (96%) elapsed=0.1m eta=0.0m cur=18.5GB
+[sweep] op 241/246 (98%) elapsed=0.1m eta=0.0m cur=19.1GB
+[sweep] op 245/246 (100%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 246/246 (100%) elapsed=0.1m eta=0.0m cur=18.5GB
+  [wc-bridge] the bridge's per-proof pass took 5.5 s outside the sweeps; stages: ntt 1.8 s/411; shard decode 1.3 s/1154; masks 0.5 s/411; pi masks 0.5 s/411; columns concat 0.4 s/1; columns gather 0.2 s/411; pi matvec 0.2 s/411; pack 0.2 s/411; columns to host 0.2 s/411; aggregate c 0.0 s/1; eval v 0.0 s/1; columns drift check 0.0 s/1
+[sweep] op 1/246 (0%) elapsed=0.0m eta=0.0m cur=18.7GB
+[sweep] op 5/246 (2%) elapsed=0.0m eta=0.0m cur=18.8GB
+[sweep] op 9/246 (4%) elapsed=0.0m eta=0.2m cur=18.6GB
+[sweep] op 13/246 (5%) elapsed=0.0m eta=0.1m cur=18.6GB
+[sweep] op 17/246 (7%) elapsed=0.0m eta=0.1m cur=18.6GB
+[sweep] op 21/246 (9%) elapsed=0.0m eta=0.1m cur=18.6GB
+[sweep] op 25/246 (10%) elapsed=0.0m eta=0.1m cur=18.6GB
+[sweep] op 29/246 (12%) elapsed=0.0m eta=0.1m cur=18.6GB
+[sweep] op 33/246 (13%) elapsed=0.0m eta=0.1m cur=18.6GB
+[sweep] op 37/246 (15%) elapsed=0.0m eta=0.1m cur=20.8GB
+[sweep] op 41/246 (17%) elapsed=0.0m eta=0.1m cur=18.6GB
+[sweep] op 45/246 (18%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 49/246 (20%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 53/246 (22%) elapsed=0.0m eta=0.0m cur=18.7GB
+[sweep] op 57/246 (23%) elapsed=0.0m eta=0.0m cur=18.7GB
+[sweep] op 61/246 (25%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 65/246 (26%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 69/246 (28%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 73/246 (30%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 77/246 (31%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 81/246 (33%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 85/246 (35%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 89/246 (36%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 93/246 (38%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 97/246 (39%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 101/246 (41%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 105/246 (43%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 109/246 (44%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 113/246 (46%) elapsed=0.0m eta=0.0m cur=18.8GB
+[sweep] op 117/246 (48%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 121/246 (49%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 125/246 (51%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 129/246 (52%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 133/246 (54%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 137/246 (56%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 141/246 (57%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 145/246 (59%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 149/246 (61%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 153/246 (62%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 157/246 (64%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 161/246 (65%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 165/246 (67%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 169/246 (69%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 173/246 (70%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 177/246 (72%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 181/246 (74%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 185/246 (75%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 189/246 (77%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 193/246 (78%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 197/246 (80%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 201/246 (82%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 205/246 (83%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 209/246 (85%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 213/246 (87%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 217/246 (88%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 221/246 (90%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 225/246 (91%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 229/246 (93%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 233/246 (95%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 237/246 (96%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 241/246 (98%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 245/246 (100%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 246/246 (100%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 1/246 (0%) elapsed=0.0m eta=0.3m cur=17.7GB
+[sweep] op 5/246 (2%) elapsed=0.0m eta=1.0m cur=17.8GB
+[sweep] op 9/246 (4%) elapsed=0.1m eta=1.8m cur=17.6GB
+[sweep] op 13/246 (5%) elapsed=0.1m eta=1.3m cur=17.6GB
+[sweep] op 17/246 (7%) elapsed=0.1m eta=1.0m cur=17.6GB
+[sweep] op 21/246 (9%) elapsed=0.1m eta=0.8m cur=17.6GB
+[sweep] op 25/246 (10%) elapsed=0.1m eta=0.7m cur=17.6GB
+[sweep] op 29/246 (12%) elapsed=0.1m eta=0.6m cur=17.6GB
+[sweep] op 33/246 (13%) elapsed=0.1m eta=0.6m cur=17.6GB
+[sweep] op 37/246 (15%) elapsed=0.1m eta=0.6m cur=19.8GB
+[sweep] op 41/246 (17%) elapsed=0.1m eta=0.6m cur=17.6GB
+[sweep] op 45/246 (18%) elapsed=0.1m eta=0.5m cur=17.6GB
+[sweep] op 49/246 (20%) elapsed=0.1m eta=0.5m cur=17.6GB
+[sweep] op 53/246 (22%) elapsed=0.1m eta=0.5m cur=17.7GB
+[sweep] op 57/246 (23%) elapsed=0.1m eta=0.4m cur=17.7GB
+[sweep] op 61/246 (25%) elapsed=0.1m eta=0.4m cur=17.6GB
+[sweep] op 65/246 (26%) elapsed=0.1m eta=0.4m cur=17.6GB
+[sweep] op 69/246 (28%) elapsed=0.1m eta=0.4m cur=17.6GB
+[sweep] op 73/246 (30%) elapsed=0.1m eta=0.3m cur=17.6GB
+[sweep] op 77/246 (31%) elapsed=0.1m eta=0.3m cur=17.6GB
+[sweep] op 81/246 (33%) elapsed=0.1m eta=0.3m cur=17.6GB
+[sweep] op 85/246 (35%) elapsed=0.1m eta=0.3m cur=17.6GB
+[sweep] op 89/246 (36%) elapsed=0.1m eta=0.3m cur=17.6GB
+[sweep] op 93/246 (38%) elapsed=0.2m eta=0.3m cur=17.6GB
+[sweep] op 97/246 (39%) elapsed=0.2m eta=0.3m cur=17.6GB
+[sweep] op 101/246 (41%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 105/246 (43%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 109/246 (44%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 113/246 (46%) elapsed=0.3m eta=0.3m cur=17.8GB
+[sweep] op 117/246 (48%) elapsed=0.3m eta=0.3m cur=17.6GB
+[sweep] op 121/246 (49%) elapsed=0.3m eta=0.3m cur=17.6GB
+[sweep] op 125/246 (51%) elapsed=0.3m eta=0.2m cur=17.6GB
+[sweep] op 129/246 (52%) elapsed=0.3m eta=0.2m cur=17.6GB
+[sweep] op 133/246 (54%) elapsed=0.3m eta=0.2m cur=17.6GB
+[sweep] op 137/246 (56%) elapsed=0.3m eta=0.2m cur=17.6GB
+[sweep] op 141/246 (57%) elapsed=0.3m eta=0.2m cur=17.6GB
+[sweep] op 145/246 (59%) elapsed=0.3m eta=0.2m cur=17.6GB
+[sweep] op 149/246 (61%) elapsed=0.3m eta=0.2m cur=17.6GB
+[sweep] op 153/246 (62%) elapsed=0.3m eta=0.2m cur=17.6GB
+[sweep] op 157/246 (64%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 161/246 (65%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 165/246 (67%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 169/246 (69%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 173/246 (70%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 177/246 (72%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 181/246 (74%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 185/246 (75%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 189/246 (77%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 193/246 (78%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 197/246 (80%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 201/246 (82%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 205/246 (83%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 209/246 (85%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 213/246 (87%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 217/246 (88%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 221/246 (90%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 225/246 (91%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 229/246 (93%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 233/246 (95%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 237/246 (96%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 241/246 (98%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 245/246 (100%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 246/246 (100%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 1/246 (0%) elapsed=0.0m eta=0.2m cur=17.7GB
+[sweep] op 5/246 (2%) elapsed=0.0m eta=0.2m cur=17.8GB
+[sweep] op 9/246 (4%) elapsed=0.0m eta=1.2m cur=17.6GB
+[sweep] op 13/246 (5%) elapsed=0.0m eta=0.9m cur=17.6GB
+[sweep] op 17/246 (7%) elapsed=0.0m eta=0.7m cur=17.6GB
+[sweep] op 21/246 (9%) elapsed=0.1m eta=0.6m cur=17.6GB
+[sweep] op 25/246 (10%) elapsed=0.1m eta=0.5m cur=17.6GB
+[sweep] op 29/246 (12%) elapsed=0.1m eta=0.4m cur=17.6GB
+[sweep] op 33/246 (13%) elapsed=0.1m eta=0.4m cur=17.6GB
+[sweep] op 37/246 (15%) elapsed=0.1m eta=0.4m cur=19.8GB
+[sweep] op 41/246 (17%) elapsed=0.1m eta=0.4m cur=17.6GB
+[sweep] op 45/246 (18%) elapsed=0.1m eta=0.4m cur=17.6GB
+[sweep] op 49/246 (20%) elapsed=0.1m eta=0.3m cur=17.6GB
+[sweep] op 53/246 (22%) elapsed=0.1m eta=0.3m cur=17.7GB
+[sweep] op 57/246 (23%) elapsed=0.1m eta=0.3m cur=17.7GB
+[sweep] op 61/246 (25%) elapsed=0.1m eta=0.3m cur=17.6GB
+[sweep] op 65/246 (26%) elapsed=0.1m eta=0.3m cur=17.6GB
+[sweep] op 69/246 (28%) elapsed=0.1m eta=0.2m cur=17.6GB
+[sweep] op 73/246 (30%) elapsed=0.1m eta=0.2m cur=17.6GB
+[sweep] op 77/246 (31%) elapsed=0.1m eta=0.2m cur=17.6GB
+[sweep] op 81/246 (33%) elapsed=0.1m eta=0.2m cur=17.6GB
+[sweep] op 85/246 (35%) elapsed=0.1m eta=0.2m cur=17.6GB
+[sweep] op 89/246 (36%) elapsed=0.1m eta=0.2m cur=17.6GB
+[sweep] op 93/246 (38%) elapsed=0.1m eta=0.2m cur=17.6GB
+[sweep] op 97/246 (39%) elapsed=0.1m eta=0.2m cur=17.6GB
+[sweep] op 101/246 (41%) elapsed=0.1m eta=0.1m cur=17.6GB
+[sweep] op 105/246 (43%) elapsed=0.1m eta=0.1m cur=17.6GB
+[sweep] op 109/246 (44%) elapsed=0.1m eta=0.1m cur=17.6GB
+[sweep] op 113/246 (46%) elapsed=0.2m eta=0.2m cur=17.8GB
+[sweep] op 117/246 (48%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 121/246 (49%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 125/246 (51%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 129/246 (52%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 133/246 (54%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 137/246 (56%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 141/246 (57%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 145/246 (59%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 149/246 (61%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 153/246 (62%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 157/246 (64%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 161/246 (65%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 165/246 (67%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 169/246 (69%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 173/246 (70%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 177/246 (72%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 181/246 (74%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 185/246 (75%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 189/246 (77%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 193/246 (78%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 197/246 (80%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 201/246 (82%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 205/246 (83%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 209/246 (85%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 213/246 (87%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 217/246 (88%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 221/246 (90%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 225/246 (91%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 229/246 (93%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 233/246 (95%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 237/246 (96%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 241/246 (98%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 245/246 (100%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 246/246 (100%) elapsed=0.2m eta=0.0m cur=17.6GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 365514; W-ref True; Wnew rows 0; p3 rows 9; peak 55.95 GB
+  [phase] prove-time breakdown (cuda-synced buckets; shares, not absolute — syncs remove overlap):
+    encode         20.5s   42.1%
+    fetch           7.8s   16.1%
+    witness         6.7s   13.8%
+    quad            3.9s    8.0%
+    fold_qlin       3.8s    7.9%
+    qlin_polymul      1.9s    4.0%
+    aux             1.0s    2.1%
+    qlin_rTA        1.0s    2.0%
+    qlin_interp      0.5s    1.1%
+    cols            0.5s    1.0%
+    fold_qirs       0.4s    0.8%
+    qlin_rowsum      0.2s    0.5%
+    compile         0.2s    0.5%
+    merkle          0.1s    0.3%
+    cache_r         0.0s    0.0%
+    cache_w         0.0s    0.0%
+    BUCKETED       48.6s  (vs total prove wall-clock; remainder = setup + un-bucketed)
+  [sweep] per-sweep breakdown (LIGERO_SWEEP_TIMING; cuda-synced seconds, so an instrumented wall; fetch = whole loader calls — storage read, decode and transfer together — taken out of the bucket they ran in; load_GB = decoded field bytes the loaders returned, not packed or disk bytes):
+    sweep          wall   witness     fetch       aux   compile    encode    merkle fold_qirs fold_qlin      cols      quad   cache_r   cache_w     loads   load_GB  cache_rd  cache_wr routed_rd routed_wr      proj
+    R1             11.4       2.2       6.2       0.0       0.0       2.7       0.1       0.0       0.0       0.0       0.0       0.0       0.0       608     91.25         0         5         0         3         0
+              loader calls by kind: weight 5.5 s / 35; shard 0.7 s / 573
+    R2              5.1       1.9       1.4       0.3       0.0       1.4       0.0       0.0       0.0       0.0       0.0       0.0       0.0      1212    183.20         5         0         3         0         3
+              loader calls by kind: shard 2.3 s / 1,152; weight-cache hits 60
+    R3              1.3       0.9       0.1       0.2       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0        60     47.91         5         0         3         0         0
+              loader calls by kind: weight-cache hits 60
+    fold           17.0       0.9       0.1       0.3       0.2       7.2       0.0       0.4       3.8       0.0       3.9       0.0       0.0        95     71.86         5         0         3         0         0
+              loader calls by kind: weight-cache hits 95
+    open           11.0       0.9       0.1       0.3       0.0       9.1       0.0       0.0       0.0       0.5       0.0       0.0       0.0        95     71.86         5         0         3         0         0
+              loader calls by kind: weight-cache hits 95
+    ALL            45.8       6.7       7.8       1.0       0.2      20.5       0.1       0.4       3.8       0.5       3.9       0.0       0.0      2070    466.08        20         5        12         3         3
+              loader calls by kind: weight 5.5 s / 35; shard 3.0 s / 1,725; weight-cache hits 310, stores 35
+    proof wall 76.1s; sweeps 45.8s; outside the sweeps 30.3s with 0 loader calls (0.00 GB); first fill (cache_w in R1) 0.0s
+  [weight-cache] 35 weights decoded once (12.0 GB packed: 12.0 GB on the GPU, 0.0 GB pinned host after the allocator's power-of-two rounding; host allocator reserved 0.0 GB), 310 resolutions served from the cache, 0 resolutions refused by the budget
+[demo_k2 +1339.4s] negative yarn-statement: change applied 4x; Rust REJECT under the honest anchors; own digest ACCEPT -> ok (284.4s)
+[demo_k2 +1349.3s] layer 0 built (dense): 40 claims so far
+[demo_k2 +1351.5s] layer 1 built (moe): 106 claims so far
+[demo_k2 +1351.7s] built: 216 claims, T=100, V=163840, offset=0, yarn=on, bridge=on, tamper=wrong-slice
+[sweep] op 1/246 (0%) elapsed=0.0m eta=0.2m cur=6.3GB
+[sweep] op 5/246 (2%) elapsed=0.0m eta=0.2m cur=6.5GB
+[sweep] op 9/246 (4%) elapsed=0.0m eta=0.9m cur=10.6GB
+[sweep] op 13/246 (5%) elapsed=0.0m eta=0.6m cur=10.5GB
+[sweep] op 17/246 (7%) elapsed=0.0m eta=0.5m cur=10.5GB
+[sweep] op 21/246 (9%) elapsed=0.0m eta=0.4m cur=10.6GB
+[sweep] op 25/246 (10%) elapsed=0.0m eta=0.4m cur=10.7GB
+[sweep] op 29/246 (12%) elapsed=0.0m eta=0.3m cur=10.8GB
+[sweep] op 33/246 (13%) elapsed=0.1m eta=0.4m cur=10.9GB
+[sweep] op 37/246 (15%) elapsed=0.1m eta=0.4m cur=13.8GB
+[sweep] op 41/246 (17%) elapsed=0.1m eta=0.3m cur=13.0GB
+[sweep] op 45/246 (18%) elapsed=0.1m eta=0.4m cur=12.9GB
+[sweep] op 49/246 (20%) elapsed=0.1m eta=0.4m cur=12.9GB
+[sweep] op 53/246 (22%) elapsed=0.1m eta=0.3m cur=13.0GB
+[sweep] op 57/246 (23%) elapsed=0.1m eta=0.3m cur=13.1GB
+[sweep] op 61/246 (25%) elapsed=0.1m eta=0.3m cur=13.1GB
+[sweep] op 65/246 (26%) elapsed=0.1m eta=0.3m cur=13.2GB
+[sweep] op 69/246 (28%) elapsed=0.1m eta=0.3m cur=13.2GB
+[sweep] op 73/246 (30%) elapsed=0.1m eta=0.3m cur=13.2GB
+[sweep] op 77/246 (31%) elapsed=0.1m eta=0.3m cur=13.2GB
+[sweep] op 81/246 (33%) elapsed=0.1m eta=0.2m cur=13.2GB
+[sweep] op 85/246 (35%) elapsed=0.1m eta=0.2m cur=13.2GB
+[sweep] op 89/246 (36%) elapsed=0.1m eta=0.2m cur=13.6GB
+[sweep] op 93/246 (38%) elapsed=0.1m eta=0.2m cur=13.6GB
+[sweep] op 97/246 (39%) elapsed=0.2m eta=0.2m cur=13.9GB
+[sweep] op 101/246 (41%) elapsed=0.2m eta=0.2m cur=13.9GB
+[sweep] op 105/246 (43%) elapsed=0.2m eta=0.2m cur=13.8GB
+[sweep] op 109/246 (44%) elapsed=0.2m eta=0.2m cur=13.9GB
+[sweep] op 113/246 (46%) elapsed=0.2m eta=0.2m cur=19.2GB
+[sweep] op 117/246 (48%) elapsed=0.2m eta=0.2m cur=18.4GB
+[sweep] op 121/246 (49%) elapsed=0.2m eta=0.2m cur=18.4GB
+[sweep] op 125/246 (51%) elapsed=0.2m eta=0.2m cur=18.4GB
+[sweep] op 129/246 (52%) elapsed=0.2m eta=0.2m cur=18.4GB
+[sweep] op 133/246 (54%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 137/246 (56%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 141/246 (57%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 145/246 (59%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 149/246 (61%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 153/246 (62%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 157/246 (64%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 161/246 (65%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 165/246 (67%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 169/246 (69%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 173/246 (70%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 177/246 (72%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 181/246 (74%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 185/246 (75%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 189/246 (77%) elapsed=0.2m eta=0.1m cur=18.4GB
+[sweep] op 193/246 (78%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 197/246 (80%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 201/246 (82%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 205/246 (83%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 209/246 (85%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 213/246 (87%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 217/246 (88%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 221/246 (90%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 225/246 (91%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 229/246 (93%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 233/246 (95%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 237/246 (96%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 241/246 (98%) elapsed=0.2m eta=0.0m cur=18.9GB
+[sweep] op 245/246 (100%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 246/246 (100%) elapsed=0.2m eta=0.0m cur=18.4GB
+[sweep] op 1/246 (0%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 5/246 (2%) elapsed=0.0m eta=0.1m cur=19.3GB
+[sweep] op 9/246 (4%) elapsed=0.0m eta=0.2m cur=18.6GB
+[sweep] op 13/246 (5%) elapsed=0.0m eta=0.2m cur=18.5GB
+[sweep] op 17/246 (7%) elapsed=0.0m eta=0.1m cur=18.5GB
+[sweep] op 21/246 (9%) elapsed=0.0m eta=0.1m cur=18.5GB
+[sweep] op 25/246 (10%) elapsed=0.0m eta=0.1m cur=18.6GB
+[sweep] op 29/246 (12%) elapsed=0.0m eta=0.1m cur=18.6GB
+[sweep] op 33/246 (13%) elapsed=0.0m eta=0.1m cur=18.6GB
+[sweep] op 37/246 (15%) elapsed=0.0m eta=0.1m cur=20.9GB
+[sweep] op 41/246 (17%) elapsed=0.0m eta=0.1m cur=18.7GB
+[sweep] op 45/246 (18%) elapsed=0.0m eta=0.1m cur=18.5GB
+[sweep] op 49/246 (20%) elapsed=0.0m eta=0.1m cur=18.5GB
+[sweep] op 53/246 (22%) elapsed=0.0m eta=0.1m cur=18.7GB
+[sweep] op 57/246 (23%) elapsed=0.0m eta=0.1m cur=18.7GB
+[sweep] op 61/246 (25%) elapsed=0.0m eta=0.1m cur=18.7GB
+[sweep] op 65/246 (26%) elapsed=0.0m eta=0.1m cur=18.6GB
+[sweep] op 69/246 (28%) elapsed=0.0m eta=0.1m cur=18.6GB
+[sweep] op 73/246 (30%) elapsed=0.0m eta=0.1m cur=18.5GB
+[sweep] op 77/246 (31%) elapsed=0.0m eta=0.0m cur=18.5GB
+[sweep] op 81/246 (33%) elapsed=0.0m eta=0.0m cur=18.5GB
+[sweep] op 85/246 (35%) elapsed=0.0m eta=0.0m cur=18.5GB
+[sweep] op 89/246 (36%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 93/246 (38%) elapsed=0.0m eta=0.1m cur=18.9GB
+[sweep] op 97/246 (39%) elapsed=0.1m eta=0.1m cur=18.8GB
+[sweep] op 101/246 (41%) elapsed=0.1m eta=0.1m cur=18.7GB
+[sweep] op 105/246 (43%) elapsed=0.1m eta=0.1m cur=18.7GB
+[sweep] op 109/246 (44%) elapsed=0.1m eta=0.1m cur=18.7GB
+[sweep] op 113/246 (46%) elapsed=0.1m eta=0.1m cur=19.3GB
+[sweep] op 117/246 (48%) elapsed=0.1m eta=0.1m cur=18.6GB
+[sweep] op 121/246 (49%) elapsed=0.1m eta=0.1m cur=18.6GB
+[sweep] op 125/246 (51%) elapsed=0.1m eta=0.1m cur=18.6GB
+[sweep] op 129/246 (52%) elapsed=0.1m eta=0.1m cur=18.6GB
+[sweep] op 133/246 (54%) elapsed=0.1m eta=0.1m cur=18.6GB
+[sweep] op 137/246 (56%) elapsed=0.1m eta=0.1m cur=18.6GB
+[sweep] op 141/246 (57%) elapsed=0.1m eta=0.1m cur=18.6GB
+[sweep] op 145/246 (59%) elapsed=0.1m eta=0.1m cur=18.6GB
+[sweep] op 149/246 (61%) elapsed=0.1m eta=0.1m cur=18.6GB
+[sweep] op 153/246 (62%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 157/246 (64%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 161/246 (65%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 165/246 (67%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 169/246 (69%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 173/246 (70%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 177/246 (72%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 181/246 (74%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 185/246 (75%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 189/246 (77%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 193/246 (78%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 197/246 (80%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 201/246 (82%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 205/246 (83%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 209/246 (85%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 213/246 (87%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 217/246 (88%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 221/246 (90%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 225/246 (91%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 229/246 (93%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 233/246 (95%) elapsed=0.1m eta=0.0m cur=18.5GB
+[sweep] op 237/246 (96%) elapsed=0.1m eta=0.0m cur=18.5GB
+[sweep] op 241/246 (98%) elapsed=0.1m eta=0.0m cur=19.1GB
+[sweep] op 245/246 (100%) elapsed=0.1m eta=0.0m cur=18.6GB
+[sweep] op 246/246 (100%) elapsed=0.1m eta=0.0m cur=18.5GB
+  [wc-bridge] the bridge's per-proof pass took 5.5 s outside the sweeps; stages: ntt 1.8 s/411; shard decode 1.3 s/1154; masks 0.5 s/411; pi masks 0.5 s/411; columns concat 0.4 s/1; columns gather 0.2 s/411; pi matvec 0.2 s/411; columns to host 0.2 s/411; pack 0.2 s/411; aggregate c 0.0 s/1; eval v 0.0 s/1; columns drift check 0.0 s/1
+[sweep] op 1/246 (0%) elapsed=0.0m eta=0.0m cur=18.7GB
+[sweep] op 5/246 (2%) elapsed=0.0m eta=0.0m cur=18.8GB
+[sweep] op 9/246 (4%) elapsed=0.0m eta=0.2m cur=18.6GB
+[sweep] op 13/246 (5%) elapsed=0.0m eta=0.1m cur=18.6GB
+[sweep] op 17/246 (7%) elapsed=0.0m eta=0.1m cur=18.6GB
+[sweep] op 21/246 (9%) elapsed=0.0m eta=0.1m cur=18.6GB
+[sweep] op 25/246 (10%) elapsed=0.0m eta=0.1m cur=18.6GB
+[sweep] op 29/246 (12%) elapsed=0.0m eta=0.1m cur=18.6GB
+[sweep] op 33/246 (13%) elapsed=0.0m eta=0.1m cur=18.6GB
+[sweep] op 37/246 (15%) elapsed=0.0m eta=0.1m cur=20.8GB
+[sweep] op 41/246 (17%) elapsed=0.0m eta=0.1m cur=18.6GB
+[sweep] op 45/246 (18%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 49/246 (20%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 53/246 (22%) elapsed=0.0m eta=0.0m cur=18.7GB
+[sweep] op 57/246 (23%) elapsed=0.0m eta=0.0m cur=18.7GB
+[sweep] op 61/246 (25%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 65/246 (26%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 69/246 (28%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 73/246 (30%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 77/246 (31%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 81/246 (33%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 85/246 (35%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 89/246 (36%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 93/246 (38%) elapsed=0.0m eta=0.0m cur=18.7GB
+[sweep] op 97/246 (39%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 101/246 (41%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 105/246 (43%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 109/246 (44%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 113/246 (46%) elapsed=0.0m eta=0.0m cur=18.8GB
+[sweep] op 117/246 (48%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 121/246 (49%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 125/246 (51%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 129/246 (52%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 133/246 (54%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 137/246 (56%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 141/246 (57%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 145/246 (59%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 149/246 (61%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 153/246 (62%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 157/246 (64%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 161/246 (65%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 165/246 (67%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 169/246 (69%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 173/246 (70%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 177/246 (72%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 181/246 (74%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 185/246 (75%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 189/246 (77%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 193/246 (78%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 197/246 (80%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 201/246 (82%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 205/246 (83%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 209/246 (85%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 213/246 (87%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 217/246 (88%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 221/246 (90%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 225/246 (91%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 229/246 (93%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 233/246 (95%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 237/246 (96%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 241/246 (98%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 245/246 (100%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 246/246 (100%) elapsed=0.0m eta=0.0m cur=18.6GB
+[sweep] op 1/246 (0%) elapsed=0.0m eta=0.3m cur=17.7GB
+[sweep] op 5/246 (2%) elapsed=0.0m eta=1.0m cur=17.8GB
+[sweep] op 9/246 (4%) elapsed=0.1m eta=1.8m cur=17.6GB
+[sweep] op 13/246 (5%) elapsed=0.1m eta=1.3m cur=17.6GB
+[sweep] op 17/246 (7%) elapsed=0.1m eta=1.0m cur=17.6GB
+[sweep] op 21/246 (9%) elapsed=0.1m eta=0.8m cur=17.6GB
+[sweep] op 25/246 (10%) elapsed=0.1m eta=0.7m cur=17.6GB
+[sweep] op 29/246 (12%) elapsed=0.1m eta=0.6m cur=17.6GB
+[sweep] op 33/246 (13%) elapsed=0.1m eta=0.6m cur=17.6GB
+[sweep] op 37/246 (15%) elapsed=0.1m eta=0.6m cur=19.8GB
+[sweep] op 41/246 (17%) elapsed=0.1m eta=0.6m cur=17.6GB
+[sweep] op 45/246 (18%) elapsed=0.1m eta=0.5m cur=17.6GB
+[sweep] op 49/246 (20%) elapsed=0.1m eta=0.5m cur=17.6GB
+[sweep] op 53/246 (22%) elapsed=0.1m eta=0.5m cur=17.7GB
+[sweep] op 57/246 (23%) elapsed=0.1m eta=0.4m cur=17.7GB
+[sweep] op 61/246 (25%) elapsed=0.1m eta=0.4m cur=17.6GB
+[sweep] op 65/246 (26%) elapsed=0.1m eta=0.4m cur=17.6GB
+[sweep] op 69/246 (28%) elapsed=0.1m eta=0.4m cur=17.6GB
+[sweep] op 73/246 (30%) elapsed=0.1m eta=0.3m cur=17.6GB
+[sweep] op 77/246 (31%) elapsed=0.1m eta=0.3m cur=17.6GB
+[sweep] op 81/246 (33%) elapsed=0.1m eta=0.3m cur=17.6GB
+[sweep] op 85/246 (35%) elapsed=0.1m eta=0.3m cur=17.6GB
+[sweep] op 89/246 (36%) elapsed=0.2m eta=0.3m cur=17.6GB
+[sweep] op 93/246 (38%) elapsed=0.2m eta=0.3m cur=17.7GB
+[sweep] op 97/246 (39%) elapsed=0.2m eta=0.3m cur=17.6GB
+[sweep] op 101/246 (41%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 105/246 (43%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 109/246 (44%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 113/246 (46%) elapsed=0.3m eta=0.3m cur=17.8GB
+[sweep] op 117/246 (48%) elapsed=0.3m eta=0.3m cur=17.6GB
+[sweep] op 121/246 (49%) elapsed=0.3m eta=0.3m cur=17.6GB
+[sweep] op 125/246 (51%) elapsed=0.3m eta=0.2m cur=17.6GB
+[sweep] op 129/246 (52%) elapsed=0.3m eta=0.2m cur=17.6GB
+[sweep] op 133/246 (54%) elapsed=0.3m eta=0.2m cur=17.6GB
+[sweep] op 137/246 (56%) elapsed=0.3m eta=0.2m cur=17.6GB
+[sweep] op 141/246 (57%) elapsed=0.3m eta=0.2m cur=17.6GB
+[sweep] op 145/246 (59%) elapsed=0.3m eta=0.2m cur=17.6GB
+[sweep] op 149/246 (61%) elapsed=0.3m eta=0.2m cur=17.6GB
+[sweep] op 153/246 (62%) elapsed=0.3m eta=0.2m cur=17.6GB
+[sweep] op 157/246 (64%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 161/246 (65%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 165/246 (67%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 169/246 (69%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 173/246 (70%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 177/246 (72%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 181/246 (74%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 185/246 (75%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 189/246 (77%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 193/246 (78%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 197/246 (80%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 201/246 (82%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 205/246 (83%) elapsed=0.3m eta=0.1m cur=17.6GB
+[sweep] op 209/246 (85%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 213/246 (87%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 217/246 (88%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 221/246 (90%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 225/246 (91%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 229/246 (93%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 233/246 (95%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 237/246 (96%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 241/246 (98%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 245/246 (100%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 246/246 (100%) elapsed=0.3m eta=0.0m cur=17.6GB
+[sweep] op 1/246 (0%) elapsed=0.0m eta=0.2m cur=17.7GB
+[sweep] op 5/246 (2%) elapsed=0.0m eta=0.2m cur=17.8GB
+[sweep] op 9/246 (4%) elapsed=0.0m eta=1.2m cur=17.6GB
+[sweep] op 13/246 (5%) elapsed=0.0m eta=0.9m cur=17.6GB
+[sweep] op 17/246 (7%) elapsed=0.1m eta=0.7m cur=17.6GB
+[sweep] op 21/246 (9%) elapsed=0.1m eta=0.6m cur=17.6GB
+[sweep] op 25/246 (10%) elapsed=0.1m eta=0.5m cur=17.6GB
+[sweep] op 29/246 (12%) elapsed=0.1m eta=0.4m cur=17.6GB
+[sweep] op 33/246 (13%) elapsed=0.1m eta=0.4m cur=17.6GB
+[sweep] op 37/246 (15%) elapsed=0.1m eta=0.4m cur=19.8GB
+[sweep] op 41/246 (17%) elapsed=0.1m eta=0.4m cur=17.6GB
+[sweep] op 45/246 (18%) elapsed=0.1m eta=0.4m cur=17.6GB
+[sweep] op 49/246 (20%) elapsed=0.1m eta=0.3m cur=17.6GB
+[sweep] op 53/246 (22%) elapsed=0.1m eta=0.3m cur=17.7GB
+[sweep] op 57/246 (23%) elapsed=0.1m eta=0.3m cur=17.7GB
+[sweep] op 61/246 (25%) elapsed=0.1m eta=0.3m cur=17.6GB
+[sweep] op 65/246 (26%) elapsed=0.1m eta=0.3m cur=17.6GB
+[sweep] op 69/246 (28%) elapsed=0.1m eta=0.2m cur=17.6GB
+[sweep] op 73/246 (30%) elapsed=0.1m eta=0.2m cur=17.6GB
+[sweep] op 77/246 (31%) elapsed=0.1m eta=0.2m cur=17.6GB
+[sweep] op 81/246 (33%) elapsed=0.1m eta=0.2m cur=17.6GB
+[sweep] op 85/246 (35%) elapsed=0.1m eta=0.2m cur=17.6GB
+[sweep] op 89/246 (36%) elapsed=0.1m eta=0.2m cur=17.6GB
+[sweep] op 93/246 (38%) elapsed=0.1m eta=0.2m cur=17.7GB
+[sweep] op 97/246 (39%) elapsed=0.1m eta=0.2m cur=17.6GB
+[sweep] op 101/246 (41%) elapsed=0.1m eta=0.2m cur=17.6GB
+[sweep] op 105/246 (43%) elapsed=0.1m eta=0.1m cur=17.6GB
+[sweep] op 109/246 (44%) elapsed=0.1m eta=0.1m cur=17.6GB
+[sweep] op 113/246 (46%) elapsed=0.2m eta=0.2m cur=17.8GB
+[sweep] op 117/246 (48%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 121/246 (49%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 125/246 (51%) elapsed=0.2m eta=0.2m cur=17.6GB
+[sweep] op 129/246 (52%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 133/246 (54%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 137/246 (56%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 141/246 (57%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 145/246 (59%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 149/246 (61%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 153/246 (62%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 157/246 (64%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 161/246 (65%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 165/246 (67%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 169/246 (69%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 173/246 (70%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 177/246 (72%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 181/246 (74%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 185/246 (75%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 189/246 (77%) elapsed=0.2m eta=0.1m cur=17.6GB
+[sweep] op 193/246 (78%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 197/246 (80%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 201/246 (82%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 205/246 (83%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 209/246 (85%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 213/246 (87%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 217/246 (88%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 221/246 (90%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 225/246 (91%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 229/246 (93%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 233/246 (95%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 237/246 (96%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 241/246 (98%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 245/246 (100%) elapsed=0.2m eta=0.0m cur=17.6GB
+[sweep] op 246/246 (100%) elapsed=0.2m eta=0.0m cur=17.6GB
+  [stream-sound] 5 rounds done; opened columns match committed leaves: True; W-block rows 365514; W-ref True; Wnew rows 0; p3 rows 9; peak 55.95 GB
+  [phase] prove-time breakdown (cuda-synced buckets; shares, not absolute — syncs remove overlap):
+    encode         20.5s   42.0%
+    fetch           7.7s   15.8%
+    witness         6.7s   13.8%
+    quad            3.9s    8.0%
+    fold_qlin       3.8s    7.9%
+    qlin_polymul      1.9s    3.9%
+    aux             1.0s    2.1%
+    qlin_rTA        1.0s    2.0%
+    cols            0.6s    1.2%
+    qlin_interp      0.5s    1.1%
+    fold_qirs       0.4s    0.8%
+    compile         0.3s    0.6%
+    qlin_rowsum      0.2s    0.5%
+    merkle          0.1s    0.3%
+    cache_r         0.0s    0.0%
+    cache_w         0.0s    0.0%
+    BUCKETED       48.7s  (vs total prove wall-clock; remainder = setup + un-bucketed)
+  [sweep] per-sweep breakdown (LIGERO_SWEEP_TIMING; cuda-synced seconds, so an instrumented wall; fetch = whole loader calls — storage read, decode and transfer together — taken out of the bucket they ran in; load_GB = decoded field bytes the loaders returned, not packed or disk bytes):
+    sweep          wall   witness     fetch       aux   compile    encode    merkle fold_qirs fold_qlin      cols      quad   cache_r   cache_w     loads   load_GB  cache_rd  cache_wr routed_rd routed_wr      proj
+    R1             11.2       2.2       6.0       0.0       0.0       2.7       0.1       0.0       0.0       0.0       0.0       0.0       0.0       599     90.19         0         5         0         3         0
+              loader calls by kind: weight 5.4 s / 35; shard 0.7 s / 564
+    R2              5.1       1.9       1.4       0.2       0.0       1.4       0.0       0.0       0.0       0.0       0.0       0.0       0.0      1212    183.20         5         0         3         0         3
+              loader calls by kind: shard 2.3 s / 1,152; weight-cache hits 60
+    R3              1.3       0.9       0.1       0.2       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0       0.0        60     47.91         5         0         3         0         0
+              loader calls by kind: weight-cache hits 60
+    fold           17.2       0.9       0.1       0.2       0.3       7.2       0.0       0.4       3.8       0.0       3.9       0.0       0.0        95     71.86         5         0         3         0         0
+              loader calls by kind: weight-cache hits 95
+    open           11.3       0.9       0.1       0.3       0.0       9.1       0.0       0.0       0.0       0.6       0.0       0.0       0.0        95     71.86         5         0         3         0         0
+              loader calls by kind: weight-cache hits 95
+    ALL            46.0       6.7       7.7       1.0       0.3      20.5       0.1       0.4       3.8       0.6       3.9       0.0       0.0      2061    465.02        20         5        12         3         3
+              loader calls by kind: weight 5.4 s / 35; shard 2.9 s / 1,716; weight-cache hits 310, stores 35
+    proof wall 76.1s; sweeps 46.0s; outside the sweeps 30.1s with 0 loader calls (0.00 GB); first fill (cache_w in R1) 0.0s
+  [weight-cache] 35 weights decoded once (12.0 GB packed: 12.0 GB on the GPU, 0.0 GB pinned host after the allocator's power-of-two rounding; host allocator reserved 0.0 GB), 310 resolutions served from the cache, 0 resolutions refused by the budget
+[demo_k2 +1474.7s] negative wrong-slice: change applied 3x; Rust REJECT under the honest anchors -> ok (135.2s)
+[demo_k2 +1474.8s] RESULT PASS
+[demo_k2 +1474.8s] record written to /workspace/records/k2-prove-s100.json
