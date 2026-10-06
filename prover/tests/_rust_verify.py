@@ -60,8 +60,12 @@ def run_verify_proof(argv):
             "rust_verify: ACCEPT", "rust_verify: REJECT"):
         raise VerifierFailure(r.returncode, out)
     checks = [ln.strip() for ln in r.stdout.splitlines() if ln.strip().startswith(("[OK ]", "[XX ]"))]
-    return dict(verdict=lines[0].split(": ", 1)[1], returncode=r.returncode, output=out,
-                checks=checks)
+    verdict = lines[0].split(": ", 1)[1]
+    # the evidence in the caller's log: the verifier's own verdict, its exit
+    # status and the checks it failed
+    print(f"    [verify_proof] {verdict} (exit {r.returncode})"
+          + "".join(f"; {c}" for c in checks if c.startswith("[XX ]"))[:300], flush=True)
+    return dict(verdict=verdict, returncode=r.returncode, output=out, checks=checks)
 
 
 # (proof serialization is now the single block-driven writer proof_dump.dump_proof;
