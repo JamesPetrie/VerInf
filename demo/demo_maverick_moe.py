@@ -130,6 +130,7 @@ def build(tape, *, T, E, d, d_ff, real=None):
     s_val = tape.paired_tlookup(r_chosen, sig_tbl, shift=SIG_SHIFT)
     ones = tape.commit("bc_ones", torch.ones(T * d, dtype=torch.uint64, device="cuda"),
                         (T, d))
+    tape.lincomb([ones], [1], 1)        # a constant, pinned (not a free witness)
     s_rep = freivalds_combine(tape, s_val, [ones], T=T, E=1, F=d)   # broadcast pin
     x_r = tape.hadamard(s_rep, x, **mm)
 

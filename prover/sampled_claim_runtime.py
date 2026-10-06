@@ -216,7 +216,7 @@ class ClaimWindowAudit:
     PROTOTYPE_UNCHECKED; constructing one requires prototype=True."""
 
     def __init__(self, tape, cfg, verifier_secret: bytes, public_io_digest: bytes,
-                 model_root: bytes, *, expected_claims: int = 2596,
+                 model_root: bytes, *, expected_claims: int = 2597,
                  window_size: int = 49, sample_per_window: int = 5,
                  progress_path: str | None = None, heartbeat_every: int = 25,
                  enable_rs_binding: bool = False, rs_columns: int = 61,

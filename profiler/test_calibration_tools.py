@@ -589,6 +589,29 @@ def _lift_to_repaired_listings(ex):
             c.w_slots += 2 * claimcosts._length(c.params)
 
 
+_BINDING_FLAGS = ("synth models lincomb but the tape never emitted it",
+                  "persistent (weight) slots: synth")
+
+
+def _lift_to_repaired_binding(ex):
+    """The archived Maverick extractions predate the binding repair
+    (2026-10-06): their RMSNorm gains and g_out were plain inputs, and
+    nothing pinned bc_ones. The repaired driver enrolls the 97 gains and pins
+    every bc_ones entry with one LinCombClaim, which is what synth models."""
+    import re
+    from manifest import ClaimRecord
+    gains = [v for v in ex.variables if re.fullmatch(r"L\d+_g[AF]|g_out", v.name)]
+    assert len(gains) == 97 and not any(v.persistent for v in gains)
+    for v in gains:
+        v.persistent = True
+    ones = next(v for v in ex.variables if v.name == "bc_ones")
+    ex.claims.append(ClaimRecord(idx=len(ex.claims), type="LinCombClaim",
+                                 label="bc_ones.pin", layer=None,
+                                 params={"length": ones.length}, inputs=["bc_ones"],
+                                 outputs=[]))
+    ones.consumers.append(len(ex.claims) - 1)
+
+
 def test_archived_crosschecks_reject_routing_cost_loss():
     archive = Path(__file__).resolve().parents[1] / "analysis/blackwell-session-1/crosscheck-out"
     for name, seq, continuation in [("llama7b", 100, None),
@@ -596,8 +619,15 @@ def test_archived_crosschecks_reject_routing_cost_loss():
         ex = Manifest.load(str(archive / f"{name}-s{seq}-extracted.json.gz"))
         sy = synth.BUILDERS[name](seq, t_queries=ex.run["ligero"]["T_QUERIES"])
         flags, _ = _quiet(crosscheck.diff_report, sy, ex, continuation)
-        assert flags and all(f.startswith(("silu: cost drift", "total W")) for f in flags), \
-            (name, seq, flags)          # the old listing shows, and only as SiLU's W
+        # the old listing shows, and only as SiLU's W and, for Maverick, the
+        # binding repair's two deltas: the pin and exactly the 97 gains
+        known = ("silu: cost drift", "total W") + (_BINDING_FLAGS if name == "maverick" else ())
+        assert flags and all(f.startswith(known) for f in flags), (name, seq, flags)
+        if name == "maverick":
+            slots = next(f for f in flags if f.startswith(_BINDING_FLAGS[1]))
+            assert slots == ("persistent (weight) slots: synth "
+                             f"{402_724_618_240 + 97 * 5120:,} != tape 402,724,618,240"), slots
+            _lift_to_repaired_binding(ex)
         _lift_to_repaired_listings(ex)
         flags, _ = _quiet(crosscheck.diff_report, sy, ex, continuation)
         assert flags == [], (name, seq, flags)

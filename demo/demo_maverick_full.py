@@ -22,7 +22,8 @@ Modes:
                    logits for the llama.cpp cross-check. (H100 safety run.)
   --sampled-audit-out PATH --sampled-audit-prototype
                    one real pass, C0 witness commitment and verifier-secret
-                   5-of-49 local audit over all 2,596 Tape claims. (Vast run.)
+                   5-of-49 local audit over all 2,597 Tape claims (2,596
+                   before the bc_ones pin). (Vast run.)
                    A PROTOTYPE: weight-to-enrollment binding and cross-window
                    value consistency are unchecked, so the flag is required
                    and the result is labeled; it is not verified inference.
@@ -267,6 +268,11 @@ def build_model(tape, gguf, prompt_ids, cont_ids, *, V, d, n_layers, E, d_ff):
     sig_tbl = tape.register_table("sigmoid", T_data=t_in, T_Y_data=t_out)
     ones_bc = tape.commit("bc_ones", torch.ones(T * d, dtype=torch.uint64,
                                                  device="cuda"), (T, d))
+    # The operand that spreads the sigmoid gate over the routed input is a
+    # constant, not a free witness: every entry is pinned to 1 by a public
+    # linear constraint. Not a model weight (its length is T·d), so it stays
+    # out of the weight root and enrollment does not depend on the length.
+    tape.lincomb([ones_bc], [1], 1)
 
     # attention-group source tensors (load_attention decodes the whole group;
     # provenance names each key's OWN packed source — W_K/W_V record the
@@ -284,10 +290,11 @@ def build_model(tape, gguf, prompt_ids, cont_ids, *, V, d, n_layers, E, d_ff):
 
     for il in range(n_layers):
         attn = {}
-        # gains are tiny (d,) — eager; projection weights lazy (1.7 GB/layer
-        # eager across 48 layers OOMs the H100's 80 GB VRAM)
-        attn["g_attn_wt"] = tape.commit(f"L{il}_gA", _attn_part(il, "g_attn")(), (d,))
-        attn["g_ffn_wt"] = tape.commit(f"L{il}_gF", _attn_part(il, "g_ffn")(), (d,))
+        # every weight is enrolled, the RMSNorm gains included (a plain
+        # commit left them free of the weight root); all lazy (1.7 GB/layer
+        # of projections eager across 48 layers OOMs the H100's 80 GB VRAM)
+        attn["g_attn_wt"] = tape.commit_lazy(f"L{il}_gA", _attn_part(il, "g_attn"), (d,), d)
+        attn["g_ffn_wt"] = tape.commit_lazy(f"L{il}_gF", _attn_part(il, "g_ffn"), (d,), d)
         for kk, nm, sh in [("W_Q_wt", "W_Q", (d, H * DH)), ("W_K_wt", "W_K", (d, H * DH)),
                             ("W_V_wt", "W_V", (d, H * DH)), ("W_O_wt", "W_O", (H * DH, d))]:
             attn[kk] = tape.commit_lazy(f"L{il}_{nm}", _attn_part(il, nm),
@@ -309,7 +316,7 @@ def build_model(tape, gguf, prompt_ids, cont_ids, *, V, d, n_layers, E, d_ff):
     # final norm + gain -> LM head
     n_f = tape.rmsnorm(x, d=d, s=S, eps_int=EPS_INT,
                         s_out=S, output_width=OUTPUT_WIDTH)
-    g_out = tape.commit("g_out", _field_loader(gguf, "output_norm.weight")(), (d,))
+    g_out = tape.commit_lazy("g_out", _field_loader(gguf, "output_norm.weight"), (d,), d)
     n_fg = tape.hadamard_broadcast(n_f, g_out, SEQ=T, d=d, s_a=S, s_b=S,
                                     s_out=S, output_width=OUTPUT_WIDTH)
     lm_name = "output.weight" if "output.weight" in by else "token_embd.weight"
@@ -557,7 +564,8 @@ def main():
         # Layout before serialization is load-bearing: it gives every wire a
         # stable row identity used by the block descriptors and C0 binding.
         _claims_bytes, manifest, stmt = admission.prepare(tape, CFG)
-        expected_claims = 0 if a.allow_dev_config else 2596
+        # 2,596 before the bc_ones pin (one LinCombClaim) of 2026-10-06
+        expected_claims = 0 if a.allow_dev_config else 2597
         if expected_claims and manifest["n_claims"] != expected_claims:
             raise SystemExit(
                 f"refusing sampled audit: production tape has "
