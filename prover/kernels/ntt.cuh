@@ -85,11 +85,6 @@ __global__ void k_scale(uint64_t* a, int n, uint64_t c) {
 
 // ---------- host helpers ----------
 
-static inline uint64_t host_addmod(uint64_t a, uint64_t b) {
-    __uint128_t s = (__uint128_t)a + b;
-    if (s >= gl::P) s -= gl::P;
-    return (uint64_t)s;
-}
 static inline uint64_t host_mulmod(uint64_t a, uint64_t b) {
     __uint128_t prod = (__uint128_t)a * b;
     return (uint64_t)(prod % gl::P);

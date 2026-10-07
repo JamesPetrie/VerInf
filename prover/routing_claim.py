@@ -47,9 +47,8 @@ from typing import List, Tuple
 
 import torch
 
-import core
 from core import P, Variable, LigeroConfig, SAMPLE_FNS, AUX_FNS
-from claims import (COMPILE_FNS, QuadraticConstraint, QuadFamily, L2_IdentityScalar,
+from claims import (COMPILE_FNS, QuadFamily, L2_IdentityScalar,
                     L2_RowSumPerSlotVector, L2_StrideOneToManyScalar,
                     _build_b_chunk)
 from packets import L2_TransposeO2MScalar
@@ -133,7 +132,6 @@ def routing_compile(c: RoutingClaim, _ch, cfg: LigeroConfig, base: int):
     neg_two_l = (P - two_l) % P
     ones_e = torch.ones(E, dtype=torch.uint64, device="cuda")
     bonus_e = _bonus_vec(E)
-    n_rows = (L + ell - 1) // ell
 
     row_pkts: List[Tuple[int, object]] = []
     cur = base

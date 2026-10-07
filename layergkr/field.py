@@ -14,7 +14,7 @@ Counting convention, chosen so nothing is double-charged or silently free:
   * batched helpers (`dot`, `vec_add`, ...) charge in bulk rather than per
     element call, which is both faster and closer to how the GPU prover works.
 """
-from typing import Iterable, List, Sequence
+from typing import List, Sequence
 
 from prover.protocol import P
 
@@ -61,19 +61,9 @@ def dot(xs: Sequence[int], ys: Sequence[int]) -> int:
     return acc % P
 
 
-def vec_scale(xs: Sequence[int], k: int) -> List[int]:
-    charge(mul=len(xs))
-    return [(x * k) % P for x in xs]
-
-
 def vec_add(xs: Sequence[int], ys: Sequence[int]) -> List[int]:
     charge(add=len(xs))
     return [(x + y) % P for x, y in zip(xs, ys)]
-
-
-def vec_sub(xs: Sequence[int], ys: Sequence[int]) -> List[int]:
-    charge(add=len(xs))
-    return [(x - y) % P for x, y in zip(xs, ys)]
 
 
 def hadamard(xs: Sequence[int], ys: Sequence[int]) -> List[int]:
@@ -99,18 +89,3 @@ def batch_inv(xs: Sequence[int]) -> List[int]:
         acc = acc * xs[i] % P
     charge(mul=2 * n, red_op=2 * n)
     return out
-
-
-def horner(coeffs: Sequence[int], x: int) -> int:
-    n = len(coeffs)
-    charge(mul=max(n - 1, 0), add=max(n - 1, 0))
-    acc = 0
-    for c in reversed(coeffs):
-        acc = (acc * x + c) % P
-    return acc
-
-
-def sum_all(xs: Iterable[int]) -> int:
-    xs = list(xs)
-    charge(add=max(len(xs) - 1, 0))
-    return sum(xs) % P

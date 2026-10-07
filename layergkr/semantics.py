@@ -405,7 +405,7 @@ def forward(cfg: ToyConfig, rng, x_in: Optional[List[List[int]]] = None,
     """Compute one layer and emit its trace."""
     tables = build_tables(cfg.table_bits, cfg.scale)
     b = _Builder(cfg, tables)
-    S, d, d_ff, E = cfg.S, cfg.d, cfg.d_ff, cfg.E
+    S, d = cfg.S, cfg.d
     w = weights if weights is not None else LayerWeights.draw(cfg, rng, x_in)
 
     with phase("semantics.forward"), stage("semantics.forward"):
@@ -705,7 +705,7 @@ def forward_tensor(cfg: ToyConfig, rng, x_in: Optional[List[List[int]]] = None,
     torch, _ = _torch()
     tables = build_tables(cfg.table_bits, cfg.scale)
     b = _TBuilder(cfg, tables, device)
-    S, d, E = cfg.S, cfg.d, cfg.E
+    S, d = cfg.S, cfg.d
     if weights is not None:
         w = weights
     elif x_in is None:

@@ -49,7 +49,6 @@ MAINTAINED = [
     "analysis/bench/ab_witness_spill.py",
     "analysis/bench/accept_toy_cache.py",
     "analysis/bench/accept_toy_spill.py",
-    "analysis/bench/confirm_cap_seq1024.py",
     "analysis/bench/cost_calculator.py",
     "analysis/bench/gpu_softmax_ab.py",
     "analysis/bench/optrun_rho.py",

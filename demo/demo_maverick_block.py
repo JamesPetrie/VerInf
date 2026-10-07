@@ -18,7 +18,6 @@ Run (Spark):
         --dump-proof /tmp/maverick_block.json
 """
 import argparse
-import json
 import math
 import os
 import sys
@@ -35,16 +34,12 @@ _R = _pl.Path(__file__).resolve().parents[1]
 _s.path.insert(0, str(_R / "prover")); _s.path.insert(0, str(_R / "demo"))
 import _uint64_compat  # noqa: F401
 
-import core
-from core import P, LigeroConfig
 import claims as _C          # noqa: F401
 import packets as _PK         # noqa: F401
 from tape import Tape
-from claims import SiluConfig
 from routing_claim import route_top1, freivalds_combine
-from max_claim import to_signed
 from demo_maverick_moe import (_to_field, _rand_int, _sigmoid_table, CFG, S,
-                                SCALE_BITS, OUTPUT_WIDTH, SILU_CFG, SIG_SHIFT,
+                                OUTPUT_WIDTH, SILU_CFG, SIG_SHIFT,
                                 WORD_BITS, HALF_X)
 
 SEED = b"maverick-block-demo"
@@ -249,7 +244,7 @@ def main():
     a = ap.parse_args()
     torch.manual_seed(7)
 
-    from loader import load_maverick_moe_layer, _gguf_by_name
+    from loader import load_maverick_moe_layer
     theta = 500000.0
     use_rope = (a.layer + 1) % 4 != 0
     print(f"[maverick-block] E={a.experts} T={a.seq} d={a.d} d_ff={a.d_ff} "

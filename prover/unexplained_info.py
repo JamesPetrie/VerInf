@@ -26,7 +26,6 @@ import math
 import numpy as np
 import torch
 
-from tape import WitnessTensor
 from max_claim import max_gap
 from ui_claim import info_finalize
 

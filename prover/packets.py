@@ -18,11 +18,9 @@ only.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 import torch
 
-from cuda_primitives import P
 
 
 @dataclass(frozen=True, slots=True)
