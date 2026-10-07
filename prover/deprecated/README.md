@@ -39,3 +39,16 @@ stale. The single production prover is `core.prove_streaming` (see `Tape.prove`)
   is partly why it was retired rather than kept in sync. The Rust `compile_difftest`
   bin that consumed it is now dead (no oracle) — to remove with the other dead bins.
   (`core.verify`, the in-process GPU co-simulation, was deleted outright in P5b.)
+
+## Added 2026-10-07 (dead-code sweep)
+
+- `tamper_proof.py` — read `/tmp/proof.json`, which nothing writes any more;
+  the negative tests now tamper through `tests/_rust_verify.py` and the
+  claim-level tamper hooks.
+- `dump_routing_proof.py` — hand-serialized the legacy proof JSON; superseded
+  by `proof_dump.dump_proof` and the demos' `--dump-proof`.
+- `difftest_lde_skip.py` — a one-off byte-identity check with a hard-coded
+  `/home/riftuser` path (routed-projected-status.md records its result).
+- `moe_routed.py` (from `demo/`) — the first routed MoE FFN builder; nothing
+  imported it. `demo_maverick_full.build_moe_ffn` is the live one (adds
+  `use_bridge` and `persistent`).
