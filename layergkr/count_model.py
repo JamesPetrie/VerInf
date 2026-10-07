@@ -330,7 +330,7 @@ class TraceShape:
     moe_cells: int = 0
 
 
-def predict_trace_shape(cfg: sem.ToyConfig) -> TraceShape:
+def predict_trace_shape(cfg: sem.ToyConfig, quotient_bound: bool = True) -> TraceShape:
     """How many relations a layer of this geometry emits, from the structure of
     semantics.forward -- not by running it. Validated in bench/run_toy.py.
 
@@ -340,7 +340,12 @@ def predict_trace_shape(cfg: sem.ToyConfig) -> TraceShape:
     route MoE nodes since the §5 work, and range checks are one per rescaled
     OUTPUT, not per cell. The error was 8x on lookups, 3.4x on gate slots and
     2.4x on matmul cells -- in a level the doc called exact. It is exact again,
-    on all five quantities, at every configuration in `tests/test_count_model`."""
+    on all five quantities, at every configuration in `tests/test_count_model`.
+
+    `quotient_bound=False` gives the shape the emitter had before protocol
+    review F12 ranged every rescale and bracket quotient. It exists only so the
+    memory peaks measured on those traces can still calibrate the per-slot and
+    per-query byte costs; no current trace has that shape."""
     S, d, d_ff, E = cfg.S, cfg.d, cfg.d_ff, max(cfg.E, 1)
     n_tab = cfg.table_size
 
@@ -357,7 +362,10 @@ def predict_trace_shape(cfg: sem.ToyConfig) -> TraceShape:
     #   per token: rms (had+rescale), RoPE q and k (affine+rescale each),
     #              softmax (had+rescale), residual 1, SwiGLU (bracket+had+
     #              rescale), residual 2
-    gates = 13 + 13 * S
+    #   and after every rescale and bracket its quotient-bound gate (review
+    #   F12): 8 + 5*S rescales and 3 + S brackets.
+    qb = 1 if quotient_bound else 0
+    gates = 13 + 13 * S + qb * (11 + 6 * S)
 
     # Slots, by gate family:
     #   hadamard  2*S*d + S*S + S*d_ff
@@ -365,11 +373,18 @@ def predict_trace_shape(cfg: sem.ToyConfig) -> TraceShape:
     #   bracket   2*S   + S*S + S*d_ff
     #   affine    4*S*d
     #   boolean   S*S
-    slots = 15 * S * d + 4 * S * S + 5 * S * d_ff + 2 * S
+    #   qbound    one per rescaled or bracketed value, as the two rows above
+    n_rescaled = 9 * S * d + S * S + 3 * S * d_ff
+    n_bracketed = 2 * S + S * S + S * d_ff
+    slots = (15 * S * d + 4 * S * S + 5 * S * d_ff + 2 * S
+             + qb * (n_rescaled + n_bracketed))
 
     # Lookups = every range check (one per rescale remainder and per bracket
-    # low half) plus the four value tables.
-    range_checks = 9 * S * d + 2 * S * S + 4 * S * d_ff + 2 * S
+    # low half, and one per quotient word) plus the four value tables.
+    k_r = sem.quotient_words(cfg.scale_bits, cfg.table_bits)
+    k_b = sem.quotient_words(cfg.table_bits, cfg.table_bits)
+    range_checks = (9 * S * d + 2 * S * S + 4 * S * d_ff + 2 * S
+                    + qb * (k_r * n_rescaled + k_b * n_bracketed))
     tables = 2 * S + S * S + S * d_ff          # isqrt, recip, exp, silu
     return TraceShape(matmuls=matmuls, matmul_cells=cells, gates=gates,
                       gate_slots=slots, lookup_queries=range_checks + tables,
@@ -429,7 +444,8 @@ def max_encode_rows(cfg: Config, free_bytes: int) -> int:
     return max(0, int(free_bytes) // (per_row * BYTES_PER_FIELD))
 
 
-def predict_forward_memory(toy: sem.ToyConfig) -> Dict[str, int]:
+def predict_forward_memory(toy: sem.ToyConfig,
+                           quotient_bound: bool = True) -> Dict[str, int]:
     """Peak device bytes of `semantics.forward_tensor`, by term.
 
     The expert weights dominate everything else by an order of magnitude, and
@@ -439,7 +455,7 @@ def predict_forward_memory(toy: sem.ToyConfig) -> Dict[str, int]:
     S, d, d_ff, E = toy.S, toy.d, toy.d_ff, max(toy.E, 1)
     B = BYTES_PER_FIELD
     experts = 3 * E * d * d_ff * B
-    shape = predict_trace_shape(toy)
+    shape = predict_trace_shape(toy, quotient_bound)
     return {
         "expert_weights": experts,
         "expert_stack_copy": experts,       # list and stack are both live

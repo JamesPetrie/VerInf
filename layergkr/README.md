@@ -42,6 +42,17 @@ SiLU, SwiGLU hadamard, both residuals — with a raw accumulator and a
 deterministic range-checked rescale after every multiply. `check_trace`
 re-derives every relation independently of the emitter.
 
+Both the remainder and the quotient of every rescale and bracket are ranged
+(protocol review F12, 25 September 2026). The remainder alone fixes nothing:
+the divisor is invertible mod P, so every remainder had a field quotient, and a
+bracket's remainder is the next lookup key. The quotient is ranged by
+`quotient_words` words of the range table, below $2^{wb \cdot k}$ with
+$nb + wb \cdot k \le 63$, so the gate is an integer identity. At
+`table_bits = 6` that is nine words per rescaled or bracketed value, and the
+LogUp queries of a layer grow about 9x (gate slots about 1.7x); measurements in
+`analysis/layergkr-cost-model.md` taken before this change count the old
+trace.
+
 ## The cost model has no kappa
 
 Three levels, each falsifiable on its own. Full detail and the change log live in

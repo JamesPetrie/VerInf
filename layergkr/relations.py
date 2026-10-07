@@ -75,8 +75,10 @@ def affine(node_id: str, coeffs: Sequence[int], xs: Sequence[Sequence[int]],
 
 def rescale(node_id: str, raw: Sequence[int], q: Sequence[int], r: Sequence[int],
             scale: int) -> Gate:
-    """raw = scale*q + r. The bound 0 <= r < scale is NOT here -- it is a range
-    lookup, because that is what makes it cheap; see semantics.py."""
+    """raw = scale*q + r. The bounds 0 <= r < scale and 0 <= q < 2^(wb*k) are
+    NOT here -- they are range lookups and a word gate, because that is what
+    makes them cheap; see semantics.py. Both are needed: with r alone ranged,
+    every r admits a field q, and the gate determines nothing (review F12)."""
     return Gate("rescale", node_id,
                 [(1, [_vec(raw)]), ((-scale) % FIELD_P, [_vec(q)]),
                  (FIELD_P - 1, [_vec(r)])])
