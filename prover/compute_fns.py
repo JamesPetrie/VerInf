@@ -34,7 +34,7 @@ from core import Variable, _resolve_loader
 # Lifted from tape.py: vectorized signed-floor decomposition + numpy field
 # helpers. Imported here (rather than re-imported from tape) so tape can
 # later be refactored without compute_fns following along.
-from tape import _signed_floor_decomp, _to_signed_np, _to_field_np, _softmax_witness_vec
+from tape import _signed_floor_decomp, _softmax_witness_vec
 
 import numpy as np
 
@@ -284,7 +284,6 @@ def silu_compute(claim: SiluClaim, live):
     the only difference is reading inputs from `live` instead of WitnessTensor.data
     and returning the values keyed by the claim's Variables."""
     sc = claim.config
-    L = claim.length
     b, T_LEN = sc.b, sc.T_LEN
     b_2, b_3, b_4 = sc.b_2, sc.b_3, sc.b_4
     w2_mod = 1 << sc.width_2
@@ -399,7 +398,7 @@ def rmsnorm_compute(claim: RmsNormClaim, live):
     Bit-identical to the prior implementation; the verifier sees the same
     witness tensors and ACCEPTs identically."""
     sc = claim.config
-    B, d, s, eps_int = sc.B, sc.d, sc.s, sc.eps_int
+    B, d, eps_int = sc.B, sc.d, sc.eps_int
     slack_max = 1 << sc.slack_width
     magic = sc.magic
     out: Dict[Variable, torch.Tensor] = {}
@@ -697,7 +696,6 @@ def softmax_compute(claim: SoftmaxClaim, live):
     `_softmax_witness_vec` (works for both no-rescale and rescale paths;
     the rescale path simply runs the same bracket on the rescaled x)."""
     sc = claim.config
-    L = claim.length
     B, M = sc.B, sc.M
     out: Dict[Variable, torch.Tensor] = {}
 

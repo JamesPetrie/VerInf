@@ -221,8 +221,8 @@ def wc_block_masks(mask_seed: bytes, width: int, block: int,
 
 def _coeffs_to_codewords(coeffs: torch.Tensor, params: WcParams) -> torch.Tensor:
     """(m, K_w) COEFFICIENT rows -> (m, N_w) evaluations on the NTT domain.
-    NOTE: rs_encode_rows is evaluation-based (Ligero messages) and is the
-    wrong primitive here; coefficient-RS is zero-pad + forward NTT."""
+    NOTE: the Ligero message encode is evaluation-based and is the wrong
+    primitive here; coefficient-RS is zero-pad + forward NTT."""
     m = coeffs.size(0)
     padded = torch.zeros(m, params.N_w, dtype=torch.uint64, device="cuda")
     padded[:, :params.K_w] = coeffs
@@ -990,7 +990,6 @@ class LazyEnrollment:
         """Second streaming pass: re-extract the eta columns and drift-check
         their inner digests against the committed leaves."""
         from core import _make_merkle_acc
-        params = self.params
         idx = torch.tensor(eta_idx, dtype=torch.long, device="cuda")
         opened = {i: [] for i in eta_idx}
         chk = _make_merkle_acc(len(eta_idx), self.total_polys)

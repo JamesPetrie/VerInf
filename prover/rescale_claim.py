@@ -23,7 +23,7 @@ This is the same layout the Rust verifier's `Build::emit_rescale` emits, which
 is what the standalone handler calls.
 """
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 import torch
 

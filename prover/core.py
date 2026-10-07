@@ -25,7 +25,6 @@ verifier perf — at the cost of bumping q_lin/p_0 from K_DEG+ELL−1 to
 from __future__ import annotations
 
 import bisect
-import random
 import secrets
 import time
 import warnings
@@ -40,11 +39,10 @@ import blake3 as _blake3
 
 from cuda_primitives import (
     P, GLOBAL_G,
-    gl_mul, gl_add, gl_sub, gl_neg, gl_inv_batched,
-    ntt_forward, ntt_inverse, ntt_forward_batched, ntt_inverse_batched,
-    rs_encode_rows,
-    poly_mul, poly_add, poly_mul_batched, poly_eval,
-    gl_matmul, gl_matvec, gl_spmv, challenge_vec, challenge_at,
+    gl_mul, gl_add, gl_sub, gl_inv_batched,
+    ntt_inverse, ntt_forward_batched, ntt_inverse_batched,
+    poly_mul_batched,
+    gl_matmul, gl_matvec, challenge_vec, challenge_at,
     interp_band, interp_band_causal_id, interp_band_causal_c2, interp_band_causal_masked_id,
     interp_band_embed, interp_band_rope_x,
     hash_columns_streamed, merkle_build_blake3,
@@ -219,10 +217,6 @@ class LigeroConfig:
             f"(needed for 2K-sized blinding rows for q_lin / p_0)")
 
     @property
-    def W_K(self) -> int:
-        return pow(GLOBAL_G, (P - 1) // self.K_DEG, P)
-
-    @property
     def W_N(self) -> int:
         return pow(GLOBAL_G, (P - 1) // self.N_LIG, P)
 
@@ -242,20 +236,6 @@ class LigeroConfig:
         the FRI coset shift)."""
         return GLOBAL_G
 
-    def zeta(self, c: int) -> int:
-        """Interpolation/message points: K-th roots of unity, c ∈ [0, ELL).
-        Lies in ⟨ω_K⟩ ⊂ ⟨ω_N⟩."""
-        return pow(self.W_K, c, P)
-
-    def eta(self, j: int) -> int:
-        """Evaluation/codeword points: η_j = γ · ω_N^j ∈ γ · ⟨ω_N⟩, disjoint
-        from ζ_c by construction (γ ∉ ⟨ω_N⟩)."""
-        return (self.coset_shift * pow(self.W_N, j, P)) % P
-
-    def zeta_points(self) -> List[int]:
-        return [self.zeta(c) for c in range(self.ELL)]
-
-
 # ============================================================
 # Challenges — every challenge is protocol.challenge(seed, index, label).
 #
@@ -265,28 +245,10 @@ class LigeroConfig:
 # both prover and verifier expand the exact values they need BY INDEX:
 #   op challenges (matmul ρ,λ; rmsnorm ρ; table α,β)  → protocol.op_vec /
 #       challenge(s_op, idx, "op{ci}:…"), keyed by settled-list claim index;
-#   test combiners r_irs/r_lin/r_quad                 → _combiner_vec(s_comb,…);
+#   test combiners r_irs/r_lin/r_quad                 → challenge_vec(s_comb,…) on the GPU;
 #   opened columns Q                                  → protocol.random_columns.
 # No challenge values are ever sent between the parties — they share only seeds.
 # ============================================================
-
-def _combiner_vec(seed, label: str, n: int) -> np.ndarray:
-    """Materialize a test-combiner vector r_label[0:n] from a round seed via the
-    shared indexable PRF: r[i] = protocol.challenge(seed, i, label). Values are
-    identical to the streaming verifier's on-demand challenge(seed, i, label);
-    core materializes only because its GPU identity checks consume dense tensors.
-    Hoists the per-call glue (challenge()/_seed_bytes/label.encode) out of the
-    loop so only the blake3 hash + 128-bit reduce runs per index. Bit-identical
-    to challenge(seed, i, label) = blake3(seed_bytes||label||i_le8)[:16] % P."""
-    prefix    = pr._seed_bytes(seed) + label.encode()
-    digest    = _blake3.blake3
-    frombytes = int.from_bytes
-    out = np.empty(n, dtype=np.uint64)
-    for i in range(n):
-        out[i] = frombytes(digest(prefix + i.to_bytes(8, "little")).digest()[:16],
-                           "little") % P
-    return out
-
 
 # ============================================================
 # Merkle helpers — BLAKE3 throughout (matches design-feasibility.md §3.1
@@ -494,9 +456,7 @@ def _iter_message_chunks(vars_list: List[Variable],
 # ============================================================
 
 NUM_BLINDING_ROWS = 3
-_BLIND_ROW_IRS  = 0   # u_irs  (length-K polynomial)
-_BLIND_ROW_LIN  = 1   # u_lin  (length-2K polynomial)
-_BLIND_ROW_QUAD = 2   # u_quad (length-2K polynomial)
+_BLIND_ROW_IRS  = 0   # u_irs  (length-K polynomial); rows 1, 2 are u_lin, u_quad (length 2K)
 
 # The prover's fixed seed for the ZK-padding PRG (row_prg) and the blinding
 # messages. Constant across proofs ON PURPOSE: the W block's padding must
@@ -803,10 +763,6 @@ def encode_messages(messages: torch.Tensor, cfg: LigeroConfig,
         return row_polys, None
     codewords = _coset_encode_codewords(row_polys, cfg)
     return row_polys, codewords
-
-
-def _pack_column_for_hash(column_vals: List[int]) -> bytes:
-    return b"".join(int(v).to_bytes(8, "little") for v in column_vals)
 
 
 # BLAKE3 chunk = 1024 bytes = 128 u64 rows. The chunked commit / open
@@ -1956,7 +1912,7 @@ class QLinAccumulator:
         # Inverse-NTT fuse (default ON; LIGERO_FUSE_POLYMUL=0 falls back):
         # accumulate the per-row products in the EVAL domain (Σ_i NTT(r_i)·
         # NTT(p_i)) and do ONE inverse NTT at finalize, instead of an inverse
-        # NTT per row inside poly_mul. Valid since the inverse NTT is linear:
+        # NTT per row. Valid since the inverse NTT is linear:
         # Σ_i INTT(prod_i) = INTT(Σ_i prod_i) — bit-exact with the unfused
         # path (measured −7.5% prove; analysis/prover-optimization-
         # investigation.md §4). LIGERO_FUSE_CHECK=1 runs BOTH paths and
@@ -2264,7 +2220,7 @@ def _compute_q_lin_inner_chunk(
     sum (validated by the retired LIGERO_QLIN_BANDCHK oracle before its
     deletion; e2e gates: test_claims, prove->ACCEPT, the seq-1000 runs)."""
     n_chunk = chunk_hi - chunk_lo
-    K, ELL = cfg.K_DEG, cfg.ELL
+    ELL = cfg.ELL
     n_targets = n_chunk * ELL
 
     overlaps = band_index.bands_overlapping(chunk_lo, chunk_hi)
@@ -2296,7 +2252,7 @@ def _compute_q_lin_inner_chunk(
         # FUSED path: forward-NTT both factors, multiply pointwise, and return
         # the EVAL-domain row-sum (size n_eval = next_pow2(2K−1)) — NO per-row
         # inverse NTT; the caller sums across chunks and inverts once at
-        # finalize. Bit-exact with poly_mul (inverse NTT is linear; the
+        # finalize. Bit-exact with the per-row product (inverse NTT is linear; the
         # dropped coefficient at index 2K−1 is zero since deg(r·p) = 2K−2).
         with _phase('qlin_polymul'), _ephase('qlin_polymul'):
             kd = r_i_coeffs.size(1)
@@ -2605,34 +2561,6 @@ def compute_p_0_streaming(
         public_pad[:K] = public_acc
         p_0 = gl_sub(p_0, public_pad)
     return p_0
-
-
-def gl_sum_mod_p(vec: torch.Tensor) -> int:
-    """Σ vec mod P. gl_matvec(v.unsqueeze(0), ones) is single-threaded
-    (parallelizes per output row, of which there's only one) — too slow for
-    multi-million-element vectors. Reshape to (~√n, ~√n) for parallelism.
-    Returns a Python int."""
-    n = vec.numel()
-    if n == 0:
-        return 0
-    if n < 4096:
-        # Small enough that single-threaded matvec is fine.
-        return int(gl_matvec(vec.unsqueeze(0).contiguous(),
-                              torch.ones(n, dtype=torch.uint64, device=vec.device)).item())
-    # Two-level reduction: chunk sums via parallel matvec, then final reduction.
-    block_size = int(n ** 0.5) + 1
-    block_count = (n + block_size - 1) // block_size
-    padded_len = block_count * block_size
-    if padded_len == n:
-        chunks = vec.view(block_count, block_size)
-    else:
-        padded = torch.zeros(padded_len, dtype=torch.uint64, device=vec.device)
-        padded[:n] = vec
-        chunks = padded.view(block_count, block_size)
-    ones_in = torch.ones(block_size,  dtype=torch.uint64, device=vec.device)
-    chunk_sums = gl_matvec(chunks.contiguous(), ones_in)        # (block_count,)
-    ones_out = torch.ones(block_count, dtype=torch.uint64, device=vec.device)
-    return int(gl_matvec(chunk_sums.unsqueeze(0).contiguous(), ones_out).item())
 
 
 # ============================================================
@@ -3372,7 +3300,6 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
     semantic sweep is exactly the single-device one."""
     import compute_fns as _cf
     import os as _os
-    import resource as _res
     _dbg = _os.environ.get("LIGERO_STREAM_DBG")
     _dbg_every = max(1, len(groups) // 20)
     # Always-on lightweight progress cadence (~50 ticks/sweep) + sweep start
@@ -3877,7 +3804,6 @@ def new_zk_seed() -> bytes:
     rows therefore pad under a per-proof secret; the persistent W block keeps
     padding under its own ENROLLMENT seed, which must be kept secret in the
     commitment handle, or its committed leaves would not reproduce."""
-    import secrets
     return secrets.token_bytes(32)
 
 
@@ -4406,40 +4332,6 @@ def _prove_streaming_body(tape, cfg, seed=None, weight_commitment=None, wnew_see
         # verifier twin lands (integration brick 4)
         proof_out.wc_bridge = wc_sidecar
     return proof_out
-
-
-class _PhaseLogger:
-    """Phase-by-phase wall-time + GPU memory logger for prove/verify.
-
-    Output looks like:
-        [prove +12.3s] [alloc=4.2G reserved=8.1G peak=6.5G] Round 1 done — m=4523
-    where alloc = currently-allocated GPU memory by live tensors,
-    reserved = total reserved by PyTorch caching allocator, and peak =
-    max allocated since last reset_peak()."""
-
-    def __init__(self, label: str, verbose: bool):
-        self.label = label
-        self.verbose = verbose
-        self.t0 = time.time()
-
-    def log(self, msg: str):
-        if not self.verbose:
-            return
-        elapsed = time.time() - self.t0
-        try:
-            alloc    = torch.cuda.memory_allocated()     / 1e9
-            reserved = torch.cuda.memory_reserved()      / 1e9
-            peak     = torch.cuda.max_memory_allocated() / 1e9
-            mem = f"[alloc={alloc:.1f}G reserved={reserved:.1f}G peak={peak:.1f}G]"
-        except Exception:
-            mem = ""
-        print(f"  [{self.label} +{elapsed:6.1f}s] {mem} {msg}", flush=True)
-
-    def reset_peak(self):
-        try:
-            torch.cuda.reset_peak_memory_stats()
-        except Exception:
-            pass
 
 
 # The flat unit/negative-test prover prove() and its _sample_test_challenges

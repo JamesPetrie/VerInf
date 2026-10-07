@@ -12,16 +12,14 @@ Stubbed with warnings (identity passthrough, no constraint):
 tape.prove() now covers all arithmetic ops in the FFN. The remaining
 warnings — rmsnorm — are the genuine paired-tlookup work; silu is full.
 """
-import math
 import time
-import warnings
 from typing import Optional
 
 import numpy as np
 import torch
 
 from cuda_primitives import (
-    P, gl_matmul, gl_mul, gl_add, gl_sub, gl_inv, lookup_multiplicities_into,
+    P, gl_add, lookup_multiplicities_into,
 )
 
 
@@ -266,15 +264,14 @@ def _signed_floor_decomp(c_full_data, k_resc: int, output_width: int):
                                   c_shifted_i - FIELD_GAP).view(torch.uint64)
     return c_rescaled_fld, c_low_fld, c_shifted_fld
 import core as _core
-from core import Variable, LigeroConfig, Table
+from core import Variable, Table
 from claims import (
     matmul_claim, AddClaim, HadamardClaim,
     RangeWordClaim, WordExtractionClaim, PairedTlookupClaim,
-    SiluConfig, SILU_TOY, SILU_14BIT, SiluClaim, silu_tpos_tneg,
+    SiluConfig, SILU_TOY, SiluClaim, silu_tpos_tneg,
     RmsNormConfig, RmsNormClaim, _chunk_widths, _rms_limb_range_groups, RMS_LIMB_W,
     SoftmaxConfig, SoftmaxClaim, _softmax_exp_tables,
-    RoPEConfig, RoPEClaim, _rope_cos_sin,
-    EmbeddingLookupClaim,
+    RoPEConfig, RoPEClaim, EmbeddingLookupClaim,
 )
 # Imported late (after claims) to avoid the circular tape↔compute_fns import.
 import compute_fns as _compute_fns
@@ -816,7 +813,6 @@ class Tape:
         # Rescale path: register rescale table; allocate x_low/x_internal/x_shifted Vars.
         if rescale_bits > 0:
             r_resc = rescale_bits
-            k_resc = 1 << r_resc
             range_rescale = self._range_table("rescale", r_resc)
             x_internal_var = self._alloc(f"{x.var.name}_silu_x_internal", L)
             x_low_var, x_shifted_var, z_x_low_v, z_x_shifted_v = self._emit_rescale_aux(
@@ -923,7 +919,6 @@ class Tape:
                             output_width=output_width)
         rescale_bits = sc.rescale_bits
         output_rescale_bits = sc.output_rescale_bits
-        magic = sc.magic
 
         # Cache the 16-bit slack range table on first call.
         cache_key = "_rmsnorm_range_w16"

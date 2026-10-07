@@ -188,11 +188,6 @@ class LazyHFLoader:
         with safe_open(self._shard_for(param_name), framework="pt", device="cpu") as f:
             return f.get_tensor(param_name)
 
-    def _get_shape(self, param_name: str) -> Tuple[int, ...]:
-        from safetensors.torch import safe_open
-        with safe_open(self._shard_for(param_name), framework="pt", device="cpu") as f:
-            return tuple(f.get_slice(param_name).get_shape())
-
     def make_loader(self, param_name: str, *,
                      transpose: bool = False,
                      divide_by: float = 1.0,

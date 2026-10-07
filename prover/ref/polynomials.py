@@ -36,11 +36,6 @@ from typing import List
 from goldilocks_ref import P, add, sub, mul, inv
 
 
-def _neg(a: int) -> int:
-    """Negation in Goldilocks. Equivalent to sub(0, a)."""
-    return (-a) % P
-
-
 def lagrange_eval(xs: List[int], ys: List[int], x_target: int) -> int:
     """Evaluate at `x_target` the unique polynomial of degree < len(xs)
     passing through {(xs[i], ys[i])}.

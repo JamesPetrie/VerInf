@@ -112,19 +112,6 @@ def _eps_int(mcfg: ModelConfig) -> int:
     """rmsnorm ε at scale S² (168 @ 2^12 for ε=1e-5) — model-dependent."""
     return round(mcfg.eps_real * S * S)
 
-# Production-shape independent benchmarks (NOT chained from x).
-SM_B     = 512
-SM_M     = 2048
-SM_Z_MAX = 1 << 17
-SILU_L   = 4096
-RMS_PROD_B = 2048
-
-
-def _rand_small(*shape, lo=0, hi=1000):
-    return torch.randint(lo, hi, shape, dtype=torch.int64,
-                         device="cuda").to(torch.uint64)
-
-
 def _rand_signed(*shape, half=32):
     """Signed integers in [-half, half), mapped to Goldilocks field rep
     (P − |v| for negative v) via gl_sub for the mod-P subtraction."""

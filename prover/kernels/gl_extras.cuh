@@ -39,54 +39,6 @@ __global__ void k_axpy_inplace(uint64_t alpha,
     y[i] = gl::add(y[i], gl::mul(alpha, x[i]));
 }
 
-// Forward sweep for the Montgomery batched-inverse trick:
-//   prefix[0]  = a[0]
-//   prefix[i]  = prefix[i-1] * a[i]
-//
-// FUTURE OPTIMIZATION: this is a single-threaded GPU loop. Acceptable at
-// today's per-column sizes (LogUp z = 1/(α - x) over a witness column,
-// n ≤ a few million), where the serial sweep is still ms-scale and one
-// launch. At billion-slot witnesses this becomes the bottleneck; replace
-// with a multi-block prefix-product scan (standard Blelloch / Brent-Kung
-// over a block-strided partial-product → finalize tree).
-__global__ void k_inv_batched_forward(const uint64_t* __restrict__ a,
-                                       uint64_t* __restrict__ prefix, int n) {
-    if (blockIdx.x != 0 || threadIdx.x != 0) return;
-    uint64_t acc = 1;
-    for (int i = 0; i < n; ++i) {
-        acc = gl::mul(acc, a[i]);
-        prefix[i] = acc;
-    }
-}
-
-// Backward sweep: given prefix[] and inv_total = (prefix[n-1])^{-1},
-// fill out[i] = a[i]^{-1}. Uses:
-//   inv_a[n-1] = inv_total * prefix[n-2]
-//   inv_running = inv_total
-//   for i = n-1 downto 1:
-//     out[i]      = inv_running * prefix[i-1]
-//     inv_running = inv_running * a[i]
-//   out[0] = inv_running
-//
-// FUTURE OPTIMIZATION: single-threaded GPU loop, same constraint as the
-// forward sweep. Parallel version reuses the same scan infrastructure
-// (a suffix-product, or equivalently the same prefix-product algorithm
-// applied to the reversed array).
-__global__ void k_inv_batched_backward(const uint64_t* __restrict__ a,
-                                        const uint64_t* __restrict__ prefix,
-                                        uint64_t inv_total,
-                                        uint64_t* __restrict__ out, int n) {
-    if (blockIdx.x != 0 || threadIdx.x != 0) return;
-    if (n == 0) return;
-    if (n == 1) { out[0] = inv_total; return; }
-    uint64_t inv_running = inv_total;
-    for (int i = n - 1; i >= 1; --i) {
-        out[i]      = gl::mul(inv_running, prefix[i - 1]);
-        inv_running = gl::mul(inv_running, a[i]);
-    }
-    out[0] = inv_running;
-}
-
 // Horner polynomial evaluation. For each (row r, point p):
 //   out[r, p] = Σ_k coeffs[r, k] · points[p]^k
 // One thread per (row, point) cell. 1-D coeffs is the m=1 special case.
