@@ -83,6 +83,33 @@ def build_tables(bits: int, scale: int) -> Dict[str, Table]:
     }
 
 
+# ── the quotient bound (protocol review F12) ─────────────────────────────────
+# A rescale or bracket gate states raw = n*q + r in the field, and the range
+# lookup bounds r to [0, n). That alone fixes nothing: n is invertible mod P,
+# so for ANY r in [0, n) the gate is met by q = (raw - r)/n mod P. The review's
+# example: raw = 0, n = 16 admits (q, r) = (0, 0) and (-1/16, 1), and since a
+# bracket's r is the next lookup key, the freedom reaches nonlinear outputs.
+#
+# The repair ranges q as well, by words of the range table: q = sum_j 2^(wb*j)
+# w_j with every w_j in [0, 2^wb). With q < 2^(wb*k) and r < n = 2^nb,
+# n*q + r < 2^(nb + wb*k) <= 2^63 < P, so the field equation is an integer
+# identity and (q, r) is the unique integer quotient and remainder of the
+# canonical raw; a raw at or above 2^(nb + wb*k) has no satisfying assignment.
+# k is the most words that keep nb + wb*k within 63 bits, so the honest limit
+# stays close to the 2^63 the tensor path already needs.
+_LIFT_BITS = 63
+
+
+def quotient_words(divisor_bits: int, word_bits: int) -> int:
+    """Words of `word_bits` bits that range a quotient of division by
+    2^divisor_bits while keeping n*q + r below 2^63 < P."""
+    k = (_LIFT_BITS - divisor_bits) // word_bits
+    if k < 1:
+        raise ValueError(f"divisor 2^{divisor_bits} with {word_bits}-bit words "
+                         f"leaves no room for a ranged quotient below 2^63")
+    return k
+
+
 @dataclass
 class ToyConfig:
     S: int = 4                # sequence length
@@ -201,7 +228,26 @@ class _Builder:
             rs.append(raw % s)
         self.gates.append(rel.rescale(self._id("rescale"), list(raws), qs, rs, s))
         self._range_check(rs, bound=s)
+        self._bound_quotient("rescale", qs, self.cfg.scale_bits)
         return qs
+
+    def _bound_quotient(self, name: str, qs: Sequence[int], divisor_bits: int) -> None:
+        """Range q by words, so raw = n*q + r lifts to the integers (F12)."""
+        wb = self.cfg.table_bits
+        k = quotient_words(divisor_bits, wb)
+        limit, mask = 1 << (wb * k), (1 << wb) - 1
+        q_max = max(qs, default=0)
+        if min(qs, default=0) < 0 or q_max >= limit:
+            raise RangeOverflow(
+                f"{name} quotient: {q_max} >= 2^{wb * k}, so raw >= "
+                f"2^{divisor_bits + wb * k} has no ranged decomposition below "
+                f"2^63; the toy semantics grow by ~n_in per matmul.")
+        words = [[(q >> (wb * j)) & mask for q in qs] for j in range(k)]
+        self.gates.append(rel.affine(self._id("qbound"),
+                                     [1 << (wb * j) for j in range(k)],
+                                     words, list(qs)))
+        for w in words:
+            self._range_check(w, bound=1 << wb)
 
     def _range_check(self, vals: Sequence[int], bound: int) -> None:
         """Membership in [0, bound) via the range table. bound must not exceed
@@ -214,7 +260,7 @@ class _Builder:
     def bracket(self, vals: Sequence[int]) -> List[int]:
         """Bring a value into the table domain: v = hi*size + lo, lo in range.
         The decomposition is a proved relation, so the lookup's domain is not
-        an assumption."""
+        an assumption: hi is ranged too, without which lo would be free (F12)."""
         n = self.cfg.table_size
         his, los = [], []
         for v in vals:
@@ -222,6 +268,7 @@ class _Builder:
             los.append(v % n)
         self.gates.append(rel.rescale(self._id("bracket"), list(vals), his, los, n))
         self._range_check(los, bound=n)
+        self._bound_quotient("bracket", his, self.cfg.table_bits)
         return los
 
     def lookup(self, name: str, xs: Sequence[int]) -> List[int]:
@@ -551,7 +598,27 @@ class _TBuilder:
         rs_ = raws & (s - 1)
         self.gates.append(rel.rescale(self._id("rescale"), raws, qs, rs_, s))
         self._range_check(rs_, bound=s)
+        self._bound_quotient("rescale", qs, self.cfg.scale_bits)
         return qs
+
+    def _bound_quotient(self, name: str, qs, divisor_bits: int) -> None:
+        """`_Builder._bound_quotient` on tensors: same words, gate and lookup
+        order. qs is non-negative here because its raw passed `_guard`."""
+        wb = self.cfg.table_bits
+        k = quotient_words(divisor_bits, wb)
+        limit, mask = 1 << (wb * k), (1 << wb) - 1
+        q_max = self._hi(qs)
+        if q_max >= limit:
+            raise RangeOverflow(
+                f"{name} quotient: {q_max} >= 2^{wb * k}, so raw >= "
+                f"2^{divisor_bits + wb * k} has no ranged decomposition below "
+                f"2^63; the toy semantics grow by ~n_in per matmul.")
+        words = [(qs >> (wb * j)) & mask for j in range(k)]
+        self.gates.append(rel.affine(self._id("qbound"),
+                                     [1 << (wb * j) for j in range(k)],
+                                     words, qs))
+        for w in words:
+            self._range_check(w, bound=1 << wb)
 
     def _range_check(self, vals, bound: int) -> None:
         torch, _ = _torch()
@@ -568,6 +635,7 @@ class _TBuilder:
         los = vals & (n - 1)
         self.gates.append(rel.rescale(self._id("bracket"), vals, his, los, n))
         self._range_check(los, bound=n)
+        self._bound_quotient("bracket", his, self.cfg.table_bits)
         return los
 
     def lookup(self, name: str, xs):

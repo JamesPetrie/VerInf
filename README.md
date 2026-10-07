@@ -19,7 +19,7 @@ See [`analysis/full-model-hidden-run-archive.md`](analysis/full-model-hidden-run
 - Research prototype; no security audit of the full construction.
 - The demonstrated run explains about 95% of the per-token information in the token stream (0.880 unexplained bits per token against a 202,048-token vocabulary), which may not suffice for all applications.
 - Proofs are large (93.6 GB for the 1000-token full-model run at 40 opened columns; higher soundness opens more columns and grows the proof).
-- The protocol is interactive, which allows a lower per-challenge soundness level without enabling grinding. The demonstrated full-scale run opened 40 columns; raising it to the deployment grade of 80 costs verifier runtime, not memory (a GPU verifier is the planned fix).
+- The protocol is interactive in its design, which allows a lower per-challenge soundness level without enabling grinding. The implementation derives the seeds by sequential Fiat-Shamir, under which a prover can grind; a non-interactive deployment must size the audit count for the grinding budget as well (paper §7.3). The demonstrated full-scale run opened 40 columns; raising it to the deployment grade of 80 costs verifier runtime, not memory (a GPU verifier is the planned fix).
 
 ## Build and run
 

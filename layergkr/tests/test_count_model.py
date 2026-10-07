@@ -14,6 +14,7 @@ not fit. Both failures are pinned below as regression cases.
 
 Run:  .venv/bin/python layergkr/tests/run_tests.py test_count_model
 """
+import dataclasses
 import pathlib
 import random
 import sys
@@ -54,14 +55,18 @@ def test_l1_counts_moe_nodes_not_per_token_matmuls():
 def test_forward_memory_tracks_measured_peaks():
     """Measured on a V100-SXM3-32GB by `bench/semantics_ladder.py`. The model is
     within 5% from d=256 up; the smallest point under-predicts, which is the
-    usual fixed-overhead signature and is the harmless direction."""
+    usual fixed-overhead signature and is the harmless direction.
+
+    The measurements predate protocol review F12, so they are compared against
+    the shape those traces had (no quotient words): they calibrate the bytes per
+    gate slot and per lookup, which F12 did not change."""
     measured_gb = {(128, 256, 8, 4): 0.01, (256, 512, 16, 4): 0.03,
                    (384, 768, 16, 4): 0.07, (512, 1024, 32, 4): 0.13,
                    (1024, 2048, 32, 8): 0.88, (2048, 4096, 64, 8): 3.53,
                    (4096, 8192, 64, 8): 13.90}
     for (d, d_ff, S, E), meas in measured_gb.items():
         toy = sem.ToyConfig(S=S, d=d, d_ff=d_ff, E=E, table_bits=6, scale_bits=6)
-        pred = sum(cm.predict_forward_memory(toy).values()) / 1e9
+        pred = sum(cm.predict_forward_memory(toy, quotient_bound=False).values()) / 1e9
         ratio = pred / meas
         lo = 0.70 if d <= 128 else 0.90
         assert lo <= ratio <= 1.10, (
@@ -81,10 +86,14 @@ def test_the_model_would_have_refused_both_runs_that_crashed():
     assert need > card, f"predicted {need/1e9:.1f} GB, which would have fitted"
 
     # 2. the LogUp commit at production geometry -- died inside the Bailey NTT
-    #    scratch allocation, asking for 17.2 GB on a chunk of 32,832 rows
+    #    scratch allocation, asking for 17.2 GB on a chunk of 32,832 rows. That
+    #    run predates protocol review F12, so its trace had no quotient words;
+    #    it is rebuilt here by dropping them, and the rebuild is checked against
+    #    the model's pre-F12 shape before it is used.
     cfg = rs.Config(ELL=8192, K_DEG=16384, N_LIG=65536, T_QUERIES=54)
-    trace = sem.forward(sem.ToyConfig(S=8, d=128, d_ff=256, E=4, table_bits=6,
-                                      scale_bits=6), random.Random(7))
+    small = sem.ToyConfig(S=8, d=128, d_ff=256, E=4, table_bits=6, scale_bits=6)
+    current = sem.forward(small, random.Random(7))
+    trace = _without_quotient_bound(current, small)
     verdict = cm.will_it_fit(trace, cfg, card, chunk=32832)
     assert not verdict["fits"], "predicted the LogUp commit would fit; it did not"
     assert verdict["largest_term"] == "encode_transient", (
@@ -96,6 +105,29 @@ def test_the_model_would_have_refused_both_runs_that_crashed():
     ok = cm.will_it_fit(trace, cfg, card, chunk=cm.max_encode_rows(cfg, 18e9))
     assert ok["fits"], (
         f"a fitted chunk still predicted {ok['predicted_bytes']/1e9:.1f} GB")
+
+    # 3. the same geometry today: the quotient words multiply the LogUp rows,
+    #    one RS row per query, so no chunk size rescues it on this card, and
+    #    the model must say so and name the raw commit.
+    now = cm.will_it_fit(current, cfg, card, chunk=cm.max_encode_rows(cfg, 18e9))
+    assert not now["fits"] and now["largest_term"] == "logup_raw_commit", (
+        f"post-F12 trace: fits={now['fits']}, blamed {now['largest_term']}")
+
+
+def _without_quotient_bound(trace: sem.LayerTrace, toy: sem.ToyConfig) -> sem.LayerTrace:
+    """The trace as emitted before review F12: no qbound gates, and the range
+    table's quotient-word queries dropped (their values do not matter to the
+    memory model, only their number). Checked against the pre-F12 shape."""
+    old = cm.predict_trace_shape(toy, quotient_bound=False)
+    drop = trace.counts()["lookup_queries"] - old.lookup_queries
+    lookups = [sem.LookupUse(u.table, u.queries[:len(u.queries) - drop])
+               if u.table.name == "range" else u for u in trace.lookups]
+    gates = [g for g in trace.gates if not g.node_id.startswith("qbound")]
+    rebuilt = dataclasses.replace(trace, gates=gates, lookups=lookups)
+    c = rebuilt.counts()
+    assert (c["gates"], c["gate_slots"], c["lookup_queries"]) == (
+        old.gates, old.gate_slots, old.lookup_queries), "pre-F12 rebuild is off"
+    return rebuilt
 
 
 def test_bailey_scratch_is_only_charged_at_n_65536():
