@@ -3068,12 +3068,9 @@ _WITNESS_CACHE_TYPES = frozenset({"SoftmaxClaim", "SiluClaim"})
 # and still degrades to recompute only when memory is genuinely tight. Which ops
 # get cached may thus vary with free memory, but cached and recomputed outputs
 # are byte-identical (validated), so this affects ONLY timing, never the proof.
-# LIGERO_WITNESS_CACHE_MEM_FRACTION overrides the fraction; the legacy
-# LIGERO_WITNESS_CACHE_MAX_ELEMS still applies as an optional hard ceiling.
+# LIGERO_WITNESS_CACHE_MEM_FRACTION overrides the fraction.
 _WITNESS_CACHE_MEM_FRACTION = float(
     os.environ.get("LIGERO_WITNESS_CACHE_MEM_FRACTION", "0.25"))
-_WITNESS_CACHE_MAX_ELEMS = int(
-    os.environ.get("LIGERO_WITNESS_CACHE_MAX_ELEMS", "0")) or None  # None = no hard cap
 
 
 def _witness_cache_budget_bytes():
@@ -3444,13 +3441,8 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
                         outs = _cf.COMPUTE_FNS[type(claim)](claim, input_data)
                     if _cacheable:
                         _nb = sum(t.numel() * t.element_size() for t in outs.values())
-                        _ne = sum(t.numel() for t in outs.values())
                         _budget = witness_cache.get('_budget_bytes', 0)
-                        _under_bytes = witness_cache.get('_bytes', 0) + _nb <= _budget
-                        _under_elems = (_WITNESS_CACHE_MAX_ELEMS is None
-                                        or witness_cache.get('_elems', 0) + _ne
-                                        <= _WITNESS_CACHE_MAX_ELEMS)
-                        if _under_bytes and _under_elems:
+                        if witness_cache.get('_bytes', 0) + _nb <= _budget:
                             with _sphase('cache_w'):
                                 if _disk:
                                     witness_cache[i] = {v: _disk_spill_store(t, witness_cache) for v, t in outs.items()}
@@ -3460,7 +3452,6 @@ def _stream_sweep(tape, cfg, master_seed_t, groups, n_ops, p1_vars, p2_vars, m_p
                                     witness_cache[i] = {v: t.clone() for v, t in outs.items()}
                             _sweep_count('cache_wr')
                             witness_cache['_bytes'] = witness_cache.get('_bytes', 0) + _nb
-                            witness_cache['_elems'] = witness_cache.get('_elems', 0) + _ne
             for v, t in outs.items():
                 live[v] = t
             if side_effects is not None:
