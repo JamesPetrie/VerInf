@@ -1473,7 +1473,7 @@ def _sweep_report(proof_wall):
 # SINGLE sync at report time -- no per-call host-sync inflation. Compare to the _phase
 # wall-clock for the same scope: wall >> gpu means host-bound (Python loop / .item()
 # stalls), wall ~= gpu means GPU-bound.
-_EPHASE_ON = bool(os.environ.get("LIGERO_EPHASE"))
+_EPHASE_ON = _env_on("LIGERO_EPHASE")
 _EPHASE: Dict[str, list] = {}
 
 
@@ -2727,6 +2727,22 @@ STREAMING_INPUT_CLAIMS: set = set()
 _SKIP_B_CHUNK = False
 
 
+@_contextmanager
+def _skipping_b_chunk():
+    """Discard b_chunks for the block's duration and restore the previous
+    setting however the block exits. prove_streaming holds the skip for the
+    whole prove and _build_stream_packets re-enters it, so an exception
+    anywhere leaves the flag as it found it. A leaked True silently zeroes
+    every nonzero-RHS constraint for the next in-process compile."""
+    global _SKIP_B_CHUNK
+    prev = _SKIP_B_CHUNK
+    _SKIP_B_CHUNK = True
+    try:
+        yield
+    finally:
+        _SKIP_B_CHUNK = prev
+
+
 def _build_b_chunk(n_added: int,
                     nz_families: List[Tuple[int, int, Any]]) -> Optional[torch.Tensor]:
     """Build a per-claim b_chunk of length n_added with the listed non-zero
@@ -3850,9 +3866,8 @@ def _build_stream_packets(claims, ch0, ch1, cfg, n_ops):
     pre-indexed here because their sum-side packets land on rows emitted long
     before they would compile. The count pass also yields the global quad
     total for r_quad."""
-    globals()['_SKIP_B_CHUNK'] = True
-    stream_pk = _StreamingPackets(claims, ch0, cfg, n_ops, chs_late=ch1)
-    globals()['_SKIP_B_CHUNK'] = False
+    with _skipping_b_chunk():
+        stream_pk = _StreamingPackets(claims, ch0, cfg, n_ops, chs_late=ch1)
     # Unified-memory hygiene: release the allocator's reserved high-water
     # before the long-lived phase begins.
     torch.cuda.empty_cache()
@@ -3889,9 +3904,17 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
     memory — is released however the prove ends, a raise included."""
     global _WEIGHT_CACHE
     try:
-        return _prove_streaming_body(tape, cfg, seed, weight_commitment, wnew_seed,
-                                     claims_bytes, zk_seed, shard_plan,
-                                     weight_enrollment=weight_enrollment)
+        # The sweeps recompile each claim and DISCARD its b_chunk (RHS): only
+        # row packets + quads are consumed (_compile_at: `..., _b = COMPILE_FNS`).
+        # Holding the skip for the whole prove saves an O(T*V) dense RHS build
+        # per claim (the V=202048 hidden-routing claim's b_chunk was ~89M
+        # entries in Python, a ~40-min stall before op 0). Value-neutral: the
+        # RHS is unused. The context manager restores the flag on any exit, so
+        # a later in-process compile that needs the RHS gets it.
+        with _skipping_b_chunk():
+            return _prove_streaming_body(tape, cfg, seed, weight_commitment, wnew_seed,
+                                         claims_bytes, zk_seed, shard_plan,
+                                         weight_enrollment=weight_enrollment)
     finally:
         _WEIGHT_CACHE = None
 
@@ -3990,12 +4013,6 @@ def _prove_streaming_body(tape, cfg, seed=None, weight_commitment=None, wnew_see
               + (["wnew"] if s['n_wnew_total'] else []) + ["p1", "p2"]
               + (["p3"] if s['n_p3_total'] else []))
     stmt_digest = pr.statement_digest(claims_bytes, blocks)
-    # The streaming sweeps recompile each claim and DISCARD its b_chunk (RHS) —
-    # only row packets + quads are consumed (_compile_at: `..., _b = COMPILE_FNS`).
-    # Keep _SKIP_B_CHUNK on so the sweep doesn't waste an O(T*V) dense RHS build
-    # per claim (the V=202048 hidden-routing claim's b_chunk was ~89M entries in
-    # Python — a ~40-min stall before op 0). Value-neutral: the RHS is unused.
-    globals()['_SKIP_B_CHUNK'] = True
     # Coins and everything derived from them are filled in at their own round
     # below; nothing challenge-dependent may exist before R1 is committed.
     ch0 = ch1 = stream_pk = Q_cols = None
@@ -4377,10 +4394,6 @@ def _prove_streaming_body(tape, cfg, seed=None, weight_commitment=None, wnew_see
               f"{_WEIGHT_CACHE['_hits']} resolutions served from the cache, "
               f"{_WEIGHT_CACHE['_refused']} resolutions refused by the budget", flush=True)
         _WEIGHT_CACHE = None
-    # Reset the sweep's b_chunk skip so a subsequent in-process verify() (which
-    # DOES need the public RHS — e.g. the reveal pin) recompiles it. Leaking
-    # True here silently zeroed every nonzero-RHS constraint in verify.
-    globals()['_SKIP_B_CHUNK'] = False
     _disk_spill_close(witness_cache)          # delete the per-proof disk-spill file
     assert blocks == (["blind"] + (["w"] if has_w else [])
                       + (["wnew"] if has_wnew else []) + ["p1", "p2"]

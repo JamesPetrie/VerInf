@@ -73,7 +73,7 @@ need unexplained-info '=== unexplained_info: 3/3 PASS ==='
 gate rescale python3 prover/tests/test_rescale.py
 need rescale '=== rescale fixtures: 4/4 PASS ==='
 gate max-claim python3 prover/tests/test_max_claim.py
-need max-claim '=== max_claim: 2/2 PASS ==='
+need max-claim '=== max_claim: 3/3 PASS ==='
 # One honest end-to-end proof on the repaired constraint set: the toy
 # transformer (causal softmax, SiLU, and with --unexplained-info the surprisal
 # claims, which it omits otherwise) dumped and checked by the Rust binary.
