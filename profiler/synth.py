@@ -51,14 +51,15 @@ class _Builder:
         return out
 
 
-def _attention(b: _Builder, x, il, S, d, H, dh, use_rope, prefix):
+def _attention(b: _Builder, x, il, S, d, H, dh, use_rope, prefix, *,
+               enrolled_gains=False):
     """Norm + gain + QKV + (RoPE) + scores + softmax + AV + O + residual.
-    Returns the post-attention residual variable."""
+    Returns the post-attention residual variable. `enrolled_gains`: the
+    RMSNorm gains are weights of the enrolled block (Maverick, since its
+    driver enrolls them); otherwise plain commits (the Llama smoke test)."""
     Ld = S * d
-    # Gains are plain (non-persistent) commits in the demos — witness rows,
-    # not streamed weights.
-    g1 = b.input_var(f"{prefix}.gain1", d)
-    g2 = b.input_var(f"{prefix}.gain2", d)
+    g1 = b.input_var(f"{prefix}.gain1", d, persistent=enrolled_gains)
+    g2 = b.input_var(f"{prefix}.gain2", d, persistent=enrolled_gains)
     n1 = b.emit("rmsnorm", dict(B=S, d=d), label=f"{prefix}.norm1", layer=il,
                 inputs=[x], out=f"{prefix}.n1", out_len=Ld)
     b.emit("embed_lookup", dict(L=Ld), label=f"{prefix}.gain1.bcast", layer=il,
@@ -263,16 +264,20 @@ def maverick(seq: int, t_queries: int = 40) -> Manifest:
     x = b.emit("matmul", dict(m=seq, k=V, n=d, rescale=False),
                label="embed.select", inputs=[emb], out="x0", out_len=seq * d)
     ones = b.input_var("bc_ones", seq * d)   # shared sigma-broadcast operand
+    b.emit("lincomb", dict(length=seq * d), label="bc_ones.pin",
+           inputs=[ones])            # every entry pinned to 1
     for il in range(48):
         prefix = f"L{il}"
         if il % 2 == 0:
-            r1, n2g = _attention(b, x, il, seq, d, H, dh, True, prefix)
+            r1, n2g = _attention(b, x, il, seq, d, H, dh, True, prefix,
+                                     enrolled_gains=True)
             x = _dense_ffn(b, r1, n2g, il, seq, d, dff_d, prefix)
         else:
             use_rope = (il % 4 == 1)   # il = 1,5,9,... RoPE; 3,7,11,... NoPE
-            r1, n2g = _attention(b, x, il, seq, d, H, dh, use_rope, prefix)
+            r1, n2g = _attention(b, x, il, seq, d, H, dh, use_rope, prefix,
+                                     enrolled_gains=True)
             x = _moe_ffn(b, r1, n2g, il, seq, d, dff_e, E, ones, prefix)
-    gf = b.input_var("final.gain", d)
+    gf = b.input_var("final.gain", d, persistent=True)
     fn = b.emit("rmsnorm", dict(B=seq, d=d), label="final.norm", inputs=[x],
                 out="final.n", out_len=seq * d)
     b.emit("embed_lookup", dict(L=seq * d), label="final.gain.bcast",
@@ -331,17 +336,21 @@ def maverick_projected(seq: int, t_queries: int = 54) -> Manifest:
     x = b.emit("matmul", dict(m=seq, k=V, n=d, rescale=False),
                label="embed.select", inputs=[emb], out="x0", out_len=seq * d)
     ones = b.input_var("bc_ones", seq * d)
+    b.emit("lincomb", dict(length=seq * d), label="bc_ones.pin",
+           inputs=[ones])            # every entry pinned to 1
     for il in range(48):
         prefix = f"L{il}"
         if il % 2 == 0:
-            r1, n2g = _attention(b, x, il, seq, d, H, dh, True, prefix)
+            r1, n2g = _attention(b, x, il, seq, d, H, dh, True, prefix,
+                                     enrolled_gains=True)
             x = _dense_ffn(b, r1, n2g, il, seq, d, dff_d, prefix)
         else:
             use_rope = (il % 4 == 1)
-            r1, n2g = _attention(b, x, il, seq, d, H, dh, use_rope, prefix)
+            r1, n2g = _attention(b, x, il, seq, d, H, dh, use_rope, prefix,
+                                     enrolled_gains=True)
             x = _moe_ffn_projected(b, r1, n2g, il, seq, d, dff_e, E, ones,
                                    prefix)
-    gf = b.input_var("final.gain", d)
+    gf = b.input_var("final.gain", d, persistent=True)
     fn = b.emit("rmsnorm", dict(B=seq, d=d), label="final.norm", inputs=[x],
                 out="final.n", out_len=seq * d)
     b.emit("embed_lookup", dict(L=seq * d), label="final.gain.bcast",

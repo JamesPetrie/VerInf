@@ -931,10 +931,12 @@ def test_projected_protocol():
     # keeps s_rep: 24 freivalds_combine claims, not 96
     assert sum(1 for c in m.claims
                if c.type == "freivalds_combine") == 24
-    # per-expert weight vars are the enrolled block: unchanged total
+    # per-expert weight vars are the enrolled block: unchanged total; the 97
+    # RMSNorm gains (48 x 2 + the final one, 5,120 each) enrolled since the
+    # binding repair of 2026-10-06 (402,724,618,240 before)
     mv = synth.BUILDERS["maverick"](1000)
     pw = lambda man: sum(v.length for v in man.variables if v.persistent)  # noqa: E731
-    assert pw(m) == pw(mv) == 402_724_618_240
+    assert pw(m) == pw(mv) == 402_724_618_240 + 97 * 5120
     # routed tapes take FIVE streaming sweeps (conditional R3 commitment
     # for phase-3 late aux); classic tapes stay at four
     assert partition.n_sweeps(m) == 5

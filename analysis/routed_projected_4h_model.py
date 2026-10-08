@@ -71,11 +71,13 @@ FRESH_ROW_CAPACITY = 100_000_000_000
 LINEAR_COUNT_CAP = 32_000_000_000
 QUADRATIC_COUNT_CAP = 45_000_000_000
 
-# Executed flat-Variable layout.  Persistent gains are excluded because the
-# builder commits them as fresh p1 values.  Every remaining length is divisible
-# by ELL, so message capacity equals the physical parameter slots exactly.
-P_WEIGHT = 402_724_618_240
-WEIGHT_ROW_CAPACITY = 402_724_618_240
+# Executed flat-Variable layout.  Since the binding repair (2026-10-06) the 97
+# RMSNorm gains (48 x 2 and the final one, 5,120 each) are enrolled weights:
+# before it the builder committed them as fresh p1 values, outside the weight
+# root.  Every other length is divisible by ELL; each gain takes one 8,192-slot
+# row, so the row capacity exceeds the parameter slots by the gains' padding.
+P_WEIGHT = 402_724_618_240 + 97 * 5_120
+WEIGHT_ROW_CAPACITY = 402_724_618_240 + 97 * 8_192
 
 # Production proof transport is JSON-framed u64le/base64, not decimal integers.
 # The exact field payload is unchanged; 4/3 base64 expansion plus roots, paths,
