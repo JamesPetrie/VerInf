@@ -120,7 +120,7 @@ def summary(pm):
 # ---- two layers ---------------------------------------------------------------------
 
 def two_layer(spec, gguf, ids_by_passage, runner, work, *, configs=tuple(ps.CONFIGS),
-              arms=tuple(em.ARMS), threads=8):
+              arms=tuple(em.ARMS), threads=8, engine=None):
     """Every arm at two layers on each passage's prompt, every position
     scored. `spec` is a MODELS entry (cfg, adapter, k)."""
     cfg, k, adapter = spec["cfg"], spec["k"], spec["adapter"]
@@ -162,7 +162,7 @@ def two_layer(spec, gguf, ids_by_passage, runner, work, *, configs=tuple(ps.CONF
                                    explain=explain(ref, eo, Wf, 2, k, gates=gates))
         r = lr.run(runner, trunc, work / "engine" / pid, ids=ids, mode="replay", n_prompt=1,
                    prompt_chunk=512, cont_chunk=512, capture=fa.captures(adapter, 2),
-                   settings=dict(n_ctx=N_CTX, threads=threads, **adapter["engine"]))
+                   settings=dict(n_ctx=N_CTX, threads=threads, **(engine or {}), **adapter["engine"]))
         eng = fa.ours(adapter, r["captures"], Wf.n_experts(1))
         p["engine"] = dict(**summary(fm.position_metrics(ref["logits"][:-1], r["logits"], tgt)),
                            explain=explain(ref, eng, Wf, 2, k,
@@ -177,7 +177,7 @@ def two_layer(spec, gguf, ids_by_passage, runner, work, *, configs=tuple(ps.CONF
 
 # ---- full depth ---------------------------------------------------------------------
 
-def generate(spec, gguf, ids_by_passage, runner, work, *, threads=8, n_gen=CONTINUATION):
+def generate(spec, gguf, ids_by_passage, runner, work, *, threads=8, n_gen=CONTINUATION, engine=None):
     """The baseline (§3.3): each prompt prefilled, then greedy one-token
     decoding, the choosing logits captured; the sequences frozen."""
     adapter = spec["adapter"]
@@ -186,7 +186,7 @@ def generate(spec, gguf, ids_by_passage, runner, work, *, threads=8, n_gen=CONTI
         t0 = time.time()
         r = lr.run(runner, gguf, pathlib.Path(work) / "generate" / pid, ids=ids, mode="generate",
                    n_prompt=len(ids), n_gen=n_gen, prompt_chunk=512,
-                   settings=dict(n_ctx=N_CTX, threads=threads, **adapter["engine"]))
+                   settings=dict(n_ctx=N_CTX, threads=threads, **(engine or {}), **adapter["engine"]))
         out[pid] = dict(tokens=r["tokens"], n_prompt=len(ids), logits=r["logits"],
                         sha256=lr.ids_sha256(r["tokens"]), seconds=time.time() - t0)
         log(pid, "generated", len(r["tokens"]) - len(ids), "tokens in", round(time.time() - t0, 1), "s")
@@ -242,15 +242,19 @@ def main(argv=None):
     ap.add_argument("--work", required=True)
     ap.add_argument("--threads", type=int, default=8)
     ap.add_argument("--layers", type=int, default=None, help="full depth: fewer layers, for tests")
+    ap.add_argument("--engine", default="{}", help="JSON: further engine settings (n_gpu_layers, kv_type, "
+                    "flash_attn, n_batch, n_ubatch, override_tensor), pinned by the kit")
     a = ap.parse_args(argv)
     work = pathlib.Path(a.work)
     work.mkdir(parents=True, exist_ok=True)
     ids = prompts(a.model, a.passages, a.render, a.gguf, work)
     if a.stage == "two-layer":
-        rec = two_layer(MODELS[a.model], a.gguf, ids, a.runner, work, threads=a.threads)
+        rec = two_layer(MODELS[a.model], a.gguf, ids, a.runner, work, threads=a.threads,
+                        engine=json.loads(a.engine))
         dst = work / "two-layer.json"
     else:
-        gen = generate(MODELS[a.model], a.gguf, ids, a.runner, work, threads=a.threads)
+        gen = generate(MODELS[a.model], a.gguf, ids, a.runner, work, threads=a.threads,
+                       engine=json.loads(a.engine))
         (work / "sequences.json").write_text(json.dumps(
             {pid: dict(tokens=g["tokens"], n_prompt=g["n_prompt"], sha256=g["sha256"])
              for pid, g in gen.items()}, indent=1))

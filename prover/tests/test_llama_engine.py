@@ -30,10 +30,12 @@ import k2_loader as kl                      # noqa: E402
 import llama_runner as lr                   # noqa: E402
 
 RUNNER = os.environ.get("VERINF_LLAMA_RUNNER")
+# the session kit runs this suite again with the model offloaded to its GPU (e.g. 99)
+GPU_LAYERS = int(os.environ.get("VERINF_LLAMA_GPU_LAYERS", "0"))
 pytestmark = pytest.mark.skipif(not RUNNER, reason="VERINF_LLAMA_RUNNER not set (no llama.cpp)")
 IDS = [3, 17, 0, 41, 9, 9, 22, 30, 5, 12, 47, 1]
 CTX = 131072                     # pinned; the long-position checks need it all
-EXACT = dict(threads=2, kv_type="f32", flash_attn="off", n_ctx=CTX)
+EXACT = dict(threads=2, kv_type="f32", flash_attn="off", n_ctx=CTX, n_gpu_layers=GPU_LAYERS)
 
 
 @pytest.fixture(scope="module")
@@ -89,7 +91,7 @@ def test_llama_cpps_own_betas_are_not_k2s(f32_toy, tmp_path):
 def test_generation_is_reproduced_by_one_token_steps(tmp_path):
     p = tmp_path / "toy.gguf"
     toy.write(p)                                               # the Q8_0 toy
-    settings = dict(threads=2, n_ctx=64, **fa.KIMI_K2["engine"])
+    settings = dict(threads=2, n_ctx=64, n_gpu_layers=GPU_LAYERS, **fa.KIMI_K2["engine"])
     gen = lr.run(RUNNER, p, tmp_path / "gen", ids=IDS[:5], mode="generate", n_prompt=5, n_gen=6,
                  prompt_chunk=512, settings=settings)
     seq = gen["tokens"]
@@ -106,7 +108,7 @@ def test_capture_does_not_change_the_computation_on_this_backend(tmp_path):
     target backend before capture is treated as overhead only (§5.1)."""
     p = tmp_path / "toy.gguf"
     toy.write(p)
-    settings = dict(threads=2, n_ctx=64, **fa.KIMI_K2["engine"])
+    settings = dict(threads=2, n_ctx=64, n_gpu_layers=GPU_LAYERS, **fa.KIMI_K2["engine"])
     kw = dict(ids=IDS[:5], mode="generate", n_prompt=5, n_gen=6, prompt_chunk=512, settings=settings)
     plain = lr.run(RUNNER, p, tmp_path / "plain", **kw)
     caught = lr.run(RUNNER, p, tmp_path / "caught", capture=fa.captures(fa.KIMI_K2, 2), **kw)
