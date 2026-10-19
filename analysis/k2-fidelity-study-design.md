@@ -172,6 +172,9 @@ parameters. The check is an all-F32 toy with an f32 KV cache
   is consistent with float32 RoPE angles at large positions, which is
   arithmetic.
 
+Reported upstream as ggml-org/llama.cpp#30830 (2026-10-19), framed on the
+pinned commit, the GGUF metadata, the override and the toy reproduction.
+
 ## 4. Metrics
 
 For each scored position t (the position whose next-token distribution

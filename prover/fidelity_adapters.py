@@ -8,7 +8,7 @@ beta_fast = 32 and beta_slow = 1. K2's config.json states 1 and 1, and so do
 our references. On the all-F32 toy, llama.cpp with K2's betas equals the
 float64 reference to float32 rounding; with its defaults the layer outputs
 are 2% off. The betas are therefore part of the engine's configuration, not a
-choice made after results (§3.3)."""
+choice made after results (§3.3). Reported upstream as ggml-org/llama.cpp#30830."""
 import numpy as np
 
 KIMI_K2 = dict(name="kimi-k2", engine=dict(yarn_beta_fast=1.0, yarn_beta_slow=1.0),
