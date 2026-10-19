@@ -52,3 +52,14 @@ def test_a_changed_user_text_is_refused(tmp_path):
     (tmp_path / "p.json").write_text(json.dumps(doc))
     with pytest.raises(ValueError, match="does not match its recorded sha256"):
         fp.render_all(tmp_path / "p.json", "unused", "unused", tmp_path / "w")
+
+
+def test_verify_names_every_difference(tmp_path):
+    rows = [_row("a", 450), _row("b", 420)]
+    frozen = tmp_path / "frozen.json"
+    frozen.write_text(json.dumps({"passages": [dict(id="a", ids_sha256=rows[0]["ids_sha256"]),
+                                               dict(id="b", ids_sha256="0" * 64),
+                                               dict(id="c", ids_sha256="1" * 64)]}))
+    assert fp.verify(rows, frozen) == [("b", "0" * 64, rows[1]["ids_sha256"]), ("c", "1" * 64, None)]
+    frozen.write_text(json.dumps({"passages": [dict(id=r["id"], ids_sha256=r["ids_sha256"]) for r in rows]}))
+    assert fp.verify(rows, frozen) == []

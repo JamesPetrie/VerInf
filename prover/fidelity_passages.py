@@ -9,7 +9,9 @@ source hash verified, its length checked, and the token ids frozen.
 
 Without --freeze it only reports. A freeze never overwrites an existing record,
 and refuses lengths outside the target unless --accept-lengths records that
-the authors accepted them before any measurement."""
+the authors accepted them before any measurement. --verify FROZEN renders
+again (on the pod, from the full, sha256-verified shard) and exits nonzero
+unless every passage's ids equal the frozen ones."""
 import argparse
 import hashlib
 import json
@@ -90,6 +92,15 @@ def freeze(prompts_path, rows, dst, *, model_provenance: dict, accept_lengths=Fa
     return rec
 
 
+def verify(rows, frozen_path):
+    """[(id, frozen ids sha256, rendered ids sha256)] for every passage that
+    differs from the frozen record, or is missing from either."""
+    frozen = {p["id"]: p["ids_sha256"] for p in json.loads(pathlib.Path(frozen_path).read_text())["passages"]}
+    got = {r["id"]: r["ids_sha256"] for r in rows}
+    return [(i, frozen.get(i), got.get(i)) for i in sorted(set(frozen) | set(got))
+            if frozen.get(i) != got.get(i)]
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--prompts", required=True)
@@ -99,12 +110,20 @@ def main(argv=None):
     ap.add_argument("--work", required=True)
     ap.add_argument("--freeze")
     ap.add_argument("--accept-lengths", action="store_true")
+    ap.add_argument("--verify", help="a frozen record the rendering must equal")
     a = ap.parse_args(argv)
     _, rows = render_all(a.prompts, a.model, a.render, a.work)
     for r in rows:
         print(f"{r['id']:26s} {r['role']:10s} {r['n_prompt_tokens']:4d} tokens  ids {r['ids_sha256'][:16]}")
     for p in problems(rows):
         print("NOTE", p)
+    if a.verify:
+        bad = verify(rows, a.verify)
+        for i, want, got in bad:
+            print(f"MISMATCH {i}: frozen {want} rendered {got}")
+        print("VERIFY", "PASS" if not bad else "FAIL")
+        if bad:
+            return 1
     if a.freeze:
         freeze(a.prompts, rows, a.freeze, model_provenance=json.loads(a.model_provenance),
                accept_lengths=a.accept_lengths)

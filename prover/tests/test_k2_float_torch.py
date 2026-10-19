@@ -88,3 +88,11 @@ def test_device_decoding_gives_the_cpu_providers_weights_and_the_same_forward(va
     a = kt.forward(IDS, weights, cfg, layers=2, k=toy.TOY["k"])
     b = kt.forward(IDS, D, cfg, layers=2, k=toy.TOY["k"])
     assert all(np.array_equal(a[n], b[n]) for n in a)
+
+
+def test_the_p64_check_on_the_cpu(tmp_path):
+    import fidelity_study as fs
+    p = tmp_path / "toy.gguf"
+    toy.write(p)
+    rec = fs.p64_check(dict(cfg=toy.TOY_MLA, k=toy.TOY["k"]), p, IDS, device="cpu")
+    assert rec["max_relative"] < 1e-12 and rec["routing_tokens_differing"] == 0

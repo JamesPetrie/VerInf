@@ -231,9 +231,40 @@ def full_depth(spec, gguf, generated, work, *, layers=None, integer=None):
     return rec
 
 
+def p64_check(spec, gguf, ids, *, device="cuda", layers=2):
+    """The torch reference on `device` (DeviceWeights: bulk decoded there)
+    against NumPy at `layers` layers on one prompt (§5.3): the largest
+    relative difference per intermediate, routing equality, wall times and
+    the device's peak memory."""
+    import torch
+    import k2_float_torch as kt
+    cfg, k = spec["cfg"], spec["k"]
+    W = GgufWeights(str(gguf), ints=False, cfg=cfg)
+    t0 = time.time()
+    ref = kf.forward(ids, W, cfg, layers=layers, k=k)
+    t_np = time.time() - t0
+    if device.startswith("cuda"):
+        torch.cuda.reset_peak_memory_stats()
+    t0 = time.time()
+    got = kt.forward(ids, kt.DeviceWeights(W, device), cfg, layers=layers, k=k, device=device)
+    t_t = time.time() - t0
+    rel = {}
+    for n in ref:
+        a, b = np.asarray(ref[n]), np.asarray(got[n])
+        if n.endswith(".top"):
+            rel[n] = int((a != b).any(axis=1).sum())
+        else:
+            rel[n] = float(np.abs(a - b).max() / max(np.abs(a).max(), 1e-300))
+    worst = max(v for n, v in rel.items() if not n.endswith(".top"))
+    flips = sum(v for n, v in rel.items() if n.endswith(".top"))
+    peak = torch.cuda.max_memory_allocated() if device.startswith("cuda") else None
+    return dict(device=device, layers=layers, tokens=len(ids), max_relative=worst, routing_tokens_differing=flips,
+                per_name=rel, seconds=dict(numpy=t_np, torch=t_t), peak_device_bytes=peak)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("stage", choices=("two-layer", "full-depth"))
+    ap.add_argument("stage", choices=("two-layer", "full-depth", "p64-check"))
     ap.add_argument("--model", choices=tuple(MODELS), required=True)
     ap.add_argument("--gguf", required=True)
     ap.add_argument("--passages", required=True)
@@ -242,12 +273,23 @@ def main(argv=None):
     ap.add_argument("--work", required=True)
     ap.add_argument("--threads", type=int, default=8)
     ap.add_argument("--layers", type=int, default=None, help="full depth: fewer layers, for tests")
+    ap.add_argument("--device", default="cuda", help="p64-check: the torch reference's device")
     ap.add_argument("--engine", default="{}", help="JSON: further engine settings (n_gpu_layers, kv_type, "
                     "flash_attn, n_batch, n_ubatch, override_tensor), pinned by the kit")
     a = ap.parse_args(argv)
     work = pathlib.Path(a.work)
     work.mkdir(parents=True, exist_ok=True)
     ids = prompts(a.model, a.passages, a.render, a.gguf, work)
+    if a.stage == "p64-check":
+        first = next(iter(ids))
+        rec = p64_check(MODELS[a.model], a.gguf, ids[first], device=a.device, layers=a.layers or 2)
+        rec["passage"] = first
+        dst = work / "p64-check.json"
+        dst.write_text(json.dumps(rec, indent=1))
+        log(f"p64-check: max relative {rec['max_relative']:.2e}, routing tokens differing "
+            f"{rec['routing_tokens_differing']}, numpy {rec['seconds']['numpy']:.0f} s, "
+            f"torch {rec['seconds']['torch']:.0f} s, peak {rec['peak_device_bytes']}")
+        return 0 if rec["max_relative"] < 1e-9 and rec["routing_tokens_differing"] == 0 else 1
     if a.stage == "two-layer":
         rec = two_layer(MODELS[a.model], a.gguf, ids, a.runner, work, threads=a.threads,
                         engine=json.loads(a.engine))

@@ -7,9 +7,14 @@ set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 L=${LLAMA_CPP:?set LLAMA_CPP to the llama.cpp checkout}
 B=$L/${LLAMA_BUILD:-build}
-commit=$(git -C "$L" rev-parse HEAD)
-if [ -n "$(git -C "$L" status --porcelain --untracked-files=no)" ]; then
-  commit="$commit-dirty"
+if git -C "$L" rev-parse HEAD > /dev/null 2>&1; then
+  commit=$(git -C "$L" rev-parse HEAD)
+  if [ -n "$(git -C "$L" status --porcelain --untracked-files=no)" ]; then
+    commit="$commit-dirty"
+  fi
+  [ -z "${LLAMA_COMMIT:-}" ] || [ "$commit" = "$LLAMA_COMMIT" ] || { echo "checkout is $commit, not $LLAMA_COMMIT"; exit 1; }
+else
+  commit=${LLAMA_COMMIT:?not a git checkout: set LLAMA_COMMIT}
 fi
 ${CXX:-g++} -O2 -std=c++17 "$here/verinf_runner.cpp" -o "$B/bin/verinf_runner" \
   -I"$L/include" -I"$L/ggml/include" -L"$B/bin" -lllama -lggml -lggml-base \
