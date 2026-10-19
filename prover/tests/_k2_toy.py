@@ -59,18 +59,58 @@ def tensors(seed=0, mla=TOY_MLA, toy=TOY):
 Q8_0_NAMES = ("attn_q_b", "attn_k_b", "attn_v_b", "_exps", "ffn_down.", "output.weight")
 
 
-def write(path, seed=0, drop=()):
+def llama_metadata(w, mla=TOY_MLA, toy=TOY, layers=2):
+    """The deepseek2 keys llama.cpp reads, as K2's UD-Q4_K_XL shard 1 states
+    them (read 2026-10-19), at the toy's sizes; no tokenizer, `vocab_size`
+    dummy tokens instead. llama.cpp's loader takes the YaRN betas from the
+    context, not from these keys (analysis/k2-fidelity-study-design.md §3.3)."""
+    import gguf
+    d, H, dn, dr, dv, kr = (mla[k] for k in ("d", "H", "d_nope", "d_rope", "d_v", "kv_rank"))
+    w.add_block_count(layers)
+    w.add_context_length(131072)
+    w.add_embedding_length(d)
+    w.add_feed_forward_length(toy["d_ff_dense"])
+    w.add_head_count(H)
+    w.add_head_count_kv(1)
+    w.add_rope_freq_base(mla["base"])
+    w.add_layer_norm_rms_eps(mla["rms_eps"])
+    w.add_expert_used_count(toy["k"])
+    w.add_leading_dense_block_count(1)
+    w.add_vocab_size(toy["V"])
+    w.add_q_lora_rank(mla["q_rank"])
+    w.add_kv_lora_rank(kr)
+    w.add_key_length(kr + dr)
+    w.add_value_length(kr)
+    w.add_key_length_mla(dn + dr)
+    w.add_value_length_mla(dv)
+    w.add_expert_feed_forward_length(toy["d_ff_expert"])
+    w.add_expert_count(toy["E"])
+    w.add_expert_shared_count(1)
+    w.add_expert_weights_scale(2.827)
+    w.add_expert_weights_norm(True)
+    w.add_expert_gating_func(gguf.ExpertGatingFuncType.SIGMOID)
+    w.add_rope_dimension_count(dr)
+    w.add_rope_scaling_type(gguf.RopeScalingType.YARN)
+    w.add_rope_scaling_factor(mla["factor"])
+    w.add_rope_scaling_orig_ctx_len(mla["original_max_pos"])
+    w.add_rope_scaling_yarn_log_mul(0.1 * mla["mscale_all_dim"])
+    w.add_tokenizer_model("none")
+
+
+def write(path, seed=0, drop=(), quantize_q8=True):
     """Write the toy and return {name: the float32 values gguf-py reads back}.
-    Tensors named in `drop` are left out."""
+    Tensors named in `drop` are left out; `quantize_q8=False` writes every
+    tensor F32. The metadata lets llama.cpp load it."""
     from gguf import GGUFWriter
     from gguf.constants import GGMLQuantizationType as Q
     from gguf.quants import dequantize, quantize
     w = GGUFWriter(str(path), "deepseek2")
+    llama_metadata(w)
     back = {}
     for name, a in tensors(seed).items():
         if name in drop:
             continue
-        if any(k in name for k in Q8_0_NAMES):
+        if quantize_q8 and any(k in name for k in Q8_0_NAMES):
             qd = quantize(a, Q.Q8_0)
             w.add_tensor(name, qd, raw_shape=qd.shape, raw_dtype=Q.Q8_0)
             back[name] = dequantize(qd, Q.Q8_0).reshape(a.shape)
