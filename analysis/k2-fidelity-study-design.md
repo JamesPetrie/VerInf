@@ -151,6 +151,24 @@ is not a floor, and it is not an alternative baseline.
 
 At two layers the engine runs a truncated GGUF (§5.2).
 
+**The engine's model must be K2's published definition** (amendment
+2026-10-19, before any result). llama.cpp's deepseek2 loader (at `f174553`)
+never reads the GGUF's YaRN beta keys; the unsloth GGUF does not carry them
+either. So llama.cpp runs K2 with its defaults, beta_fast = 32 and
+beta_slow = 1, where K2's `config.json` and our references have 1 and 1.
+That rotates a band of RoPE dimensions differently at every position: a
+difference of definition, not of arithmetic.
+
+The K2 adapter (`prover/fidelity_adapters.py`) passes the betas as context
+parameters. The check is an all-F32 toy with an f32 KV cache
+(`prover/tests/test_llama_engine.py`):
+- with K2's betas, llama.cpp equals p64 to float32 rounding: layer outputs
+  within 3·10⁻⁷, logits KL 8·10⁻¹⁴, identical routing and gates;
+- with the defaults, its layer outputs are 2·10⁻² off;
+- at position 130,072, with K2's betas, the outputs are 1.4·10⁻³ off. That
+  is consistent with float32 RoPE angles at large positions, which is
+  arithmetic.
+
 ## 4. Metrics
 
 For each scored position t (the position whose next-token distribution
@@ -226,6 +244,18 @@ Each adapter holds:
   refuses it unless the loaded hyperparameters and branch match the full
   model's: query-LoRA present or absent, head dimensions, expert counts and
   gating.
+
+  **Confirmed on Moonlight** (2026-10-19, `prover/gguf_truncate.py`,
+  `prover/tests/test_moonlight_integration.py`). The loader decides "lite"
+  as 26 or 27 layers, or 48 with a 128,256 vocabulary. A lite model never
+  has its query-LoRA rank read, and Moonlight's GGUF has no such key.
+  - Truncated to two layers without a fix, the copy is refused: `key not
+    found in model: deepseek2.attention.q_lora_rank`.
+  - With `q_lora_rank = 0` written, the copy's print_info hyperparameters
+    equal the full model's on every key a truncation keeps.
+
+  K2 truncated to two layers stays in its own branch: 61 layers and two are
+  both non-lite, and K2 has query-LoRA.
 
 ### 5.3 The torch float64 reference
 
@@ -361,7 +391,9 @@ waits for a later run.
 ## 8. Fixtures
 
 - **The tiny synthetic K2 (`prover/tests/_k2_toy.py`),** extended with the
-  metadata llama.cpp needs to load it as `deepseek2`. The engine runner, the
+  metadata llama.cpp needs to load it as `deepseek2`: K2's keys from shard
+  1's header at the toy's sizes, and tokenizer `none` with `vocab_size`
+  dummy tokens. An all-F32 variant isolates definition from arithmetic. The engine runner, the
   adapters, the torch reference, the emulations and the metrics then run end
   to end on a CPU in seconds. The toy keeps covering what Moonlight lacks:
   K2's query-LoRA path, YaRN, and K2's routing shape (one shared expert,
