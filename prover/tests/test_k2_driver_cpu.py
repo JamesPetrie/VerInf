@@ -63,6 +63,15 @@ def _no_tape(*a, **k):
     raise AssertionError("no tape may be built here")
 
 
+def test_the_driver_refuses_a_gguf_without_the_head_before_any_tape(tmp_path, monkeypatch):
+    import tape
+    path = tmp_path / "headless.gguf"
+    toy.write(path, drop=("output.weight",))
+    monkeypatch.setattr(tape, "Tape", _no_tape)
+    with pytest.raises(ValueError, match="output.weight is missing"):
+        dk.build(str(path), [1, 2], [3, 4], cfg=toy.TOY_MLA, layers=2, kk=toy.TOY["k"])
+
+
 def test_a_stopped_reference_fails_the_check_and_keeps_its_ranges(driver, monkeypatch):
     monkeypatch.setitem(kl.K2_INT, "sig_bits", 6)       # a 64-entry table: logits fall outside
     monkeypatch.setattr(dk, "build", _no_tape)

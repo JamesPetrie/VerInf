@@ -240,12 +240,13 @@ def build(gguf, prompt_ids, cont_ids, *, cfg=K2_MLA, layers=2, kk=8, offset=0, y
     counts = {} if counts is None else counts
     from demo_maverick_full import UI, _field_loader, build_inputs
     from demo_maverick_moe import CFG, SILU_CFG
-    from k2_loader import by_name, sigmoid_table
+    from k2_loader import by_name, head_name, sigmoid_table
     from tape import Tape
     from unexplained_info import prove_unexplained_info
     assert SILU_CFG.s_x == S
-    tape = Tape(ligero or CFG, silu_config=SILU_CFG, lazy=True)
     by = by_name(gguf)
+    head = head_name(by)                # before any tape work: no untied-head substitute
+    tape = Tape(ligero or CFG, silu_config=SILU_CFG, lazy=True)
     d = cfg["d"]
     V = int(by["token_embd.weight"].n_elements) // d
     T = len(prompt_ids) + len(cont_ids)
@@ -287,7 +288,6 @@ def build(gguf, prompt_ids, cont_ids, *, cfg=K2_MLA, layers=2, kk=8, offset=0, y
     n0 = len(tape.claims)
     g_out = tape.commit_lazy("g_out", _field_loader(gguf, "output_norm.weight"), (d,), d)
     nfg = _norm_gain(tape, x, g_out, T=T, d=d)
-    head = "output.weight" if "output.weight" in by else "token_embd.weight"
     W_lm = tape.commit_lazy("W_lm", _field_loader(gguf, head, transpose=True), (d, V), d * V)
     logits = tape.matmul(nfg, W_lm, **_mm())
     trace["final.ng"], trace["logits"] = nfg, logits

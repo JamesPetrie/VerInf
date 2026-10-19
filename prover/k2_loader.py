@@ -133,6 +133,20 @@ def sigmoid_table(S_in: int, S_out: int, bits: int = 19):
     return list(range(1 << bits)), [int(v) for v in y], shift
 
 
+HEAD = "output.weight"
+
+
+def head_name(by) -> str:
+    """K2's LM head. K2 is untied (tie_word_embeddings false), so a GGUF
+    without output.weight is not K2: refuse it. Scoring with the embedding
+    instead would change the model, and both references and the driver would
+    share the substitute, so the exact check could not see it."""
+    if HEAD not in by:
+        raise ValueError(f"{HEAD} is missing: K2's head is untied and the embedding "
+                         "is not a substitute")
+    return HEAD
+
+
 class GgufWeights:
     """Both references' weights from one GGUF, a layer at a time and the
     experts on demand: integers exactly as the driver commits them
@@ -144,9 +158,8 @@ class GgufWeights:
         self.path, self.ints, self.S, self.S_sel, self.cfg = gguf_path, ints, S, S_sel, cfg
         self.by = by_name(gguf_path)
         self.d = cfg["d"]
-        head = "output.weight" if "output.weight" in self.by else "token_embd.weight"
-        self.head_name = head
-        self.V = int(self.by[head].n_elements) // self.d
+        self.head_name = head_name(self.by)
+        self.V = int(self.by[self.head_name].n_elements) // self.d
 
     def _q(self, w, S=None):
         return to_ints(w, S or self.S) if self.ints else np.asarray(w, dtype=np.float64)

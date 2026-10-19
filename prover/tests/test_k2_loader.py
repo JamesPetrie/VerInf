@@ -69,6 +69,15 @@ def test_embedding_rows_and_head_columns(gguf):
     assert np.array_equal(W.g_out(), _rint(back["output_norm.weight"], S))
 
 
+@pytest.mark.parametrize("ints", [True, False])
+def test_a_gguf_without_the_head_is_refused(tmp_path, ints):
+    """K2 is untied: no fallback to the embedding, in either provider."""
+    path = tmp_path / "headless.gguf"
+    toy.write(path, drop=("output.weight",))
+    with pytest.raises(ValueError, match="output.weight is missing"):
+        kl.GgufWeights(str(path), ints=ints, cfg=toy.TOY_MLA)
+
+
 def test_attention_ints_are_the_transforms_rounded_with_sigma_folded(gguf):
     path, back = gguf
     cfg = toy.TOY_MLA

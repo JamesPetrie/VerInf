@@ -59,14 +59,17 @@ def tensors(seed=0, mla=TOY_MLA, toy=TOY):
 Q8_0_NAMES = ("attn_q_b", "attn_k_b", "attn_v_b", "_exps", "ffn_down.", "output.weight")
 
 
-def write(path, seed=0):
-    """Write the toy and return {name: the float32 values gguf-py reads back}."""
+def write(path, seed=0, drop=()):
+    """Write the toy and return {name: the float32 values gguf-py reads back}.
+    Tensors named in `drop` are left out."""
     from gguf import GGUFWriter
     from gguf.constants import GGMLQuantizationType as Q
     from gguf.quants import dequantize, quantize
     w = GGUFWriter(str(path), "deepseek2")
     back = {}
     for name, a in tensors(seed).items():
+        if name in drop:
+            continue
         if any(k in name for k in Q8_0_NAMES):
             qd = quantize(a, Q.Q8_0)
             w.add_tensor(name, qd, raw_shape=qd.shape, raw_dtype=Q.Q8_0)
