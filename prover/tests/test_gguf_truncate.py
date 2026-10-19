@@ -90,3 +90,25 @@ def test_shard_sets_are_found_by_pattern(tmp_path):
     assert [p.name for p in gt.shard_paths(tmp_path / "m-00002-of-00003.gguf")] == \
         [f"m-{i:05d}-of-00003.gguf" for i in (1, 2, 3)]
     assert gt.shard_paths(tmp_path / "single.gguf") == [tmp_path / "single.gguf"]
+
+
+def test_metadata_only_from_a_head_keeps_every_key_but_split(toy_path, tmp_path):
+    """The key-values come from the head of the file alone (the tensor data
+    cut off), as from the pinned K2 shard's first bytes."""
+    data = toy_path.read_bytes()
+    head = tmp_path / "head.bin"
+    head.write_bytes(data[: len(data) // 4])
+    _, n_tensors, kv = gt.read_head_metadata(head)
+    assert n_tensors == len(_tensors(toy_path))
+    out = tmp_path / "meta.gguf"
+    gt.metadata_only(head, out)
+    full, meta = gt.metadata(toy_path), gt.metadata(out)
+    assert meta == {k: v for k, v in full.items() if k not in gt.SPLIT_KEYS}
+    assert _tensors(out) == {}
+
+
+def test_a_head_cut_inside_the_key_values_is_refused(toy_path, tmp_path):
+    head = tmp_path / "short.bin"
+    head.write_bytes(toy_path.read_bytes()[:200])
+    with pytest.raises(ValueError, match="ends inside the key-values"):
+        gt.read_head_metadata(head)

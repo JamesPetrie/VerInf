@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "authored_date": "2026-10-19",
+  "provenance": "All four user turns and their embedded scenarios were newly authored by the reviewing assistant for this study. The scenarios are synthetic, not quotations or reports of actual events.",
+  "status": "Source text selected before K2 study measurements; rendered prompts, token counts and token-ID hashes still require the pinned K2 GGUF chat template and tokenizer.",
+  "formatting": "Apply the pinned GGUF chat template to each messages array with an assistant generation prefix. Do not substitute a different model's template, insert an additional system message, or truncate tokenized prompts silently. Check the 400-500 token target and the 1000-token total cap before freezing token IDs. Any source-text adjustment for length must precede all study measurements and be recorded.",
+  "passages": [
+    {
+      "id": "p1-research-review",
+      "role": "proved",
+      "domain": "technical reasoning",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Review the following newly written research memo. Use only the information in it; the names and measurements are hypothetical.\n\nA team has built an integer implementation of a mixture-of-experts language model. Its verifier accepts a proof that the implementation computed exactly the specified integer operations on committed weights and private input tokens. The team now wants to describe that result as evidence that a customer received the advertised model.\n\nThe advertised checkpoint is stored in a quantized format. A high-precision reference decodes those weights and evaluates the mathematical operations in float64. A serving engine reads the same checkpoint, generates a continuation, and records the probability distribution used to choose each token. Every comparison then replays that frozen sequence. The integer implementation and the serving engine sometimes choose different experts, particularly when selection scores are close.\n\nOn the first two layers, the integer implementation has smaller average output error than one serving configuration but larger error than another. Both serving configurations use the same weights. Their batch sizes and cache precision differ. The team has not yet measured any of the three implementations at full depth. It has enough compute for one full proof and a small number of reference passes.\n\nOne researcher proposes accepting whichever integer scale falls within the range spanned by the serving configurations. Another wants to pick an acceptable serving configuration before measuring full-depth drift. A third argues that the accepted proof makes further numerical comparisons unnecessary.\n\nWrite a short review recommending the next experiment. Explain what the proof establishes, what remains unmeasured, and how to choose a comparison baseline without selecting it to favor the result. Distinguish a numerical fidelity failure from a proof failure. Identify one conclusion that the two-layer measurements support and one that they do not. End with a concrete reporting rule for a full-depth result that is inconclusive."
+        }
+      ],
+      "user_content_sha256": "b413278c5538cfc55757b3cc8bf20b6051bbf59db5f736d2d333c9efddaac58d"
+    },
+    {
+      "id": "p2-event-reconciliation",
+      "role": "additional",
+      "domain": "code and state tracking",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Review this newly written event-reconciliation example. It describes a hypothetical warehouse service, not an existing software package.\n\nEach event has an item name, a positive integer revision, an operation, and a value. Operations are either set or delete. A set value is a nonnegative integer quantity. Delete has no value. Events can arrive in any order. For each item, the event with the greatest revision determines its final state. Repeating an identical event must have no effect. Two different events for the same item and revision are invalid input and must raise an error, even if a newer revision has already arrived. A deletion must prevent an older set from restoring the item.\n\nThe proposed implementation is:\n\n```python\ndef reconcile(events):\n    current = {}\n    for item, revision, operation, value in events:\n        previous = current.get(item)\n        if previous is not None and revision < previous[0]:\n            continue\n        if operation == 'delete':\n            current.pop(item, None)\n        else:\n            current[item] = (revision, value)\n    return {item: value for item, (_, value) in current.items()}\n```\n\nThe author tested only streams whose revisions increase for each item. They also tested repeating the final set event. Both tests passed, so they believe the implementation satisfies the contract. Another engineer observes that a service restart may replay older events after a deletion. A third points out that the final quantities are not enough to determine whether the input contained a conflict.\n\nExplain the distinct correctness defects and give a compact corrected Python implementation. State what information it must retain while consuming the stream and why. Include a short example demonstrating an older set after a deletion, and another demonstrating a conflicting old revision after a newer revision. Do not add persistence, networking, concurrency, or external libraries. You may assume all event fields have valid types and operations."
+        }
+      ],
+      "user_content_sha256": "f7215054ea0427a0fe1c4c39da83c4176d65d513fcdd46dd17b35bb8fafc4040"
+    },
+    {
+      "id": "p3-dependency-schedule",
+      "role": "additional",
+      "domain": "quantitative planning",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Solve this newly written scheduling problem for a hypothetical laboratory. All durations below are exact, and there are no unstated setup times.\n\nThe laboratory has one preparation bench and one scanner. A task must run without interruption once started. A bench task occupies only the bench; a scan occupies only the scanner. The two resources can operate simultaneously on different samples. Each sample must finish preparation before its scan starts. The scanner can process samples in any order. Completed preparation remains valid indefinitely, so samples can wait for the scanner. All four samples are available at time zero.\n\nSample Alder requires 4 minutes of preparation and 9 minutes of scanning. Sample Birch requires 7 minutes of preparation and 3 minutes of scanning. Sample Cedar requires 2 minutes of preparation and 6 minutes of scanning. Sample Dune requires 5 minutes of preparation and 4 minutes of scanning. Every sample must finish both stages. Time is measured in minutes after the start of the shift.\n\nThe technician proposes preparing samples in alphabetical order and scanning each as soon as it is ready and the scanner is free. The laboratory manager suggests preparing the sample with the shortest preparation first, then choosing the remaining preparation order by intuition. A colleague says that a schedule with a faster first result must also finish all four samples sooner. The laboratory actually cares about the time at which the final scan finishes, rather than the first result or the average completion time.\n\nGive a schedule that minimizes the time of the final completed scan. Show start and finish times for both stages of every sample, and calculate the completion time of the technician's alphabetical schedule for comparison. Give a short lower-bound argument proving your proposed completion time is optimal; do not merely assert that a scheduling rule applies. Explain whether the colleague's general claim about the first result follows from these resource constraints. Keep the explanation understandable to someone who has not studied scheduling algorithms."
+        }
+      ],
+      "user_content_sha256": "8c42750a4bdeefe14e3a0a2ece2b12bba7f40958deb87d363d1ee0d5c9a51296"
+    },
+    {
+      "id": "p4-public-notice",
+      "role": "additional",
+      "domain": "prose synthesis and constraint following",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Turn the following newly written notes into a public notice for a hypothetical neighborhood repair library. The organization and events are invented. Use the notes as the complete factual record.\n\nThe repair library lends hand tools and provides supervised workbenches. Its building will close for floor repairs from November 4 through November 12, inclusive. The building reopens on November 13 if the contractor completes the work as scheduled. The contractor has not guaranteed that date. A confirmation will appear on the library's usual noticeboard by noon on November 12.\n\nLoans already due during the closure will automatically receive a new due date of November 16, with no late fee for that extension. Loans already overdue before November 4 keep their existing status. Members do not need to contact staff to receive an eligible extension. New reservations can still be submitted through the existing reservation form, but staff will not promise collection dates until reopening is confirmed.\n\nA volunteer team will operate a temporary advice table outside the east entrance on November 6 and November 9, from ten in the morning until one in the afternoon. The team can help diagnose small household repairs and explain safe uses of hand tools. It cannot lend tools, accept returns, perform electrical repairs, or admit visitors to the building. If it rains, that day's advice table is canceled; there is no indoor alternative.\n\nThe coordinator wants the notice to sound welcoming without describing the closure as an improvement in service. She also wants readers to understand the difference between a loan extension and a guaranteed reopening date. A draft written earlier incorrectly said that every overdue loan would be forgiven and that tools could be returned to the advice table. Neither statement is true.\n\nWrite the notice in clear, ordinary language. Lead with the closure dates, then explain the practical consequences for borrowers and visitors. Include the conditional reopening date and where to check confirmation. Avoid inventing contact details, opening hours, services, or reasons for delays. Finish with a short sentence thanking members for their patience."
+        }
+      ],
+      "user_content_sha256": "225e06a270c45337cd0196d0c47862abae67db04f11483b861a9b1b31b673d87"
+    }
+  ]
+}

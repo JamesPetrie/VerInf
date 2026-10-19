@@ -57,6 +57,82 @@ def metadata(path) -> dict:
     return {f.name: f.contents() for f in r.fields.values() if f.name not in SKIP_KEYS[1:]}
 
 
+def read_head_metadata(head_path) -> tuple:
+    """(version, tensor count, [(key, GGUFValueType, value, array subtype)]) from
+    the first bytes of a GGUF, which need not be the whole file: the key-values
+    precede the tensor infos and data. Raises if the head ends inside them."""
+    import struct
+    from gguf import GGUFValueType as VT
+    b = pathlib.Path(head_path).read_bytes()
+    fmt = {VT.UINT8: "<B", VT.INT8: "<b", VT.UINT16: "<H", VT.INT16: "<h", VT.UINT32: "<I",
+           VT.INT32: "<i", VT.FLOAT32: "<f", VT.BOOL: "<?", VT.UINT64: "<Q", VT.INT64: "<q",
+           VT.FLOAT64: "<d"}
+    o = 0
+
+    def rd(f):
+        nonlocal o
+        if o + struct.calcsize(f) > len(b):
+            raise ValueError("the head ends inside the key-values")
+        v = struct.unpack_from(f, b, o)[0]
+        o += struct.calcsize(f)
+        return v
+
+    def rs():
+        nonlocal o
+        n = rd("<Q")
+        if o + n > len(b):
+            raise ValueError("the head ends inside the key-values")
+        s = b[o:o + n].decode("utf-8")
+        o += n
+        return s
+
+    def val(t):
+        if t == VT.STRING:
+            return rs()
+        if t == VT.ARRAY:
+            it, n = VT(rd("<I")), rd("<Q")
+            return [val(it) for _ in range(n)]
+        return rd(fmt[t])
+
+    if b[:4] != b"GGUF":
+        raise ValueError("not a GGUF")
+    o = 4
+    version, n_tensors, n_kv = rd("<I"), rd("<Q"), rd("<Q")
+    kv = []
+    for _ in range(n_kv):
+        key = rs()
+        t = VT(rd("<I"))
+        if t == VT.ARRAY:
+            sub = VT(rd("<I"))
+            o -= 4                              # val() reads the subtype again
+            kv.append((key, t, val(t), sub))
+        else:
+            kv.append((key, t, val(t), None))
+    return version, n_tensors, kv
+
+
+def metadata_only(head_path, dst) -> dict:
+    """A GGUF with the key-values of `head_path` (split keys dropped) and no
+    tensors: enough for llama.cpp to load the vocabulary and chat template.
+    Returns {key: value} as written, without the token arrays."""
+    from gguf import GGUFWriter
+    _, _, kv = read_head_metadata(head_path)
+    arch = next(v for k, _, v, _ in kv if k == "general.architecture")
+    w = GGUFWriter(str(dst), arch)
+    written = {}
+    for key, t, v, sub in kv:
+        if key in SKIP_KEYS or key in SPLIT_KEYS:
+            continue
+        w.add_key_value(key, v, t, sub_type=sub)
+        if not isinstance(v, list) or len(v) < 64:
+            written[key] = v
+    w.write_header_to_file()
+    w.write_kv_data_to_file()
+    w.write_tensors_to_file()
+    w.close()
+    return written
+
+
 def deepseek2_block_names(il: int, *, dense_lead: int, q_lora: bool) -> set:
     names = DEEPSEEK2_ATTN + (DEEPSEEK2_Q_LORA if q_lora else DEEPSEEK2_Q_DIRECT)
     names += DEEPSEEK2_DENSE if il < dense_lead else DEEPSEEK2_MOE

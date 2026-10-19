@@ -51,3 +51,24 @@ def test_two_layers_load_on_the_full_branch_only_with_the_fix(full_fingerprint, 
         lr.run(RUNNER, tmp_path / "unfixed.gguf", tmp_path / "unfixed", mode="info")
     log = (tmp_path / "unfixed" / "load.log").read_text()
     assert "key not found in model: deepseek2.attention.q_lora_rank" in log
+
+
+def test_render_applies_the_gguf_template_as_jinja2_does(tmp_path):
+    """verinf_render (llama.cpp's Jinja engine) against an independent jinja2
+    rendering of the same template; special tokens become single ids."""
+    import json
+    import subprocess
+    from jinja2.sandbox import ImmutableSandboxedEnvironment
+    render = pathlib.Path(RUNNER).with_name("verinf_render")
+    content = "Name three prime numbers above 100, one per line."
+    (tmp_path / "user.txt").write_text(content)
+    subprocess.run([str(render), "--model", MOONLIGHT, "--content", str(tmp_path / "user.txt"),
+                    "--out", str(tmp_path)], check=True)
+    rj = json.loads((tmp_path / "render.json").read_text())
+    env = ImmutableSandboxedEnvironment(trim_blocks=True, lstrip_blocks=True)
+    want = env.from_string(rj["template"]).render(
+        messages=[{"role": "user", "content": content}], add_generation_prompt=True)
+    assert (tmp_path / "prompt.txt").read_text() == want
+    ids = [int(x) for x in (tmp_path / "ids.txt").read_text().split()]
+    assert rj["n_tokens"] == len(ids) and not rj["content_has_special_tokens"]
+    assert len(ids) < len(want) // 2                  # tags are single tokens, not characters

@@ -1,7 +1,8 @@
 #!/bin/bash
-# Build verinf_runner against a llama.cpp checkout and its build directory.
+# Build verinf_runner and verinf_render against a llama.cpp checkout and its build directory.
 #   LLAMA_CPP=~/build/llama.cpp-verinf LLAMA_BUILD=build-cpu tools/llama_runner/build.sh
-# The binary lands in $LLAMA_CPP/$LLAMA_BUILD/bin and records the checkout's commit.
+# The binaries (verinf_runner, verinf_render) land in $LLAMA_CPP/$LLAMA_BUILD/bin and
+# record the checkout's commit.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 L=${LLAMA_CPP:?set LLAMA_CPP to the llama.cpp checkout}
@@ -14,3 +15,7 @@ ${CXX:-g++} -O2 -std=c++17 "$here/verinf_runner.cpp" -o "$B/bin/verinf_runner" \
   -I"$L/include" -I"$L/ggml/include" -L"$B/bin" -lllama -lggml -lggml-base \
   -Wl,-rpath,"$B/bin" -DVERINF_LLAMA_COMMIT="\"$commit\""
 echo "$B/bin/verinf_runner ($commit)"
+${CXX:-g++} -O2 -std=c++17 "$here/verinf_render.cpp" -o "$B/bin/verinf_render" \
+  -I"$L/include" -I"$L/ggml/include" -I"$L/common" -I"$L/vendor" -L"$B/bin" \
+  -lllama-common -lllama -lggml -lggml-base -Wl,-rpath,"$B/bin" -DVERINF_LLAMA_COMMIT="\"$commit\""
+echo "$B/bin/verinf_render ($commit)"
