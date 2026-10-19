@@ -1,0 +1,387 @@
+# K2 fidelity study: design and pre-registered acceptance (2026-10-19)
+
+Session 10 found Kimi K2's integer model exact against its integer reference
+and 5.1–5.4% off a float pass at the logits after two layers, with the
+routed MoE output 18–21% off from expert flips at selection margins near
+0.0005 (`analysis/b200-session-10-archive.md`). This note designs the study
+that decides whether that integer arithmetic is an acceptable implementation
+of K2, and fixes the acceptance criterion before any measurement. It was
+settled in review on 2026-10-18 and 2026-10-19. §6 is frozen: it changes
+only by a dated amendment written here before the data it would apply to
+exist.
+
+A fidelity failure does not invalidate a proof. The proof certifies the
+specified integer computation; this study asks whether that computation
+stands in for K2 well enough that its unexplained-information bound U can be
+compared with what a real inference engine computes on the same tokens.
+
+## 1. Two questions, kept apart
+
+- **Arithmetic drift.** How far each arithmetic lands from a high-precision
+  computation on the same decoded weights and tokens. The integer
+  configurations and the rounding emulations (§3.2) answer this, and the
+  emulations explain where drift arises. They do not reproduce any
+  deployment.
+- **Deployment equivalence.** Whether the integer model is at least as close
+  to the high-precision computation as the engine that writes the
+  continuation. Only the engine itself (§3.3) anchors this. If the engine arm
+  fails, the emulations still guide precision work, but this question stays
+  unanswered.
+
+The decision (§6) concerns the second question, at full depth. Two layers
+validate the machinery and rank configurations provisionally; they do not
+settle full-depth accuracy.
+
+## 2. Fixed inputs
+
+### 2.1 Weights
+
+Every arm reads the same bytes: `unsloth/Kimi-K2-Instruct-GGUF` at
+`23bf90d8`, UD-Q4_K_XL, 13 shards, each pinned by sha256 in the session kit.
+The float64 reference, the integer configurations and the emulations all
+start from one decode, `k2_loader`'s (gguf-py's `dequantize`, float32,
+widened to float64). Each run's manifest records a sha256 per decoded
+tensor, so "the same weights" is checked, not assumed. The engine decodes
+the same bytes with its own kernels, which is part of what it is.
+
+Drift between distributed checkpoints, for example Moonshot's FP8 release
+served by another stack against this Q4 GGUF, mixes weight quantization with
+execution error. It is not part of this study. If it is ever measured, it is
+reported separately, as total deployment drift.
+
+### 2.2 The reference
+
+p64 is the high-precision float64 reference: `k2_float_reference.forward`
+in NumPy, and its torch port (§5.3) once validated against it. It
+approximates the mathematical computation on the decoded weights. It does
+not recover precision lost when the checkpoint was quantized, and it is not
+"exact arithmetic".
+
+### 2.3 Tokens
+
+T is a token count; S is reserved for arithmetic scales. Each passage is a
+frozen token sequence (§6.4) that every arm consumes unchanged, at the same
+positions with the same causal context.
+
+## 3. Arms
+
+### 3.1 Integer configurations
+
+These are the precision study's `CONFIGS` (`prover/k2_precision_study.py`):
+`baseline` (2^12 throughout; equal to the validated reference by test),
+`w16`, `a16`, `a14w14`, `a16w16`, and `a16w16n14`. The last is hypothetical:
+its RMSNorm bracket would need revising. Selection stays at 2^16, and SiLU
+and softmax keep their 2^12 tables. All six run at two layers. At full depth
+only the chosen configuration runs. Its logits come from the driver's engine
+pass, or, for the proved passage, from the proof's own witness.
+
+### 3.2 Emulations (K2-specific, two layers, diagnostic)
+
+Each emulation starts from the decoded float64 tensors and names every
+precision boundary below. A matmul is a float32 GEMM on rounded inputs.
+That emulates fp32 accumulation; rounding a float64 product would not. Its
+summation order and blocking differ from any GPU kernel, so it is an
+emulation of a precision policy, not a reproduction of a kernel. bf16 rounds
+float32 to nearest even at the bit level. E4M3 rounds to nearest even on its
+grid (3 mantissa bits, exponent bias 7, subnormals to 2^-9), saturating at
+±448.
+
+| boundary (composition A order) | bf16 policy | FP8 policy |
+|---|---|---|
+| embedding rows | bf16 | bf16 |
+| RMSNorm (attn, q_a, kv_a, ffn, output) | bf16 in; fp32 mean square, inverse root and gain; bf16 out | same |
+| linears: q_a, q_b, kv_a, the k_b and v_b split, o; dense, shared and expert gate, up and down | bf16 input and weight, fp32 GEMM, bf16 out | input quantized E4M3 per 1×128 group along the contraction (scale = amax/448), weight bf16 (the decoded GGUF value, §2.1, not FP8), fp32 GEMM, bf16 out |
+| RoPE / YaRN | fp32 on bf16 input, bf16 out | same |
+| attention scores q·k, probabilities·V | bf16 inputs, fp32 accumulation; softmax fp32; probabilities bf16 before ·V | same: no FP8 on scores or probabilities |
+| SiLU(gate)·up | fp32, bf16 out | same |
+| residual additions | fp32 sum of bf16 terms, bf16 stream | same |
+| router | see the routing table | same (the router is not an FP8 linear) |
+| gate × expert output, sum over experts | fp32, bf16 out | same |
+| LM head | bf16 input and weight, fp32 GEMM, fp32 logits | same (not FP8) |
+
+The FP8 policy follows K2's release, `quantization_config`
+`{fmt: e4m3, activation_scheme: dynamic, weight_block_size: [128, 128]}`
+(Kimi-K2-Instruct `config.json`). Activation groups follow DeepSeek-V3's
+reference `linear()`, which quantizes activations per 128 only when
+`gemm_impl = "fp8"`. Its default is `"bf16"`: weights dequantized, bf16
+GEMM. Its default `attn_impl = "absorb"` dequantizes `wkv_b` into bf16
+einsums (`inference/model.py`). So the FP8 arm emulates block-FP8 serving of
+the linears, not DeepSeek's default reference path, and attention never
+receives FP8 inputs. Quantizing attention probabilities would make the
+comparison artificially forgiving.
+
+**Routing.** K2 selects on biased scores and weights experts by the original
+scores (`analysis/topk-routing-design.md` §1). The emulations state each
+stage:
+
+| stage | R-fp32 | R-bf16 |
+|---|---|---|
+| logits r = x·W_router | bf16 x, F32 weight as stored, fp32 GEMM, fp32 | same GEMM, logits rounded to bf16 |
+| scores s = sigmoid(r) | fp32 | bf16 |
+| selection key s + b | fp32 (b is F32 as stored) | fp32 sum of the bf16 s and F32 b |
+| top-k | on the fp32 key, lowest index on a tie | same |
+| gate w = s_sel / Σ s_sel · 2.827 | fp32 on the unbiased s | fp32 on the bf16 s |
+
+That gives four emulation arms (bf16 or FP8, each with R-fp32 or R-bf16).
+No ranking of 2^12 against them is predicted. Fixed point has an absolute
+step, while a scaled float's step depends on magnitude and block scale, and
+their ordering is what the measurement establishes.
+
+### 3.3 The engine
+
+The engine is llama.cpp at a pinned commit. The kit pins, and every manifest
+records:
+- the build flags, backend and device;
+- threads, context, `n_batch` and `n_ubatch`;
+- the KV cache type and the flash-attention setting;
+- greedy sampling.
+
+**The baseline is the generation run itself.** The prompt is prefilled with
+the settings generation actually uses, then tokens are decoded one at a
+time. The logits that chose each token are captured during generation,
+along with the logits at the prompt's last position. The generated
+continuation is frozen (token ids, sha256), and every other arm consumes
+that frozen sequence.
+
+**The 512-token replay is a separate diagnostic.** The frozen sequence is
+prefilled in chunks of 512, with identical positions, causal context, cache
+precision and backend. The logical batch and physical microbatch are
+recorded. Its difference from the baseline is reported as a measurement. It
+is not a floor, and it is not an alternative baseline.
+
+At two layers the engine runs a truncated GGUF (§5.2).
+
+## 4. Metrics
+
+For each scored position t (the position whose next-token distribution
+scores continuation token y_{t+1}), each arm's logits go through a float64
+log-softmax over the full vocabulary. The engine's float32 logits and the
+integer logits at their scale are widened first.
+
+- KL_t = Σ_v p64_t(v) · (log p64_t(v) − log p_arm_t(v)), in nats.
+- NLL_t = −log2 p_arm_t(y_{t+1}), in bits.
+
+**Deciding aggregates**, over pooled positions: mean KL, p99 KL, mean NLL,
+and max KL as a guard.
+
+**Explaining** (none of these decides anything):
+- Routing support: per token and layer, experts selected by the arm and not
+  by p64, and the reverse; the number of tokens with any difference.
+- Normalized gate distance ½ Σ_e |g64_e − g_arm_e|, with zero weight on
+  unselected experts. This also captures reweighting among unchanged
+  experts.
+- Weight on swapped experts: Σ g64_e over experts p64 selects and the arm
+  does not, and the reverse. This is kept separate from the gate distance.
+  Neither bounds output error, because expert outputs differ.
+- Per-layer residual relative error ‖x_arm − x64‖ / ‖x64‖ at each layer
+  output, per position, to locate where divergence starts.
+- Selection margins: the 8th-minus-9th gap of s + b per token and layer, as
+  a full distribution in every arm, not only for flipped tokens.
+- Worst positions: the 10 positions with the highest integer KL and the 10
+  with the highest engine KL, each listed with the other arm's value at the
+  same position. Otherwise the engine's worst position could hide an
+  integer error elsewhere.
+
+Engine routing is reported only where llama.cpp exposes it (its MoE top-k
+tensors through the evaluation callback).
+
+## 5. Tooling
+
+### 5.1 The engine runner (reusable)
+
+The runner takes token ids, the prompt/continuation split, the model and the
+settings. It emits:
+- logits for the requested positions;
+- selected layer tensors by name: the layer outputs `l_out-N` and,
+  optionally, the MoE top-k ids and weights;
+- a reproducibility manifest: the llama.cpp commit and build flags, backend
+  and device, settings, GGUF sha256s and tensor list, the token-ids sha256,
+  and the capture overhead, measured as wall time with and without the
+  callback.
+
+It has two modes: generate (the baseline) and replay. The callback's
+synchronization and copying are measured, not assumed free.
+`analysis/maverick_full_ref.py` already reads `l_out` samples from
+llama.cpp's callback log; the runner replaces that with structured
+captures.
+
+### 5.2 Architecture adapters (small, per model)
+
+Each adapter holds:
+- **A tensor-name mapping**: llama.cpp's names to ours (`l_out-N` ↔
+  `L{N}.out`, and so on).
+- **Truncated-model construction.** Tensors are extracted by name across the
+  whole shard set, never by assuming which shard holds what. The adapter
+  requires the embedding, the final norm, the real output head and every
+  tensor of blocks 0..n−1. llama.cpp's DeepSeek loader can fall back to tied
+  embeddings when the head is absent, which would silently change K2, so a
+  missing head is an error here as in our own loader
+  (`prover/k2_loader.py: head_name`). Quantized bytes are copied unchanged;
+  metadata is copied with the block count rewritten and the split keys
+  removed.
+- **A loader-branch check.** llama.cpp's DeepSeek loader identifies some
+  "lite" variants by layer count, so rewriting the block count can switch
+  the loading branch. Moonlight's 27 layers truncated to two is the case at
+  hand. The adapter loads the truncated model in the pinned llama.cpp and
+  refuses it unless the loaded hyperparameters and branch match the full
+  model's: query-LoRA present or absent, head dimensions, expert counts and
+  gating.
+
+### 5.3 The torch float64 reference
+
+This is a port of `k2_float_reference` to torch float64 on the GPU, with
+layers streamed and expert decoding tiled. To begin with, gguf-py decodes on
+the CPU and feeds GPU float64 operations. GPU dequantization follows only
+once its output is shown bit-identical to gguf-py's. The port is validated
+against NumPy before anything relies on it:
+- identical decoded weights (the per-tensor hashes);
+- intermediates at every shared name within float64 summation-order
+  differences;
+- identical routing except at exact float64 ties, which are reported.
+
+It is then benchmarked for memory and runtime while Rust verification
+occupies the CPUs on the full-run pod.
+
+### 5.4 Emulations
+
+Rounding hooks in K2's NumPy float reference, one per boundary in §3.2's
+tables, with a test that the hook set covers every boundary.
+
+## 6. Pre-registered acceptance (frozen 2026-10-19)
+
+### 6.1 What is compared
+
+The chosen integer configuration and the engine baseline (§3.3), each
+against p64, at full depth, on the scored continuation positions of the
+frozen passages. Only these three arms need full depth.
+
+### 6.2 Bounds
+
+| metric | required bound |
+|---|---|
+| mean KL | integer ≤ 1.1 × engine + 10⁻⁶ nats |
+| p99 KL | integer ≤ 1.1 × engine + 10⁻⁶ nats |
+| mean continuation NLL | integer − engine ≤ 0.01 bits/token |
+| maximum KL | integer ≤ 2 × engine maximum + 10⁻⁶ nats |
+
+The margins are declared engineering tolerances. They are not derived from
+the variation between passages, which belongs in the uncertainty estimate
+and does not establish what degradation is acceptable.
+
+### 6.3 Uncertainty and verdicts
+
+**The first three rows use a paired passage bootstrap:**
+- B = 10,000 resamples of passages with replacement, from
+  `numpy.random.default_rng(20261019)`.
+- In each resample, both arms' statistics are recomputed on the same
+  resampled passages.
+- Excess per resample: integer − (1.1 × engine + 10⁻⁶) for the two KL rows;
+  integer − engine − 0.01 for the NLL row.
+- **Pass:** the one-sided 95% upper confidence bound on the excess (its
+  95th percentile) is ≤ 0.
+- **Fail:** the one-sided 95% lower bound (its 5th percentile) is > 0.
+- **Inconclusive:** otherwise.
+
+Beating the engine on a point estimate does not override the uncertainty.
+The full-corpus point estimates are reported beside the bounds.
+
+**The maximum is a failure guard on the observed corpus,** with no
+bootstrap. It is reported with the worst paired positions (§4).
+
+**The study accepts** only when all four rows pass. It fails if any row
+fails, and is inconclusive otherwise.
+
+### 6.4 Frozen choices
+
+- **Passages:** N = 4. One is the passage proved in the full run, on the
+  prompt the author chooses; three others are chosen by the same rule.
+  - Each is a chat-formatted request built with the GGUF's own chat template
+    as llama.cpp applies it.
+  - Its user turn works from a text written after K2's training data, so the
+    continuation is not recall.
+  - The four prompts and the sha256 of each prompt's token ids are entered
+    in §6.6 before any measurement of any arm.
+- **Continuation:** greedy, at most 500 tokens, ending at EOS if EOS comes
+  first. A generated EOS is a scored position. Prompts are as tokenized,
+  with 400–500 tokens as the target, so T ≤ 1,000.
+- **Weighting:** all scored positions are pooled with equal weight, so a
+  passage weighs its number of positions. The bootstrap resamples passages,
+  never positions, because adjacent tokens are not independent samples.
+- **Percentile:** `numpy.percentile(..., method="linear")` over pooled
+  positions.
+- **Direction:** D_KL(p64 ‖ p_arm), natural logarithm; NLL in bits.
+- **Engine configuration:** pinned in the kit before generation (§3.3).
+
+With four passages the bootstrap cannot support a strong generalization
+claim. The result speaks for these passages.
+
+### 6.5 Reported beside the criterion
+
+- The 512-token replay against the baseline (§3.3).
+- p64's own NLL excess, NLL_64 − NLL_engine − 0.01, with its bootstrap
+  bound. The continuation is the engine's own greedy output, so the NLL row
+  asks whether the integer model explains the engine's output as well as
+  the engine does. That is the question the U comparison asks, but the
+  engine scores its own argmax choices, and a faithful arithmetic can lose
+  NLL to it at near-ties for that reason alone. If p64 itself fails this
+  row, the report says so. The row stands as frozen unless amended here
+  before results.
+
+### 6.6 Passages (to be entered before any measurement)
+
+| # | role | prompt source | prompt token ids sha256 | entered |
+|---|---|---|---|---|
+| 1 | proved | (the author's choice) | | |
+| 2 | | | | |
+| 3 | | | | |
+| 4 | | | | |
+
+## 7. Stages
+
+1. **Two layers** (session 11, after the fixtures pass locally):
+   - all six integer configurations, the four emulations, the truncated
+     engine model, and NumPy p64 against torch p64;
+   - on the four frozen prompts, scoring every prompt position.
+   
+   Outcome: validated machinery and a provisional ranking. No acceptance.
+2. **Full run** (B200):
+   - generate each passage's continuation (the baseline, with logits
+     captured) and freeze the tokens;
+   - the 512 replay;
+   - integer logits for each passage;
+   - prove the designated passage;
+   - torch p64 for each passage on the GPU while Rust verification has the
+     CPUs.
+3. **Acceptance**, offline, by §6.
+
+If the chosen configuration fails, its proof still stands as a proof of that
+integer computation with its fidelity documented, and the next configuration
+waits for a later run.
+
+## 8. Fixtures
+
+- **The tiny synthetic K2 (`prover/tests/_k2_toy.py`),** extended with the
+  metadata llama.cpp needs to load it as `deepseek2`. The engine runner, the
+  adapters, the torch reference, the emulations and the metrics then run end
+  to end on a CPU in seconds. The toy keeps covering what Moonlight lacks:
+  K2's query-LoRA path, YaRN, and K2's routing shape (one shared expert,
+  scale 2.827).
+- **Moonlight-16B-A3B-Instruct, Q4_K_M,** for integration:
+  - `gabriellarson/Moonlight-16B-A3B-Instruct-GGUF` at `6e9f9f42`, sha256
+    `2b113655…df360`, configuration from `moonshotai/Moonlight-16B-A3B-Instruct`
+    at `4e735b07`;
+  - real weights from K2's architecture family: MLA without query-LoRA, the
+    same head dimensions (128 + 64, v 128), 16 heads, d = 2048, 64 experts
+    with 6 active and 2 shared, sigmoid selection with a bias, scale 2.446,
+    the first layer dense, 27 layers, ε = 1e-5, no YaRN, K2's vocabulary;
+  - every arm at two layers and at full depth runs locally, and it is where
+    the truncation branch check (§5.2) is first exercised.
+
+## 9. Cost, provisionally
+
+At two layers session 10 measured T = 100 → 1,000 at 142 → 268 s for the
+integer reference and 70 → 149 s for the float pass. Expert decoding
+dominates there, not attention. These replace earlier attention-scaling
+estimates. The full-depth p64 runtime comes from the §5.3 benchmark. Engine
+generation on the full-run pod reads experts from disk; the estimate of 2–4
+s per token is unmeasured.
