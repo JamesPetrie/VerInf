@@ -132,7 +132,10 @@ their ordering is what the measurement establishes.
 The engine is llama.cpp at a pinned commit. The kit pins, and every manifest
 records:
 - the build flags, backend and device;
-- threads, context, `n_batch` and `n_ubatch`;
+- threads, `n_batch` and `n_ubatch`;
+- the context size, pinned at 1,024 for this corpus. The runner requires it
+  and never derives it from the sequence, so a capped generation and an
+  early-EOS replay cannot run with different contexts;
 - the KV cache type and the flash-attention setting;
 - greedy sampling.
 
@@ -185,9 +188,12 @@ and max KL as a guard.
 **Explaining** (none of these decides anything):
 - Routing support: per token and layer, experts selected by the arm and not
   by p64, and the reverse; the number of tokens with any difference.
-- Normalized gate distance ½ Σ_e |g64_e − g_arm_e|, with zero weight on
-  unselected experts. This also captures reweighting among unchanged
-  experts.
+- Normalized gate distance ½ Σ_e |g64_e − g_arm_e|, on gates normalized to
+  sum to 1 over each token's selected experts, so the routed scale (2.827
+  for K2, 2.446 for Moonlight) is divided out and models compare on one
+  footing. Unselected experts have zero weight. This also captures
+  reweighting among unchanged experts. The scaled weights, each expert's
+  actual contribution, are reported separately.
 - Weight on swapped experts: Σ g64_e over experts p64 selects and the arm
   does not, and the reverse. This is kept separate from the gate distance.
   Neither bounds output error, because expert outputs differ.
@@ -219,6 +225,13 @@ settings. It emits:
 
 It has two modes: generate (the baseline) and replay. The callback's
 synchronization and copying are measured, not assumed free.
+
+Capture changes what is requested, not only how long it takes: with capture
+on, the runner asks for outputs at every position, so the last layer's
+tensors cover every position. On the CPU toy, capture on and off give
+bit-identical tokens and logits (`prover/tests/test_llama_engine.py`). The
+kit repeats that check on the target backend before capture is treated as
+overhead only.
 `analysis/maverick_full_ref.py` already reads `l_out` samples from
 llama.cpp's callback log; the runner replaces that with structured
 captures.
@@ -348,23 +361,48 @@ claim. The result speaks for these passages.
 ### 6.5 Reported beside the criterion
 
 - The 512-token replay against the baseline (§3.3).
-- p64's own NLL excess, NLL_64 − NLL_engine − 0.01, with its bootstrap
-  bound. The continuation is the engine's own greedy output, so the NLL row
-  asks whether the integer model explains the engine's output as well as
-  the engine does. That is the question the U comparison asks, but the
-  engine scores its own argmax choices, and a faithful arithmetic can lose
-  NLL to it at near-ties for that reason alone. If p64 itself fails this
-  row, the report says so. The row stands as frozen unless amended here
-  before results.
+- p64's own NLL against the engine's: the raw difference NLL_64 −
+  NLL_engine and its excess over 0.01, each with its bootstrap bounds. The
+  continuation is the engine's own greedy output, so the NLL row asks
+  whether the integer model explains the engine's output as well as the
+  engine does. That is the question the U comparison asks, but the engine
+  scores its own argmax choices, and a faithful arithmetic can lose NLL to
+  it at near-ties for that reason alone. If p64 itself fails this row, the
+  report says so.
+- **The NLL row scores every continuation position** (decided 2026-10-19,
+  before any result). Restricting it to positions where p64 and the engine
+  agree would drop exactly the disagreements it must measure. It is not a
+  symmetric fidelity measure.
+- **If the NLL row alone fails** (or is inconclusive) while the three KL rows
+  pass, the report says so: the U-comparison requirement is not met, and
+  distributional fidelity, assessed by KL, is. The study's verdict is still
+  §6.3's.
 
 ### 6.6 Passages (to be entered before any measurement)
 
-| # | role | prompt source | prompt token ids sha256 | entered |
-|---|---|---|---|---|
-| 1 | proved | (the author's choice) | | |
-| 2 | | | | |
-| 3 | | | | |
-| 4 | | | | |
+The four user turns are newly written, synthetic prompts, authored for this
+study, with provenance and content hashes, in
+`analysis/k2-fidelity-prompts-2026-10-19.json`. Each is rendered with the
+pinned GGUF's chat template by llama.cpp's Jinja engine, with the assistant
+prefix, and tokenized as `llama-completion` does: special tokens added and
+parsed. K2 adds no BOS. The template itself inserts its default system
+message, since none is given. The tool is `tools/llama_runner/verinf_render`,
+run on a metadata-only GGUF built from the pinned shard 1's head. An
+independent jinja2 rendering gives the same strings, and no user text holds
+special-token text.
+
+Prompt lengths as rendered, before any measurement:
+
+| # | id | role | prompt tokens |
+|---|---|---|---|
+| 1 | p1-research-review | proved | 378 |
+| 2 | p2-event-reconciliation | | 398 |
+| 3 | p3-dependency-schedule | | 400 |
+| 4 | p4-public-notice | | 424 |
+
+Two are under the 400–500 target; all are within the 1,000-token cap. Any
+length adjustment of the source text is the authors' and comes before the
+freeze. The token ids and their sha256 are entered here when frozen.
 
 ## 7. Stages
 
@@ -416,4 +454,7 @@ integer reference and 70 → 149 s for the float pass. Expert decoding
 dominates there, not attention. These replace earlier attention-scaling
 estimates. The full-depth p64 runtime comes from the §5.3 benchmark. Engine
 generation on the full-run pod reads experts from disk; the estimate of 2–4
-s per token is unmeasured.
+s per token is unmeasured. The first full-depth generation is timed, and the
+remaining passages' estimate updated from it. Four passages were kept with
+their roughly $15 increment over one: with a single passage the passage-level
+uncertainty would be uninformative.
