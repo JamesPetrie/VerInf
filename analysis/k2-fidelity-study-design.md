@@ -166,7 +166,7 @@ The K2 adapter (`prover/fidelity_adapters.py`) passes the betas as context
 parameters. The check is an all-F32 toy with an f32 KV cache
 (`prover/tests/test_llama_engine.py`):
 - with K2's betas, llama.cpp equals p64 to float32 rounding: layer outputs
-  within 3·10⁻⁷, logits KL 8·10⁻¹⁴, identical routing and gates;
+  within 5·10⁻⁷, logits KL 8·10⁻¹⁴, identical routing and gates;
 - with the defaults, its layer outputs are 2·10⁻² off;
 - at position 130,072, with K2's betas, the outputs are 1.4·10⁻³ off. That
   is consistent with float32 RoPE angles at large positions, which is
