@@ -288,6 +288,22 @@ against NumPy before anything relies on it:
 It is then benchmarked for memory and runtime while Rust verification
 occupies the CPUs on the full-run pod.
 
+**Status (2026-10-19).**
+- `prover/k2_float_torch.py` equals the NumPy reference within 10⁻¹²
+  relative at every intermediate on the toy, in K2's form and Moonlight's,
+  at position 0 and 130,072, with identical routing.
+- `prover/gguf_dequant_torch.py` ports gguf-py's dequantizers for F32, F16,
+  Q8_0, Q5_0, Q4_K, Q5_K and Q6_K. The port keeps gguf-py's float32
+  operations in order, one rounded step each, so eager torch fuses nothing.
+  On the CPU it is bit-identical to gguf-py for every bit pattern, from
+  random bytes with NaN and infinite scales included.
+- `k2_float_torch.DeviceWeights` decodes the experts, the dense and shared
+  FFNs and the LM head on the device. It is bit-identical to the CPU
+  provider, and so is the forward through it.
+
+The GPU repeats the dequantization test (`VERINF_DEQUANT_DEVICE=cuda`)
+before the full-depth reference relies on it.
+
 ### 5.4 Emulations
 
 Rounding hooks in K2's NumPy float reference, one per boundary in §3.2's
@@ -438,6 +454,14 @@ If the chosen configuration fails, its proof still stands as a proof of that
 integer computation with its fidelity documented, and the next configuration
 waits for a later run.
 
+The stages run through `prover/fidelity_study.py`:
+- `two-layer`: every arm on each passage's prompt;
+- `full-depth`: the engine's generation, then p64 and the integer arm on
+  the frozen sequences, then §6's acceptance and §6.5's calibration.
+
+Engine settings beyond the adapter's are pinned by the caller. It runs end
+to end on the toy (`prover/tests/test_llama_engine.py`).
+
 ## 8. Fixtures
 
 - **The tiny synthetic K2 (`prover/tests/_k2_toy.py`),** extended with the
@@ -458,6 +482,15 @@ waits for a later run.
     the first layer dense, 27 layers, ε = 1e-5, no YaRN, K2's vocabulary;
   - every arm at two layers and at full depth runs locally, and it is where
     the truncation branch check (§5.2) is first exercised.
+  - The references take Moonlight's form by configuration
+    (`k2_attention.MOONLIGHT_MLA`, `k2_loader.int_constants`): no
+    query-LoRA, plain RoPE, its routed scale and ε. K2's form is unchanged,
+    its toy byte-identical.
+  - A Moonlight-shaped toy (`_k2_toy.TOY_MOON_MLA`) loads in llama.cpp, and
+    in all F32 llama.cpp equals p64 on it as on K2's toy.
+  - Moonlight's prompts are the frozen passages' user text rendered with
+    its own template. It is an integration rehearsal, not part of the
+    study's evidence.
 
 ## 9. Cost, provisionally
 
