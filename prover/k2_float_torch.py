@@ -19,7 +19,46 @@ ROUTED_SCALING = kf.ROUTED_SCALING
 
 
 def _t(a, dev):
+    if torch.is_tensor(a):
+        return a.to(device=dev, dtype=torch.float64)
     return torch.as_tensor(np.asarray(a, dtype=np.float64), device=dev)
+
+
+class DeviceWeights:
+    """k2_loader.GgufWeights(ints=False) with the bulk decoded on `device` by
+    gguf_dequant_torch (bit-identical to gguf-py): the experts, the dense and
+    shared FFNs and the LM head come back as float64 torch tensors on the
+    device; the attention tensors, gains, router, bias and embedding rows
+    are the CPU provider's own."""
+
+    def __init__(self, Wf, device):
+        self.Wf, self.dev, self.V = Wf, torch.device(device), Wf.V
+
+    def __getattr__(self, name):
+        return getattr(self.Wf, name)
+
+    def _dec(self, t, rows=None):
+        import gguf_dequant_torch as gd
+        data = t.data if rows is None else t.data[rows]
+        return gd.dequantize(data, t.tensor_type, device=self.dev)
+
+    def _mat(self, name):
+        return self._dec(self.Wf.by[name]).T.to(torch.float64)
+
+    def dense(self, il):
+        return {k: self._mat(f"blk.{il}.ffn_{n}.weight")
+                for k, n in (("W_gate", "gate"), ("W_up", "up"), ("W_down", "down"))}
+
+    def shared(self, il):
+        return {k: self._mat(f"blk.{il}.ffn_{n}_shexp.weight")
+                for k, n in (("W_gate", "gate"), ("W_up", "up"), ("W_down", "down"))}
+
+    def expert(self, il, kind, e):
+        t = self.Wf.by[f"blk.{il}.ffn_{kind}_exps.weight"]
+        return self._dec(t, slice(e, e + 1))[0].T.to(torch.float64)
+
+    def head(self, v0, v1):
+        return self._dec(self.Wf.by[self.Wf.head_name], slice(v0, v1)).T.to(torch.float64)
 
 
 def rmsnorm(x, g, eps):

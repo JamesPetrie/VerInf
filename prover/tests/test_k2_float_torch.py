@@ -69,3 +69,22 @@ def test_a_tie_goes_to_the_lowest_index_in_both():
     top_np, _ = kf.select(s, b, 2)
     top_t, _ = kt.select(torch.as_tensor(s), torch.as_tensor(b), 2)
     assert top_np.tolist() == top_t.tolist() == [[1, 2]]
+
+
+def test_device_decoding_gives_the_cpu_providers_weights_and_the_same_forward(variant):
+    """DeviceWeights (gguf_dequant_torch) against the CPU provider: every
+    accessor bit-identical, so the torch forward is bit-identical too."""
+    weights, cfg = variant
+    D = kt.DeviceWeights(weights, "cpu")
+    for il in (0, 1):
+        pairs = list(weights.dense(il).items()) if weights.kind(il) == "dense" else \
+            list(weights.shared(il).items()) + [(f"{k}{e}", weights.expert(il, k, e))
+                                                for k in ("gate", "up", "down") for e in (0, 5)]
+        dev = D.dense(il) if weights.kind(il) == "dense" else \
+            {**D.shared(il), **{f"{k}{e}": D.expert(il, k, e) for k in ("gate", "up", "down") for e in (0, 5)}}
+        for name, a in pairs:
+            assert np.array_equal(dev[name].numpy(), a), (il, name)
+    assert np.array_equal(D.head(3, 40).numpy(), weights.head(3, 40))
+    a = kt.forward(IDS, weights, cfg, layers=2, k=toy.TOY["k"])
+    b = kt.forward(IDS, D, cfg, layers=2, k=toy.TOY["k"])
+    assert all(np.array_equal(a[n], b[n]) for n in a)
