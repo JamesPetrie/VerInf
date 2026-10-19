@@ -168,8 +168,9 @@ def test_the_study_runs_end_to_end_on_the_toy(tmp_path):
         if name != "p64":
             assert np.isfinite(r["mean_kl"]) and "L1.routing" in r["explain"], name
     gen = fs.generate(spec, p, {"a": IDS[:5], "b": IDS[3:9]}, RUNNER, tmp_path / "gen", threads=2, n_gen=6)
-    full = fs.full_depth(spec, p, gen, tmp_path / "full")
+    full = fs.full_depth(spec, p, gen, tmp_path / "full", configs=("baseline", "a16"))
     assert full["layers"] == 2 and set(full["passages"]) == {"a", "b"}
+    assert set(full["configs"]) == {"baseline", "a16"} and full["acceptance_config"] == "baseline"
     assert full["acceptance"]["overall"] in ("accept", "fail", "inconclusive")
     assert set(full["acceptance"]["rows"]) == {"mean_kl", "p99_kl", "mean_nll", "max_kl"}
     assert "difference" in full["nll_calibration"]

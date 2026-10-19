@@ -198,42 +198,72 @@ def generate(spec, gguf, ids_by_passage, runner, work, *, threads=8, n_gen=CONTI
     return out
 
 
-def full_depth(spec, gguf, generated, work, *, layers=None, integer=None):
+def full_depth(spec, gguf, generated, work, *, layers=None, integer=None, configs=("baseline",)):
     """p64 and the integer model on each frozen sequence; per-position KL and
     NLL over the continuation for the integer arm and the engine baseline;
     §6's acceptance and the §6.5 calibration. `integer(ids)` returns the
-    integer arm's real-valued logits (default: the CPU integer model)."""
+    integer arm's real-valued logits; by default the CPU integer model runs at
+    each of `configs`, all against one p64 and one baseline. The first is the
+    record's acceptance; every one has its own under "configs"."""
     cfg, k = spec["cfg"], spec["k"]
     W = GgufWeights(str(gguf), ints=False, cfg=cfg)
-    n_layers = layers or int(gt.metadata(gguf)[f"{gt.metadata(gguf)['general.architecture']}.block_count"])
+    md = gt.metadata(gguf)
+    n_layers = layers or int(md[f"{md['general.architecture']}.block_count"])
     if integer is None:
-        def integer(ids):
-            io, _ = ps.forward(ids, W, cfg, ps.CONFIGS["baseline"], layers=n_layers, kk=k)
-            return np.asarray(io["logits"], dtype=np.float64) / S_ACT
-    per = {"integer": [], "engine": [], "p64_nll": []}
+        def make(name):
+            def run(ids):
+                io, _ = ps.forward(ids, W, cfg, ps.CONFIGS[name], layers=n_layers, kk=k)
+                return np.asarray(io["logits"], dtype=np.float64) / (1 << ps.CONFIGS[name]["S_act"])
+            return run
+        arms = {name: make(name) for name in configs}
+    else:
+        arms = {"integer": integer}
+    per = {name: [] for name in arms}
+    per_eng, per_p64 = [], []
     rec = dict(model=spec["adapter"]["name"], layers=n_layers, passages={})
     for pid, g in generated.items():
         ids, P = g["tokens"], g["n_prompt"]
         t0 = time.time()
         ref = kf.forward(ids, W, cfg, layers=n_layers, k=k)["logits"]
-        t_ref = time.time() - t0
-        t0 = time.time()
-        lg_int = integer(ids)
-        t_int = time.time() - t0
+        secs = dict(p64=time.time() - t0, generate=g.get("seconds"))
         rows = slice(P - 1, len(ids) - 1)                  # positions scoring the continuation
         tgt = ids[P:]
-        pi = fm.position_metrics(ref[rows], lg_int[rows], tgt)
         pe = fm.position_metrics(ref[rows], g["logits"], tgt)
-        per["integer"].append(pi)
-        per["engine"].append(pe)
-        per["p64_nll"].append(fm.nll_bits(ref[rows], tgt))
-        rec["passages"][pid] = dict(scored=len(tgt), integer=summary(pi), engine=summary(pe),
-                                    p64_mean_nll=float(per["p64_nll"][-1].mean()),
-                                    seconds=dict(p64=t_ref, integer=t_int, generate=g["seconds"]))
-        log(pid, "integer", rec["passages"][pid]["integer"], "engine", rec["passages"][pid]["engine"])
-    rec["acceptance"] = fm.acceptance(per["integer"], per["engine"])
-    rec["nll_calibration"] = fm.nll_calibration(per["p64_nll"], [e["nll"] for e in per["engine"]])
+        per_eng.append(pe)
+        per_p64.append(fm.nll_bits(ref[rows], tgt))
+        prow = dict(scored=len(tgt), engine=summary(pe), p64_mean_nll=float(per_p64[-1].mean()),
+                    seconds=secs, integer={})
+        for name, fn in arms.items():
+            t0 = time.time()
+            pi = fm.position_metrics(ref[rows], fn(ids)[rows], tgt)
+            secs[name] = time.time() - t0
+            per[name].append(pi)
+            prow["integer"][name] = summary(pi)
+            log(pid, name, prow["integer"][name])
+        log(pid, "engine", prow["engine"])
+        rec["passages"][pid] = prow
+    rec["configs"] = {name: fm.acceptance(per[name], per_eng) for name in arms}
+    first = next(iter(arms))
+    rec["acceptance"] = rec["configs"][first]
+    rec["acceptance_config"] = first
+    rec["nll_calibration"] = fm.nll_calibration(per_p64, [e["nll"] for e in per_eng])
     return rec
+
+
+def load_generated(work) -> dict:
+    """The sequences and the baseline's choosing logits a generate stage left
+    in `work` (sequences.json and each passage's runner output), checked
+    against the recorded hashes."""
+    work = pathlib.Path(work)
+    seqs = json.loads((work / "sequences.json").read_text())
+    out = {}
+    for pid, s in seqs.items():
+        r = lr.load(work / "generate" / pid)
+        if r["tokens"] != s["tokens"] or lr.ids_sha256(r["tokens"]) != s["sha256"]:
+            raise ValueError(f"{pid}: the runner's output is not the frozen sequence")
+        out[pid] = dict(tokens=s["tokens"], n_prompt=s["n_prompt"], logits=r["logits"],
+                        sha256=s["sha256"], seconds=None)
+    return out
 
 
 def p64_check(spec, gguf, ids, *, device="cuda", layers=2):
@@ -279,6 +309,10 @@ def main(argv=None):
     ap.add_argument("--threads", type=int, default=8)
     ap.add_argument("--layers", type=int, default=None, help="full depth: fewer layers, for tests")
     ap.add_argument("--device", default="cuda", help="p64-check: the torch reference's device")
+    ap.add_argument("--configs", default="baseline",
+                    help="full depth: integer configurations, comma-separated (the first is the record's)")
+    ap.add_argument("--reuse", action="store_true",
+                    help="full depth: the sequences and baseline logits already in --work, not generated again")
     ap.add_argument("--engine", default="{}", help="JSON: further engine settings (n_gpu_layers, kv_type, "
                     "flash_attn, n_batch, n_ubatch, override_tensor), pinned by the kit")
     a = ap.parse_args(argv)
@@ -300,13 +334,18 @@ def main(argv=None):
                         engine=json.loads(a.engine))
         dst = work / "two-layer.json"
     else:
-        gen = generate(MODELS[a.model], a.gguf, ids, a.runner, work, threads=a.threads,
-                       engine=json.loads(a.engine))
-        (work / "sequences.json").write_text(json.dumps(
-            {pid: dict(tokens=g["tokens"], n_prompt=g["n_prompt"], sha256=g["sha256"])
-             for pid, g in gen.items()}, indent=1))
-        rec = full_depth(MODELS[a.model], a.gguf, gen, work, layers=a.layers)
-        dst = work / "full-depth.json"
+        if a.reuse:
+            gen = load_generated(work)
+        else:
+            gen = generate(MODELS[a.model], a.gguf, ids, a.runner, work, threads=a.threads,
+                           engine=json.loads(a.engine))
+            (work / "sequences.json").write_text(json.dumps(
+                {pid: dict(tokens=g["tokens"], n_prompt=g["n_prompt"], sha256=g["sha256"])
+                 for pid, g in gen.items()}, indent=1))
+        configs = tuple(a.configs.split(","))
+        rec = full_depth(MODELS[a.model], a.gguf, gen, work, layers=a.layers, configs=configs)
+        dst = work / ("full-depth.json" if configs == ("baseline",)
+                      else f"full-depth-{'-'.join(configs)}.json")
     dst.write_text(json.dumps(rec, indent=1, default=str))
     log("record:", dst)
     return 0
