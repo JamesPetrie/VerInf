@@ -378,7 +378,7 @@ claim. The result speaks for these passages.
   distributional fidelity, assessed by KL, is. The study's verdict is still
   §6.3's.
 
-### 6.6 Passages (to be entered before any measurement)
+### 6.6 Passages (frozen 2026-10-19)
 
 The four user turns are newly written, synthetic prompts, authored for this
 study, with provenance and content hashes, in
@@ -391,18 +391,27 @@ run on a metadata-only GGUF built from the pinned shard 1's head. An
 independent jinja2 rendering gives the same strings, and no user text holds
 special-token text.
 
-Prompt lengths as rendered, before any measurement:
+**Frozen 2026-10-19, before any measurement**, in
+`analysis/k2-fidelity-passages-frozen-2026-10-19.json`. The record holds:
+- the token ids;
+- the hashes of the prompts file, of each rendered prompt and of the
+  template;
+- the llama.cpp commit;
+- the pinned shard's identity.
 
-| # | id | role | prompt tokens |
-|---|---|---|---|
-| 1 | p1-research-review | proved | 378 |
-| 2 | p2-event-reconciliation | | 398 |
-| 3 | p3-dependency-schedule | | 400 |
-| 4 | p4-public-notice | | 424 |
+The authors accepted p1 (378 tokens) and p2 (398) unchanged on 2026-10-19:
+the 400–500 range was a target, and padding the prompts adds no
+experimental value. Session 11 re-derives the ids from the full,
+sha256-verified shard 1 and requires them equal to these.
 
-Two are under the 400–500 target; all are within the 1,000-token cap. Any
-length adjustment of the source text is the authors' and comes before the
-freeze. The token ids and their sha256 are entered here when frozen.
+| # | id | role | prompt tokens | prompt token ids sha256 (little-endian int32) |
+|---|---|---|---|---|
+| 1 | p1-research-review | proved | 378 | `f552a8a1355ee532247e4840a694bb15536e744300e85622b27fac3f930683ca` |
+| 2 | p2-event-reconciliation | | 398 | `e673b4298273fa2a187d6611c6e457a1b97b7e6f6540ed5450be693b6f93d342` |
+| 3 | p3-dependency-schedule | | 400 | `8038e677dc8af4c96f35aad10282b6ded64a88096ac5b4ce7355743c64ac4e3f` |
+| 4 | p4-public-notice | | 424 | `9978873e6cc826847ebb0d1ec81b7e4a6d7eb543ee8ac3803aa4116c4e1b16b5` |
+
+All four are within the 1,000-token cap with a 500-token continuation.
 
 ## 7. Stages
 
