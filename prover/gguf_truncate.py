@@ -57,13 +57,15 @@ def metadata(path) -> dict:
     return {f.name: f.contents() for f in r.fields.values() if f.name not in SKIP_KEYS[1:]}
 
 
-def read_head_metadata(head_path) -> tuple:
+def read_head_metadata(head_path, limit=1 << 28) -> tuple:
     """(version, tensor count, [(key, GGUFValueType, value, array subtype)]) from
     the first bytes of a GGUF, which need not be the whole file: the key-values
-    precede the tensor infos and data. Raises if the head ends inside them."""
+    precede the tensor infos and data. At most `limit` bytes are read, so a
+    49 GB shard costs its header only. Raises if the head ends inside them."""
     import struct
     from gguf import GGUFValueType as VT
-    b = pathlib.Path(head_path).read_bytes()
+    with open(head_path, "rb") as f:
+        b = f.read(limit)
     fmt = {VT.UINT8: "<B", VT.INT8: "<b", VT.UINT16: "<H", VT.INT16: "<h", VT.UINT32: "<I",
            VT.INT32: "<i", VT.FLOAT32: "<f", VT.BOOL: "<?", VT.UINT64: "<Q", VT.INT64: "<q",
            VT.FLOAT64: "<d"}
