@@ -135,6 +135,28 @@ def metadata_only(head_path, dst) -> dict:
     return written
 
 
+GATING = {1: "softmax", 2: "sigmoid"}
+
+
+def deepseek2_expected_fingerprint(md: dict) -> dict:
+    """The print_info values the full model's branch implies, from its
+    metadata, for when the full model cannot be loaded (one shard of a split
+    file present): query-LoRA rank (0 without the key, as "lite" loads it),
+    dense lead, expert counts, gating and RoPE scaling."""
+    a = md["general.architecture"]
+    exp = {"n_lora_q": str(int(md.get(f"{a}.attention.q_lora_rank", 0))),
+           "n_lora_kv": str(int(md[f"{a}.attention.kv_lora_rank"])),
+           "n_layer_dense_lead": str(int(md.get(f"{a}.leading_dense_block_count", 0))),
+           "n_expert": str(int(md[f"{a}.expert_count"])),
+           "n_expert_used": str(int(md[f"{a}.expert_used_count"])),
+           "n_expert_shared": str(int(md[f"{a}.expert_shared_count"]))}
+    if f"{a}.expert_gating_func" in md:
+        exp["expert_gating_func"] = GATING[int(md[f"{a}.expert_gating_func"])]
+    if f"{a}.rope.scaling.type" in md:
+        exp["rope scaling"] = md[f"{a}.rope.scaling.type"]
+    return exp
+
+
 def deepseek2_block_names(il: int, *, dense_lead: int, q_lora: bool) -> set:
     names = DEEPSEEK2_ATTN + (DEEPSEEK2_Q_LORA if q_lora else DEEPSEEK2_Q_DIRECT)
     names += DEEPSEEK2_DENSE if il < dense_lead else DEEPSEEK2_MOE

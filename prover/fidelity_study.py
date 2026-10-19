@@ -130,9 +130,14 @@ def two_layer(spec, gguf, ids_by_passage, runner, work, *, configs=tuple(ps.CONF
     if not trunc.exists():
         rec = gt.truncate(gguf, trunc, 2)
         log("truncated:", rec["added_keys"] or "no keys added")
-    full_fp = lr.run(runner, gguf, work / "info-full", mode="info")["fingerprint"]
     two_fp = lr.run(runner, trunc, work / "info-two", mode="info")["fingerprint"]
-    branch = lr.branch_differences(full_fp, two_fp)
+    try:
+        full_fp = lr.run(runner, gguf, work / "info-full", mode="info")["fingerprint"]
+        branch = lr.branch_differences(full_fp, two_fp)
+    except RuntimeError:                  # one shard of a split model: its metadata decides
+        want = gt.deepseek2_expected_fingerprint(gt.metadata(gguf))
+        branch = {k: (v, two_fp.get(k)) for k, v in want.items() if two_fp.get(k) != v}
+        log("the full model does not load here; the branch checked against its metadata")
     if branch:
         raise RuntimeError(f"the truncation leaves the full model's branch: {branch}")
     Wf = ps.CachedFloats(GgufWeights(str(gguf), ints=False, cfg=cfg))

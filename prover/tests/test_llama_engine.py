@@ -173,3 +173,16 @@ def test_the_study_runs_end_to_end_on_the_toy(tmp_path):
     assert full["acceptance"]["overall"] in ("accept", "fail", "inconclusive")
     assert set(full["acceptance"]["rows"]) == {"mean_kl", "p99_kl", "mean_nll", "max_kl"}
     assert "difference" in full["nll_calibration"]
+
+
+def test_the_expected_fingerprint_is_what_llama_cpp_prints(f32_toy, tmp_path):
+    """Metadata's expectations against llama.cpp's own print_info, both toys."""
+    for name, cfg in (("k2", toy.TOY_MLA), ("moon", toy.TOY_MOON_MLA)):
+        p = tmp_path / f"{name}.gguf"
+        toy.write(p, mla=cfg)
+        fp = lr.run(RUNNER, p, tmp_path / name, mode="info")["fingerprint"]
+        exp = gt.deepseek2_expected_fingerprint(gt.metadata(p))
+        assert {k: fp.get(k) for k in exp if k != "rope scaling"} == \
+            {k: v for k, v in exp.items() if k != "rope scaling"}, name
+        if "rope scaling" in exp:
+            assert fp["rope scaling"] == exp["rope scaling"]

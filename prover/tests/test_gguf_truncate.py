@@ -112,3 +112,14 @@ def test_a_head_cut_inside_the_key_values_is_refused(toy_path, tmp_path):
     head.write_bytes(toy_path.read_bytes()[:200])
     with pytest.raises(ValueError, match="ends inside the key-values"):
         gt.read_head_metadata(head)
+
+
+def test_the_expected_fingerprint_from_metadata(toy_path, tmp_path):
+    md = gt.metadata(toy_path)
+    exp = gt.deepseek2_expected_fingerprint(md)
+    assert exp["n_lora_q"] == str(toy.TOY_MLA["q_rank"]) and exp["n_layer_dense_lead"] == "1"
+    assert exp["expert_gating_func"] == "sigmoid" and exp["rope scaling"] == "yarn"
+    assert exp["n_expert"] == str(toy.TOY["E"]) and exp["n_expert_used"] == str(toy.TOY["k"])
+    moon = tmp_path / "moon.gguf"
+    toy.write(moon, mla=toy.TOY_MOON_MLA)
+    assert gt.deepseek2_expected_fingerprint(gt.metadata(moon))["n_lora_q"] == "0"
