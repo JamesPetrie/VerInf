@@ -48,14 +48,14 @@ def select(scores, bias, k):
     return order[:, :k], q
 
 
-def moe(x, W, il, *, k, eps, out, p):
+def moe(x, W, il, *, k, eps, out, p, scale=ROUTED_SCALING):
     scores = sigmoid(x @ W.router(il))
     bias = W.bias(il)
     top, _ = select(scores, bias, k)
     T = x.shape[0]
     y = np.zeros_like(x)
     w = np.take_along_axis(scores, top, axis=1)
-    w = w / w.sum(axis=1, keepdims=True) * ROUTED_SCALING
+    w = w / w.sum(axis=1, keepdims=True) * scale
     for e in sorted(set(top.ravel().tolist())):
         ts, slots = np.nonzero(top == e)
         h = ffn(x[ts], W.expert(il, "gate", e), W.expert(il, "up", e),
@@ -90,7 +90,8 @@ def forward(ids, W, cfg, *, layers, offset=0, k=8, head_chunk=16384):
             out[f"{p}.ffn"] = f
             x = r1 + f
         else:
-            x = r1 + moe(n2g, W, il, k=k, eps=eps, out=out, p=p)
+            x = r1 + moe(n2g, W, il, k=k, eps=eps, out=out, p=p,
+                         scale=cfg.get("routed_scale", ROUTED_SCALING))
         out[f"{p}.out"] = x
     nfg = rmsnorm(x, W.g_out(), eps)
     out["final.ng"] = nfg

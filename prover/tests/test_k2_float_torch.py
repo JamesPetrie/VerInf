@@ -22,6 +22,14 @@ import k2_loader as kl                      # noqa: E402
 IDS = [3, 17, 0, 41, 9, 9, 22, 30, 5, 12, 47, 1]
 
 
+@pytest.fixture(scope="module", params=["k2", "moonlight"])
+def variant(request, tmp_path_factory):
+    cfg = toy.TOY_MLA if request.param == "k2" else toy.TOY_MOON_MLA
+    p = tmp_path_factory.mktemp("k2torch") / f"{request.param}.gguf"
+    toy.write(p, mla=cfg)
+    return kl.GgufWeights(str(p), ints=False, cfg=cfg), cfg
+
+
 @pytest.fixture(scope="module")
 def weights(tmp_path_factory):
     p = tmp_path_factory.mktemp("k2torch") / "toy.gguf"
@@ -30,8 +38,9 @@ def weights(tmp_path_factory):
 
 
 @pytest.mark.parametrize("offset", [0, 130_072])
-def test_every_intermediate_is_the_numpy_references(weights, offset):
-    cfg, k = toy.TOY_MLA, toy.TOY["k"]
+def test_every_intermediate_is_the_numpy_references(variant, offset):
+    weights, cfg = variant
+    k = toy.TOY["k"]
     ref = kf.forward(IDS, weights, cfg, layers=2, offset=offset, k=k, head_chunk=20)
     got = kt.forward(IDS, weights, cfg, layers=2, offset=offset, k=k, head_chunk=20)
     assert set(ref) == set(got)

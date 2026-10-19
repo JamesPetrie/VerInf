@@ -43,7 +43,16 @@ K2_INT = dict(S=S_ACT, S_sel=S_SEL, output_width=26, eps=1e-6,
               S_w=1 << 12, C=round(2.827 * (1 << 12)), select_word_bits=13,
               bracket_word_bits=8)
 
-ATTN_TENSORS = ("attn_norm", "attn_q_a", "attn_q_a_norm", "attn_q_b", "attn_kv_a_mqa",
+
+def int_constants(cfg) -> dict:
+    """K2_INT for a model of K2's family: its rms_norm_eps and routed scale,
+    everything else K2's. int_constants(K2_MLA) == K2_INT."""
+    eps = cfg["rms_eps"]
+    return dict(K2_INT, eps=eps, eps_int=round(eps * S_ACT * S_ACT),
+                C=round(cfg.get("routed_scale", 2.827) * K2_INT["S_w"]))
+
+
+ATTN_TENSORS = ("attn_norm", "attn_q_a", "attn_q_a_norm", "attn_q_b", "attn_q", "attn_kv_a_mqa",
                 "attn_kv_a_norm", "attn_k_b", "attn_v_b", "attn_kv_b", "attn_output")
 
 

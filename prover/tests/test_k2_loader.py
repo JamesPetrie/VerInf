@@ -134,3 +134,25 @@ def test_sigmoid_table():
 def test_constants():
     k = kl.K2_INT
     assert k["eps_int"] == 17 and k["C"] == 11579 and k["S"] == 1 << 12
+
+
+def test_int_constants_are_k2s_for_k2_and_the_models_own_otherwise():
+    from k2_attention import K2_MLA, MOONLIGHT_MLA
+    assert kl.int_constants(K2_MLA) == kl.K2_INT
+    m = kl.int_constants(MOONLIGHT_MLA)
+    assert m["C"] == round(2.446 * 4096) and m["eps"] == 1e-5 and m["eps_int"] == round(1e-5 * 2 ** 24)
+    assert {k: v for k, v in m.items() if k not in ("C", "eps", "eps_int")} == \
+        {k: v for k, v in kl.K2_INT.items() if k not in ("C", "eps", "eps_int")}
+
+
+def test_without_query_lora_the_query_weights_read_the_input(tmp_path):
+    path = tmp_path / "moon.gguf"
+    back = toy.write(path, mla=toy.TOY_MOON_MLA)
+    cfg = toy.TOY_MOON_MLA
+    W = kl.GgufWeights(str(path), ints=False, cfg=cfg)
+    w = W.attn(0)
+    assert "W_qa" not in w and "g_q_a" not in w
+    H, dn, dr, d = cfg["H"], cfg["d_nope"], cfg["d_rope"], cfg["d"]
+    q = back["blk.0.attn_q.weight"].reshape(H, dn + dr, d)
+    assert np.array_equal(w["W_q_nope"], q[:, :dn, :].reshape(H * dn, d).T.astype(np.float64))
+    assert w["W_q_pe"].shape == (d, H * dr)

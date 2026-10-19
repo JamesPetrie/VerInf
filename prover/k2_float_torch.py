@@ -13,7 +13,7 @@ import numpy as np
 import torch
 
 import k2_float_reference as kf
-from k2_attention import softmax_scale
+from k2_attention import rope_float_tables, softmax_scale
 
 ROUTED_SCALING = kf.ROUTED_SCALING
 
@@ -39,16 +39,8 @@ def ffn(x, wg, wu, wd):
 
 
 def rope_tables(cfg, positions):
-    """cos and sin (T, d_rope/2) times YaRN's mscale, exactly as
-    k2_attention.composition_a_attention builds them."""
-    from claims import RoPEConfig, _rope_yarn_inv_freq, _rope_yarn_mscale
-    rc = RoPEConfig(SEQ=1, d_h=cfg["d_rope"], s_x=1, base=cfg["base"], scale_factor=cfg["factor"],
-                    original_max_pos=cfg["original_max_pos"], yarn=True,
-                    yarn_beta_fast=cfg["beta_fast"], yarn_beta_slow=cfg["beta_slow"],
-                    yarn_mscale=cfg["mscale"], yarn_mscale_all_dim=cfg["mscale_all_dim"])
-    theta = np.outer(np.asarray(positions), np.array(_rope_yarn_inv_freq(rc)))
-    m = _rope_yarn_mscale(rc)
-    return np.cos(theta) * m, np.sin(theta) * m
+    """cos and sin (T, d_rope/2), exactly as composition_a_attention builds them."""
+    return rope_float_tables(cfg, positions)
 
 
 def attention(x, w, cfg, cos, sin):
@@ -62,7 +54,7 @@ def attention(x, w, cfg, cos, sin):
         c, s = cos[:, None, :], sin[:, None, :]
         return torch.cat([lo * c - hi * s, lo * s + hi * c], dim=-1)
     sigma = softmax_scale(cfg)
-    a_q = rmsnorm(x @ w["W_qa"], w["g_q_a"], cfg["rms_eps"])
+    a_q = rmsnorm(x @ w["W_qa"], w["g_q_a"], cfg["rms_eps"]) if "W_qa" in w else x
     q_nope = (a_q @ (w["W_q_nope"] * sigma)).reshape(T, H, dn)
     q_pe = rope((a_q @ (w["W_q_pe"] * sigma)).reshape(T, H, dr))
     ckv = rmsnorm(x @ w["W_ckv"], w["g_kv_a"], cfg["rms_eps"])
@@ -89,12 +81,12 @@ def select(scores, bias, k):
     return order[:, :k], q
 
 
-def moe(x, W, il, *, k, dev, out, p):
+def moe(x, W, il, *, k, dev, out, p, scale=ROUTED_SCALING):
     scores = sigmoid(x @ _t(W.router(il), dev))
     bias = _t(W.bias(il), dev)
     top, _ = select(scores, bias, k)
     w = torch.gather(scores, 1, top)
-    w = w / w.sum(dim=1, keepdim=True) * ROUTED_SCALING
+    w = w / w.sum(dim=1, keepdim=True) * scale
     y = torch.zeros_like(x)
     for e in torch.unique(top).tolist():
         ts, slots = torch.nonzero(top == e, as_tuple=True)
@@ -139,7 +131,8 @@ def forward(ids, W, cfg, *, layers, offset=0, k=8, head_chunk=16384, device="cpu
             step[f"{p}.ffn"] = f
             x = r1 + f
         else:
-            x = r1 + moe(n2g, W, il, k=k, dev=dev, out=step, p=p)
+            x = r1 + moe(n2g, W, il, k=k, dev=dev, out=step, p=p,
+                         scale=cfg.get("routed_scale", ROUTED_SCALING))
         step[f"{p}.out"] = x
         put(step)
     nfg = rmsnorm(x, _t(W.g_out(), dev), eps)

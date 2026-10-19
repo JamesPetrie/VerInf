@@ -324,8 +324,11 @@ def mla(op: Int, x, w, cfg, *, T, offset, yarn, p, out):
     the post-attention norm. Returns (r1, n2g)."""
     H, dn, dr, dv = cfg["H"], cfg["d_nope"], cfg["d_rope"], cfg["d_v"]
     n1g = op.gain(op.rmsnorm(x, f"{p}.n1"), w["g_attn"], f"{p}.n1g")
-    aqg = op.gain(op.rmsnorm(op.matmul(n1g, w["W_qa"], f"{p}.qa"), f"{p}.aq"),
-                  w["g_q_a"], f"{p}.aqg")
+    if "W_qa" in w:                       # query-LoRA; without it the query reads n1g
+        aqg = op.gain(op.rmsnorm(op.matmul(n1g, w["W_qa"], f"{p}.qa"), f"{p}.aq"),
+                      w["g_q_a"], f"{p}.aqg")
+    else:
+        aqg = n1g
     ckvg = op.gain(op.rmsnorm(op.matmul(n1g, w["W_ckv"], f"{p}.ckv_raw"), f"{p}.ckv"),
                    w["g_kv_a"], f"{p}.ckvg")
     cos, sin = rope_tables(cfg, T=T, offset=offset, yarn=yarn, S=op.S)
@@ -415,12 +418,14 @@ def moe(op: Int, x, W, il, *, T, E, kk, p, out):
     return y, sh
 
 
-def forward(ids, W, cfg, *, layers, offset=0, yarn=True, k=K2_INT, kk=8,
+def forward(ids, W, cfg, *, layers, offset=0, yarn=None, k=K2_INT, kk=8,
             head_chunk=16384, ranges=None):
     """Token ids to logits through `layers` layers. `W` gives the integer
     weights (k2_loader.GgufWeights(ints=True), or a test's toy provider).
     Returns ({name: int array}, Ranges). Pass `ranges` to keep the
-    measurements made before an UndefinedValue."""
+    measurements made before an UndefinedValue. `yarn` defaults to the
+    model's (cfg["yarn"], K2's True)."""
+    yarn = cfg.get("yarn", True) if yarn is None else yarn
     op = Int(k, ranges)
     T = len(ids)
     out = {}

@@ -34,7 +34,7 @@ import k2_float_reference as kf
 import k2_int_reference as ki
 import topk_reference as tref
 from k2_attention import K2_MLA, SIGMA_FOLDED, softmax_scale
-from k2_loader import K2_INT, S_SEL, sigmoid_table, to_ints
+from k2_loader import K2_INT, S_SEL, int_constants, sigmoid_table, to_ints
 
 # exponents: S_act, S_wt, s_norm (2^n); "hypothetical" names the claim that would change
 CONFIGS = {
@@ -129,7 +129,7 @@ class Mixed:
         return self.mul(x, np.asarray(g, dtype=np.int64)[None, :], name, self.A, self.Wt, self.A)
 
     def rope(self, x, cfg, *, T, heads, offset, name):
-        cos, sin = ki.rope_tables(cfg, T=T, offset=offset, S=self.A)
+        cos, sin = ki.rope_tables(cfg, T=T, offset=offset, S=self.A, yarn=cfg.get("yarn", True))
         dr = cfg["d_rope"]
         z = np.asarray(x, dtype=np.int64).reshape(T, heads, dr)
         half = dr // 2
@@ -155,10 +155,11 @@ def quantized(Wf, il, cfg, prec):
     return {k: to_ints(v, S, sigma if k in SIGMA_FOLDED else 1.0) for k, v in Wf.attn(il).items()}
 
 
-def forward(ids, Wf, cfg, prec, *, layers=2, offset=0, kk=8, head_chunk=16384):
+def forward(ids, Wf, cfg, prec, *, layers=2, offset=0, kk=8, head_chunk=16384, k=None):
     """The two-layer integer forward at one configuration, from float weights
-    (`Wf`, k2_loader.GgufWeights(ints=False), cached by the caller)."""
-    op = Mixed(prec)
+    (`Wf`, k2_loader.GgufWeights(ints=False), cached by the caller). `k`
+    defaults to the model's constants (k2_loader.int_constants)."""
+    op = Mixed(prec, int_constants(cfg) if k is None else k)
     A, Wt, Tb = op.A, op.Wt, op.Tb
     q = lambda w: to_ints(w, Wt)
     T = len(ids)
@@ -170,8 +171,11 @@ def forward(ids, Wf, cfg, prec, *, layers=2, offset=0, kk=8, head_chunk=16384):
         p = f"L{il}"
         w = quantized(Wf, il, cfg, prec)
         n1g = op.gain(op.rmsnorm(x, f"{p}.n1"), w["g_attn"], f"{p}.n1g")
-        aqg = op.gain(op.rmsnorm(op.matmul(n1g, w["W_qa"], f"{p}.qa", A, Wt, A), f"{p}.aq"),
-                      w["g_q_a"], f"{p}.aqg")
+        if "W_qa" in w:
+            aqg = op.gain(op.rmsnorm(op.matmul(n1g, w["W_qa"], f"{p}.qa", A, Wt, A), f"{p}.aq"),
+                          w["g_q_a"], f"{p}.aqg")
+        else:
+            aqg = n1g
         ckvg = op.gain(op.rmsnorm(op.matmul(n1g, w["W_ckv"], f"{p}.ckv_raw", A, Wt, A), f"{p}.ckv"),
                        w["g_kv_a"], f"{p}.ckvg")
         q_nope = op.matmul(aqg, w["W_q_nope"], f"{p}.q_nope", A, Wt, A)

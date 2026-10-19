@@ -29,6 +29,7 @@ SUITES=(
   prover/tests/test_gguf_truncate.py
   prover/tests/test_fidelity_passages.py
   prover/tests/test_k2_float_torch.py
+  prover/tests/test_k2_emulation.py
   prover/tests/test_word_extract_compute.py
   prover/tests/test_aes_trace.py
   prover/tests/test_demo_bridge_policy.py

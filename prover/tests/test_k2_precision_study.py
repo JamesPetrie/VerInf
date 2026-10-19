@@ -44,6 +44,21 @@ def test_the_baseline_is_the_validated_reference(gguf, offset):
     cfg, kk = toy.TOY_MLA, toy.TOY["k"]
     ref, _ = ki.forward(IDS, kl.GgufWeights(gguf, cfg=cfg), cfg, layers=2, offset=offset,
                         kk=kk, head_chunk=20)
+    _equal_at_shared_names(ref, gguf, cfg, kk, offset)
+
+
+def test_without_query_lora_or_yarn_the_baseline_is_the_integer_reference(tmp_path):
+    """Moonlight's variant: the integer reference with the model's constants."""
+    cfg, kk = toy.TOY_MOON_MLA, toy.TOY["k"]
+    path = tmp_path / "moon.gguf"
+    toy.write(path, mla=cfg)
+    ref, _ = ki.forward(IDS, kl.GgufWeights(str(path), cfg=cfg), cfg, layers=2, kk=kk,
+                        head_chunk=20, k=kl.int_constants(cfg))
+    assert "L0.aqg" not in ref or np.array_equal(ref["L0.aqg"], ref["L0.n1g"])
+    _equal_at_shared_names(ref, str(path), cfg, kk, 0)
+
+
+def _equal_at_shared_names(ref, gguf, cfg, kk, offset):
     Wf = ps.CachedFloats(kl.GgufWeights(gguf, ints=False, cfg=cfg))
     got, _ = ps.forward(IDS, Wf, cfg, ps.CONFIGS["baseline"], offset=offset, kk=kk, head_chunk=20)
     shared = sorted(set(ref) & set(got))

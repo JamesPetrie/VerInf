@@ -27,7 +27,25 @@ import numpy as np
 # Kimi K2 (config.json at Hugging Face revision fd1984e2)
 K2_MLA = dict(d=7168, H=64, q_rank=1536, kv_rank=512, d_nope=128, d_rope=64, d_v=128,
               rms_eps=1e-6, base=50000.0, factor=32.0, original_max_pos=4096,
-              beta_fast=1.0, beta_slow=1.0, mscale=1.0, mscale_all_dim=1.0)
+              beta_fast=1.0, beta_slow=1.0, mscale=1.0, mscale_all_dim=1.0,
+              yarn=True, routed_scale=2.827)
+
+# Moonlight-16B-A3B (moonshotai/Moonlight-16B-A3B-Instruct config.json at 4e735b07),
+# the fidelity study's integration model: K2's family without query-LoRA or YaRN
+# (analysis/k2-fidelity-study-design.md §8)
+MOONLIGHT_MLA = dict(d=2048, H=16, q_rank=None, kv_rank=512, d_nope=128, d_rope=64, d_v=128,
+                     rms_eps=1e-5, base=50000.0, factor=1.0, original_max_pos=8192,
+                     beta_fast=32.0, beta_slow=1.0, mscale=1.0, mscale_all_dim=0.0,
+                     yarn=False, routed_scale=2.446)
+
+
+def rope_config_kw(cfg) -> dict:
+    """claims.RoPEConfig's YaRN arguments for a model, empty for plain RoPE."""
+    if not cfg.get("yarn", True):
+        return {}
+    return dict(scale_factor=cfg["factor"], original_max_pos=cfg["original_max_pos"], yarn=True,
+                yarn_beta_fast=cfg["beta_fast"], yarn_beta_slow=cfg["beta_slow"],
+                yarn_mscale=cfg["mscale"], yarn_mscale_all_dim=cfg["mscale_all_dim"])
 
 SIGMA_FOLDED = ("W_q_nope", "W_q_pe")
 
@@ -40,7 +58,7 @@ def softmax_scale(cfg) -> float:
     """σ = (d_nope + d_rope)^-1/2 · m², m = yarn_get_mscale(factor,
     mscale_all_dim) when mscale_all_dim is set (:690-696). K2: 0.130861."""
     s = (cfg["d_nope"] + cfg["d_rope"]) ** -0.5
-    if cfg.get("mscale_all_dim"):
+    if cfg.get("yarn", True) and cfg.get("mscale_all_dim"):
         m = _yarn_get_mscale(cfg["factor"], cfg["mscale_all_dim"])
         s = s * m * m
     return s
@@ -64,15 +82,20 @@ def mla_weights_from_gguf(t: dict, cfg) -> dict:
 
       attn_q_a       (q_rank, d)              attn_q_a_norm (q_rank,)
       attn_q_b       (H·(d_nope+d_rope), q_rank)
+        — or, without query-LoRA, attn_q (H·(d_nope+d_rope), d)
       attn_kv_a_mqa  (kv_rank + d_rope, d)    attn_kv_a_norm (kv_rank,)
       attn_k_b       (H, kv_rank, d_nope)     attn_v_b (H, d_v, kv_rank)
         — or the legacy attn_kv_b (H·(d_nope+d_v), kv_rank)
       attn_output    (d, H·d_v)               attn_norm (d,)
 
-    Returns {name: array} with every matrix (in, out)."""
+    Returns {name: array} with every matrix (in, out); W_qa and g_q_a only
+    with query-LoRA."""
     H, dn, dr, dv = cfg["H"], cfg["d_nope"], cfg["d_rope"], cfg["d_v"]
-    qr, kr = cfg["q_rank"], cfg["kv_rank"]
-    qb = t["attn_q_b"].reshape(H, dn + dr, qr)
+    kr = cfg["kv_rank"]
+    q_lora = "attn_q_b" in t
+    qsrc = t["attn_q_b"] if q_lora else t["attn_q"]
+    qr = qsrc.shape[1]
+    qb = qsrc.reshape(H, dn + dr, qr)
     q_pe = deinterleave_rows(qb[:, dn:, :].reshape(H * dr, qr), dr)
     kva = t["attn_kv_a_mqa"]
     assert kva.shape[0] == kr + dr
@@ -85,9 +108,8 @@ def mla_weights_from_gguf(t: dict, cfg) -> dict:
         kvb = t["attn_kv_b"].reshape(H, dn + dv, kr)
         w_k_nope = kvb[:, :dn, :].transpose(2, 0, 1).reshape(kr, H * dn)
         w_v = kvb[:, dn:, :].transpose(2, 0, 1).reshape(kr, H * dv)
-    return {
-        "g_attn": t["attn_norm"], "g_q_a": t["attn_q_a_norm"], "g_kv_a": t["attn_kv_a_norm"],
-        "W_qa": t["attn_q_a"].T,
+    w = {
+        "g_attn": t["attn_norm"], "g_kv_a": t["attn_kv_a_norm"],
         "W_q_nope": qb[:, :dn, :].reshape(H * dn, qr).T,
         "W_q_pe": q_pe.T,
         "W_ckv": kva[:kr].T,
@@ -96,6 +118,9 @@ def mla_weights_from_gguf(t: dict, cfg) -> dict:
         "W_v": w_v,
         "W_o": t["attn_output"].T,
     }
+    if q_lora:
+        w.update(g_q_a=t["attn_q_a_norm"], W_qa=t["attn_q_a"].T)
+    return w
 
 
 def gguf_from_hf(hf: dict, cfg) -> dict:
@@ -181,32 +206,41 @@ def reference_attention(x, hf, cfg, positions=None):
     return out @ hf["o_proj"].T
 
 
+def rope_float_tables(cfg, positions):
+    """cos and sin (T, d_rope/2) in float64, times YaRN's mscale with YaRN, at
+    the prover's frequencies (claims._rope_yarn_inv_freq, or plain RoPE)."""
+    import pathlib
+    import sys
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+    from claims import RoPEConfig, _rope_yarn_inv_freq, _rope_yarn_mscale
+    dr = cfg["d_rope"]
+    pos = np.asarray(positions)
+    if cfg.get("yarn", True):
+        rc = RoPEConfig(SEQ=1, d_h=dr, s_x=1, base=cfg["base"], **rope_config_kw(cfg))
+        inv, m = np.array(_rope_yarn_inv_freq(rc)), _rope_yarn_mscale(rc)
+    else:
+        inv, m = 1.0 / (cfg["base"] ** (np.arange(0, dr, 2) / dr)), 1.0
+    theta = np.outer(pos, inv)
+    return np.cos(theta) * m, np.sin(theta) * m
+
+
 def composition_a_attention(x, w, cfg, positions=None):
     """The same layer as the prover's claims compute it (§4.2), in float64,
     on mla_weights_from_gguf's output: σ folded into the two query weights,
     half-split RoPE at the prover's YaRN frequencies (claims._rope_yarn_inv_freq),
     the per-head assembly with the shared rotary key, scores with no further
-    scale."""
-    import sys
-    import pathlib
-    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-    from claims import RoPEConfig, _rope_yarn_inv_freq, _rope_yarn_mscale
+    scale. Without query-LoRA the query weights read the normed input."""
     T = x.shape[0]
     H, dn, dr, dv = cfg["H"], cfg["d_nope"], cfg["d_rope"], cfg["d_v"]
     pos = np.arange(T) if positions is None else np.asarray(positions)
-    rc = RoPEConfig(SEQ=1, d_h=dr, s_x=1, base=cfg["base"], scale_factor=cfg["factor"],
-                    original_max_pos=cfg["original_max_pos"], yarn=True,
-                    yarn_beta_fast=cfg["beta_fast"], yarn_beta_slow=cfg["beta_slow"],
-                    yarn_mscale=cfg["mscale"], yarn_mscale_all_dim=cfg["mscale_all_dim"])
-    theta = np.outer(pos, np.array(_rope_yarn_inv_freq(rc)))
-    cos, sin = np.cos(theta) * _rope_yarn_mscale(rc), np.sin(theta) * _rope_yarn_mscale(rc)
+    cos, sin = rope_float_tables(cfg, pos)
 
     def rope(z):                                            # (T, h, dr), half-split
         lo, hi = z[..., :dr // 2], z[..., dr // 2:]
         c, s = cos[:, None, :], sin[:, None, :]
         return np.concatenate([lo * c - hi * s, lo * s + hi * c], axis=-1)
     sigma = softmax_scale(cfg)
-    a_q = _rmsnorm(x @ w["W_qa"], w["g_q_a"], cfg["rms_eps"])
+    a_q = _rmsnorm(x @ w["W_qa"], w["g_q_a"], cfg["rms_eps"]) if "W_qa" in w else x
     q_nope = (a_q @ (w["W_q_nope"] * sigma)).reshape(T, H, dn)
     q_pe = rope((a_q @ (w["W_q_pe"] * sigma)).reshape(T, H, dr))
     ckv = _rmsnorm(x @ w["W_ckv"], w["g_kv_a"], cfg["rms_eps"])

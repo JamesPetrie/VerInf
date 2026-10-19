@@ -130,3 +130,22 @@ def test_a_truncation_loads_on_the_full_models_branch(f32_toy, tmp_path):
     full = lr.run(RUNNER, f32_toy, tmp_path / "full", mode="info")["fingerprint"]
     one = lr.run(RUNNER, tmp_path / "one.gguf", tmp_path / "one", mode="info")["fingerprint"]
     assert one["n_layer"] == "1" and lr.branch_differences(full, one) == {}
+
+
+def test_without_query_lora_or_yarn_the_engine_is_the_float64_reference(tmp_path):
+    """Moonlight's variant (direct query, plain RoPE, scale 2.446), all F32."""
+    cfg = toy.TOY_MOON_MLA
+    p = tmp_path / "moon-f32.gguf"
+    toy.write(p, quantize_q8=False, mla=cfg)
+    fp = lr.run(RUNNER, p, tmp_path / "info", mode="info")["fingerprint"]
+    assert fp["n_lora_q"] == "0" and fp["rope scaling"] != "yarn"
+    W = kl.GgufWeights(str(p), ints=False, cfg=cfg)
+    ref = kf.forward(IDS, W, cfg, layers=2, k=toy.TOY["k"])
+    r = lr.run(RUNNER, p, tmp_path / "rep", ids=IDS, mode="replay", n_prompt=1, prompt_chunk=512,
+               cont_chunk=512, capture=fa.captures(fa.MOONLIGHT, 2),
+               settings=dict(EXACT, **fa.MOONLIGHT["engine"]))
+    got = fa.ours(fa.MOONLIGHT, r["captures"], toy.TOY["E"])
+    for il in (0, 1):
+        assert fm.residual_error(ref[f"L{il}.out"], got[f"L{il}.out"]).max() < 1e-5, il
+    assert np.array_equal(got["L1.top"], ref["L1.top"])
+    assert fm.position_metrics(ref["logits"][:-1], r["logits"], IDS[1:])["kl"].max() < 1e-10

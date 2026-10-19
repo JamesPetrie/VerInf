@@ -14,6 +14,9 @@ import k2_attention as ka
 
 TOY_MLA = dict(ka.K2_MLA, d=64, H=2, q_rank=32, kv_rank=32, d_nope=32, d_rope=32, d_v=32)
 TOY = dict(V=48, d_ff_dense=64, E=8, k=3, d_ff_expert=32, d_ff_shared=32)
+# Moonlight's variant of the family (k2_attention.MOONLIGHT_MLA): no query-LoRA,
+# plain RoPE, its routed scale and rms_norm_eps
+TOY_MOON_MLA = dict(TOY_MLA, q_rank=None, yarn=False, routed_scale=2.446, rms_eps=1e-5)
 
 
 def tensors(seed=0, mla=TOY_MLA, toy=TOY):
@@ -28,11 +31,14 @@ def tensors(seed=0, mla=TOY_MLA, toy=TOY):
          "output.weight": n(d ** -0.5, V, d)}
     for il in range(2):
         p = f"blk.{il}."
+        t[p + "attn_norm.weight"] = gain(d)           # first, as before: K2's draws unchanged
+        if qr is None:
+            t[p + "attn_q.weight"] = n(d ** -0.5, H * (dn + dr), d)
+        else:
+            t.update({p + "attn_q_a.weight": n(d ** -0.5, qr, d),
+                      p + "attn_q_a_norm.weight": gain(qr),
+                      p + "attn_q_b.weight": n(qr ** -0.5, H * (dn + dr), qr)})
         t.update({
-            p + "attn_norm.weight": gain(d),
-            p + "attn_q_a.weight": n(d ** -0.5, qr, d),
-            p + "attn_q_a_norm.weight": gain(qr),
-            p + "attn_q_b.weight": n(qr ** -0.5, H * (dn + dr), qr),
             p + "attn_kv_a_mqa.weight": n(d ** -0.5, kr + dr, d),
             p + "attn_kv_a_norm.weight": gain(kr),
             p + "attn_k_b.weight": n(kr ** -0.5, H, kr, dn),
@@ -56,7 +62,7 @@ def tensors(seed=0, mla=TOY_MLA, toy=TOY):
     return t
 
 
-Q8_0_NAMES = ("attn_q_b", "attn_k_b", "attn_v_b", "_exps", "ffn_down.", "output.weight")
+Q8_0_NAMES = ("attn_q_b", "attn_q.", "attn_k_b", "attn_v_b", "_exps", "ffn_down.", "output.weight")
 
 
 def llama_metadata(w, mla=TOY_MLA, toy=TOY, layers=2):
@@ -77,7 +83,7 @@ def llama_metadata(w, mla=TOY_MLA, toy=TOY, layers=2):
     w.add_expert_used_count(toy["k"])
     w.add_leading_dense_block_count(1)
     w.add_vocab_size(toy["V"])
-    w.add_q_lora_rank(mla["q_rank"])
+    w.add_q_lora_rank(mla["q_rank"] or 0)        # 0: no query-LoRA, two layers are not "lite"
     w.add_kv_lora_rank(kr)
     w.add_key_length(kr + dr)
     w.add_value_length(kr)
@@ -86,28 +92,30 @@ def llama_metadata(w, mla=TOY_MLA, toy=TOY, layers=2):
     w.add_expert_feed_forward_length(toy["d_ff_expert"])
     w.add_expert_count(toy["E"])
     w.add_expert_shared_count(1)
-    w.add_expert_weights_scale(2.827)
+    w.add_expert_weights_scale(mla.get("routed_scale", 2.827))
     w.add_expert_weights_norm(True)
     w.add_expert_gating_func(gguf.ExpertGatingFuncType.SIGMOID)
     w.add_rope_dimension_count(dr)
-    w.add_rope_scaling_type(gguf.RopeScalingType.YARN)
-    w.add_rope_scaling_factor(mla["factor"])
-    w.add_rope_scaling_orig_ctx_len(mla["original_max_pos"])
-    w.add_rope_scaling_yarn_log_mul(0.1 * mla["mscale_all_dim"])
+    if mla.get("yarn", True):
+        w.add_rope_scaling_type(gguf.RopeScalingType.YARN)
+        w.add_rope_scaling_factor(mla["factor"])
+        w.add_rope_scaling_orig_ctx_len(mla["original_max_pos"])
+        w.add_rope_scaling_yarn_log_mul(0.1 * mla["mscale_all_dim"])
     w.add_tokenizer_model("none")
 
 
-def write(path, seed=0, drop=(), quantize_q8=True):
+def write(path, seed=0, drop=(), quantize_q8=True, mla=TOY_MLA):
     """Write the toy and return {name: the float32 values gguf-py reads back}.
     Tensors named in `drop` are left out; `quantize_q8=False` writes every
-    tensor F32. The metadata lets llama.cpp load it."""
+    tensor F32; `mla=TOY_MOON_MLA` writes Moonlight's variant. The metadata
+    lets llama.cpp load it."""
     from gguf import GGUFWriter
     from gguf.constants import GGMLQuantizationType as Q
     from gguf.quants import dequantize, quantize
     w = GGUFWriter(str(path), "deepseek2")
-    llama_metadata(w)
+    llama_metadata(w, mla)
     back = {}
-    for name, a in tensors(seed).items():
+    for name, a in tensors(seed, mla).items():
         if name in drop:
             continue
         if quantize_q8 and any(k in name for k in Q8_0_NAMES):
