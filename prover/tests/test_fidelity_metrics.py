@@ -138,9 +138,18 @@ def test_the_arms_must_score_the_same_positions_and_the_bootstrap_is_seeded():
     assert a["rows"] == b["rows"]
 
 
-def test_nll_calibration():
+def test_nll_calibration_reports_the_raw_difference_and_the_excess():
     out = fm.nll_calibration([np.full(10, 1.1)] * 3, [np.full(10, 1.0)] * 3, B=200)
-    assert out["verdict"] == "fail" and abs(out["excess"] - 0.09) < 1e-12
+    assert abs(out["difference"] - 0.1) < 1e-12 and abs(out["excess"] - 0.09) < 1e-12
+    assert out["difference_upper95"] - out["upper95"] == pytest.approx(fm.NLL_MARGIN)
+    assert out["verdict"] == "fail"
+
+
+def test_an_nll_only_failure_is_read_as_the_u_comparison_not_fidelity():
+    out = fm.acceptance(*_arms([0.1] * 4, [0.1] * 4, int_nll=1.02, eng_nll=1.0), B=500)
+    assert out["overall"] == "fail" and out["reading"].startswith("U-comparison requirement fail")
+    both = fm.acceptance(*_arms([0.6] * 4, [0.1] * 4, int_nll=1.02, eng_nll=1.0), B=500)
+    assert both["reading"] is None
 
 
 def test_routing_explainers_separate_support_from_reweighting():

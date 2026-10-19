@@ -25,9 +25,11 @@ def captures(adapter, layers: int) -> tuple:
 
 
 def ours(adapter, caps: dict, n_experts: int) -> dict:
-    """Captured tensors under our names: L{i}.out, L{i}.top (sorted ids) and
-    L{i}.gates (T, E), the normalized gates times the routed scale, zero on
-    unselected experts."""
+    """Captured tensors under our names: L{i}.out, L{i}.top (sorted ids),
+    L{i}.gates (T, E), the normalized gates (summing to 1 over the selected
+    experts, zero elsewhere), which the normalized gate distance compares across
+    models, and L{i}.gates_scaled, the same times the routed scale, each
+    expert's actual weight on its output."""
     out = {}
     for name, a in caps.items():
         kind, il = name.rsplit("-", 1)
@@ -37,9 +39,10 @@ def ours(adapter, caps: dict, n_experts: int) -> dict:
         kind, il = name.rsplit("-", 1)
         if kind == "ffn_moe_topk":
             ids = np.asarray(a).astype(np.int64)
-            w = np.asarray(caps[f"ffn_moe_weights_norm-{il}"], dtype=np.float64) * adapter["routed_scale"]
+            w = np.asarray(caps[f"ffn_moe_weights_norm-{il}"], dtype=np.float64)
             g = np.zeros((ids.shape[0], n_experts))
             np.put_along_axis(g, ids, w, axis=1)
             out[f"L{il}.top"] = np.sort(ids, axis=1)
             out[f"L{il}.gates"] = g
+            out[f"L{il}.gates_scaled"] = g * adapter["routed_scale"]
     return out

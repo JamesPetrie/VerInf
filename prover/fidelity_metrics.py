@@ -76,7 +76,10 @@ def gate_matrix(top, w, E):
 
 
 def gate_distance(g_ref, g_arm):
-    """½ Σ_e |g_ref − g_arm| per token: support changes and reweighting."""
+    """½ Σ_e |g_ref − g_arm| per token: support changes and reweighting. For
+    the normalized distance the gates are normalized (each row sums to 1 over
+    its selected experts), the routed scale divided out, so K2 and Moonlight
+    compare on one footing; scaled weights are reported separately."""
     return 0.5 * np.abs(np.asarray(g_ref) - np.asarray(g_arm)).sum(axis=1)
 
 
@@ -164,6 +167,14 @@ def acceptance(integer, engine, *, B=BOOTSTRAP_B, seed=BOOTSTRAP_SEED, worst=10)
     verdicts = [r["verdict"] for r in rows.values()]
     overall = ("accept" if all(v == "pass" for v in verdicts)
                else "fail" if "fail" in verdicts else "inconclusive")
+    # §6.5: the NLL row asks how well the integer model explains the engine's own
+    # output (the U comparison), not a symmetric fidelity; a failure there alone
+    # is reported as that, with the distribution's fidelity assessed by the KL rows
+    others = [rows[k]["verdict"] for k in ("mean_kl", "p99_kl", "max_kl")]
+    reading = None
+    if rows["mean_nll"]["verdict"] != "pass" and all(v == "pass" for v in others):
+        reading = (f"U-comparison requirement {rows['mean_nll']['verdict']} (NLL row only); "
+                   "distributional fidelity by KL passes")
     where = [(j, t) for j in every for t in range(len(integer[j]["kl"]))]
 
     def worst_of(key_arm):
@@ -174,23 +185,26 @@ def acceptance(integer, engine, *, B=BOOTSTRAP_B, seed=BOOTSTRAP_SEED, worst=10)
     stats = {arm: dict(mean_kl=float(k.mean()), p99_kl=p99(k), max_kl=float(k.max()),
                        mean_nll=float(n.mean()))
              for arm, k, n in (("integer", ik, inl), ("engine", ek, enl))}
-    return dict(overall=overall, rows=rows, stats=stats, passages=N, positions=len(ik),
+    return dict(overall=overall, reading=reading, rows=rows, stats=stats, passages=N, positions=len(ik),
                 worst_integer=worst_of("integer"), worst_engine=worst_of("engine"),
                 bootstrap=dict(B=B, seed=seed, method=PERCENTILE_METHOD))
 
 
 def nll_calibration(reference_nll, engine_nll, *, B=BOOTSTRAP_B, seed=BOOTSTRAP_SEED):
-    """§6.5: p64's own NLL excess over the engine on the engine's continuation,
-    NLL_64 − NLL_engine − NLL_MARGIN, with the same paired bootstrap. Reported
-    beside the criterion, never part of it."""
+    """§6.5: p64's own NLL against the engine's on the engine's continuation:
+    the raw difference NLL_64 − NLL_engine and its excess over NLL_MARGIN, each
+    with the same paired bootstrap. Reported beside the criterion, never part
+    of it."""
     N = len(reference_nll)
     if N != len(engine_nll) or not N:
         raise ValueError("one entry per passage for both")
     cat = lambda rows, idx: np.concatenate([np.asarray(rows[j], dtype=np.float64) for j in idx])
-    ex = lambda idx: float(cat(reference_nll, idx).mean() - cat(engine_nll, idx).mean()
-                           - NLL_MARGIN)
+    diff = lambda idx: float(cat(reference_nll, idx).mean() - cat(engine_nll, idx).mean())
     rng = np.random.default_rng(seed)
-    boot = np.asarray([ex(rng.integers(0, N, N)) for _ in range(B)])
+    boot = np.asarray([diff(rng.integers(0, N, N)) for _ in range(B)])
     lo = float(np.percentile(boot, LOWER_Q, method=PERCENTILE_METHOD))
     hi = float(np.percentile(boot, UPPER_Q, method=PERCENTILE_METHOD))
-    return dict(excess=ex(range(N)), lower95=lo, upper95=hi, verdict=_verdict(lo, hi))
+    d = diff(range(N))
+    return dict(difference=d, difference_lower95=lo, difference_upper95=hi,
+                excess=d - NLL_MARGIN, lower95=lo - NLL_MARGIN, upper95=hi - NLL_MARGIN,
+                verdict=_verdict(lo - NLL_MARGIN, hi - NLL_MARGIN))
