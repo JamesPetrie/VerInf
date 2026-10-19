@@ -149,3 +149,25 @@ def test_without_query_lora_or_yarn_the_engine_is_the_float64_reference(tmp_path
         assert fm.residual_error(ref[f"L{il}.out"], got[f"L{il}.out"]).max() < 1e-5, il
     assert np.array_equal(got["L1.top"], ref["L1.top"])
     assert fm.position_metrics(ref["logits"][:-1], r["logits"], IDS[1:])["kl"].max() < 1e-10
+
+
+def test_the_study_runs_end_to_end_on_the_toy(tmp_path):
+    """fidelity_study's stages on the toy: two layers with every kind of arm,
+    then a generation (the baseline) and the full-depth acceptance record."""
+    import fidelity_study as fs
+    p = tmp_path / "toy.gguf"
+    toy.write(p)
+    spec = dict(cfg=toy.TOY_MLA, adapter=fa.KIMI_K2, k=toy.TOY["k"])
+    rec = fs.two_layer(spec, p, {"a": IDS}, RUNNER, tmp_path / "two", configs=("baseline", "a16"),
+                       arms=("bf16/R-fp32", "fp8/R-bf16"), threads=2)
+    arms = rec["passages"]["a"]
+    assert {"p64", "int/baseline", "int/a16", "emu/bf16/R-fp32", "emu/fp8/R-bf16", "engine"} == set(arms)
+    for name, r in arms.items():
+        if name != "p64":
+            assert np.isfinite(r["mean_kl"]) and "L1.routing" in r["explain"], name
+    gen = fs.generate(spec, p, {"a": IDS[:5], "b": IDS[3:9]}, RUNNER, tmp_path / "gen", threads=2, n_gen=6)
+    full = fs.full_depth(spec, p, gen, tmp_path / "full")
+    assert full["layers"] == 2 and set(full["passages"]) == {"a", "b"}
+    assert full["acceptance"]["overall"] in ("accept", "fail", "inconclusive")
+    assert set(full["acceptance"]["rows"]) == {"mean_kl", "p99_kl", "mean_nll", "max_kl"}
+    assert "difference" in full["nll_calibration"]
