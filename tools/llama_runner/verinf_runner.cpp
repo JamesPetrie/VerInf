@@ -256,7 +256,11 @@ int main(int argc, char ** argv) {
     const bool all_outputs = !cap.names.empty();
 
     auto cp = llama_context_default_params();
-    cp.n_ctx = a.n_ctx > 0 ? a.n_ctx : a.pos_offset + T_max;
+    // the context size is part of the configuration (§3.3): pinned, never derived from the
+    // sequence, so capped generation and an early-EOS replay run with the same one
+    if (a.n_ctx <= 0) die("--n-ctx is required");
+    if (a.pos_offset + T_max > a.n_ctx) die("the sequence does not fit --n-ctx");
+    cp.n_ctx = a.n_ctx;
     cp.n_batch = a.n_batch;
     cp.n_ubatch = a.n_ubatch;
     if (a.threads > 0) { cp.n_threads = a.threads; cp.n_threads_batch = a.threads; }

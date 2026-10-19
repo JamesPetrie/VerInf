@@ -32,7 +32,8 @@ import llama_runner as lr                   # noqa: E402
 RUNNER = os.environ.get("VERINF_LLAMA_RUNNER")
 pytestmark = pytest.mark.skipif(not RUNNER, reason="VERINF_LLAMA_RUNNER not set (no llama.cpp)")
 IDS = [3, 17, 0, 41, 9, 9, 22, 30, 5, 12, 47, 1]
-EXACT = dict(threads=2, kv_type="f32", flash_attn="off")
+CTX = 131072                     # pinned; the long-position checks need it all
+EXACT = dict(threads=2, kv_type="f32", flash_attn="off", n_ctx=CTX)
 
 
 @pytest.fixture(scope="module")
@@ -69,8 +70,10 @@ def test_with_k2s_betas_the_engine_is_the_float64_reference(f32_toy, tmp_path):
     assert np.array_equal(got["L1.top"], ref["L1.top"])
     s = ref["L1.s"]
     w = np.take_along_axis(s, ref["L1.top"], axis=1)
-    g_ref = fm.gate_matrix(ref["L1.top"], w / w.sum(axis=1, keepdims=True) * 2.827, toy.TOY["E"])
-    assert np.abs(fm.gate_distance(g_ref, got["L1.gates"])).max() < 1e-5
+    g_ref = fm.gate_matrix(ref["L1.top"], w / w.sum(axis=1, keepdims=True), toy.TOY["E"])
+    assert np.allclose(got["L1.gates"].sum(axis=1), 1.0)
+    assert fm.gate_distance(g_ref, got["L1.gates"]).max() < 1e-5
+    assert np.allclose(got["L1.gates_scaled"], got["L1.gates"] * fa.KIMI_K2["routed_scale"])
     kl_t = fm.position_metrics(ref["logits"][:-1], r["logits"], IDS[1:])["kl"]
     assert kl_t.max() < 1e-10
     m = r["manifest"]
@@ -86,7 +89,7 @@ def test_llama_cpps_own_betas_are_not_k2s(f32_toy, tmp_path):
 def test_generation_is_reproduced_by_one_token_steps(tmp_path):
     p = tmp_path / "toy.gguf"
     toy.write(p)                                               # the Q8_0 toy
-    settings = dict(threads=2, **fa.KIMI_K2["engine"])
+    settings = dict(threads=2, n_ctx=64, **fa.KIMI_K2["engine"])
     gen = lr.run(RUNNER, p, tmp_path / "gen", ids=IDS[:5], mode="generate", n_prompt=5, n_gen=6,
                  prompt_chunk=512, settings=settings)
     seq = gen["tokens"]
@@ -95,6 +98,31 @@ def test_generation_is_reproduced_by_one_token_steps(tmp_path):
                  prompt_chunk=512, cont_chunk=1, settings=settings)
     assert np.array_equal(gen["logits"], rep["logits"])
     assert np.array_equal(np.argmax(gen["logits"], axis=1), seq[5:])
+
+
+def test_capture_does_not_change_the_computation_on_this_backend(tmp_path):
+    """Capturing asks for outputs at every position; on this backend that
+    leaves tokens and logits bit for bit unchanged. The kit repeats this on the
+    target backend before capture is treated as overhead only (§5.1)."""
+    p = tmp_path / "toy.gguf"
+    toy.write(p)
+    settings = dict(threads=2, n_ctx=64, **fa.KIMI_K2["engine"])
+    kw = dict(ids=IDS[:5], mode="generate", n_prompt=5, n_gen=6, prompt_chunk=512, settings=settings)
+    plain = lr.run(RUNNER, p, tmp_path / "plain", **kw)
+    caught = lr.run(RUNNER, p, tmp_path / "caught", capture=fa.captures(fa.KIMI_K2, 2), **kw)
+    assert plain["tokens"] == caught["tokens"]
+    assert np.array_equal(plain["logits"], caught["logits"])
+    assert caught["captures"]["l_out-1"].shape[0] == len(caught["tokens"]) - 1
+
+
+def test_the_context_size_is_required(tmp_path):
+    p = tmp_path / "toy.gguf"
+    toy.write(p)
+    with pytest.raises(RuntimeError, match="--n-ctx is required"):
+        lr.run(RUNNER, p, tmp_path / "x", ids=IDS, mode="replay", n_prompt=1, settings=dict(threads=2))
+    with pytest.raises(RuntimeError, match="does not fit"):
+        lr.run(RUNNER, p, tmp_path / "y", ids=IDS, mode="replay", n_prompt=1,
+               settings=dict(threads=2, n_ctx=8))
 
 
 def test_a_truncation_loads_on_the_full_models_branch(f32_toy, tmp_path):
