@@ -457,7 +457,11 @@ waits for a later run.
 The stages run through `prover/fidelity_study.py`:
 - `two-layer`: every arm on each passage's prompt;
 - `full-depth`: the engine's generation, then p64 and the integer arm on
-  the frozen sequences, then §6's acceptance and §6.5's calibration.
+  the frozen sequences, then §6's acceptance and §6.5's calibration. Each
+  passage's p64 rows and each configuration's per-position metrics are
+  saved as they finish, keyed by the model, layers, GGUF shards, prover
+  sources, sequence and configuration, so a stopped run resumes after its
+  last whole part.
 
 Engine settings beyond the adapter's are pinned by the caller. It runs end
 to end on the toy (`prover/tests/test_llama_engine.py`).

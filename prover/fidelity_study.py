@@ -12,9 +12,14 @@ study's baseline configuration, equal to the integer reference).
 
 Prompts: K2 uses the frozen token ids; another model renders the frozen
 passages' user text with its own template (verinf_render). Records are JSON
-in --work; nothing here decides anything the note has not frozen."""
+in --work; nothing here decides anything the note has not frozen. Full
+depth checkpoints each passage's p64 rows and each configuration's
+per-position metrics in --work/full-depth-parts, so a stopped run started
+again resumes at its last whole part."""
 import argparse
+import hashlib
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -36,6 +41,7 @@ MODELS = {"kimi-k2": dict(cfg=K2_MLA, adapter=fa.KIMI_K2, k=8),
           "moonlight": dict(cfg=MOONLIGHT_MLA, adapter=fa.MOONLIGHT, k=6)}
 N_CTX = 1024                                   # pinned (§3.3)
 CONTINUATION = 500
+PARTS = "full-depth-parts"
 
 
 def log(*a):
@@ -198,13 +204,51 @@ def generate(spec, gguf, ids_by_passage, runner, work, *, threads=8, n_gen=CONTI
     return out
 
 
+def _sources_sha256() -> str:
+    """The prover tree's sources: a part is reused only by the code that wrote it."""
+    h = hashlib.sha256()
+    for f in sorted(pathlib.Path(__file__).resolve().parent.glob("*.py")):
+        h.update(f.name.encode() + b"\0" + f.read_bytes())
+    return h.hexdigest()
+
+
+def _gguf_identity(gguf):
+    """Each shard's name, size and modification time (hashing K2's would take an hour)."""
+    return [[p.name, p.stat().st_size, p.stat().st_mtime_ns] for p in map(pathlib.Path, gt.shard_paths(gguf))]
+
+
+def _part(path, key, compute):
+    """`compute()`'s arrays, saved at `path` under `key`; or loaded, when an
+    earlier run left them there under the same key. A part under another key
+    is computed again and replaced. Returns (arrays, loaded)."""
+    path = pathlib.Path(path)
+    key = json.loads(json.dumps(key))
+    if path.exists():
+        with np.load(path, allow_pickle=False) as z:
+            if json.loads(str(z["key"])) == key:
+                return {n: z[n] for n in z.files if n != "key"}, True
+        log(path, "was written under another key: computing it again")
+    out = compute()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp.npz")
+    np.savez(tmp, key=np.array(json.dumps(key)), **out)
+    os.replace(tmp, path)                               # whole, or not there
+    return out, False
+
+
 def full_depth(spec, gguf, generated, work, *, layers=None, integer=None, configs=("baseline",)):
     """p64 and the integer model on each frozen sequence; per-position KL and
     NLL over the continuation for the integer arm and the engine baseline;
     §6's acceptance and the §6.5 calibration. `integer(ids)` returns the
     integer arm's real-valued logits; by default the CPU integer model runs at
     each of `configs`, all against one p64 and one baseline. The first is the
-    record's acceptance; every one has its own under "configs"."""
+    record's acceptance; every one has its own under "configs".
+
+    Each passage's p64 rows (the continuation's) and each configuration's
+    per-position metrics are parts in `work`/full-depth-parts, keyed by the
+    model, the layers, the GGUF's shards, the prover's sources, the sequence
+    and the configuration; a run finds the parts an earlier one finished and
+    resumes after them. An `integer` callable's metrics are never saved."""
     cfg, k = spec["cfg"], spec["k"]
     W = GgufWeights(str(gguf), ints=False, cfg=cfg)
     md = gt.metadata(gguf)
@@ -215,31 +259,51 @@ def full_depth(spec, gguf, generated, work, *, layers=None, integer=None, config
                 io, _ = ps.forward(ids, W, cfg, ps.CONFIGS[name], layers=n_layers, kk=k)
                 return np.asarray(io["logits"], dtype=np.float64) / (1 << ps.CONFIGS[name]["S_act"])
             return run
-        arms = {name: make(name) for name in configs}
+        arms = {name: (make(name), ps.CONFIGS[name]) for name in configs}
     else:
-        arms = {"integer": integer}
+        arms = {"integer": (integer, None)}
+    parts = pathlib.Path(work) / PARTS
+    base = dict(model=spec["adapter"]["name"], layers=n_layers, k=k, gguf=_gguf_identity(gguf),
+                sources=_sources_sha256())
     per = {name: [] for name in arms}
     per_eng, per_p64 = [], []
     rec = dict(model=spec["adapter"]["name"], layers=n_layers, passages={})
     for pid, g in generated.items():
         ids, P = g["tokens"], g["n_prompt"]
-        t0 = time.time()
-        ref = kf.forward(ids, W, cfg, layers=n_layers, k=k)["logits"]
-        secs = dict(p64=time.time() - t0, generate=g.get("seconds"))
         rows = slice(P - 1, len(ids) - 1)                  # positions scoring the continuation
         tgt = ids[P:]
-        pe = fm.position_metrics(ref[rows], g["logits"], tgt)
-        per_eng.append(pe)
-        per_p64.append(fm.nll_bits(ref[rows], tgt))
-        prow = dict(scored=len(tgt), engine=summary(pe), p64_mean_nll=float(per_p64[-1].mean()),
-                    seconds=secs, integer={})
-        for name, fn in arms.items():
+        key = dict(base, sequence=lr.ids_sha256(ids), n_prompt=P)
+
+        def p64():
             t0 = time.time()
-            pi = fm.position_metrics(ref[rows], fn(ids)[rows], tgt)
-            secs[name] = time.time() - t0
+            ref = kf.forward(ids, W, cfg, layers=n_layers, k=k)["logits"]
+            return dict(ref=np.asarray(ref[rows], dtype=np.float64), seconds=np.float64(time.time() - t0))
+        part, loaded = _part(parts / pid / "p64.npz", key, p64)
+        ref = part["ref"]
+        resumed = ["p64"] if loaded else []
+        secs = dict(p64=float(part["seconds"]), generate=g.get("seconds"))
+        pe = fm.position_metrics(ref, g["logits"], tgt)
+        per_eng.append(pe)
+        per_p64.append(fm.nll_bits(ref, tgt))
+        prow = dict(scored=len(tgt), engine=summary(pe), p64_mean_nll=float(per_p64[-1].mean()),
+                    seconds=secs, integer={}, resumed=resumed)
+        for name, (fn, settings) in arms.items():
+            def score():
+                t0 = time.time()
+                pi = fm.position_metrics(ref, fn(ids)[rows], tgt)
+                return dict(kl=pi["kl"], nll=pi["nll"], seconds=np.float64(time.time() - t0))
+            if settings is None:
+                part, loaded = score(), False
+            else:
+                part, loaded = _part(parts / pid / f"{name}.npz", dict(key, config=name, settings=settings),
+                                     score)
+            pi = dict(kl=part["kl"], nll=part["nll"])
+            secs[name] = float(part["seconds"])
+            if loaded:
+                resumed.append(name)
             per[name].append(pi)
             prow["integer"][name] = summary(pi)
-            log(pid, name, prow["integer"][name])
+            log(pid, name, *(["(resumed)"] if loaded else []), prow["integer"][name])
         log(pid, "engine", prow["engine"])
         rec["passages"][pid] = prow
     rec["configs"] = {name: fm.acceptance(per[name], per_eng) for name in arms}
@@ -312,7 +376,8 @@ def main(argv=None):
     ap.add_argument("--configs", default="baseline",
                     help="full depth: integer configurations, comma-separated (the first is the record's)")
     ap.add_argument("--reuse", action="store_true",
-                    help="full depth: the sequences and baseline logits already in --work, not generated again")
+                    help="full depth: the sequences and baseline logits already in --work, not generated "
+                    "again (finished parts in --work are always reused)")
     ap.add_argument("--engine", default="{}", help="JSON: further engine settings (n_gpu_layers, kv_type, "
                     "flash_attn, n_batch, n_ubatch, override_tensor), pinned by the kit")
     a = ap.parse_args(argv)
