@@ -10,6 +10,16 @@ study's baseline configuration, equal to the integer reference).
     python prover/fidelity_study.py full-depth --model moonlight --gguf M.gguf \\
         --passages FROZEN.json --runner R --render RENDER --work DIR
 
+Two layers keep each integer configuration's ranges whole (every row's
+signed extremes, bounds, claim and implementation; the violations per
+implementation). --configs, --arms "" and --no-engine run the integer
+configurations alone; --only runs some passages, and two-layer-merge
+joins such records:
+
+    python prover/fidelity_study.py two-layer ... --configs a16w16 --arms "" \\
+        --no-engine --only p1-research-review --out p1.json
+    python prover/fidelity_study.py two-layer-merge --work DIR --out all.json p1.json ...
+
 Prompts: K2 uses the frozen token ids; another model renders the frozen
 passages' user text with its own template (verinf_render). Records are JSON
 in --work; nothing here decides anything the note has not frozen. Full
@@ -126,20 +136,47 @@ def summary(pm):
 
 # ---- two layers ---------------------------------------------------------------------
 
-def two_layer(spec, gguf, ids_by_passage, runner, work, *, configs=tuple(ps.CONFIGS),
-              arms=tuple(em.ARMS), threads=8, engine=None):
-    """Every arm at two layers on each passage's prompt, every position
-    scored. `spec` is a MODELS entry (cfg, adapter, k)."""
-    cfg, k, adapter = spec["cfg"], spec["k"], spec["adapter"]
-    work = pathlib.Path(work)
-    work.mkdir(parents=True, exist_ok=True)
-    trunc = work / "two-layer.gguf"
+def violations_by_implementation(ranges) -> dict:
+    """Each implementation's rows outside their constraint, whole: the
+    quantity (keyed "name [implementation]" where the row is one
+    implementation's own; its `implementation` None where it holds for
+    both), its signed extremes, the inclusive bounds and the claim."""
+    rows = ranges.as_dict()
+    return {i: {key: rows[key] for key in sorted(ranges.violations(i))} for i in ps.IMPLEMENTATIONS}
+
+
+def two_layer_feasibility(passages) -> dict:
+    """Each integer configuration's ranges over every passage (the extremes
+    of all; k2_precision_study.feasibility), its violations whole per
+    implementation, and every row."""
+    out = {}
+    names = dict.fromkeys(key[4:] for p in passages.values() for key in p if key.startswith("int/"))
+    for name in names:
+        rg = ki.Ranges.from_dicts(*(p[f"int/{name}"]["ranges"] for p in passages.values()
+                                    if f"int/{name}" in p))
+        out[name] = dict(ps.feasibility(rg), violations=violations_by_implementation(rg), ranges=rg.as_dict())
+    return out
+
+
+def log_feasibility(feasibility):
+    for name, f in feasibility.items():
+        for impl, rows in f["violations"].items():
+            log(f"int/{name} {impl}:", "every range inside its constraint" if not rows else
+                f"{len(rows)} outside their constraint")
+            for key, r in rows.items():
+                log(f"    {key}: [{r['min']}, {r['max']}] against {r['inequality']} ({r['claim']})")
+
+
+def truncated(gguf, runner, work):
+    """The two-layer GGUF the engine runs (§5.2), in `work`, checked to load
+    on the full model's branch."""
+    trunc = pathlib.Path(work) / "two-layer.gguf"
     if not trunc.exists():
         rec = gt.truncate(gguf, trunc, 2)
         log("truncated:", rec["added_keys"] or "no keys added")
-    two_fp = lr.run(runner, trunc, work / "info-two", mode="info")["fingerprint"]
+    two_fp = lr.run(runner, trunc, pathlib.Path(work) / "info-two", mode="info")["fingerprint"]
     try:
-        full_fp = lr.run(runner, gguf, work / "info-full", mode="info")["fingerprint"]
+        full_fp = lr.run(runner, gguf, pathlib.Path(work) / "info-full", mode="info")["fingerprint"]
         branch = lr.branch_differences(full_fp, two_fp)
     except RuntimeError:                  # one shard of a split model: its metadata decides
         want = gt.deepseek2_expected_fingerprint(gt.metadata(gguf))
@@ -147,6 +184,21 @@ def two_layer(spec, gguf, ids_by_passage, runner, work, *, configs=tuple(ps.CONF
         log("the full model does not load here; the branch checked against its metadata")
     if branch:
         raise RuntimeError(f"the truncation leaves the full model's branch: {branch}")
+    return trunc
+
+
+def two_layer(spec, gguf, ids_by_passage, runner, work, *, configs=tuple(ps.CONFIGS),
+              arms=tuple(em.ARMS), threads=8, engine=None, with_engine=True):
+    """Every arm at two layers on each passage's prompt, every position
+    scored. `spec` is a MODELS entry (cfg, adapter, k). Each integer
+    configuration's ranges are kept whole, per passage and over all of them
+    (two_layer_feasibility). with_engine=False runs no llama.cpp: with no
+    `arms`, the integer configurations alone."""
+    cfg, k, adapter = spec["cfg"], spec["k"], spec["adapter"]
+    work = pathlib.Path(work)
+    work.mkdir(parents=True, exist_ok=True)
+    if with_engine:
+        trunc = truncated(gguf, runner, work)
     Wf = ps.CachedFloats(GgufWeights(str(gguf), ints=False, cfg=cfg))
     out = dict(model=adapter["name"], layers=2, passages={})
     for pid, ids in ids_by_passage.items():
@@ -156,6 +208,7 @@ def two_layer(spec, gguf, ids_by_passage, runner, work, *, configs=tuple(ps.CONF
         ref = kf.forward(ids, Wf, cfg, layers=2, k=k)
         p = {"p64": dict(n=T)}
         for name in configs:
+            t0 = time.time()
             io, ranges = ps.forward(ids, Wf, cfg, ps.CONFIGS[name], layers=2, kk=k)
             A = 1 << ps.CONFIGS[name]["S_act"]
             lg = np.asarray(io["logits"], dtype=np.float64) / A
@@ -164,14 +217,21 @@ def two_layer(spec, gguf, ids_by_passage, runner, work, *, configs=tuple(ps.CONF
             top = {f"L{il}.top": _gates_int(io, il, None)[0] for il in range(2) if f"L{il}.mask" in io}
             p[f"int/{name}"] = dict(**summary(fm.position_metrics(ref["logits"][:-1], lg[:-1], tgt)),
                                     explain=explain(ref, {**io_f, **top}, Wf, 2, k),
-                                    violations=len(ranges.violations()))
+                                    violations=violations_by_implementation(ranges), ranges=ranges.as_dict(),
+                                    seconds=time.time() - t0)
         for arm in arms:
+            t0 = time.time()
             P = em.Policy(*em.ARMS[arm])
             eo = em.forward(ids, Wf, cfg, P, layers=2, k=k)
             gates = {il: _gates_p64(eo, il, Wf, k, Wf.n_experts(il))[1]
                      for il in range(2) if f"L{il}.s" in eo}
             p[f"emu/{arm}"] = dict(**summary(fm.position_metrics(ref["logits"][:-1], eo["logits"][:-1], tgt)),
-                                   explain=explain(ref, eo, Wf, 2, k, gates=gates))
+                                   explain=explain(ref, eo, Wf, 2, k, gates=gates), seconds=time.time() - t0)
+        if not with_engine:
+            out["passages"][pid] = p
+            log(pid, *(f"{key} mean KL {round(v['mean_kl'], 6)}" for key, v in p.items() if key != "p64"))
+            continue
+        t0 = time.time()
         r = lr.run(runner, trunc, work / "engine" / pid, ids=ids, mode="replay", n_prompt=1,
                    prompt_chunk=512, cont_chunk=512, capture=fa.captures(adapter, 2),
                    settings=dict(n_ctx=N_CTX, threads=threads, **(engine or {}), **adapter["engine"]))
@@ -180,10 +240,76 @@ def two_layer(spec, gguf, ids_by_passage, runner, work, *, configs=tuple(ps.CONF
                            explain=explain(ref, eng, Wf, 2, k,
                                            gates={il: eng[f"L{il}.gates"] for il in range(2)
                                                   if f"L{il}.gates" in eng}),
-                           manifest=r["manifest"]["settings"])
+                           manifest=r["manifest"]["settings"], seconds=time.time() - t0)
         out["passages"][pid] = p
-        log(pid, "engine mean KL", round(p["engine"]["mean_kl"], 6), "int baseline",
-            round(p["int/baseline"]["mean_kl"], 6))
+        log(pid, "engine mean KL", round(p["engine"]["mean_kl"], 6),
+            *(f"int {name} {round(p[f'int/{name}']['mean_kl'], 6)}" for name in configs))
+    out["feasibility"] = two_layer_feasibility(out["passages"])
+    log_feasibility(out["feasibility"])
+    return out
+
+
+def merge_two_layer(records) -> dict:
+    """Two-layer records of disjoint passages (one process each) as one: the
+    passages in the order given, the feasibility over all of them."""
+    out = dict(model=records[0]["model"], layers=records[0]["layers"], passages={})
+    for r in records:
+        if (r["model"], r["layers"]) != (out["model"], out["layers"]):
+            raise ValueError(f"{r['model']} at {r['layers']} layers is not {out['model']} at {out['layers']}")
+        if out["passages"].keys() & r["passages"].keys():
+            raise ValueError(f"passages in two records: {sorted(out['passages'].keys() & r['passages'].keys())}")
+        out["passages"].update(r["passages"])
+    out["feasibility"] = two_layer_feasibility(out["passages"])
+    return out
+
+
+# ---- the engine's kernel paths at two layers ---------------------------------------
+
+# name: (n_gpu_layers, continuation chunk, environment). The batch is how the
+# two-layer stage replays (positions 1.. as one 512-token chunk); the steps
+# are how generation decodes, one token at a time.
+ENGINE_PATHS = {"gpu-batch": (99, 512, {}), "gpu-steps": (99, 1, {}),
+                "gpu-batch-no-tf32": (99, 512, {"NVIDIA_TF32_OVERRIDE": "0"}),
+                "cpu-batch": (0, 512, {}), "cpu-steps": (0, 1, {})}
+
+
+def engine_paths(spec, gguf, ids_by_passage, runner, work, *, paths=tuple(ENGINE_PATHS), threads=8,
+                 engine=None, backend="numpy", device=None):
+    """The two-layer engine arm along each kernel path of ENGINE_PATHS, each
+    scored against p64 on the same passages; p64 once per passage, from
+    `reference(backend, device)`. The settings are two_layer's engine arm's,
+    `engine` included, with n_gpu_layers and the chunk set by the path."""
+    cfg, k, adapter = spec["cfg"], spec["k"], spec["adapter"]
+    work = pathlib.Path(work)
+    work.mkdir(parents=True, exist_ok=True)
+    trunc = truncated(gguf, runner, work)
+    ident, p64_forward = reference(backend, device)
+    W = GgufWeights(str(gguf), ints=False, cfg=cfg)
+    out = dict(model=adapter["name"], layers=2, reference=ident, paths={n: ENGINE_PATHS[n] for n in paths},
+               passages={})
+    for pid, ids in ids_by_passage.items():
+        t0 = time.time()
+        ref = np.asarray(p64_forward(ids, W, cfg, 2, k))
+        p = dict(p64=dict(n=len(ids), seconds=time.time() - t0))
+        for name in paths:
+            ngl, chunk, env = ENGINE_PATHS[name]
+            t0 = time.time()
+            settings = dict(n_ctx=N_CTX, threads=threads, **(engine or {}), **adapter["engine"])
+            settings["n_gpu_layers"] = ngl
+            r = lr.run(runner, trunc, work / "engine" / name / pid, ids=ids, mode="replay", n_prompt=1,
+                       prompt_chunk=512, cont_chunk=chunk, settings=settings, env=env)
+            p[name] = dict(**summary(fm.position_metrics(ref[:-1], r["logits"], ids[1:])),
+                           settings=r["manifest"]["settings"], environment=r["manifest"]["environment"],
+                           logits_sha256=hashlib.sha256(np.ascontiguousarray(r["logits"]).tobytes()).hexdigest(),
+                           seconds=time.time() - t0)
+        out["passages"][pid] = p
+        log(pid, *(f"{n} {p[n]['mean_kl']:.3e}" for n in paths))
+    out["pooled"] = {}
+    for name in paths:
+        rows = [out["passages"][pid][name] for pid in out["passages"]]
+        n = [out["passages"][pid]["p64"]["n"] - 1 for pid in out["passages"]]
+        out["pooled"][name] = dict(mean_kl=float(np.average([r["mean_kl"] for r in rows], weights=n)),
+                                   max_kl=max(r["max_kl"] for r in rows))
     return out
 
 
@@ -442,19 +568,29 @@ def p64_check(spec, gguf, ids, *, device="cuda", layers=2):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("stage", choices=("two-layer", "full-depth", "p64-check"))
-    ap.add_argument("--model", choices=tuple(MODELS), required=True)
-    ap.add_argument("--gguf", required=True)
-    ap.add_argument("--passages", required=True)
-    ap.add_argument("--runner", required=True)
-    ap.add_argument("--render", required=True)
+    ap.add_argument("stage", choices=("two-layer", "two-layer-merge", "engine-paths", "full-depth", "p64-check"))
+    ap.add_argument("records", nargs="*", help="two-layer-merge: the records to merge, in passage order")
+    ap.add_argument("--model", choices=tuple(MODELS))
+    ap.add_argument("--gguf")
+    ap.add_argument("--passages")
+    ap.add_argument("--runner")
+    ap.add_argument("--render")
     ap.add_argument("--work", required=True)
+    ap.add_argument("--configs", default=",".join(ps.CONFIGS),
+                    help="two layers: the integer configurations, comma-separated")
+    ap.add_argument("--arms", default=",".join(em.ARMS),
+                    help="two layers: the emulations, comma-separated (empty: none)")
+    ap.add_argument("--no-engine", action="store_true", help="two layers: no llama.cpp arm")
+    ap.add_argument("--only", default="", help="two layers: these passages, comma-separated")
+    ap.add_argument("--paths", default=",".join(ENGINE_PATHS),
+                    help="engine-paths: the kernel paths, comma-separated (ENGINE_PATHS)")
+    ap.add_argument("--out", default="two-layer.json", help="two layers: the record's name in --work")
     ap.add_argument("--threads", type=int, default=8)
     ap.add_argument("--layers", type=int, default=None, help="full depth: fewer layers, for tests")
     ap.add_argument("--device", default=None,
                     help="the torch reference's device (p64-check: default cuda; full depth: default cpu)")
     ap.add_argument("--backend", choices=("numpy", "torch"), default="numpy",
-                    help="full depth: the p64 reference (numpy runs on the cpu)")
+                    help="full depth and engine-paths: the p64 reference (numpy runs on the cpu)")
     ap.add_argument("--primary", help="full depth: the configuration whose verdict is the record's, "
                     "named before the run (required)")
     ap.add_argument("--exploratory", default="",
@@ -469,7 +605,19 @@ def main(argv=None):
         ap.error("full-depth needs --primary: the configuration named before the run")
     work = pathlib.Path(a.work)
     work.mkdir(parents=True, exist_ok=True)
+    if a.stage == "two-layer-merge":
+        rec = merge_two_layer([json.loads(pathlib.Path(r).read_text()) for r in a.records])
+        log_feasibility(rec["feasibility"])
+        dst = work / a.out
+        dst.write_text(json.dumps(rec, indent=1, default=str))
+        log("record:", dst)
+        return 0
+    missing = [o for o in ("model", "gguf", "passages", "runner", "render") if getattr(a, o) is None]
+    if missing:
+        ap.error(f"{a.stage} needs " + ", ".join(f"--{o}" for o in missing))
     ids = prompts(a.model, a.passages, a.render, a.gguf, work)
+    if a.only:
+        ids = {pid: ids[pid] for pid in a.only.split(",")}
     if a.stage == "p64-check":
         first = next(iter(ids))
         rec = p64_check(MODELS[a.model], a.gguf, ids[first], device=a.device or "cuda", layers=a.layers or 2)
@@ -480,10 +628,15 @@ def main(argv=None):
             f"{rec['routing_tokens_differing']}, numpy {rec['seconds']['numpy']:.0f} s, "
             f"torch {rec['seconds']['torch']:.0f} s, peak {rec['peak_device_bytes']}")
         return 0 if rec["max_relative"] < 1e-9 and rec["routing_tokens_differing"] == 0 else 1
-    if a.stage == "two-layer":
+    if a.stage == "engine-paths":
+        rec = engine_paths(MODELS[a.model], a.gguf, ids, a.runner, work, paths=tuple(a.paths.split(",")),
+                           threads=a.threads, engine=json.loads(a.engine), backend=a.backend, device=a.device)
+        dst = work / "engine-paths.json"
+    elif a.stage == "two-layer":
         rec = two_layer(MODELS[a.model], a.gguf, ids, a.runner, work, threads=a.threads,
-                        engine=json.loads(a.engine))
-        dst = work / "two-layer.json"
+                        engine=json.loads(a.engine), configs=tuple(c for c in a.configs.split(",") if c),
+                        arms=tuple(c for c in a.arms.split(",") if c), with_engine=not a.no_engine)
+        dst = work / a.out
     else:
         if a.reuse:
             gen = load_generated(work)

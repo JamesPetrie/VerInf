@@ -3,6 +3,7 @@ baseline (no llama.cpp): a run started again resumes after the last part an
 earlier one finished, reproducing its record; a new configuration reuses the
 p64 rows; a changed sequence is computed again. The stages with the engine
 are test_llama_engine.py's."""
+import json
 import pathlib
 import sys
 
@@ -161,3 +162,49 @@ def test_the_reference_backend_is_recorded_and_keys_every_part(gguf, tmp_path, c
         assert abs(a - b) <= 1e-10 + 1e-9 * abs(a), (name, a, b)       # float64 both, summed apart
     with pytest.raises(ValueError, match="runs on the cpu"):
         fs.full_depth(SPEC, gguf, gen, tmp_path, primary="baseline", device="cuda")
+
+
+def test_two_layers_keep_every_range_row_with_its_implementation(gguf, tmp_path):
+    """The integer configurations alone (no llama.cpp): each passage's rows
+    whole (signed extremes, bounds, claim, implementation), the violations
+    per implementation, and the feasibility over every passage; per-passage
+    runs merged give the one run's."""
+    gen = _generated()
+    ids = {pid: g["tokens"] for pid, g in gen.items()}
+    kw = dict(configs=("baseline", "a14w14"), arms=(), with_engine=False)
+    rec = fs.two_layer(SPEC, gguf, ids, None, tmp_path / "all", **kw)
+    for pid in ids:
+        row = rec["passages"][pid]["int/a14w14"]
+        assert set(row["violations"]) == set(fs.ps.IMPLEMENTATIONS) and row["ranges"]
+        for r in row["ranges"].values():
+            assert {"min", "max", "lo", "hi", "ok", "inequality", "claim", "implementation"} <= set(r)
+        own = {r["implementation"] for r in row["ranges"].values()}
+        assert own == {None, *fs.ps.IMPLEMENTATIONS}            # common rows and each one's own
+    f = rec["feasibility"]["a14w14"]
+    assert f["ranges"] == fs.ki.Ranges.from_dicts(*(rec["passages"][p]["int/a14w14"]["ranges"]
+                                                    for p in ids)).as_dict()
+    assert set(f["implementations"]) == set(f["violations"]) == set(fs.ps.IMPLEMENTATIONS)
+    parts = [fs.two_layer(SPEC, gguf, {pid: i}, None, tmp_path / pid, **kw) for pid, i in ids.items()]
+    merged = fs.merge_two_layer(parts)
+    assert merged["feasibility"] == rec["feasibility"] and list(merged["passages"]) == list(ids)
+    with pytest.raises(ValueError, match="passages in two records"):
+        fs.merge_two_layer([parts[0], parts[0]])
+    files = []
+    for part in parts:
+        files.append(tmp_path / f"{next(iter(part['passages']))}.json")
+        files[-1].write_text(json.dumps(part, default=str))
+    assert fs.main(["two-layer-merge", "--work", str(tmp_path), "--out", "m.json", *map(str, files)]) == 0
+    assert json.loads((tmp_path / "m.json").read_text())["feasibility"] == json.loads(
+        json.dumps(rec["feasibility"], default=str))
+
+
+def test_a_violation_is_reported_under_its_own_implementation():
+    rg = fs.ki.Ranges()
+    rg.bound("L0.sm.x", [-5, 40], -16, 15, "softmax input", implementation="input-rescale")
+    rg.bound("L0.sm.x", [-5, 9], -16, 15, "softmax input", implementation="combined-rounding")
+    rg.bound("L0.n1.out", [0, 3], 0, 7, "rmsnorm output")
+    v = fs.violations_by_implementation(rg)
+    assert v["combined-rounding"] == {}
+    assert list(v["input-rescale"]) == ["L0.sm.x [input-rescale]"]
+    r = v["input-rescale"]["L0.sm.x [input-rescale]"]
+    assert (r["min"], r["max"], r["lo"], r["hi"], r["implementation"]) == (-5, 40, -16, 15, "input-rescale")

@@ -8,11 +8,16 @@ No model knowledge here: which tensors to capture, which YaRN betas the
 model's definition needs and how names map to ours are the adapters'."""
 import hashlib
 import json
+import os
 import pathlib
 import re
 import subprocess
 
 import numpy as np
+
+# environment variables that can change the engine's arithmetic (TF32 in
+# cuBLAS, ggml's CUDA switches): recorded with every run, as the settings are
+PRECISION_ENV = ("GGML_", "NVIDIA_TF32_", "CUBLAS_", "CUDA_VISIBLE_DEVICES")
 
 
 def ids_sha256(ids) -> str:
@@ -29,10 +34,12 @@ def file_sha256(path, chunk=1 << 24) -> str:
 
 def run(binary, model, out, *, ids=None, mode="replay", n_prompt=None, n_gen=0,
         prompt_chunk=512, cont_chunk=1, pos_offset=0, capture=(), settings=None,
-        hash_model=False, timeout=None):
+        hash_model=False, timeout=None, env=None):
     """Run the runner; returns load(out). `settings` maps runner flags without
     their dashes (n_batch, n_ubatch, threads, n_gpu_layers, kv_type,
-    flash_attn, yarn_beta_fast, yarn_beta_slow) to values."""
+    flash_attn, yarn_beta_fast, yarn_beta_slow) to values; `env` adds
+    environment variables. The manifest records the PRECISION_ENV variables
+    the runner ran under."""
     out = pathlib.Path(out)
     out.mkdir(parents=True, exist_ok=True)
     cmd = [str(binary), "--model", str(model), "--out", str(out), "--mode", mode]
@@ -48,13 +55,15 @@ def run(binary, model, out, *, ids=None, mode="replay", n_prompt=None, n_gen=0,
             cmd += ["--capture", ",".join(capture)]
     for k, v in (settings or {}).items():
         cmd += [f"--{k.replace('_', '-')}", str(v)]
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    environ = dict(os.environ, **{k: str(v) for k, v in (env or {}).items()})
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=environ)
     (out / "runner.stderr").write_text(proc.stderr)
     if proc.returncode != 0:
         raise RuntimeError(f"verinf_runner exited {proc.returncode}: {proc.stderr[-2000:]}")
     res = load(out)
     m = res["manifest"]
     m["command"] = cmd
+    m["environment"] = {k: v for k, v in sorted(environ.items()) if k.startswith(PRECISION_ENV)}
     if mode != "info":
         m["input_ids_sha256"] = ids_sha256(ids)
         m["sequence_ids_sha256"] = ids_sha256(res["tokens"])

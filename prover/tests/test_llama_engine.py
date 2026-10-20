@@ -187,3 +187,23 @@ def test_the_expected_fingerprint_is_what_llama_cpp_prints(f32_toy, tmp_path):
             {k: v for k, v in exp.items() if k != "rope scaling"}, name
         if "rope scaling" in exp:
             assert fp["rope scaling"] == exp["rope scaling"]
+
+
+def test_the_engine_paths_are_scored_on_the_same_passages(tmp_path):
+    """fidelity_study.engine_paths: the two-layer engine arm as one batch and
+    in one-token steps, each against p64, the environment it ran under
+    recorded (cuBLAS's TF32 off for its path)."""
+    import fidelity_study as fs
+    p = tmp_path / "toy.gguf"
+    toy.write(p)
+    spec = dict(cfg=toy.TOY_MLA, adapter=fa.KIMI_K2, k=toy.TOY["k"])
+    paths = ("gpu-batch", "gpu-steps", "gpu-batch-no-tf32")
+    rec = fs.engine_paths(spec, p, {"a": IDS, "b": IDS[2:]}, RUNNER, tmp_path / "paths", paths=paths,
+                          threads=2, engine=dict(n_gpu_layers=GPU_LAYERS))
+    for pid in ("a", "b"):
+        row = rec["passages"][pid]
+        for name in paths:
+            assert np.isfinite(row[name]["mean_kl"]) and row[name]["settings"]["cont_chunk"] in (1, 512)
+        assert row["gpu-batch-no-tf32"]["environment"]["NVIDIA_TF32_OVERRIDE"] == "0"
+        assert "NVIDIA_TF32_OVERRIDE" not in row["gpu-batch"]["environment"]
+    assert set(rec["pooled"]) == set(paths)
