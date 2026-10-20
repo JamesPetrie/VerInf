@@ -254,7 +254,9 @@ def _ints(t):
     return [int(v) % (1 << 64) for v in t.view(torch.int64)]
 
 
-def test_the_rescale_witness_tamper_keeps_every_linear_identity_and_only_its_target(gguf):
+@pytest.mark.parametrize("precision,residual_bits", [("a14w14", 2), ("a16w16", 4)])
+def test_the_rescale_witness_tamper_keeps_every_linear_identity_and_only_its_target(gguf, precision,
+                                                                                    residual_bits):
     """The first standalone rescale's first output one higher, its shifted word
     one higher, its low word 2^r lower (mod P): x_full = 2^r·x + low and
     shifted = x + 2^(w−1) still hold, low leaves [0, 2^r). Every other
@@ -265,7 +267,7 @@ def test_the_rescale_witness_tamper_keeps_every_linear_identity_and_only_its_tar
     from rescale_claim import RescaleClaim
     with ct.cuda_on_cpu():
         b = dk.build(gguf, [3, 17, 0], [41, 9, 9], cfg=toy.TOY_MLA, layers=2, kk=toy.TOY["k"],
-                     precision="a14w14")
+                     precision=precision)
         pair = [c for c in b.tape.claims if isinstance(c, RescaleClaim)][:2]
         target, other = pair
         honest = dict.__getitem__(compute_fns.COMPUTE_FNS, RescaleClaim)
@@ -276,7 +278,8 @@ def test_the_rescale_witness_tamper_keeps_every_linear_identity_and_only_its_tar
             got = [compute_fns.COMPUTE_FNS[RescaleClaim](c, lv) for c, lv in zip(pair, live)]
         assert dict.__getitem__(compute_fns.COMPUTE_FNS, RescaleClaim) is honest
     r = target.rescale_bits
-    assert r == 2 and counts["rescale-witness"] == 1 and counts["rescale-witness-target"]["rescale_bits"] == 2
+    assert r == residual_bits and counts["rescale-witness"] == 1
+    assert counts["rescale-witness-target"]["rescale_bits"] == residual_bits      # the residual stream's
     x, low, sh = (_ints(got[0][v]) for v in (target.x, target.x_low, target.x_shifted))
     hx, hlow, hsh = (_ints(want[0][v]) for v in (target.x, target.x_low, target.x_shifted))
     assert x[0] == (hx[0] + 1) % P and sh[0] == (hsh[0] + 1) % P and low[0] == (hlow[0] - (1 << r)) % P

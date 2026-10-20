@@ -19,7 +19,11 @@ In the order the gate validates:
    k2_precision_study's a14w14 model at every name, its consumer inputs at
    the table scales included; the proof is accepted; the residual stream's
    2-bit rescale, tampered as above, is rejected; and the record carries the
-   profile with the proof's and the enrollment's identities.
+   profile with the proof's and the enrollment's identities;
+5. the same at a16w16, its own implementation gate (a14w14's results do not
+   qualify it): exact at both positions, the proof with its 2^28-entry
+   combine table and 2^24-entry tail tables accepted, the residual stream's
+   4-bit rescale tampered and rejected, the interleave rejected.
 Float fidelity and routing differences are CPU checks
 (tests/test_k2_int_reference.py, and demo_k2.py --mode fidelity on the real
 GGUF). Plain test functions, for tests/run_tests.py."""
@@ -128,4 +132,30 @@ def test_a14w14_proof_accepts_and_a_tampered_residual_rescale_rejects():
     assert ids["tail"] == dict(s_c=1 << 32, s_y=1 << 28, s_b=1 << 12, gap_max=1 << 22)
     assert rec["U_bits"] > 0
     assert ids["enrollment_identity"]
+    assert rec["ok"]
+
+
+def test_engine_pass_equals_the_a16w16_model_at_both_positions():
+    for offset in (0, LONG):
+        rec = _exact(offset, "a16w16")
+        names = {r["name"] for r in rec["exact"]}
+        assert {"L0.scores", "L0.n1g", "L0.ckvg", "L1.router", "L1.g", "L1.h", "L1.y_raw"} <= names
+        p = rec["precision"]
+        assert (p["S_act"], p["S_wt"], p["s_norm"], p["S_tab"]) == (16, 16, 12, 12)
+
+
+def test_a16w16_proof_accepts_and_a_tampered_residual_rescale_rejects():
+    rec = dk.research_prove(_gguf(), PROMPT, CONT, cfg=toy.TOY_MLA, layers=2, kk=KK, offset=LONG,
+                            bridge=True, negatives=("rescale-witness", "interleave"), ligero=CFG,
+                            wc_params=PARAMS, precision="a16w16")
+    assert rec["verify"]["accept"], rec["verify"].get("tail")
+    row = rec["negatives"]["rescale-witness"]
+    assert row["applied"] > 0 and row["rejected_by_rust"] and row["passed"], row
+    assert row["target"]["rescale_bits"] == 4, row["target"]          # the residual stream's coarse copy
+    assert rec["negatives"]["interleave"]["passed"]
+    ids = rec["identities"]
+    assert ids["precision"]["S_act"] == 16 and ids["precision"]["S_wt"] == 16
+    assert ids["weight_root"] and ids["statement_digest"] and ids["enrollment_identity"]
+    assert ids["tail"] == dict(s_c=1 << 36, s_y=1 << 28, s_b=1 << 12, gap_max=1 << 24)
+    assert rec["U_bits"] > 0
     assert rec["ok"]

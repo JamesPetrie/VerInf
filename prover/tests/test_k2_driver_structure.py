@@ -11,6 +11,10 @@
   norm); RMSNorm runs at s_norm with its output at S_act; the tail takes
   the logits at 2^14 with its kernel unchanged; and every name the driver
   traces is one the precision study's model computes.
+- a16w16 is the same design at its own scales, not a copy of a14w14's
+  tape: the consumers' rescales are 20 bits, the residual reaches RMSNorm
+  through a 4-bit rescale, the combine's low word is 2^28 entries and the
+  tail's tables 2^24.
 
 Each build runs in a fresh process (claim and table names carry
 process-wide counters), all of them at once."""
@@ -35,7 +39,7 @@ BASELINE = {
     "long": "53b4255e6c5e9efcdf3575d4bd6c40427136d42bde6959d2c8645b59ce8bf21c",
 }
 BUILDS = {"plain": {}, "bridge": dict(bridge=True), "long": dict(offset=130_072),
-          "a14w14": dict(precision="a14w14")}
+          "a14w14": dict(precision="a14w14"), "a16w16": dict(precision="a16w16")}
 PROMPT, CONT = [3, 17, 0], [41, 9, 9]
 
 _SCRIPT = """
@@ -135,4 +139,46 @@ def test_a14w14s_trace_is_the_precision_studys(built, gguf):
     out, ranges = ps.forward(PROMPT + CONT, kl.GgufWeights(str(gguf), ints=False, cfg=toy.TOY_MLA),
                              toy.TOY_MLA, ps.CONFIGS["a14w14"], kk=toy.TOY["k"], head_chunk=20)
     assert set(built["a14w14"]["trace"]) <= set(out)
+    assert not ranges.violations("combined-rounding")
+
+
+def test_a16w16_is_combined_rounding_at_its_own_scales(built):
+    a = built["a16w16"]
+    A, N, Tb = 1 << 16, 1 << 12, 1 << 12
+    assert [(s, s_out) for _, s, s_out in a["rmsnorms"]] == [(N, A)]
+    assert all(s_in in (0, s) for s_in, s, _ in a["rmsnorms"])
+    assert set(a["silu_in"]) <= {0, Tb} and a["softmax"] == [[Tb, 0]]
+    # 20 = log2(A·A/Tb) = log2(A·Wt/Tb) = log2(A·Wt/N)
+    assert a["fed"]["softmax"] == [["matmul", 20]]
+    assert a["fed"]["silu"] == [["matmul", 20], ["rescale", 20]]
+    assert a["fed"]["rmsnorm"] == [["matmul", 20], ["rescale", 4]]       # the residual: 2^16 to 2^12
+    assert a["rescales"].count(4) == 2 * 2 + 1 and 2 not in a["rescales"]
+    assert a["matmul_bits"] == [12, 16, 20]
+    assert 28 in a["rescales"]                               # the combine, from S_w·A·Wt
+    assert a["claims"] == built["a14w14"]["claims"]          # the same sites as a14w14
+
+
+def test_a16w16s_tables(built):
+    import k2_loader as kl
+    a, a14 = built["a16w16"], built["a14w14"]
+    tail = kl.tail_params(1 << 16)
+    assert tail == dict(s_c=1 << 36, s_y=1 << 28, s_b=1 << 12, gap_max=1 << 24)
+    k = tail["s_c"] // tail["s_b"]
+    assert ((tail["gap_max"] - 1) ** 2 + k - 1) // k == (1 << 24) - 1            # at its maximum, below 2^24
+    assert a["info"]["tail"] == tail
+    assert a["tables"]["ui_exp"] == a["tables"]["mx1_gap"] == tail["gap_max"]
+    assert a["tables"]["ui1_rem"] == k == 1 << 24
+    assert a["tables"]["ui_pow"] == a14["tables"]["ui_pow"]                     # s_b
+    assert a["tables"]["rescale_w28"] == 1 << 28 and "rescale_w26" not in a["tables"]
+    for w in (4, 16, 20, 28):
+        assert f"rescale_w{w}" in a["tables"], w
+    assert a["tables"]["k2_sigmoid"] == a14["tables"]["k2_sigmoid"]
+
+
+def test_a16w16s_trace_is_the_precision_studys(built, gguf):
+    import k2_loader as kl
+    import k2_precision_study as ps
+    out, ranges = ps.forward(PROMPT + CONT, kl.GgufWeights(str(gguf), ints=False, cfg=toy.TOY_MLA),
+                             toy.TOY_MLA, ps.CONFIGS["a16w16"], kk=toy.TOY["k"], head_chunk=20)
+    assert set(built["a16w16"]["trace"]) <= set(out)
     assert not ranges.violations("combined-rounding")
