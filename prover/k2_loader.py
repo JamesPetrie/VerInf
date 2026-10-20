@@ -37,11 +37,12 @@ S_SEL = 1 << 16                       # router scores and selection bias
 # The integer model's public constants, one source for the driver and the
 # integer reference. Z_max is Maverick's (~9.77 real units: T_A is 0 beyond
 # ~8.3 at s_y = 2^12); eps is K2's rms_norm_eps; C is routed_scaling_factor
-# at the gate scale S_w; the sigmoid table spans ±64 real logit units.
+# at the gate scale S_w; the sigmoid table spans ±64 real logit units; the
+# softmax's aux table (c2 + 2^23) and saturating window (z_high < 2^16).
 K2_INT = dict(S=S_ACT, S_sel=S_SEL, output_width=26, eps=1e-6,
               eps_int=round(1e-6 * S_ACT * S_ACT), z_max=40000, sig_bits=19,
               S_w=1 << 12, C=round(2.827 * (1 << 12)), select_word_bits=13,
-              bracket_word_bits=8)
+              bracket_word_bits=8, sm_aux_width=24, sm_z_high_width=16)
 
 
 def int_constants(cfg) -> dict:

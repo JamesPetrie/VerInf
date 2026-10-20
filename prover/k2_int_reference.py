@@ -32,10 +32,15 @@ logits; the unexplained-information tail is the prover's.
 
 Products are exact: float64 BLAS when every partial sum is below 2^53,
 int64 below 2^62, limbs and Python integers beyond. Along the way `Ranges`
-records each quantity whose window the prover fixes (§6.2's measurements);
-a quantity outside its window is reported, not asserted, so one run
+records each quantity's signed extremes against the constraint the claim
+computing or consuming it places on it (§6.2's measurements): a rescale's
+signed output window, a field representative where the claim needs only
+that (the residual adds, the products before a rescale), the RMSNorm
+bracket's derived windows, the softmax's and the sigmoid table's. A
+quantity outside its constraint is reported, not asserted, so one run
 measures all of them."""
 import math
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -115,23 +120,116 @@ def log2_ratio(s_in: int, s_out: int) -> int:
     return r
 
 
+FIELD = "a field representative, |v| ≤ (P − 1)/2, so the claim's arithmetic is the integers'"
+
+
+def _extremes(v):
+    """(min, max) of an array (int64 or object) or of a (min, max) pair; None when empty."""
+    if isinstance(v, tuple):
+        return int(v[0]), int(v[1])
+    a = np.asarray(v)
+    if a.size == 0:
+        return None
+    if a.dtype == object:
+        vals = [int(x) for x in a.ravel()]
+        return min(vals), max(vals)
+    return int(a.min()), int(a.max())
+
+
+def _show(n: int) -> str:
+    """n as a power of two where it is one: ±2^k, 2^k − 1, (P − 1)/2."""
+    m, s = abs(n), "−" if n < 0 else ""
+    if m == P_HALF:
+        return f"{s}(P − 1)/2"
+    if m >= 1 << 16 and m & (m - 1) == 0:
+        return f"{s}2^{m.bit_length() - 1}"
+    if m >= 1 << 16 and (m + 1) & m == 0:
+        return f"{s}(2^{m.bit_length()} − 1)" if s else f"2^{m.bit_length()} − 1"
+    return str(n)
+
+
+def signed_width(mn: int, mx: int) -> int:
+    """The least w with −2^(w−1) ≤ mn and mx ≤ 2^(w−1) − 1."""
+    return max(max(mx, 0).bit_length(), max(-mn - 1, 0).bit_length()) + 1
+
+
+@dataclass(frozen=True)
+class Row:
+    min: int
+    max: int
+    lo: int
+    hi: int
+    claim: str
+    implementation: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.lo <= self.min and self.max <= self.hi
+
+
 class Ranges:
-    """name -> (observed, limit, note): observed must stay below limit."""
+    """Each recorded quantity's signed extremes and the constraint, lo ≤ v ≤ hi
+    (inclusive), that the claim computing or consuming it places on it. A
+    constraint holds for every implementation of the arithmetic, or for one
+    (`implementation`, k2_precision_study.IMPLEMENTATIONS), keyed then as
+    "name [implementation]". Several calls under one key keep the extremes
+    of all."""
 
     def __init__(self):
         self.rows = {}
 
-    def note(self, name, observed, limit, what=""):
-        prev = self.rows.get(name)
-        if prev is None or observed > prev[0]:
-            self.rows[name] = (int(observed), int(limit), what)
+    def bound(self, name, values, lo, hi, claim, implementation=None):
+        """`values`: an array (any shape) or a (min, max) pair."""
+        ext = _extremes(values)
+        if ext is None:
+            return
+        key = name if implementation is None else f"{name} [{implementation}]"
+        r = self.rows.get(key)
+        if r is not None:
+            if (r.lo, r.hi, r.claim, r.implementation) != (lo, hi, claim, implementation):
+                raise ValueError(f"{key}: recorded under two constraints")
+            ext = (min(r.min, ext[0]), max(r.max, ext[1]))
+        self.rows[key] = Row(ext[0], ext[1], int(lo), int(hi), claim, implementation)
 
-    def violations(self):
-        return {n: r for n, r in self.rows.items() if not r[0] < r[1]}
+    def violations(self, implementation=None):
+        """The rows outside their constraint: all of them, or, given an
+        implementation, those that hold for it (its own and the common ones)."""
+        return {k: r for k, r in self.rows.items()
+                if not r.ok and (implementation is None or r.implementation in (None, implementation))}
 
     def as_dict(self):
-        return {n: dict(observed=o, limit=l, bits=o.bit_length(), limit_bits=l.bit_length(),
-                        ok=o < l, what=w) for n, (o, l, w) in self.rows.items()}
+        return {k: dict(min=r.min, max=r.max, lo=r.lo, hi=r.hi, ok=r.ok,
+                        inequality=f"{_show(r.lo)} ≤ v ≤ {_show(r.hi)}", claim=r.claim,
+                        implementation=r.implementation) for k, r in self.rows.items()}
+
+    @classmethod
+    def from_dicts(cls, *dicts):
+        """The union of as_dict() records (one per passage, say): the extremes of all."""
+        out = cls()
+        for d in dicts:
+            for k, r in d.items():
+                impl = r["implementation"]
+                name = k if impl is None else k[:-len(f" [{impl}]")]
+                out.bound(name, (r["min"], r["max"]), r["lo"], r["hi"], r["claim"], impl)
+        return out
+
+
+def rms_ranges(ranges, name, st, ys, *, d, s, eps_int):
+    """One RMSNorm's bracket windows, derived by RmsNormConfig from (d, s, ε_int):
+    the row energy's limbs, y's window and the limb products' carries."""
+    from claims import RMS_LIMB_W, RMS_S_CAP_BITS, RmsNormConfig
+    y_max = RmsNormConfig(B=1, d=d, s=s, eps_int=eps_int).y_max
+    y_width = max(1, (y_max - 1).bit_length())      # RmsNormConfig.y_width, which asserts the carries
+    ranges.bound(f"{name}.S_tot", (min(st), max(st)), 0, (1 << RMS_S_CAP_BITS) - 1,
+                 f"row energy Σx² + d·ε_int in {RMS_S_CAP_BITS // RMS_LIMB_W} limbs of "
+                 f"{RMS_LIMB_W} bits: S_tot < 2^{RMS_S_CAP_BITS}")
+    ranges.bound(f"{name}.y", (min(ys), max(ys)), 1, 1 << y_width,
+                 f"y − 1 in [0, 2^{y_width}) (d = {d}, s = {s}, ε_int = {eps_int}; "
+                 f"the ε floor gives y ≤ y_max = {y_max})")
+    carries = 2 * y_width + RMS_LIMB_W
+    ranges.bound(f"{name}.carries", (carries, carries), 0, 63,
+                 f"2·y_width + LIMB_W = 2·{y_width} + {RMS_LIMB_W} ≤ 63: the bracket's "
+                 f"limb products wrap-free")
 
 
 class Int:
@@ -143,11 +241,22 @@ class Int:
         self.width = k["output_width"]
         self.ranges = ranges if ranges is not None else Ranges()
 
-    def rescale(self, full, r, name):
-        self.ranges.note(f"{name}.full", _maxabs(full), P_HALF + 1, "field representative")
+    @property
+    def window(self):
+        """A rescale's signed output: out + 2^(width−1) in [0, 2^width)."""
+        return -(1 << (self.width - 1)), (1 << (self.width - 1)) - 1
+
+    def field(self, name, v, what):
+        self.ranges.bound(name, v, -P_HALF, P_HALF, f"{what}: {FIELD}")
+
+    def rescale(self, full, r, name, implementation=None):
+        """`implementation`: the output exists only in that one (a value at
+        S_act that another implementation rescales straight to a coarser scale)."""
+        self.field(f"{name}.full", full, "the product before its rescale")
         out = floor_shift(full, r)
-        self.ranges.note(f"{name}.out", _maxabs(out), 1 << (self.width - 1),
-                         f"{self.width}-bit output")
+        self.ranges.bound(f"{name}.out", out, *self.window,
+                          f"the rescale's signed output: out + 2^{self.width - 1} in [0, 2^{self.width})",
+                          implementation)
         return out if np.asarray(out).dtype == object else np.asarray(out, dtype=np.int64)
 
     def matmul(self, a, w, name):
@@ -175,12 +284,7 @@ class Int:
             while y > 1 and (y - 1) * (y - 1) * s_tot >= magic:
                 y -= 1
             ys.append(y)
-        from claims import RMS_S_CAP_BITS, RmsNormConfig
-        self.ranges.note(f"{name}.S_tot", max(st), 1 << RMS_S_CAP_BITS,
-                         f"row energy against the 2^{RMS_S_CAP_BITS} limb cap (d = {d})")
-        y_max = RmsNormConfig(B=1, d=d, s=S, eps_int=eps_int).y_max
-        self.ranges.note(f"{name}.y", max(ys), y_max + 1,
-                         f"inverse RMS against y_max = {y_max}, the ε floor (d = {d})")
+        rms_ranges(self.ranges, name, st, ys, d=d, s=S, eps_int=eps_int)
         return self.rescale(mul(x, np.asarray(ys, dtype=np.int64)[:, None]),
                             log2_ratio(S * S, S), name)
 
@@ -201,7 +305,7 @@ class Int:
         xs = np.asarray(x, dtype=np.int64).reshape(T * H, T)
         out = np.zeros_like(xs)
         q_pos = np.arange(T * H) // H
-        spread, past, c2_abs = 0, 0, 0
+        spread, past, c2s = [], [], []
         for r0 in range(0, T * H, rows_per_chunk):
             r1 = min(T * H, r0 + rows_per_chunk)
             xc = xs[r0:r1]
@@ -227,20 +331,24 @@ class Int:
             z = c2[:, None] - xc
             ok = live & (z >= 0) & (z < Z)
             out[r0:r1] = np.where(ok, TA[np.where(ok, z, 0)], 0)
-            spread = max(spread, int((c2 - mn).max()))
-            c2_abs = max(c2_abs, int(np.abs(c2).max()))
-            past = max(past, int((live & (z >= Z)).sum(axis=1).max()))
-        self.ranges.note(f"{name}.spread", spread, Z << 16,
-                         "c2 − min x against Z_max·2^Z_high_width (the saturating window)")
-        self.ranges.note(f"{name}.c2", c2_abs, 1 << 23,
-                         "|c2| against the signed 24-bit aux chunk (aux_chunk_width 24)")
-        self.ranges.note(f"{name}.keys_past_table", past, T + 1,
-                         "most keys in a row beyond Z_max (weight 0); informational")
+            spread.append(c2 - mn)
+            c2s.append(c2)
+            past.append((live & (z >= Z)).sum(axis=1))
+        zh, aux = self.k["sm_z_high_width"], self.k["sm_aux_width"]
+        self.ranges.bound(f"{name}.spread", np.concatenate(spread), 0, (Z << zh) - 1,
+                          f"c2 − min x = z_low + Z_max·z_high with z_high < 2^{zh}: the saturating window")
+        self.ranges.bound(f"{name}.c2", np.concatenate(c2s), -(1 << (aux - 1)), (1 << (aux - 1)) - 1,
+                          f"c2 + 2^{aux - 1} in the {aux}-bit aux table")
+        self.ranges.bound(f"{name}.keys_past_table", np.concatenate(past), 0, P_HALF,
+                          "keys in a row beyond Z_max (weight 0): informational, no claim constraint")
         return out.reshape(T, H * T)
 
-    def silu(self, x):
+    def silu(self, x, name):
         cfg = self.silu_cfg
         x = np.asarray(x, dtype=np.int64)
+        m = (cfg.b_4 << cfg.width_4) - 1
+        self.ranges.bound(f"{name}.silu_x", x, -m, m,
+                          f"SiLU's five-word magnitude: |x| < b_4·2^width_4 = 2^{m.bit_length()}")
         mag = np.abs(x)
         key = (x < 0).astype(np.int64) * cfg.T_LEN + (mag // cfg.b) % cfg.T_LEN
         return np.where(mag >= cfg.b_2, np.maximum(x, 0), self.silu_TY[key])
@@ -248,8 +356,8 @@ class Int:
     def lookup_sigmoid(self, r, name):
         TY, shift = self.sigmoid
         idx = np.asarray(r, dtype=np.int64) + shift
-        self.ranges.note(f"{name}.logit", _maxabs(r), shift,
-                         "router logit against the sigmoid table's half-domain")
+        self.ranges.bound(f"{name}.logit", r, -shift, len(TY) - 1 - shift,
+                          f"the sigmoid table's index r + {shift} in [0, {len(TY)})")
         if idx.min() < 0 or idx.max() >= len(TY):
             raise UndefinedValue(f"{name}: router logit {_maxabs(r)} outside the sigmoid "
                                  f"table's half-domain {shift}")
@@ -351,6 +459,7 @@ def mla(op: Int, x, w, cfg, *, T, offset, yarn, p, out):
              v.reshape(T, H, dv).transpose(1, 0, 2))                       # (H, T, dv)
     att = op.rescale(raw.transpose(1, 0, 2).reshape(T, H * dv), r, f"{p}.att")
     r1 = np.asarray(x, dtype=np.int64) + op.matmul(att, w["W_o"], f"{p}.proj")
+    op.field(f"{p}.r1", r1, "the residual add (AddClaim)")
     n2g = op.gain(op.rmsnorm(r1, f"{p}.n2"), w["g_ffn"], f"{p}.n2g")
     out.update({f"{p}.n1g": n1g, f"{p}.aqg": aqg, f"{p}.ckvg": ckvg, f"{p}.q_pe": q_pe,
                 f"{p}.k_pe": k_pe, f"{p}.query": query, f"{p}.key": key, f"{p}.v": v,
@@ -362,7 +471,7 @@ def mla(op: Int, x, w, cfg, *, T, offset, yarn, p, out):
 def ffn(op: Int, x, wg, wu, wd, name):
     g = op.matmul(x, wg, f"{name}.g")
     u = op.matmul(x, wu, f"{name}.u")
-    return op.matmul(op.hadamard(op.silu(g), u, f"{name}.h"), wd, f"{name}.out")
+    return op.matmul(op.hadamard(op.silu(g, name), u, f"{name}.h"), wd, f"{name}.out")
 
 
 def topk_width(s_sel: int, bias, E: int) -> int:
@@ -391,10 +500,9 @@ def moe(op: Int, x, W, il, *, T, E, kk, p, out):
         xe = x[[t for t, _ in rows]]
         g = op.matmul(xe, W.expert(il, "gate", e), f"{p}.g")
         u = op.matmul(xe, W.expert(il, "up", e), f"{p}.u")
-        h = op.hadamard(op.silu(g), u, f"{p}.h")
+        h = op.hadamard(op.silu(g, p), u, f"{p}.h")
         D = mm(h, W.expert(il, "down", e))
-        op.ranges.note(f"{p}.D", _maxabs(D), P_HALF + 1,
-                       "routed down output, field representative")
+        op.field(f"{p}.D", D, "the routed down product")
         if g_all is None:
             g_all = np.zeros((kk * T, g.shape[1]), dtype=np.int64)
             h_all = np.zeros_like(g_all)
@@ -410,8 +518,9 @@ def moe(op: Int, x, W, il, *, T, E, kk, p, out):
     shw = W.shared(il)
     sh = ffn(op, x, shw["W_gate"], shw["W_up"], shw["W_down"], f"{p}.sh")
     width = topk_width(k["S_sel"], b, E)
-    op.ranges.note(f"{p}.topk_width", width, 64,
-                   f"q̃ difference width from the bias span {int(b.max()) - int(b.min())} at S_sel")
+    op.ranges.bound(f"{p}.topk_width", (width, width), 0, 63,
+                    f"q̃ difference width from the bias span {int(b.max()) - int(b.min())} at S_sel: "
+                    f"below 2^63, route_topk's word")
     out.update({f"{p}.router": r, f"{p}.s": s, f"{p}.mask": np.asarray(routing["m"]),
                 f"{p}.gw": gw, f"{p}.g": g_all, f"{p}.h": h_all, f"{p}.D": D_all,
                 f"{p}.y_raw": y_raw, f"{p}.y": y, f"{p}.sh": sh})
@@ -430,6 +539,7 @@ def forward(ids, W, cfg, *, layers, offset=0, yarn=None, k=K2_INT, kk=8,
     T = len(ids)
     out = {}
     x = np.asarray(W.embed_rows(ids), dtype=np.int64)
+    op.field("x0", x, "the embedding rows")
     out["x0"] = x
     for il in range(layers):
         p = f"L{il}"
@@ -441,7 +551,9 @@ def forward(ids, W, cfg, *, layers, offset=0, yarn=None, k=K2_INT, kk=8,
             x = r1 + f
         else:
             y, sh = moe(op, n2g, W, il, T=T, E=W.n_experts(il), kk=kk, p=p, out=out)
+            op.field(f"{p}.r1_y", r1 + y, "the residual add (AddClaim)")
             x = (r1 + y) + sh
+        op.field(f"{p}.x_out", x, "the residual add (AddClaim)")
         out[f"{p}.out"] = x
     nfg = op.gain(op.rmsnorm(x, "final.n"), W.g_out(), "final.ng")
     out["final.ng"] = nfg

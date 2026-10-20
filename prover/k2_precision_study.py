@@ -18,6 +18,18 @@ the RMSNorm bracket's inverse window needs 24 bits against the 22 its limb
 carries allow (RmsNormConfig.y_width), so the bracket would need revising.
 Raising ε is not studied: it changes the modeled normalization.
 
+A configuration whose activations are finer than a consumer's scale has two
+implementations (IMPLEMENTATIONS), equal in every value (⌊⌊v/2^a⌋/2^b⌋ =
+⌊v/2^(a+b)⌋) and different in what the claims bound:
+  - input-rescale: RMSNorm, softmax and SiLU take the value at S_act through
+    their s_in paths, each bounding the coarsened x by its own window;
+  - combined-rounding: a producer whose only consumer is coarser rescales
+    straight to the consumer's scale (the attention scores for softmax, the
+    gate projections for SiLU, as the router logits already do), its output
+    in the rescale's signed window; RMSNorm's input, the residual, also
+    feeds the residual add, so a standalone rescale makes its coarse copy.
+Ranges records each implementation's constraints under its name.
+
 The baseline configuration reproduces k2_int_reference.forward exactly
 (tests/test_k2_precision_study.py), so every difference measured here is the
 scale change's. k2_int_reference stays the validated model; this module only
@@ -47,6 +59,15 @@ CONFIGS = {
                       hypothetical="RMSNorm bracket at an internal 2^14 (inverse window 24 bits)"),
 }
 TABLE = 12          # SiLU and softmax internal scale, router-logit scale (2^12)
+IMPLEMENTATIONS = ("input-rescale", "combined-rounding")
+# the s_in paths' windows on the coarsened x (claims.py): x + 2^15 in a table
+RMS_S_IN = (-(1 << 15), (1 << 15) - 1, "RMSNorm's s_in: x + 2^15 in the 16-bit slack table")
+SILU_S_IN = (-(1 << 15), (1 << 15) - 1, "SiLU's s_in: x + 2^(width_2 − 1) in the 2^width_2 table, width_2 = 16")
+
+
+def softmax_s_in(k):
+    aux = k["sm_aux_width"]
+    return (-(1 << 15), (1 << aux) - (1 << 15) - 1, f"softmax's s_in: x + 2^15 in the {aux}-bit aux table")
 
 
 def mm(a, b):
@@ -73,8 +94,9 @@ def mm(a, b):
 
 
 class Mixed:
-    """The integer ops at mixed scales; ranges recorded as in k2_int_reference
-    (rescaled outputs against 2^31, to read the width each would need)."""
+    """The integer ops at mixed scales, ranges recorded as in k2_int_reference
+    against the driver's windows (its signed output_width-bit rescales), with
+    each implementation's own constraints where they differ."""
 
     def __init__(self, prec, k=K2_INT):
         self.k = k
@@ -83,27 +105,35 @@ class Mixed:
         self.ranges = ki.Ranges()
         # the tables of the 2^12 model (SiLU, softmax exp, sigmoid)
         self.base = ki.Int(k, self.ranges)
+        # a value at S_act whose one consumer is coarser exists only under input-rescale
+        self.only_input_rescale = IMPLEMENTATIONS[0] if self.A > self.Tb else None
 
-    def rescale(self, full, r, name):
-        self.ranges.note(f"{name}.full", ki._maxabs(full), ki.P_HALF + 1, "field representative")
-        out = ki.floor_shift(full, r)
-        self.ranges.note(f"{name}.out", ki._maxabs(out), 1 << 31, "rescaled output (width probe)")
-        return np.asarray(out, dtype=np.int64)
+    def rescale(self, full, r, name, implementation=None):
+        return np.asarray(self.base.rescale(full, r, name, implementation), dtype=np.int64)
 
-    def matmul(self, a, w, name, s_a, s_b, s_out):
-        return self.rescale(mm(a, w), ki.log2_ratio(s_a * s_b, s_out), name)
+    def matmul(self, a, w, name, s_a, s_b, s_out, implementation=None):
+        return self.rescale(mm(a, w), ki.log2_ratio(s_a * s_b, s_out), name, implementation)
 
     def mul(self, a, b, name, s_a, s_b, s_out):
         return self.rescale(ki.mul(a, b), ki.log2_ratio(s_a * s_b, s_out), name)
 
-    def coarsen(self, x, s_in, s):
-        """A claim's input rescale x_in = (s_in/s)·x + x_low: x = ⌊x_in / (s_in/s)⌋."""
-        return np.asarray(x, dtype=np.int64) >> ki.log2_ratio(s_in, s)
+    def coarsen(self, x, s_in, s, name, s_in_window):
+        """x at s_in for a consumer at s: ⌊x / (s_in/s)⌋. Under input-rescale
+        the consumer's claim takes x through its s_in path and bounds the
+        coarsened value by `s_in_window` (lo, hi, claim); under
+        combined-rounding the value is a rescale's output at s."""
+        x = np.asarray(x, dtype=np.int64) >> ki.log2_ratio(s_in, s)
+        lo, hi, claim = s_in_window
+        self.ranges.bound(f"{name}.x", x, lo, hi, claim, IMPLEMENTATIONS[0])
+        self.ranges.bound(f"{name}.x", x, *self.base.window,
+                          f"a rescale's signed output at 2^{s.bit_length() - 1}: x + 2^{self.base.width - 1} "
+                          f"in [0, 2^{self.base.width})", IMPLEMENTATIONS[1])
+        return x
 
     def rmsnorm(self, x, name):
         """Input at S_act, the bracket at s_norm, the output at S_act."""
         A, N = self.A, self.N
-        x = self.coarsen(x, A, N) if A > N else np.asarray(x, dtype=np.int64)
+        x = self.coarsen(x, A, N, name, RMS_S_IN) if A > N else np.asarray(x, dtype=np.int64)
         B, d = x.shape
         eps_int = round(self.k["eps"] * N * N)
         magic = d * N ** 4
@@ -116,12 +146,7 @@ class Mixed:
             while y > 1 and (y - 1) * (y - 1) * s_tot >= magic:
                 y -= 1
             ys.append(y)
-        from claims import RMS_LIMB_W, RMS_S_CAP_BITS, RmsNormConfig
-        y_max = RmsNormConfig(B=1, d=d, s=N, eps_int=eps_int).y_max
-        y_width = max(1, (y_max - 1).bit_length())
-        self.ranges.note(f"{name}.S_tot", max(st), 1 << RMS_S_CAP_BITS, f"row energy (d = {d})")
-        self.ranges.note(f"{name}.y_width", 2 * y_width + RMS_LIMB_W, 64,
-                         "2·y_width + LIMB_W against 63: the bracket's carries")
+        ki.rms_ranges(self.ranges, name, st, ys, d=d, s=N, eps_int=eps_int)
         return self.rescale(ki.mul(x, np.asarray(ys, dtype=np.int64)[:, None]),
                             ki.log2_ratio(N * N, A), name)
 
@@ -139,12 +164,12 @@ class Mixed:
         return self.rescale(rot.reshape(T, heads * dr), ki.log2_ratio(self.A * self.A, self.A), name)
 
     def softmax(self, sc, *, T, H, name):
-        x = self.coarsen(sc, self.A, self.Tb) if self.A > self.Tb else sc
+        x = self.coarsen(sc, self.A, self.Tb, name, softmax_s_in(self.k)) if self.A > self.Tb else sc
         return self.base.softmax(x, T=T, H=H, name=name)          # output at 2^12
 
-    def silu(self, g):
-        x = self.coarsen(g, self.A, self.Tb) if self.A > self.Tb else g
-        return self.base.silu(x)                                   # output at 2^12
+    def silu(self, g, name):
+        x = self.coarsen(g, self.A, self.Tb, f"{name}.silu", SILU_S_IN) if self.A > self.Tb else g
+        return self.base.silu(x, name)                             # output at 2^12
 
 
 def quantized(Wf, il, cfg, prec):
@@ -165,6 +190,7 @@ def forward(ids, Wf, cfg, prec, *, layers=2, offset=0, kk=8, head_chunk=16384, k
     T = len(ids)
     out = {}
     x = to_ints(Wf.embed_rows(ids), A)
+    op.base.field("x0", x, "the embedding rows")
     out["x0"] = x
     H, dn, dr, dv = cfg["H"], cfg["d_nope"], cfg["d_rope"], cfg["d_v"]
     for il in range(layers):
@@ -189,18 +215,20 @@ def forward(ids, Wf, cfg, prec, *, layers=2, offset=0, kk=8, head_chunk=16384, k
         key = ki.head_interleave(k_nope, k_pe, T=T, H=H, w1=dn, w2=dr, shared=True)
         dh = dn + dr
         raw = mm(query.reshape(T, H, dh).transpose(1, 0, 2), key.reshape(T, H, dh).transpose(1, 2, 0))
-        sc = op.rescale(raw.transpose(1, 0, 2).reshape(T, H * T), ki.log2_ratio(A * A, A), f"{p}.scores")
+        sc = op.rescale(raw.transpose(1, 0, 2).reshape(T, H * T), ki.log2_ratio(A * A, A), f"{p}.scores",
+                        op.only_input_rescale)
         sm = op.softmax(sc, T=T, H=H, name=f"{p}.sm")                       # at 2^12
         raw = mm(sm.reshape(T, H, T).transpose(1, 0, 2), v.reshape(T, H, dv).transpose(1, 0, 2))
         att = op.rescale(raw.transpose(1, 0, 2).reshape(T, H * dv), ki.log2_ratio(Tb * A, A), f"{p}.att")
         r1 = x + op.matmul(att, w["W_o"], f"{p}.proj", A, Wt, A)
+        op.base.field(f"{p}.r1", r1, "the residual add (AddClaim)")
         n2g = op.gain(op.rmsnorm(r1, f"{p}.n2"), w["g_ffn"], f"{p}.n2g")
         out.update({f"{p}.n1g": n1g, f"{p}.r1": r1, f"{p}.n2g": n2g})
 
         def ffn(xin, wg, wu, wd, name):
-            g = op.matmul(xin, q(wg), f"{name}.g", A, Wt, A)
+            g = op.matmul(xin, q(wg), f"{name}.g", A, Wt, A, op.only_input_rescale)
             u = op.matmul(xin, q(wu), f"{name}.u", A, Wt, A)
-            h = op.mul(op.silu(g), u, f"{name}.h", Tb, A, A)
+            h = op.mul(op.silu(g, name), u, f"{name}.h", Tb, A, A)
             return op.matmul(h, q(wd), f"{name}.out", A, Wt, A)
         if Wf.kind(il) == "dense":
             dw = Wf.dense(il)
@@ -209,7 +237,9 @@ def forward(ids, Wf, cfg, prec, *, layers=2, offset=0, kk=8, head_chunk=16384, k
             x = r1 + f
         else:
             y, sh = _moe(op, n2g, Wf, il, T=T, kk=kk, p=p, out=out, ffn=ffn)
+            op.base.field(f"{p}.r1_y", r1 + y, "the residual add (AddClaim)")
             x = (r1 + y) + sh
+        op.base.field(f"{p}.x_out", x, "the residual add (AddClaim)")
         out[f"{p}.out"] = x
     nfg = op.gain(op.rmsnorm(x, "final.n"), q(Wf.g_out()), "final.ng")
     out["final.ng"] = nfg
@@ -236,11 +266,11 @@ def _moe(op, x, Wf, il, *, T, kk, p, out, ffn):
     for e in sorted(set(sel.ravel().tolist())):
         rows = [(t, i) for t in range(T) for i in range(kk) if sel[t, i] == e]
         xe = x[[t for t, _ in rows]]
-        g = op.matmul(xe, to_ints(Wf.expert(il, "gate", e), Wt), f"{p}.g", A, Wt, A)
+        g = op.matmul(xe, to_ints(Wf.expert(il, "gate", e), Wt), f"{p}.g", A, Wt, A, op.only_input_rescale)
         u = op.matmul(xe, to_ints(Wf.expert(il, "up", e), Wt), f"{p}.u", A, Wt, A)
-        h = op.mul(op.silu(g), u, f"{p}.h", op.Tb, A, A)
+        h = op.mul(op.silu(g, p), u, f"{p}.h", op.Tb, A, A)
         D = mm(h, to_ints(Wf.expert(il, "down", e), Wt))                       # at A·Wt
-        op.ranges.note(f"{p}.D", ki._maxabs(D), ki.P_HALF + 1, "routed down output, field representative")
+        op.base.field(f"{p}.D", D, "the routed down product")
         for j, (t, i) in enumerate(rows):
             y_raw[t] += np.asarray(D[j], dtype=object) * int(gw[t, i])
     y_raw = ki._narrow(y_raw)
@@ -249,6 +279,18 @@ def _moe(op, x, Wf, il, *, T, kk, p, out, ffn):
     sh = ffn(x, shw["W_gate"], shw["W_up"], shw["W_down"], f"{p}.sh")
     out.update({f"{p}.s": s, f"{p}.mask": np.asarray(routing["m"]), f"{p}.y": y, f"{p}.sh": sh})
     return y, sh
+
+
+def feasibility(ranges) -> dict:
+    """Proof feasibility from a run's ranges, apart from any fidelity verdict:
+    per implementation, the rows outside their constraint (none: feasible);
+    the signed width every rescale's output needs; the RMSNorm bracket's
+    carry bits (at most 63)."""
+    outs = [r for k, r in ranges.rows.items() if k.split(" [")[0].endswith(".out")]
+    return dict(implementations={i: dict(ok=not ranges.violations(i), violations=sorted(ranges.violations(i)))
+                                 for i in IMPLEMENTATIONS},
+                output_width_needed=max((ki.signed_width(r.min, r.max) for r in outs), default=0),
+                rmsnorm_carries=max((r.max for k, r in ranges.rows.items() if k.endswith(".carries")), default=0))
 
 
 class CachedFloats:
@@ -314,14 +356,14 @@ def study(gguf, ids, *, configs=tuple(CONFIGS), cfg=K2_MLA, layers=2, offset=0, 
         fid = kf.fidelity(io, fo, 1 << prec["S_act"], S_SEL)
         rd = {il: kf.routing_differences(io, fo, Wf, il, k=kk, S=1 << prec["S_act"])
               for il in range(layers) if Wf.kind(il) == "moe"}
-        rg = ranges.as_dict()
-        width = max(r["bits"] for n, r in rg.items() if n.endswith(".out")) + 1
-        bracket = max(r["observed"] for n, r in rg.items() if n.endswith(".y_width"))
+        f = feasibility(ranges)
         rows[name] = dict(prec=prec, s=time.time() - t0, fidelity=fid, routing=rd,
-                          output_width_needed=width, rmsnorm_bracket_bits=bracket,
-                          rmsnorm_bracket_ok=bracket <= 63,
-                          field_ok=all(r["ok"] for n, r in rg.items() if n.endswith((".full", ".D"))),
-                          ranges=rg)
+                          output_width_needed=f["output_width_needed"],
+                          rmsnorm_bracket_bits=f["rmsnorm_carries"],
+                          rmsnorm_bracket_ok=f["rmsnorm_carries"] <= 63,
+                          field_ok=not [n for n, r in ranges.rows.items() if not r.ok and ki.FIELD in r.claim],
+                          feasible=f["implementations"], ranges=ranges.as_dict())
+        width, bracket = f["output_width_needed"], f["rmsnorm_carries"]
         e2e = rd[max(rd)]["end_to_end"] if rd else {}
         log(f"{name:10s} logits rel {fid['logits']['rel_l2']:.4f}  top-1 {fid['logits.top1_agree']:.3f}  "
             f"routing e2e {e2e.get('tokens_differing')}/{e2e.get('tokens')}  "

@@ -128,7 +128,8 @@ def build_mla(tape, x, gguf, il, *, T, cfg, offset, yarn, trace):
     key = head_interleave(tape, k_nope, k_pe, T=T, H=H, w1=dn, w2=dr, shared=True)
     sc = tape.matmul(query, key, transpose_b=True, heads=H, head_dim=dn + dr, **mm)
     sm = tape.softmax(sc, M=T, s_x=S, s_c=S, s_y=S, Z_max=K2_INT["z_max"], saturate=True,
-                      Z_high_width=16, aux_chunk_width=24, causal=True, heads=H)
+                      Z_high_width=K2_INT["sm_z_high_width"], aux_chunk_width=K2_INT["sm_aux_width"],
+                      causal=True, heads=H)
     att = tape.matmul(sm, v, heads=H, head_dim=T, **mm)
     r1 = x + tape.matmul(att, w["W_o"], **mm)
     n2g = _norm_gain(tape, r1, w["g_ffn"], T=T, d=d)

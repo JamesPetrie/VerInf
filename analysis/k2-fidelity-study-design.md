@@ -461,7 +461,16 @@ The stages run through `prover/fidelity_study.py`:
   passage's p64 rows and each configuration's per-position metrics are
   saved as they finish, keyed by the model, layers, GGUF shards, prover
   sources, sequence and configuration, so a stopped run resumes after its
-  last whole part.
+  last whole part. Each configuration's integer ranges over every passage
+  are recorded beside the acceptance as proof feasibility. Each quantity's
+  signed extremes are checked against the constraint of the claim that
+  computes or consumes it: a rescale's signed output window, field safety
+  where that is all the claim needs (the residual adds, the products
+  before a rescale), the RMSNorm bracket's derived windows, and the
+  softmax and sigmoid tables. Where a finer configuration's two
+  implementations differ (the claims' input rescaling, or one combined
+  rounding), each is checked under its own constraints. Feasibility never
+  enters §6's verdict.
 
 Engine settings beyond the adapter's are pinned by the caller. It runs end
 to end on the toy (`prover/tests/test_llama_engine.py`).

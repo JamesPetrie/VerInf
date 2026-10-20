@@ -67,6 +67,9 @@ def test_a_run_started_again_resumes_and_reproduces_its_record(gguf, tmp_path, c
     again = fs.full_depth(SPEC, gguf, gen, tmp_path)
     assert counted == []
     assert again["configs"] == first["configs"] and again["nll_calibration"] == first["nll_calibration"]
+    assert again["feasibility"] == first["feasibility"]
+    f = first["feasibility"]["baseline"]
+    assert all(v["ok"] for v in f["implementations"].values()) and "L1.x_out" in f["ranges"]
     assert _without_resumed(again) == _without_resumed(first)
     assert again["passages"]["b"]["resumed"] == ["p64", "baseline"]
 
@@ -120,4 +123,5 @@ def test_a_callable_integer_arm_is_never_saved(gguf, tmp_path):
     for _ in range(2):
         fs.full_depth(SPEC, gguf, gen, tmp_path, integer=integer)
     assert sorted(calls) == [8, 8, 9, 9]
+    assert fs.full_depth(SPEC, gguf, gen, tmp_path, integer=integer)["feasibility"] == {}
     assert {p.name for p in (tmp_path / fs.PARTS / "a").iterdir()} == {"p64.npz"}

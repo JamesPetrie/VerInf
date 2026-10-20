@@ -68,7 +68,7 @@ def test_softmax_equals_the_prover_witness():
                              aux_chunk_width=24, saturate=True, Z_high_width=16,
                              causal=True, heads=H)
     assert np.array_equal(got.reshape(-1), w["y_A"].astype(np.int64))
-    assert op.ranges.rows["sm.keys_past_table"][0] > 0      # the saturating row was exercised
+    assert op.ranges.rows["sm.keys_past_table"].max > 0     # the saturating row was exercised
 
 
 @pytest.mark.parametrize("offset", [0, 130_072])
@@ -116,14 +116,16 @@ def test_rmsnorm_is_the_least_y_and_close_to_float():
     real = x[:5] / S
     want = real / np.sqrt((real ** 2).mean(axis=1, keepdims=True) + kl.K2_INT["eps"])
     assert np.abs(out[:5] / S - want).max() < 2e-3
-    assert op.ranges.rows["n.y"][0] == op.ranges.rows["n.y"][1] - 1     # the zero row hit y_max
+    from claims import RmsNormConfig
+    y = op.ranges.rows["n.y"]                               # the zero row hit y_max, inside y's window
+    assert y.max == RmsNormConfig(B=1, d=d, s=S, eps_int=kl.K2_INT["eps_int"]).y_max <= y.hi
 
 
 def test_silu_branches():
     op = ki.Int()
     cfg = op.silu_cfg
     x = np.arange(-cfg.b_2 - 40, cfg.b_2 + 40, 37, dtype=np.int64)
-    y = op.silu(x)
+    y = op.silu(x, "s")
     hi = np.abs(x) >= cfg.b_2
     assert np.array_equal(y[hi], np.maximum(x[hi], 0))
     real = x[~hi] / S
@@ -186,3 +188,46 @@ def test_two_layers_against_the_float_reference(toy_gguf, offset):
     rd = kf.routing_differences(io, fo, Wf, 1, k=kk, S=S)
     assert rd["same_input"]["tokens_differing"] <= 1, rd
     assert rd["end_to_end"]["tokens_differing"] <= 2, rd
+
+
+def test_ranges_are_signed_inclusive_windows():
+    op = ki.Int()
+    lo, hi = op.window
+    assert (lo, hi) == (-(1 << 25), (1 << 25) - 1)
+    op.rescale(np.array([lo << 12, (hi << 12) + 4095]), 12, "edge")
+    op.rescale(np.array([(hi + 1) << 12]), 12, "over")
+    op.rescale(np.array([(lo - 1) << 12]), 12, "under")
+    assert set(op.ranges.violations()) == {"over.out", "under.out"}
+    d = op.ranges.as_dict()
+    assert (d["edge.out"]["min"], d["edge.out"]["max"]) == (lo, hi)
+    assert d["edge.out"]["inequality"] == "−2^25 ≤ v ≤ 2^25 − 1"
+    assert d["edge.full"]["inequality"] == "−(P − 1)/2 ≤ v ≤ (P − 1)/2"
+
+
+def test_ranges_merge_and_keep_each_implementation_apart():
+    a, b = ki.Ranges(), ki.Ranges()
+    a.bound("q", np.array([-3, 5]), -8, 7, "c")
+    b.bound("q", np.array([-9, 1]), -8, 7, "c")
+    b.bound("q", (0, 2), 0, 3, "d", "combined-rounding")
+    b.bound("r", (5, 5), 0, 3, "e", "input-rescale")
+    m = ki.Ranges.from_dicts(a.as_dict(), b.as_dict())
+    assert (m.rows["q"].min, m.rows["q"].max) == (-9, 5) and not m.rows["q"].ok
+    assert m.rows["q [combined-rounding]"].ok
+    assert set(m.violations("combined-rounding")) == {"q"}
+    assert set(m.violations("input-rescale")) == {"q", "r [input-rescale]"} == set(m.violations())
+    with pytest.raises(ValueError, match="two constraints"):
+        a.bound("q", (0, 0), -16, 15, "c")
+
+
+@pytest.mark.parametrize("mn,mx,w", [(0, 0, 1), (-1, 0, 1), (0, 1, 2), (-(1 << 25), (1 << 25) - 1, 26),
+                                     (-(1 << 25) - 1, 0, 27), (0, 1 << 25, 27)])
+def test_signed_width(mn, mx, w):
+    assert ki.signed_width(mn, mx) == w
+
+
+def test_k2s_rmsnorm_bracket_is_62_of_63():
+    """K2's ε = 10⁻⁶ at s = 2^12 and d = 7168: y_width 22, carries 2·22 + 18."""
+    r = ki.Ranges()
+    ki.rms_ranges(r, "n", [1 << 40], [5], d=7168, s=1 << 12, eps_int=kl.K2_INT["eps_int"])
+    assert r.rows["n.carries"].max == 62 and r.rows["n.carries"].ok
+    assert r.rows["n.S_tot"].hi == (1 << 54) - 1

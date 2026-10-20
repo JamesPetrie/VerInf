@@ -32,6 +32,7 @@ import fidelity_metrics as fm
 import gguf_truncate as gt
 import k2_emulation as em
 import k2_float_reference as kf
+import k2_int_reference as ki
 import k2_precision_study as ps
 import llama_runner as lr
 from k2_attention import K2_MLA, MOONLIGHT_MLA
@@ -244,11 +245,16 @@ def full_depth(spec, gguf, generated, work, *, layers=None, integer=None, config
     each of `configs`, all against one p64 and one baseline. The first is the
     record's acceptance; every one has its own under "configs".
 
+    Proof feasibility is recorded beside it and never enters it: each
+    configuration's ranges over every passage against the claims'
+    constraints, per implementation (k2_precision_study.feasibility).
+
     Each passage's p64 rows (the continuation's) and each configuration's
     per-position metrics are parts in `work`/full-depth-parts, keyed by the
     model, the layers, the GGUF's shards, the prover's sources, the sequence
     and the configuration; a run finds the parts an earlier one finished and
-    resumes after them. An `integer` callable's metrics are never saved."""
+    resumes after them. An `integer` callable's metrics are never saved, and
+    it has no ranges."""
     cfg, k = spec["cfg"], spec["k"]
     W = GgufWeights(str(gguf), ints=False, cfg=cfg)
     md = gt.metadata(gguf)
@@ -256,16 +262,18 @@ def full_depth(spec, gguf, generated, work, *, layers=None, integer=None, config
     if integer is None:
         def make(name):
             def run(ids):
-                io, _ = ps.forward(ids, W, cfg, ps.CONFIGS[name], layers=n_layers, kk=k)
-                return np.asarray(io["logits"], dtype=np.float64) / (1 << ps.CONFIGS[name]["S_act"])
+                io, ranges = ps.forward(ids, W, cfg, ps.CONFIGS[name], layers=n_layers, kk=k)
+                return (np.asarray(io["logits"], dtype=np.float64) / (1 << ps.CONFIGS[name]["S_act"]),
+                        ranges.as_dict())
             return run
         arms = {name: (make(name), ps.CONFIGS[name]) for name in configs}
     else:
-        arms = {"integer": (integer, None)}
+        arms = {"integer": (lambda ids: (integer(ids), None), None)}
     parts = pathlib.Path(work) / PARTS
     base = dict(model=spec["adapter"]["name"], layers=n_layers, k=k, gguf=_gguf_identity(gguf),
                 sources=_sources_sha256())
     per = {name: [] for name in arms}
+    per_ranges = {name: [] for name in arms}
     per_eng, per_p64 = [], []
     rec = dict(model=spec["adapter"]["name"], layers=n_layers, passages={})
     for pid, g in generated.items():
@@ -290,8 +298,12 @@ def full_depth(spec, gguf, generated, work, *, layers=None, integer=None, config
         for name, (fn, settings) in arms.items():
             def score():
                 t0 = time.time()
-                pi = fm.position_metrics(ref, fn(ids)[rows], tgt)
-                return dict(kl=pi["kl"], nll=pi["nll"], seconds=np.float64(time.time() - t0))
+                logits, ranges = fn(ids)
+                pi = fm.position_metrics(ref, logits[rows], tgt)
+                out = dict(kl=pi["kl"], nll=pi["nll"], seconds=np.float64(time.time() - t0))
+                if ranges is not None:
+                    out["ranges"] = np.array(json.dumps(ranges))
+                return out
             if settings is None:
                 part, loaded = score(), False
             else:
@@ -302,6 +314,7 @@ def full_depth(spec, gguf, generated, work, *, layers=None, integer=None, config
             if loaded:
                 resumed.append(name)
             per[name].append(pi)
+            per_ranges[name].append(json.loads(str(part["ranges"])) if "ranges" in part else None)
             prow["integer"][name] = summary(pi)
             log(pid, name, *(["(resumed)"] if loaded else []), prow["integer"][name])
         log(pid, "engine", prow["engine"])
@@ -311,6 +324,14 @@ def full_depth(spec, gguf, generated, work, *, layers=None, integer=None, config
     rec["acceptance"] = rec["configs"][first]
     rec["acceptance_config"] = first
     rec["nll_calibration"] = fm.nll_calibration(per_p64, [e["nll"] for e in per_eng])
+    rec["feasibility"] = {}
+    for name, rgs in per_ranges.items():
+        if rgs and all(r is not None for r in rgs):
+            rg = ki.Ranges.from_dicts(*rgs)
+            rec["feasibility"][name] = dict(ps.feasibility(rg), ranges=rg.as_dict())
+            f = rec["feasibility"][name]
+            log(name, "feasible:", {i: v["ok"] for i, v in f["implementations"].items()},
+                "output width", f["output_width_needed"], "RMSNorm carries", f["rmsnorm_carries"])
     return rec
 
 
