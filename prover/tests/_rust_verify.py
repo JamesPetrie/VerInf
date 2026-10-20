@@ -121,3 +121,25 @@ def rust_verify(claims, proof, seed, cfg):
 def rust_verify_tape(tape, proof, seed):
     """Convenience for the tape-based tests: pulls claims + cfg off the tape."""
     return rust_verify(tape.claims, proof, seed, tape.cfg)
+
+
+def rust_verify_anchored(claims, proof, cfg, *, root_w, stmt, wc_identity):
+    """The Rust verifier under GIVEN policy anchors (weight root, statement
+    digest, bridge enrollment identity), not the proof's own: the check a
+    negative needs, proved against an honest run's enrollment and statement.
+    Returns run_verify_proof's {verdict, returncode, output}; raises
+    VerifierFailure when the binary gives no explicit verdict."""
+    from proof_dump import dump_proof
+    seeds = {k: v.hex() for k, v in proof.seeds.items()}
+    Q = list(pr.random_columns(proof.seeds["s_col"], cfg))
+    fd, path = tempfile.mkstemp(suffix=".json")
+    os.close(fd)
+    os.unlink(path)          # dump_proof refuses an existing file
+    argv = [_verify_proof_bin(), path, root_w.hex() if root_w else "-",
+            stmt.hex() if stmt else "-", wc_identity.hex() if wc_identity else "-"]
+    try:
+        dump_proof(path, pr.claims_to_json(claims, cfg), seeds, proof, Q, None)
+        return run_verify_proof(argv)
+    finally:
+        if os.path.exists(path):
+            os.unlink(path)
