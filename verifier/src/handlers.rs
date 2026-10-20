@@ -1510,7 +1510,7 @@ pub fn compile_claims_bound_pinned(cs: &mut ClaimSet, s_op: &[u8], s_bind: Optio
     {
         let by_id = cs.tables_by_id();
         for (k, &tid) in cs.table_order.iter().enumerate() {
-            let paired = by_id[&tid].t_y.is_some();
+            let paired = by_id.get(&tid).expect(TABLE_ORDER_CHECKED).t_y.is_some();
             let alpha = challenge(s_op, 0, &format!("op{}:alpha", n_ops + k));
             let beta = if paired { challenge(s_op, 0, &format!("op{}:beta", n_ops + k)) } else { 0 };
             ab.insert(tid, (alpha, beta));
@@ -1526,10 +1526,14 @@ pub fn compile_claims_bound_pinned(cs: &mut ClaimSet, s_op: &[u8], s_bind: Optio
     // Pass 2: settle tables in table_order.
     let by_id = cs.tables_by_id();
     for &tid in &cs.table_order {
-        settle_table(&by_id[&tid], &mut b, ell);
+        settle_table(by_id.get(&tid).expect(TABLE_ORDER_CHECKED), &mut b, ell);
     }
     Constraints { families: b.families, rhs: b.rhs, quadratic: b.quad, m_total: mt }
 }
+
+/// The verdict path (verify::verify_bound_pinned) rejects a claim set whose
+/// table_order fails ClaimSet::check_table_order before compiling it.
+const TABLE_ORDER_CHECKED: &str = "table_order unchecked: call ClaimSet::check_table_order first";
 
 #[cfg(test)]
 mod rope_scaling_tests {
