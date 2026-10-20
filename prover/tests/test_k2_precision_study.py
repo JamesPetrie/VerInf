@@ -62,8 +62,10 @@ def _equal_at_shared_names(ref, gguf, cfg, kk, offset):
     Wf = ps.CachedFloats(kl.GgufWeights(gguf, ints=False, cfg=cfg))
     got, _ = ps.forward(IDS, Wf, cfg, ps.CONFIGS["baseline"], offset=offset, kk=kk, head_chunk=20)
     shared = sorted(set(ref) & set(got))
-    assert {"x0", "L0.n1g", "L0.r1", "L0.ffn", "L1.n2g", "L1.s", "L1.mask", "L1.y",
-            "L1.sh", "final.ng", "logits"} <= set(shared)
+    assert {"x0", "L0.n1g", "L0.ckvg", "L0.q_pe", "L0.k_pe", "L0.query", "L0.key", "L0.v",
+            "L0.scores", "L0.sm", "L0.att", "L0.r1", "L0.ffn", "L1.n2g", "L1.router", "L1.s",
+            "L1.mask", "L1.gw", "L1.g", "L1.h", "L1.D", "L1.y_raw", "L1.y", "L1.sh", "final.ng",
+            "logits"} <= set(shared)
     for name in shared:
         a = np.asarray(ref[name]).astype(object).ravel()
         b = np.asarray(got[name]).astype(object).ravel()
@@ -112,3 +114,24 @@ def test_the_input_rescale_windows_are_the_claims():
     assert ps.softmax_s_in(kl.K2_INT)[:2] == (-(1 << 15), (1 << 24) - (1 << 15) - 1)
     f = ps.feasibility(op.ranges)
     assert not f["implementations"]["input-rescale"]["ok"] and f["implementations"]["combined-rounding"]["ok"]
+
+
+def test_a_profile_has_one_meaning_per_scale():
+    sc = ps.scales(ps.CONFIGS["a14w14"])
+    assert (sc.S_act, sc.S_wt, sc.s_norm, sc.S_tab, sc.S_sel, sc.S_w) == \
+        (1 << 14, 1 << 14, 1 << 12, 1 << 12, kl.S_SEL, kl.K2_INT["S_w"])
+    assert ps.scales(ps.CONFIGS["baseline"]) == kl.Scales()
+    with pytest.raises(AssertionError, match="power of two"):
+        kl.Scales(S_act=3 << 12)
+
+
+def test_the_tail_keeps_its_kernel_at_any_logit_scale():
+    import ui_claim
+    from demo_maverick_full import UI
+    assert kl.tail_params(1 << 12) == UI and kl.TAIL_Z_O_BITS == ui_claim.Z_O_BITS
+    for e in range(10, 19):
+        t = kl.tail_params(1 << e)
+        assert t["s_c"] // t["s_b"] ** 2 == UI["s_c"] // UI["s_b"] ** 2 and t["s_y"] == UI["s_y"]
+        k = t["s_c"] // t["s_b"]                       # prove_unexplained_info's ceiling divisor
+        assert ((t["gap_max"] - 1) ** 2 + k - 1) // k < 1 << ui_claim.Z_O_BITS, e
+    assert kl.tail_params(1 << 14)["gap_max"] / (1 << 14) == 128.0

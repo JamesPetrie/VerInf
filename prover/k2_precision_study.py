@@ -46,7 +46,7 @@ import k2_float_reference as kf
 import k2_int_reference as ki
 import topk_reference as tref
 from k2_attention import K2_MLA, SIGMA_FOLDED, softmax_scale
-from k2_loader import K2_INT, S_SEL, int_constants, sigmoid_table, to_ints
+from k2_loader import K2_INT, S_SEL, Scales, int_constants, sigmoid_table, to_ints
 
 # exponents: S_act, S_wt, s_norm (2^n); "hypothetical" names the claim that would change
 CONFIGS = {
@@ -60,6 +60,12 @@ CONFIGS = {
 }
 TABLE = 12          # SiLU and softmax internal scale, router-logit scale (2^12)
 IMPLEMENTATIONS = ("input-rescale", "combined-rounding")
+
+
+def scales(prec) -> Scales:
+    """A configuration's precision profile (prec: a CONFIGS entry, exponents)."""
+    return Scales(S_act=1 << prec["S_act"], S_wt=1 << prec["S_wt"], s_norm=1 << prec["s_norm"],
+                  S_tab=1 << TABLE)
 # the s_in paths' windows on the coarsened x (claims.py): x + 2^15 in a table
 RMS_S_IN = (-(1 << 15), (1 << 15) - 1, "RMSNorm's s_in: x + 2^15 in the 16-bit slack table")
 SILU_S_IN = (-(1 << 15), (1 << 15) - 1, "SiLU's s_in: x + 2^(width_2 − 1) in the 2^width_2 table, width_2 = 16")
@@ -100,8 +106,8 @@ class Mixed:
 
     def __init__(self, prec, k=K2_INT):
         self.k = k
-        self.A, self.Wt = 1 << prec["S_act"], 1 << prec["S_wt"]
-        self.N, self.Tb = 1 << prec["s_norm"], 1 << TABLE
+        sc = scales(prec)
+        self.A, self.Wt, self.N, self.Tb = sc.S_act, sc.S_wt, sc.s_norm, sc.S_tab
         self.ranges = ki.Ranges()
         # the tables of the 2^12 model (SiLU, softmax exp, sigmoid)
         self.base = ki.Int(k, self.ranges)
@@ -163,13 +169,13 @@ class Mixed:
         rot = np.concatenate([ki.mul(c, lo) - ki.mul(s, hi), ki.mul(s, lo) + ki.mul(c, hi)], axis=-1)
         return self.rescale(rot.reshape(T, heads * dr), ki.log2_ratio(self.A * self.A, self.A), name)
 
-    def softmax(self, sc, *, T, H, name):
-        x = self.coarsen(sc, self.A, self.Tb, name, softmax_s_in(self.k)) if self.A > self.Tb else sc
-        return self.base.softmax(x, T=T, H=H, name=name)          # output at 2^12
-
-    def silu(self, g, name):
-        x = self.coarsen(g, self.A, self.Tb, f"{name}.silu", SILU_S_IN) if self.A > self.Tb else g
-        return self.base.silu(x, name)                             # output at 2^12
+    def to_tables(self, v, name, s_in_window):
+        """A value at S_act as a table's input at S_tab: itself when the two
+        are equal, else coarsened (under combined-rounding, the producer's
+        own rescale to S_tab)."""
+        if self.A > self.Tb:
+            return self.coarsen(v, self.A, self.Tb, name, s_in_window)
+        return np.asarray(v, dtype=np.int64)
 
 
 def quantized(Wf, il, cfg, prec):
@@ -217,18 +223,27 @@ def forward(ids, Wf, cfg, prec, *, layers=2, offset=0, kk=8, head_chunk=16384, k
         raw = mm(query.reshape(T, H, dh).transpose(1, 0, 2), key.reshape(T, H, dh).transpose(1, 2, 0))
         sc = op.rescale(raw.transpose(1, 0, 2).reshape(T, H * T), ki.log2_ratio(A * A, A), f"{p}.scores",
                         op.only_input_rescale)
-        sm = op.softmax(sc, T=T, H=H, name=f"{p}.sm")                       # at 2^12
+        sc = op.to_tables(sc, f"{p}.sm", softmax_s_in(op.k))                 # softmax's input, at 2^12
+        sm = op.base.softmax(sc, T=T, H=H, name=f"{p}.sm")
         raw = mm(sm.reshape(T, H, T).transpose(1, 0, 2), v.reshape(T, H, dv).transpose(1, 0, 2))
         att = op.rescale(raw.transpose(1, 0, 2).reshape(T, H * dv), ki.log2_ratio(Tb * A, A), f"{p}.att")
         r1 = x + op.matmul(att, w["W_o"], f"{p}.proj", A, Wt, A)
         op.base.field(f"{p}.r1", r1, "the residual add (AddClaim)")
         n2g = op.gain(op.rmsnorm(r1, f"{p}.n2"), w["g_ffn"], f"{p}.n2g")
-        out.update({f"{p}.n1g": n1g, f"{p}.r1": r1, f"{p}.n2g": n2g})
+        out.update({f"{p}.n1g": n1g, f"{p}.aqg": aqg, f"{p}.ckvg": ckvg, f"{p}.q_pe": q_pe,
+                    f"{p}.k_pe": k_pe, f"{p}.query": query, f"{p}.key": key, f"{p}.v": v,
+                    f"{p}.scores": sc, f"{p}.sm": sm, f"{p}.att": att, f"{p}.r1": r1,
+                    f"{p}.n2g": n2g})
+
+        def silu_in(xin, wg, name):
+            """The gate projection as SiLU's input, at S_tab."""
+            g = op.matmul(xin, wg, f"{name}.g", A, Wt, A, op.only_input_rescale)
+            return op.to_tables(g, f"{name}.silu", SILU_S_IN)
 
         def ffn(xin, wg, wu, wd, name):
-            g = op.matmul(xin, q(wg), f"{name}.g", A, Wt, A, op.only_input_rescale)
+            g = silu_in(xin, q(wg), name)
             u = op.matmul(xin, q(wu), f"{name}.u", A, Wt, A)
-            h = op.mul(op.silu(g, name), u, f"{name}.h", Tb, A, A)
+            h = op.mul(op.base.silu(g, name), u, f"{name}.h", Tb, A, A)
             return op.matmul(h, q(wd), f"{name}.out", A, Wt, A)
         if Wf.kind(il) == "dense":
             dw = Wf.dense(il)
@@ -236,7 +251,7 @@ def forward(ids, Wf, cfg, prec, *, layers=2, offset=0, kk=8, head_chunk=16384, k
             out[f"{p}.ffn"] = f
             x = r1 + f
         else:
-            y, sh = _moe(op, n2g, Wf, il, T=T, kk=kk, p=p, out=out, ffn=ffn)
+            y, sh = _moe(op, n2g, Wf, il, T=T, kk=kk, p=p, out=out, ffn=ffn, silu_in=silu_in)
             op.base.field(f"{p}.r1_y", r1 + y, "the residual add (AddClaim)")
             x = (r1 + y) + sh
         op.base.field(f"{p}.x_out", x, "the residual add (AddClaim)")
@@ -247,13 +262,15 @@ def forward(ids, Wf, cfg, prec, *, layers=2, offset=0, kk=8, head_chunk=16384, k
     for v0 in range(0, Wf.V, head_chunk):
         v1 = min(Wf.V, v0 + head_chunk)
         logits[:, v0:v1] = op.matmul(nfg, q(Wf.head(v0, v1)), "logits", A, Wt, A)
+    ki.tail_ranges(op.ranges, logits, A)
     out["logits"] = logits
     return out, op.ranges
 
 
-def _moe(op, x, Wf, il, *, T, kk, p, out, ffn):
+def _moe(op, x, Wf, il, *, T, kk, p, out, ffn, silu_in):
     """Router at 2^12 for the sigmoid table, scores at S_sel; the top-k
-    reference; slot experts at the configuration's scales; the combine."""
+    reference; slot experts at the configuration's scales, slot-major rows
+    i·T + t as k2_int_reference.moe lays them; the combine."""
     A, Wt, k = op.A, op.Wt, op.k
     r = op.matmul(x, to_ints(Wf.router(il), Wt), f"{p}.router", A, Wt, op.Tb)
     s = op.base.lookup_sigmoid(r, f"{p}.router")
@@ -262,22 +279,32 @@ def _moe(op, x, Wf, il, *, T, kk, p, out, ffn):
     M, ss = tref.slot_witness(routing["m"], s.tolist(), kk)
     gw = np.asarray(tref.bracket_witness(ss, k["C"])["w"], dtype=np.int64)
     sel = np.asarray([[M[i][t].index(1) for i in range(kk)] for t in range(T)])
-    y_raw = np.zeros((T, x.shape[1]), dtype=object)
+    g_all = h_all = D_all = None
     for e in sorted(set(sel.ravel().tolist())):
         rows = [(t, i) for t in range(T) for i in range(kk) if sel[t, i] == e]
         xe = x[[t for t, _ in rows]]
-        g = op.matmul(xe, to_ints(Wf.expert(il, "gate", e), Wt), f"{p}.g", A, Wt, A, op.only_input_rescale)
+        g = silu_in(xe, to_ints(Wf.expert(il, "gate", e), Wt), p)
         u = op.matmul(xe, to_ints(Wf.expert(il, "up", e), Wt), f"{p}.u", A, Wt, A)
-        h = op.mul(op.silu(g, p), u, f"{p}.h", op.Tb, A, A)
+        h = op.mul(op.base.silu(g, p), u, f"{p}.h", op.Tb, A, A)
         D = mm(h, to_ints(Wf.expert(il, "down", e), Wt))                       # at A·Wt
         op.base.field(f"{p}.D", D, "the routed down product")
-        for j, (t, i) in enumerate(rows):
-            y_raw[t] += np.asarray(D[j], dtype=object) * int(gw[t, i])
+        if g_all is None:
+            g_all = np.zeros((kk * T, g.shape[1]), dtype=np.int64)
+            h_all = np.zeros_like(g_all)
+            D_all = np.zeros((kk * T, D.shape[1]), dtype=object)
+        idx = [i * T + t for t, i in rows]
+        g_all[idx], h_all[idx], D_all[idx] = g, h, D
+    D_all = ki._narrow(D_all)
+    y_raw = np.zeros(D_all.shape[1], dtype=object)[None, :].repeat(T, axis=0)
+    for i in range(kk):
+        y_raw = y_raw + ki.mul(gw[:, i:i + 1], D_all[i * T:(i + 1) * T]).astype(object)
     y_raw = ki._narrow(y_raw)
     y = op.rescale(y_raw, ki.log2_ratio(k["S_w"] * A * Wt, A), f"{p}.y")
     shw = Wf.shared(il)
     sh = ffn(x, shw["W_gate"], shw["W_up"], shw["W_down"], f"{p}.sh")
-    out.update({f"{p}.s": s, f"{p}.mask": np.asarray(routing["m"]), f"{p}.y": y, f"{p}.sh": sh})
+    out.update({f"{p}.router": r, f"{p}.s": s, f"{p}.mask": np.asarray(routing["m"]), f"{p}.gw": gw,
+                f"{p}.g": g_all, f"{p}.h": h_all, f"{p}.D": D_all, f"{p}.y_raw": y_raw,
+                f"{p}.y": y, f"{p}.sh": sh})
     return y, sh
 
 

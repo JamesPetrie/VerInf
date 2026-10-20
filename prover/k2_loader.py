@@ -27,6 +27,8 @@ integers. Tensor names are llama.cpp's for DEEPSEEK2 (llama-arch.cpp).
 
 Only the shards on disk are indexed (loader._gguf_by_name), so a pod holding
 shard 1 of UD-Q4_K_XL builds the two-layer gate."""
+import dataclasses
+
 import numpy as np
 
 from k2_attention import K2_MLA, SIGMA_FOLDED, mla_weights_from_gguf, softmax_scale
@@ -43,6 +45,53 @@ K2_INT = dict(S=S_ACT, S_sel=S_SEL, output_width=26, eps=1e-6,
               eps_int=round(1e-6 * S_ACT * S_ACT), z_max=40000, sig_bits=19,
               S_w=1 << 12, C=round(2.827 * (1 << 12)), select_word_bits=13,
               bracket_word_bits=8, sm_aux_width=24, sm_z_high_width=16)
+
+
+@dataclasses.dataclass(frozen=True)
+class Scales:
+    """A precision profile: the integer model's scales, one meaning each.
+
+      S_act   activations: the residual stream and every rescaled output
+      S_wt    the checkpoint's weights (attention, FFNs, experts, router,
+              the RMSNorm gains, the head)
+      s_norm  RMSNorm's internal scale, its input coarsened to it
+      S_tab   the nonlinear tables' input and output: SiLU, softmax, the
+              router logit
+      S_sel   the router scores and the selection bias
+      S_w     the gate weights w_i = ⌊C·s_i / Σ s⌋
+
+    The default is the 2^12 model every driver so far proves."""
+    S_act: int = S_ACT
+    S_wt: int = S_ACT
+    s_norm: int = S_ACT
+    S_tab: int = S_ACT
+    S_sel: int = S_SEL
+    S_w: int = 1 << 12
+
+    def __post_init__(self):
+        for f in dataclasses.fields(self):
+            v = getattr(self, f.name)
+            assert v > 0 and v & (v - 1) == 0, f"{f.name} = {v} is not a power of two"
+
+    def exponents(self) -> dict:
+        return {f.name: getattr(self, f.name).bit_length() - 1 for f in dataclasses.fields(self)}
+
+
+# The unexplained-information tail: demo_maverick_full.UI at 2^12. Its kernel
+# s_c = 2σ² is 2^4·S_logit² (σ² = 8 real logit units), and its ceiling
+# quotient ⌈gap_o²/k⌉ (k = s_c/s_b) must stay below 2^24 (ui_claim.Z_O_BITS).
+TAIL_KERNEL_BITS, TAIL_Z_O_BITS = 4, 24
+
+
+def tail_params(S_logit: int) -> dict:
+    """The tail's constants for logits at S_logit: the same kernel and s_y in
+    real logit units at any scale, and the widest gap table the ceiling
+    quotient allows, gap_max = 2^⌊(Z_O_BITS + kernel bits + log2 S_logit)/2⌋:
+    256 real logit units at 2^12 (demo_maverick_full.UI exactly), 128 at 2^14."""
+    e = S_logit.bit_length() - 1
+    assert 1 << e == S_logit, f"S_logit = {S_logit} is not a power of two"
+    return dict(s_c=1 << (TAIL_KERNEL_BITS + 2 * e), s_y=1 << 28, s_b=S_logit,
+                gap_max=1 << ((TAIL_Z_O_BITS + TAIL_KERNEL_BITS + e) // 2))
 
 
 def int_constants(cfg) -> dict:

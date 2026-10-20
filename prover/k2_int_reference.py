@@ -45,7 +45,7 @@ from dataclasses import dataclass
 import numpy as np
 
 import topk_reference as tref
-from k2_loader import K2_INT, sigmoid_table
+from k2_loader import K2_INT, sigmoid_table, tail_params
 from topk_params import P, l_bits
 
 P_HALF = P // 2
@@ -212,6 +212,15 @@ class Ranges:
                 name = k if impl is None else k[:-len(f" [{impl}]")]
                 out.bound(name, (r["min"], r["max"]), r["lo"], r["hi"], r["claim"], impl)
         return out
+
+
+def tail_ranges(ranges, logits, S_logit):
+    """The tail's gap table: every gap v* − l of a row in [0, gap_max)."""
+    gap_max = tail_params(S_logit)["gap_max"]
+    lg = np.asarray(logits)
+    gaps = lg.max(axis=1) - lg.min(axis=1)
+    ranges.bound("tail.gap", gaps, 0, gap_max - 1,
+                 f"the tail's largest gap v* − l in its {gap_max}-entry table (logits at {S_logit})")
 
 
 def rms_ranges(ranges, name, st, ys, *, d, s, eps_int):
@@ -561,5 +570,6 @@ def forward(ids, W, cfg, *, layers, offset=0, yarn=None, k=K2_INT, kk=8,
     for v0 in range(0, W.V, head_chunk):
         v1 = min(W.V, v0 + head_chunk)
         logits[:, v0:v1] = op.matmul(nfg, W.head(v0, v1), "logits")
+    tail_ranges(op.ranges, logits, op.S)
     out["logits"] = logits
     return out, op.ranges
