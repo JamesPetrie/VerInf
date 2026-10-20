@@ -206,12 +206,23 @@ RMSNorm) and [−2^15, 2^24 − 2^15 − 1] (softmax). Moonlight's full-depth
 values break them at 109 sites. It would need those claims widened, which is
 not implemented unless the combined design meets a concrete limitation.
 
-The tail takes the logits at `S_act`, as the fidelity study measures them.
-Its Gaussian kernel and `s_y` are unchanged in real units: `s_c` = 2^4·S²
-(σ² = 8 logit units). Its gap table is the widest that the 24-bit ceiling
-quotient allows, `gap_max` = 2^⌊(28 + log2 S)/2⌋: 256 real logit units at
-2^12, 128 at 2^14. Moonlight's largest gap is 63, and each run records
-`tail.gap` against it. At 2^12 every constant is the previous one.
+The tail reads the logits natively at `S_act`, as the fidelity study
+measures them (review of 2026-10-20). Its kernel and its gap domain are the
+same in real logit units at every scale: `s_c` = 16·S² (σ² = 8) and gaps
+strictly below 256 units (`gap_max` = 256·S). Its surprisal stays at the
+resolution `s_b` = 2^12, so U = Σ surprisal / (`s_b`·ln 2) at any activation
+precision.
+
+At a14w14 that is `s_c` = 2^32, `s_y` = 2^28, `s_b` = 2^12, `gap_max` = 2^22
+and k = `s_c`/`s_b` = 2^20. The honest ceiling quotient at the largest gap is
+16,777,209 < 2^24 (16,777,185 at 2^12); `tail_params` asserts that bound and
+refuses scales beyond 2^16.
+
+The tail's constants are recorded with the proof identity. Each run records
+`tail.gap` against the domain; Moonlight's largest gap is 63 units.
+`tests/test_k2_tail.py` proves the domain's largest gap (accepted, U sound
+and tight) and one past it (rejected). At 2^12 every constant is the
+previous one.
 
 Checks:
 - **Baseline lock.** The 2^12 tape is locked by digest
@@ -590,27 +601,43 @@ lazily on the CPU at K2's real dimensions, from a sparse stand-in for shard 1
 (its real header, no data), and counted by the profiler's extractor. The
 routed experts are bridge-held. Full depth is the two-layer tape plus 59
 MoE-layer increments. Record: `analysis/k2-precision-costs-2026-10-20.json`.
-Runtime is not extrapolated; the gate measures it (session kit, stage P).
+
+What each figure is:
+- **Witness slots and rows** are exact from the tape.
+- **Constraints and quadratic products** come from the profiler's formulas.
+  Every one of the tape's 24 claim types now has one; the tail's two were
+  added and checked against their compile functions.
+- **Proof bytes** are a serialization estimate: T_QUERIES × rows × 11 bytes
+  of compact framing, not a measured dump.
+- **The live activation set** is the streaming replay's, not total GPU peak
+  memory.
+
+The gate (session kit, stage P) measures prove and verify time, the proof's
+size and peak GPU memory.
 
 | T = 1000, 61 layers | 2^12 baseline | a14w14 | a16w16 |
 |---|---|---|---|
 | witness slots | 2.145 × 10^11 | +2.1% | +2.3% |
-| linear constraints | 6.80 × 10^10 | +2.7% | +3.0% |
-| quadratic products | 8.61 × 10^10 | +2.0% | +2.0% |
+| linear constraints | 6.73 × 10^10 | +2.7% | +3.1% |
+| quadratic products | 8.70 × 10^10 | +2.0% | +2.0% |
 | rows at ELL 8192 | 26.21 M | +2.1% | +2.3% |
-| proof, compact (T_QUERIES 54) | 15.6 GB | 15.9 GB | 15.9 GB |
-| shared table entries | 104.1 M (30 tables) | 157.0 M (34) | 364.9 M (34) |
+| proof, compact (estimate, T_QUERIES 54) | 15.6 GB | 15.9 GB | 15.9 GB |
+| shared table entries | 104.1 M (30 tables) | 161.8 M (34) | 405.0 M (34) |
 
 - **Per MoE layer, the only difference is the two standalone residual
-  rescales:** +71.7 M slots at T = 1000, +2.1%.
-- **The rest is tables.** a14w14's combine rescales from S_w·S_act·S_wt, a
-  2^26-entry low-word table where the baseline has 2^24. The tail's gap and
-  exp tables double, and its remainder and log tables grow fourfold.
+  rescales:** +71.7 M slots at T = 1000.
+- **The rest is tables.**
+  - The combine's low-word table is 2^26 entries at a14w14, against 2^24 at
+    the baseline.
+  - The tail's gap and exp tables are 2^22 for the 256-unit domain at
+    2^14, against 2^20.
+  - Its remainder table has k = 2^20 entries, against 2^16.
 - **The gate is where tables show.** At the two-layer, T = 100 gate a14w14
-  is +3.1% (a16w16 +13.5%, its combine table 2^28). At full depth the
-  tables amortize.
-- **Live activation set:** at T = 1000 over three layers it peaks at 32.0
+  is +3.3% in witness and +16% in constraints, most of the latter the
+  tables' settlement. a16w16 is +15.5% and +78%, its combine table 2^28.
+  At full depth the tables amortize.
+- **The live activation set** at T = 1000 over three layers peaks at 32.0
   GiB at the baseline and 33.2 GiB at a14w14, both in the tail's max.
 
-A split low word for the combine's rescale would shrink its table; at full
+A split low word for the combine's rescale would shrink its table. At full
 depth that is under 0.1% of the witness, and it is not done.
