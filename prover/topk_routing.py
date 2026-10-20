@@ -474,22 +474,27 @@ def split(tape, x, n_parts, part_shape):
 
 def topk_moe_ffn(tape, x, s, b, w, *, T, E, k, d, d_ff, S, S_w, C, score_bits,
                  width, output_width, select_word_bits=12, bracket_word_bits=8,
-                 use_bridge=False, trace=None):
+                 use_bridge=False, trace=None, S_wt=None, S_tab=None):
     """One top-k MoE FFN with output-side gates.
 
-    x (T, d) at scale S; s (T, E) the scores at their own scale (< 2^score_bits);
-    b (E,) the selection bias; w["gate"], w["up"] lists of E shards (d, d_ff),
-    w["down"] E shards (d_ff, d), all at scale S. Returns y (T, d) at scale S:
+    x (T, d) at the activation scale S; s (T, E) the scores at their own scale
+    (< 2^score_bits); b (E,) the selection bias; w["gate"], w["up"] lists of E
+    shards (d, d_ff), w["down"] E shards (d_ff, d), at the weight scale S_wt
+    (default S). Returns y (T, d) at scale S:
       y[t] = Σ_i w_i[t] · FFN_{e_i}(x[t]),  w_i = ⌊C·s_i / Σ s⌋ at scale S_w.
+    The gate projection is rescaled straight to SiLU's table scale S_tab
+    (default S), its one consumer; the up projection and the SiLU product to S.
     `use_bridge`: the shards are external inputs the weight enrollment
     authenticates (routed_projected_matmul's bridge). `trace`, a dict, receives
     the intermediates (m, gw, g, h, D, y_raw, y) for an exact comparison."""
     from rescale_claim import rescale
     from routed_projected import routed_projected_matmul
     from routing_claim import freivalds_combine
-    assert tape.silu_config.s_in in (0, tape.silu_config.s_x) and tape.silu_config.s_x == S, (
+    S_wt = S if S_wt is None else S_wt
+    S_tab = S if S_tab is None else S_tab
+    assert tape.silu_config.s_in in (0, tape.silu_config.s_x) and tape.silu_config.s_x == S_tab, (
         f"topk_moe_ffn: the tape's SiLU tables are at scale {tape.silu_config.s_x}, "
-        f"the activations at {S}: build the tape with a SiluConfig of r = log2(S)")
+        f"its input at {S_tab}: build the tape with a SiluConfig of r = log2(S_tab)")
     m, _tau = route_topk(tape, s, b, T=T, E=E, k=k, width=width,
                          word_bits=select_word_bits)
     M, ss = topk_slots(tape, m, s, T=T, E=E, k=k)
@@ -498,17 +503,18 @@ def topk_moe_ffn(tape, x, s, b, w, *, T, E, k, d, d_ff, S, S_w, C, score_bits,
     Tk = k * T
     M_k = tape.concat(M, (Tk, E))                       # slot-major rows i·T + t
     x_k = tape.concat([x] * k, (Tk, d))
-    rp = dict(s_in=S * S, s_out=S, output_width=output_width)
     g = rescale(tape, routed_projected_matmul(tape, x_k, M_k, w["gate"], T=Tk, K=d,
-                                              J=d_ff, E=E, use_bridge=use_bridge), **rp)
+                                              J=d_ff, E=E, use_bridge=use_bridge),
+                s_in=S * S_wt, s_out=S_tab, output_width=output_width)
     u = rescale(tape, routed_projected_matmul(tape, x_k, M_k, w["up"], T=Tk, K=d,
-                                              J=d_ff, E=E, use_bridge=use_bridge), **rp)
-    h = tape.hadamard(tape.silu(g), u, s_a=S, s_b=S, s_out=S, output_width=output_width)
+                                              J=d_ff, E=E, use_bridge=use_bridge),
+                s_in=S * S_wt, s_out=S, output_width=output_width)
+    h = tape.hadamard(tape.silu(g), u, s_a=S_tab, s_b=S, s_out=S, output_width=output_width)
     D = routed_projected_matmul(tape, h, M_k, w["down"], T=Tk, K=d_ff, J=d, E=E,
                                 use_bridge=use_bridge)
-    parts = split(tape, D, k, (T, d))                   # D_i: slot i's raw output, S²
-    y_raw = freivalds_combine(tape, gw, parts, T=T, E=k, F=d)   # at S_w·S²
-    y = rescale(tape, y_raw, s_in=S_w * S * S, s_out=S, output_width=output_width)
+    parts = split(tape, D, k, (T, d))                   # D_i: slot i's raw output, S·S_wt
+    y_raw = freivalds_combine(tape, gw, parts, T=T, E=k, F=d)   # at S_w·S·S_wt
+    y = rescale(tape, y_raw, s_in=S_w * S * S_wt, s_out=S, output_width=output_width)
     if trace is not None:
         trace.update(m=m, gw=gw, g=g, h=h, D=D, y_raw=y_raw, y=y)
     return y

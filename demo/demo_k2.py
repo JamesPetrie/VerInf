@@ -4,6 +4,16 @@ profiler/instrumented_prove.py: no admission gate, an in-process enrollment,
 the public bound discovered by a reveal pass, the Rust check under the same
 run's anchors. Cite its checks and timings, not its proofs.
 
+The tape is built at a precision profile (--precision, a
+k2_precision_study configuration; k2_loader.Scales): the 2^12 baseline, or
+finer activations and weights by combined rounding: a producer whose one
+consumer is coarser rescales straight to that consumer's scale (the attention
+scores to softmax's, the gate projections and router logits to their
+tables', the query-LoRA and KV latents to RMSNorm's), and the residual stream,
+which its residual adds also read, reaches RMSNorm through a standalone
+rescale. The baseline's claims are exactly those before the profiles existed
+(tests/test_k2_driver_structure.py).
+
 The tape: the token-select embedding over hidden one-hot inputs
 (demo_maverick_full.build_inputs); per layer, latent attention as
 composition A (analysis/mla-attention-design.md §4.2: σ folded into the
@@ -16,8 +26,9 @@ the routed experts are external inputs the streaming enrollment
 authenticates.
 
 Modes, in the order the gate runs them:
-  check     the integer reference (k2_int_reference) on the CPU from the
-            same GGUF, recording the ranges of §6.2, then the engine pass:
+  check     the integer reference on the CPU from the same GGUF
+            (k2_int_reference at the baseline, k2_precision_study's model at
+            any other profile), recording the ranges of §6.2, then the engine pass:
             PASS needs every named intermediate EXACT and every range inside
             its window. A reference stopped by an undefined value (a lookup
             outside its table) ends the check with its ranges recorded.
@@ -36,6 +47,10 @@ Modes, in the order the gate runs them:
                               statement digest (and, for contrast, its own)
               wrong-slice     expert 0's gate shard decoded from expert 1's
                               rows (--bridge)
+              rescale-witness the first standalone rescale's first output one
+                              higher, its low word 2^r lower: every linear
+                              identity holds and only the low word's range
+                              check can catch it
             PASS needs the honest proof accepted and, for every planned
             negative, its change applied (counted where the witness or the
             claims change) and an explicit `rust_verify: REJECT` from a
@@ -72,7 +87,8 @@ from k2_loader import K2_INT, S_SEL      # noqa: E402
 
 S = K2_INT["S"]
 OW = K2_INT["output_width"]
-NEGATIVES = ("interleave", "yarn-witness", "yarn-statement", "wrong-slice")
+NEGATIVES = ("interleave", "yarn-witness", "yarn-statement", "wrong-slice", "rescale-witness")
+IMPLEMENTATION = "combined-rounding"    # the driver's: k2_precision_study.IMPLEMENTATIONS
 
 _T0 = time.time()
 
@@ -90,35 +106,64 @@ def yarn_scaling(cfg):
 
 # ---- the tape ---------------------------------------------------------------------
 
-def _mm():
-    return dict(s_a=S, s_b=S, s_out=S, output_width=OW)
+def profile(name="baseline"):
+    """A k2_precision_study configuration's scales (k2_loader.Scales); the
+    hypothetical ones, which need a claim changed, are refused."""
+    import k2_precision_study as ps
+    if name not in ps.CONFIGS or "hypothetical" in ps.CONFIGS[name]:
+        raise SystemExit(f"precision {name!r}: choose from "
+                         f"{[n for n, c in ps.CONFIGS.items() if 'hypothetical' not in c]}")
+    sc = ps.scales(ps.CONFIGS[name])
+    assert sc.S_w == K2_INT["S_w"] and sc.S_sel == S_SEL, "C and the sigmoid table are K2_INT's"
+    return sc
 
 
-def _norm_gain(tape, x, gain, *, T, d):
-    n = tape.rmsnorm(x, d=d, s=S, eps_int=K2_INT["eps_int"], s_out=S, output_width=OW)
-    return tape.hadamard_broadcast(n, gain, SEQ=T, d=d, **_mm())
+def _mm(s_a=S, s_b=S, s_out=S):
+    return dict(s_a=s_a, s_b=s_b, s_out=s_out, output_width=OW)
 
 
-def build_mla(tape, x, gguf, il, *, T, cfg, offset, yarn, trace):
-    """Latent attention and the post-attention norm. Returns (r1, n2g)."""
+def _norm_gain(tape, x, gain, *, T, d, sc=None, at_norm=False):
+    """RMSNorm at s_norm, its output at S_act, then the gain (at S_wt). `x` is
+    at S_act and reaches s_norm through a standalone rescale when the two
+    differ (the residual stream, which the residual adds also read), or is
+    already at s_norm (`at_norm`: its producer rescaled straight to it)."""
+    from k2_loader import Scales
+    sc = sc or Scales()
+    if sc.S_act != sc.s_norm and not at_norm:
+        from rescale_claim import rescale
+        assert sc.S_act > sc.s_norm
+        x = rescale(tape, x, s_in=sc.S_act, s_out=sc.s_norm, output_width=OW)
+    n = tape.rmsnorm(x, d=d, s=sc.s_norm, eps_int=round(K2_INT["eps"] * sc.s_norm * sc.s_norm),
+                     s_out=sc.S_act, output_width=OW)
+    return tape.hadamard_broadcast(n, gain, SEQ=T, d=d, **_mm(sc.S_act, sc.S_wt, sc.S_act))
+
+
+def build_mla(tape, x, gguf, il, *, T, cfg, offset, yarn, trace, sc=None):
+    """Latent attention and the post-attention norm at the profile `sc`.
+    Returns (r1, n2g)."""
     from head_interleave import head_interleave
-    from k2_loader import attention_loader
+    from k2_loader import Scales, attention_loader
+    sc = sc or Scales()
+    A, Wt, N, Tb = sc.S_act, sc.S_wt, sc.s_norm, sc.S_tab
     d, H, qr, kr = cfg["d"], cfg["H"], cfg["q_rank"], cfg["kv_rank"]
     dn, dr, dv = cfg["d_nope"], cfg["d_rope"], cfg["d_v"]
     shapes = {"g_attn": (d,), "g_q_a": (qr,), "g_kv_a": (kr,), "g_ffn": (d,),
               "W_qa": (d, qr), "W_q_nope": (qr, H * dn), "W_q_pe": (qr, H * dr),
               "W_ckv": (d, kr), "W_k_pe": (d, dr), "W_k_nope": (kr, H * dn),
               "W_v": (kr, H * dv), "W_o": (H * dv, d)}
-    w = {k: tape.commit_lazy(f"L{il}_{k}", attention_loader(gguf, il, k, S, cfg), sh,
+    w = {k: tape.commit_lazy(f"L{il}_{k}", attention_loader(gguf, il, k, Wt, cfg), sh,
                              sh[0] * (sh[1] if len(sh) > 1 else 1))
          for k, sh in shapes.items()}
-    mm = _mm()
+    mm = _mm(A, Wt, A)
     p = f"L{il}"
-    n1g = _norm_gain(tape, x, w["g_attn"], T=T, d=d)
-    aqg = _norm_gain(tape, tape.matmul(n1g, w["W_qa"], **mm), w["g_q_a"], T=T, d=qr)
-    ckvg = _norm_gain(tape, tape.matmul(n1g, w["W_ckv"], **mm), w["g_kv_a"], T=T, d=kr)
-    rope = dict(SEQ=T, d_h=dr, s_x=S, base=cfg["base"], position_offset=offset,
-                rope_scaling=yarn_scaling(cfg) if yarn else None, s_out=S, output_width=OW)
+    n1g = _norm_gain(tape, x, w["g_attn"], T=T, d=d, sc=sc)
+    # the latents' one consumer is their RMSNorm: rescaled straight to s_norm
+    aqg = _norm_gain(tape, tape.matmul(n1g, w["W_qa"], **_mm(A, Wt, N)), w["g_q_a"], T=T, d=qr,
+                     sc=sc, at_norm=True)
+    ckvg = _norm_gain(tape, tape.matmul(n1g, w["W_ckv"], **_mm(A, Wt, N)), w["g_kv_a"], T=T, d=kr,
+                      sc=sc, at_norm=True)
+    rope = dict(SEQ=T, d_h=dr, s_x=A, base=cfg["base"], position_offset=offset,
+                rope_scaling=yarn_scaling(cfg) if yarn else None, s_out=A, output_width=OW)
     q_nope = tape.matmul(aqg, w["W_q_nope"], **mm)
     q_pe = tape.rope(tape.matmul(aqg, w["W_q_pe"], **mm), heads=H, **rope)
     k_pe = tape.rope(tape.matmul(n1g, w["W_k_pe"], **mm), heads=1, **rope)
@@ -126,29 +171,35 @@ def build_mla(tape, x, gguf, il, *, T, cfg, offset, yarn, trace):
     v = tape.matmul(ckvg, w["W_v"], **mm)
     query = head_interleave(tape, q_nope, q_pe, T=T, H=H, w1=dn, w2=dr)
     key = head_interleave(tape, k_nope, k_pe, T=T, H=H, w1=dn, w2=dr, shared=True)
-    sc = tape.matmul(query, key, transpose_b=True, heads=H, head_dim=dn + dr, **mm)
-    sm = tape.softmax(sc, M=T, s_x=S, s_c=S, s_y=S, Z_max=K2_INT["z_max"], saturate=True,
+    # the scores' one consumer is softmax: rescaled straight to its table scale
+    scores = tape.matmul(query, key, transpose_b=True, heads=H, head_dim=dn + dr, **_mm(A, A, Tb))
+    sm = tape.softmax(scores, M=T, s_x=Tb, s_c=Tb, s_y=Tb, Z_max=K2_INT["z_max"], saturate=True,
                       Z_high_width=K2_INT["sm_z_high_width"], aux_chunk_width=K2_INT["sm_aux_width"],
                       causal=True, heads=H)
-    att = tape.matmul(sm, v, heads=H, head_dim=T, **mm)
+    att = tape.matmul(sm, v, heads=H, head_dim=T, **_mm(Tb, A, A))
     r1 = x + tape.matmul(att, w["W_o"], **mm)
-    n2g = _norm_gain(tape, r1, w["g_ffn"], T=T, d=d)
+    n2g = _norm_gain(tape, r1, w["g_ffn"], T=T, d=d, sc=sc)
     trace.update({f"{p}.n1g": n1g, f"{p}.aqg": aqg, f"{p}.ckvg": ckvg, f"{p}.q_pe": q_pe,
                   f"{p}.k_pe": k_pe, f"{p}.query": query, f"{p}.key": key, f"{p}.v": v,
-                  f"{p}.scores": sc, f"{p}.sm": sm, f"{p}.att": att, f"{p}.r1": r1,
+                  f"{p}.scores": scores, f"{p}.sm": sm, f"{p}.att": att, f"{p}.r1": r1,
                   f"{p}.n2g": n2g})
     return r1, n2g
 
 
-def _dense_ffn(tape, x, gguf, names, *, d, d_ff, tag):
+def _dense_ffn(tape, x, gguf, names, *, d, d_ff, tag, sc=None):
+    """SwiGLU at the profile `sc`: the gate projection rescaled straight to
+    SiLU's table scale, its one consumer."""
     from demo_maverick_full import _field_loader
+    from k2_loader import Scales
+    sc = sc or Scales()
+    A, Wt, Tb = sc.S_act, sc.S_wt, sc.S_tab
     gate, up, down = names
-    Wg = tape.commit_lazy(f"{tag}_Wg", _field_loader(gguf, gate, transpose=True), (d, d_ff), d * d_ff)
-    Wu = tape.commit_lazy(f"{tag}_Wu", _field_loader(gguf, up, transpose=True), (d, d_ff), d * d_ff)
-    Wd = tape.commit_lazy(f"{tag}_Wd", _field_loader(gguf, down, transpose=True), (d_ff, d), d_ff * d)
-    mm = _mm()
-    h = tape.hadamard(tape.silu(tape.matmul(x, Wg, **mm)), tape.matmul(x, Wu, **mm), **mm)
-    return tape.matmul(h, Wd, **mm)
+    Wg = tape.commit_lazy(f"{tag}_Wg", _field_loader(gguf, gate, Wt, transpose=True), (d, d_ff), d * d_ff)
+    Wu = tape.commit_lazy(f"{tag}_Wu", _field_loader(gguf, up, Wt, transpose=True), (d, d_ff), d * d_ff)
+    Wd = tape.commit_lazy(f"{tag}_Wd", _field_loader(gguf, down, Wt, transpose=True), (d_ff, d), d_ff * d)
+    h = tape.hadamard(tape.silu(tape.matmul(x, Wg, **_mm(A, Wt, Tb))), tape.matmul(x, Wu, **_mm(A, Wt, A)),
+                      **_mm(Tb, A, A))
+    return tape.matmul(h, Wd, **_mm(A, Wt, A))
 
 
 def _rows(t):
@@ -165,27 +216,30 @@ def _counted(load, counts, key):
     return run
 
 
-def build_moe(tape, n2g, gguf, il, sig_tbl, *, T, d, kk, bridge, wrong_slice, trace, counts):
-    """Router, sigmoid lookup, top-k MoE (topk_moe_ffn), shared expert."""
+def build_moe(tape, n2g, gguf, il, sig_tbl, *, T, d, kk, bridge, wrong_slice, trace, counts, sc=None):
+    """Router, sigmoid lookup, top-k MoE (topk_moe_ffn), shared expert, at the
+    profile `sc`: the router logits rescaled straight to the sigmoid table's
+    input scale."""
     from demo_maverick_full import _field_loader
     from k2_int_reference import topk_width
-    from k2_loader import bias_ints, by_name, ints_loader
+    from k2_loader import Scales, bias_ints, by_name, ints_loader
     from loader import gguf_provenance, maverick_lazy_expert
     from topk_routing import topk_moe_ffn
+    sc = sc or Scales()
+    A, Wt = sc.S_act, sc.S_wt
     by = by_name(gguf)
     E = int(by[f"blk.{il}.ffn_gate_inp.weight"].n_elements) // d
     d_ff = int(by[f"blk.{il}.ffn_gate_exps.weight"].data.shape[1])
-    mm = _mm()
     p = f"L{il}"
-    W_r = tape.commit_lazy(f"{p}_Wr", _field_loader(gguf, f"blk.{il}.ffn_gate_inp.weight",
+    W_r = tape.commit_lazy(f"{p}_Wr", _field_loader(gguf, f"blk.{il}.ffn_gate_inp.weight", Wt,
                                                     transpose=True), (d, E), d * E)
-    r = tape.matmul(n2g, W_r, **mm)
+    r = tape.matmul(n2g, W_r, **_mm(A, Wt, sc.S_tab))
     s = tape.paired_tlookup(r, sig_tbl, shift=1 << (K2_INT["sig_bits"] - 1))
     bias_name = f"blk.{il}.exp_probs_b.bias"
-    b = tape.commit_lazy(f"{p}_bias", ints_loader(lambda: bias_ints(by_name(gguf), il, S_SEL),
+    b = tape.commit_lazy(f"{p}_bias", ints_loader(lambda: bias_ints(by_name(gguf), il, sc.S_sel),
                                                   provenance=gguf_provenance(gguf, bias_name)),
                          (E,), E)
-    width = topk_width(S_SEL, bias_ints(by, il, S_SEL), E)
+    width = topk_width(sc.S_sel, bias_ints(by, il, sc.S_sel), E)
 
     info = dict(E=E, d_ff=d_ff, width=width)
     if wrong_slice:
@@ -196,9 +250,9 @@ def build_moe(tape, n2g, gguf, il, sig_tbl, *, T, d, kk, bridge, wrong_slice, tr
 
     def shard(kind, e, shape):
         if wrong_slice and kind == "gate_exps" and e == 0:     # expert 0 from expert 1's rows
-            ld = _counted(maverick_lazy_expert(gguf, il, kind, 1, S), counts, "wrong-slice")
+            ld = _counted(maverick_lazy_expert(gguf, il, kind, 1, Wt), counts, "wrong-slice")
         else:
-            ld = maverick_lazy_expert(gguf, il, kind, e, S)
+            ld = maverick_lazy_expert(gguf, il, kind, e, Wt)
         name = f"{p}_{kind}{e}"
         if bridge:
             return tape.external_lazy(name, ld, shape, shape[0] * shape[1])
@@ -207,13 +261,14 @@ def build_moe(tape, n2g, gguf, il, sig_tbl, *, T, d, kk, bridge, wrong_slice, tr
          "up": [shard("up_exps", e, (d, d_ff)) for e in range(E)],
          "down": [shard("down_exps", e, (d_ff, d)) for e in range(E)]}
     tr = {}
-    y = topk_moe_ffn(tape, n2g, s, b, w, T=T, E=E, k=kk, d=d, d_ff=d_ff, S=S, S_w=K2_INT["S_w"],
-                     C=K2_INT["C"], score_bits=S_SEL.bit_length(), width=width,
+    y = topk_moe_ffn(tape, n2g, s, b, w, T=T, E=E, k=kk, d=d, d_ff=d_ff, S=A, S_w=sc.S_w,
+                     C=K2_INT["C"], score_bits=sc.S_sel.bit_length(), width=width,
                      output_width=OW, select_word_bits=K2_INT["select_word_bits"],
-                     bracket_word_bits=K2_INT["bracket_word_bits"], use_bridge=bridge, trace=tr)
+                     bracket_word_bits=K2_INT["bracket_word_bits"], use_bridge=bridge, trace=tr,
+                     S_wt=Wt, S_tab=sc.S_tab)
     d_sh = _rows(by[f"blk.{il}.ffn_gate_shexp.weight"])
     sh = _dense_ffn(tape, n2g, gguf, [f"blk.{il}.ffn_{k}_shexp.weight" for k in ("gate", "up", "down")],
-                    d=d, d_ff=d_sh, tag=f"{p}_sh")
+                    d=d, d_ff=d_sh, tag=f"{p}_sh", sc=sc)
     trace.update({f"{p}.router": r, f"{p}.s": s, f"{p}.mask": tr["m"], f"{p}.gw": tr["gw"],
                   f"{p}.g": tr["g"], f"{p}.h": tr["h"], f"{p}.D": tr["D"],
                   f"{p}.y_raw": tr["y_raw"], f"{p}.y": tr["y"], f"{p}.sh": sh})
@@ -233,31 +288,34 @@ class Built:
 
 
 def build(gguf, prompt_ids, cont_ids, *, cfg=K2_MLA, layers=2, kk=8, offset=0, yarn=True,
-          bridge=False, tamper=None, ligero=None, counts=None):
-    """The K2 tape over `layers` layers. `tamper` = "yarn-statement" builds the
-    claims without YaRN; "wrong-slice" decodes expert 0's gate shard from
-    expert 1's rows, counting each decode in `counts`. Witness tampers are
-    applied at prove time (tampering)."""
+          bridge=False, tamper=None, ligero=None, counts=None, precision="baseline"):
+    """The K2 tape over `layers` layers at a precision profile (profile()).
+    `tamper` = "yarn-statement" builds the claims without YaRN; "wrong-slice"
+    decodes expert 0's gate shard from expert 1's rows, counting each decode
+    in `counts`. Witness tampers are applied at prove time (tampering)."""
     counts = {} if counts is None else counts
-    from demo_maverick_full import UI, _field_loader, build_inputs
+    from demo_maverick_full import _field_loader, build_inputs
     from demo_maverick_moe import CFG, SILU_CFG
-    from k2_loader import by_name, head_name, sigmoid_table
+    from k2_loader import by_name, head_name, sigmoid_table, tail_params
     from tape import Tape
     from unexplained_info import prove_unexplained_info
-    assert SILU_CFG.s_x == S
+    sc = profile(precision)
+    assert SILU_CFG.s_x == sc.S_tab
     by = by_name(gguf)
     head = head_name(by)                # before any tape work: no untied-head substitute
     tape = Tape(ligero or CFG, silu_config=SILU_CFG, lazy=True)
     d = cfg["d"]
     V = int(by["token_embd.weight"].n_elements) // d
     T = len(prompt_ids) + len(cont_ids)
-    layer_of, trace, info = {}, {}, dict(V=V, T=T, layers={})
+    layer_of, trace, info = {}, {}, dict(V=V, T=T, layers={},
+                                         precision=dict(name=precision, **sc.exponents()))
 
     def mark(tag, n0):
         for c in tape.claims[n0:]:
             layer_of.setdefault(id(c), tag)
     n0 = len(tape.claims)
-    E_wt = tape.commit_lazy("token_embd", _field_loader(gguf, "token_embd.weight"), (V, d), V * d)
+    # the embedding rows are activations: at S_act
+    E_wt = tape.commit_lazy("token_embd", _field_loader(gguf, "token_embd.weight", sc.S_act), (V, d), V * d)
     x, ind_mid, o_last = build_inputs(tape, gguf, E_wt, prompt_ids, cont_ids, V=V, d=d)
     trace["x0"] = x
     mark("embed", n0)
@@ -266,20 +324,20 @@ def build(gguf, prompt_ids, cont_ids, *, cfg=K2_MLA, layers=2, kk=8, offset=0, y
         n0 = len(tape.claims)
         p = f"L{il}"
         r1, n2g = build_mla(tape, x, gguf, il, T=T, cfg=cfg, offset=offset,
-                            yarn=(yarn and tamper != "yarn-statement"), trace=trace)
+                            yarn=(yarn and tamper != "yarn-statement"), trace=trace, sc=sc)
         if f"blk.{il}.ffn_gate_inp.weight" in by:
             if sig_tbl is None:
-                keys, ty, _ = sigmoid_table(S, S_SEL, K2_INT["sig_bits"])
+                keys, ty, _ = sigmoid_table(sc.S_tab, sc.S_sel, K2_INT["sig_bits"])
                 sig_tbl = tape.register_table("k2_sigmoid", T_data=keys, T_Y_data=ty)
             y, sh, li = build_moe(tape, n2g, gguf, il, sig_tbl, T=T, d=d, kk=kk, bridge=bridge,
                                   wrong_slice=(tamper == "wrong-slice"), trace=trace,
-                                  counts=counts)
+                                  counts=counts, sc=sc)
             x = (r1 + y) + sh
             info["layers"][il] = dict(kind="moe", **li)
         else:
             d_ff = _rows(by[f"blk.{il}.ffn_gate.weight"])
             f = _dense_ffn(tape, n2g, gguf, [f"blk.{il}.ffn_{k}.weight" for k in ("gate", "up", "down")],
-                           d=d, d_ff=d_ff, tag=p)
+                           d=d, d_ff=d_ff, tag=p, sc=sc)
             trace[f"{p}.ffn"] = f
             x = r1 + f
             info["layers"][il] = dict(kind="dense", d_ff=d_ff)
@@ -287,18 +345,20 @@ def build(gguf, prompt_ids, cont_ids, *, cfg=K2_MLA, layers=2, kk=8, offset=0, y
         mark(il, n0)
         log(f"layer {il} built ({info['layers'][il]['kind']}): {len(tape.claims)} claims so far")
     n0 = len(tape.claims)
-    g_out = tape.commit_lazy("g_out", _field_loader(gguf, "output_norm.weight"), (d,), d)
-    nfg = _norm_gain(tape, x, g_out, T=T, d=d)
-    W_lm = tape.commit_lazy("W_lm", _field_loader(gguf, head, transpose=True), (d, V), d * V)
-    logits = tape.matmul(nfg, W_lm, **_mm())
+    g_out = tape.commit_lazy("g_out", _field_loader(gguf, "output_norm.weight", sc.S_wt), (d,), d)
+    nfg = _norm_gain(tape, x, g_out, T=T, d=d, sc=sc)
+    W_lm = tape.commit_lazy("W_lm", _field_loader(gguf, head, sc.S_wt, transpose=True), (d, V), d * V)
+    logits = tape.matmul(nfg, W_lm, **_mm(sc.S_act, sc.S_wt, sc.S_act))
     trace["final.ng"], trace["logits"] = nfg, logits
     ids = list(prompt_ids) + list(cont_ids)
     O_ext = tape.concat([ind_mid, o_last], (T, V))
     sum_pos = list(range(len(prompt_ids) - 1, T - 1))
+    # the tail takes the logits at S_act, its kernel the same in real units
     Sz, handles = prove_unexplained_info(tape, logits, ids[1:] + [ids[-1]], T=T, V=V,
-                                         sum_positions=sum_pos, reveal=True, O_ext=O_ext, **UI)
+                                         sum_positions=sum_pos, reveal=True, O_ext=O_ext,
+                                         **tail_params(sc.S_act))
     mark("tail", n0)
-    log(f"built: {len(tape.claims)} claims, T={T}, V={V}, offset={offset}, "
+    log(f"built at {precision}: {len(tape.claims)} claims, T={T}, V={V}, offset={offset}, "
         f"yarn={'off' if tamper == 'yarn-statement' or not yarn else 'on'}, "
         f"bridge={'on' if bridge else 'off'}" + (f", tamper={tamper}" if tamper else ""))
     return Built(tape, trace, logits, Sz, handles, sum_pos, layer_of, info)
@@ -350,33 +410,42 @@ def check_verdict(rec) -> bool:
     rows = rec.get("exact") or []
     return (not rec.get("reference_error") and bool(rows) and all(r["ok"] for r in rows)
             and not rec.get("range_violations")
-            and all(r["ok"] for r in (rec.get("ranges") or {}).values()))
+            and all(r["ok"] for r in (rec.get("ranges") or {}).values()
+                    if r.get("implementation") in (None, IMPLEMENTATION)))
 
 
-def _reference(gguf, ids, cfg, layers, kk, offset, rec):
+def _reference(gguf, ids, cfg, layers, kk, offset, rec, precision="baseline"):
     """The integer reference, its ranges kept in `rec` even when it stops at
-    an undefined value. Returns its intermediates, or None if it stopped."""
+    an undefined value: k2_int_reference (the validated model) at the
+    baseline, k2_precision_study's model at another profile. Returns its
+    intermediates, or None if it stopped."""
     import k2_int_reference as ki
+    import k2_precision_study as ps
     from k2_loader import GgufWeights
     ranges = ki.Ranges()
     t0 = time.time()
     try:
-        ref, _ = ki.forward(ids, GgufWeights(gguf, cfg=cfg), cfg, layers=layers, offset=offset,
-                            kk=kk, ranges=ranges)
+        if precision == "baseline":
+            ref, _ = ki.forward(ids, GgufWeights(gguf, cfg=cfg), cfg, layers=layers, offset=offset,
+                                kk=kk, ranges=ranges)
+        else:
+            ref, _ = ps.forward(ids, GgufWeights(gguf, ints=False, cfg=cfg), cfg, ps.CONFIGS[precision],
+                                layers=layers, offset=offset, kk=kk, ranges=ranges)
     except ki.UndefinedValue as e:
         ref = None
         rec["reference_error"] = str(e)
         log(f"integer reference STOPPED: {e}")
     rec["reference_s"] = time.time() - t0
     rec["ranges"] = ranges.as_dict()
-    rec["range_violations"] = sorted(ranges.violations())
+    # the driver's arithmetic is combined rounding: the other implementation's constraints do not apply
+    rec["range_violations"] = sorted(ranges.violations(IMPLEMENTATION))
     log(f"ranges: {len(ranges.rows)} recorded, {len(rec['range_violations'])} outside their "
         f"window" + (f": {rec['range_violations']}" if rec["range_violations"] else ""))
     return ref
 
 
 def check(gguf, prompt_ids, cont_ids, *, cfg=K2_MLA, layers=2, kk=8, offset=0, ligero=None,
-          rec=None):
+          rec=None, precision="baseline"):
     """The integer reference first (CPU), recording every range; then the
     engine pass, compared name by name. Fills and returns `rec`; rec["ok"]
     only when every intermediate is exact and every range is inside its
@@ -384,12 +453,12 @@ def check(gguf, prompt_ids, cont_ids, *, cfg=K2_MLA, layers=2, kk=8, offset=0, l
     table, which the engine could not compute either) ends the check there,
     its measurements kept."""
     rec = {} if rec is None else rec
-    rec.update(mode="check", ok=False)
-    ref = _reference(gguf, list(prompt_ids) + list(cont_ids), cfg, layers, kk, offset, rec)
+    rec.update(mode="check", ok=False, precision=dict(name=precision, **profile(precision).exponents()))
+    ref = _reference(gguf, list(prompt_ids) + list(cont_ids), cfg, layers, kk, offset, rec, precision)
     if ref is None:
         return rec
     b = build(gguf, prompt_ids, cont_ids, cfg=cfg, layers=layers, kk=kk, offset=offset,
-              ligero=ligero)
+              ligero=ligero, precision=precision)
     rec["info"] = b.info
     t0 = time.time()
     got, sz = engine_values(b)
@@ -405,7 +474,7 @@ def check(gguf, prompt_ids, cont_ids, *, cfg=K2_MLA, layers=2, kk=8, offset=0, l
     return rec
 
 
-def fidelity(gguf, ids, *, cfg=K2_MLA, layers=2, kk=8, offset=0, rec=None):
+def fidelity(gguf, ids, *, cfg=K2_MLA, layers=2, kk=8, offset=0, rec=None, precision="baseline"):
     """CPU only: the integer reference against the float reference. rec["ok"]
     when the reference ran with every range inside its window; the
     tolerances are read, not asserted."""
@@ -414,14 +483,15 @@ def fidelity(gguf, ids, *, cfg=K2_MLA, layers=2, kk=8, offset=0, rec=None):
     from k2_loader import GgufWeights
     rec = {} if rec is None else rec
     rec.update(mode="fidelity", ok=False)
-    io = _reference(gguf, ids, cfg, layers, kk, offset, rec)
+    A = profile(precision).S_act
+    io = _reference(gguf, ids, cfg, layers, kk, offset, rec, precision)
     if io is None:
         return rec
     t0 = time.time()
     Wf = GgufWeights(gguf, ints=False, cfg=cfg)
     fo = kf.forward(ids, Wf, cfg, layers=layers, offset=offset, k=kk)
-    rec["fidelity"] = kf.fidelity(io, fo, S, S_SEL)
-    rec["routing"] = {il: kf.routing_differences(io, fo, Wf, il, k=kk, S=S)
+    rec["fidelity"] = kf.fidelity(io, fo, A, S_SEL)
+    rec["routing"] = {il: kf.routing_differences(io, fo, Wf, il, k=kk, S=A)
                       for il in range(layers) if Wf.kind(il) == "moe"}
     rec["float_s"] = time.time() - t0
     fid = rec["fidelity"]
@@ -437,8 +507,18 @@ def fidelity(gguf, ids, *, cfg=K2_MLA, layers=2, kk=8, offset=0, rec=None):
 
 # ---- prove: the honest proof, then the negatives against its enrollment -------------
 
+def _field_add_at(t, i, delta):
+    """A copy of t (field elements, uint64) with t[i] + delta mod P."""
+    import torch
+    from core import P
+    u = t.contiguous().view(torch.int64).clone()
+    v = (int(u[i]) % (1 << 64) + delta) % P
+    u[i] = v - (1 << 64) if v >= 1 << 63 else v
+    return u.view(torch.uint64)
+
+
 @contextlib.contextmanager
-def tampering(kind, cfg, counts):
+def tampering(kind, cfg, counts, tape=None):
     """Witness tampers, applied wherever the claim's witness is computed; each
     application that changes a value is counted in counts[kind]."""
     import compute_fns
@@ -476,6 +556,26 @@ def tampering(kind, cfg, counts):
             yield
         finally:
             compute_fns._rope_cos_sin = orig
+    elif kind == "rescale-witness":
+        from rescale_claim import RescaleClaim
+        target = next((c for c in tape.claims if isinstance(c, RescaleClaim)), None)
+        honest = dict.__getitem__(compute_fns.COMPUTE_FNS, RescaleClaim)
+
+        def shifted(c, live):
+            outs = honest(c, live)
+            if c is target:
+                hit()
+                outs[c.x] = _field_add_at(outs[c.x], 0, 1)
+                outs[c.x_shifted] = _field_add_at(outs[c.x_shifted], 0, 1)
+                outs[c.x_low] = _field_add_at(outs[c.x_low], 0, -(1 << c.rescale_bits))
+            return outs
+        compute_fns.COMPUTE_FNS[RescaleClaim] = shifted
+        if target is not None:              # none on the tape: nothing applied, the negative fails
+            counts["rescale-witness-target"] = dict(x=target.x.name, rescale_bits=target.rescale_bits)
+        try:
+            yield
+        finally:
+            compute_fns.COMPUTE_FNS[RescaleClaim] = honest
     else:
         yield
 
@@ -492,6 +592,10 @@ def reveal(b: Built):
     del live
     torch.cuda.empty_cache()
     return sz
+
+
+def _hex(v):
+    return v.hex() if isinstance(v, (bytes, bytearray)) else (None if v is None else str(v))
 
 
 def rust_verify_anchored(claims, proof, cfg, *, root_w, stmt, wc_identity):
@@ -537,7 +641,7 @@ def prove_verdict(rec, negatives) -> bool:
 
 def research_prove(gguf, prompt_ids, cont_ids, *, cfg=K2_MLA, layers=2, kk=8, offset=0,
                    bridge=False, negatives=(), dump=None, ligero=None, wc_params=None,
-                   rec=None):
+                   rec=None, precision="baseline"):
     """The honest proof under its own anchors, then each negative on a fresh
     tape, proved with the honest WeightCommitment and bridge enrollment and
     checked under the honest weight root and enrollment identity. Fills and
@@ -549,10 +653,12 @@ def research_prove(gguf, prompt_ids, cont_ids, *, cfg=K2_MLA, layers=2, kk=8, of
     lig = ligero
     if "wrong-slice" in negatives and not bridge:
         raise SystemExit("wrong-slice needs --bridge: the bridge enrollment is its anchor")
-    kw = dict(cfg=cfg, layers=layers, kk=kk, offset=offset, bridge=bridge, ligero=lig)
+    kw = dict(cfg=cfg, layers=layers, kk=kk, offset=offset, bridge=bridge, ligero=lig, precision=precision)
+    sc = profile(precision)
     rec = {} if rec is None else rec
     rec.update(mode="prove", ok=False, bridge=bridge, offset=offset,
-               T=len(prompt_ids) + len(cont_ids), planned_negatives=list(negatives))
+               T=len(prompt_ids) + len(cont_ids), planned_negatives=list(negatives),
+               precision=dict(name=precision, **sc.exponents()))
     t0 = time.time()
     hon = build(gguf, prompt_ids, cont_ids, **kw)
     rec["build_s"] = time.time() - t0
@@ -565,7 +671,7 @@ def research_prove(gguf, prompt_ids, cont_ids, *, cfg=K2_MLA, layers=2, kk=8, of
         import wc_bridge as wcb
         t0 = time.time()
         wc_enr = wcb.lazy_enroll_tape(hon.tape, b"k2-gate-mask",
-                                      f"kimi-k2|{gguf}|S={S}".encode(),
+                                      f"kimi-k2|{gguf}|S={sc.S_wt}".encode(),     # the weights' scale
                                       wc_params or wcb.WcParams())
         rec["wc_enroll_s"] = time.time() - t0
         log(f"bridge enrollment {rec['wc_enroll_s']:.1f}s, identity {wc_enr.identity().hex()[:16]}…")
@@ -584,6 +690,9 @@ def research_prove(gguf, prompt_ids, cont_ids, *, cfg=K2_MLA, layers=2, kk=8, of
                    wc_identity=(proof.wc_bridge["identity"] if bridge else None))
     if anchors["root_w"] != wc.root:
         raise RuntimeError("the proof's weight root is not the enrollment's")
+    rec["identities"] = dict(precision=rec["precision"], weight_root=_hex(anchors["root_w"]),
+                             statement_digest=_hex(anchors["stmt"]),
+                             enrollment_identity=_hex(anchors["wc_identity"]))
     if dump:
         from instrumented_prove import write_dump_policy
         from proof_dump import dump_proof
@@ -610,7 +719,7 @@ def research_prove(gguf, prompt_ids, cont_ids, *, cfg=K2_MLA, layers=2, kk=8, of
         t0 = time.time()
         counts = {}
         bt = build(gguf, prompt_ids, cont_ids, tamper=neg, counts=counts, **kw)
-        with tampering(neg, cfg, counts):
+        with tampering(neg, cfg, counts, tape=bt.tape):
             sz = reveal(bt)
             p = bt.tape.prove(weight_commitment=wc, weight_enrollment=wc_enr)
         if neg == "yarn-statement":
@@ -624,7 +733,8 @@ def research_prove(gguf, prompt_ids, cont_ids, *, cfg=K2_MLA, layers=2, kk=8, of
         stmt = anchors["stmt"] if neg == "yarn-statement" else p.statement_digest
         v = rust_verify_anchored(bt.tape.claims, p, lig, root_w=anchors["root_w"],
                                  stmt=stmt, wc_identity=anchors["wc_identity"])
-        row = dict(applied=applied, verdict=v["verdict"], exit_status=v["returncode"],
+        row = dict(applied=applied, target=counts.get(f"{neg}-target"),
+                   verdict=v["verdict"], exit_status=v["returncode"],
                    failed_checks=[c for c in v["checks"] if c.startswith("[XX ]")],
                    rejected_by_rust=v["verdict"] == "REJECT", Sz=sz, s=time.time() - t0,
                    same_statement=(p.statement_digest == anchors["stmt"]),
@@ -662,6 +772,8 @@ def main(argv=None):
     ap.add_argument("--prompt-n", type=int, default=50)
     ap.add_argument("--cont-n", type=int, default=50)
     ap.add_argument("--layers", type=int, default=2)
+    ap.add_argument("--precision", default="baseline",
+                    help="a k2_precision_study configuration: the tape's scales (k2_loader.Scales)")
     ap.add_argument("--top-k", type=int, default=8)
     ap.add_argument("--offset", type=int, default=0, help="first position (long-position arm: 130072)")
     ap.add_argument("--t-queries", type=int, default=54)
@@ -706,8 +818,9 @@ def main(argv=None):
     prompt_ids = rng.integers(0, V, a.prompt_n).tolist()
     cont_ids = rng.integers(0, V, a.cont_n).tolist()
     log(f"RESEARCH run, mode {a.mode}: T={a.prompt_n + a.cont_n} (synthetic token ids), "
-        f"layers={a.layers}, k={a.top_k}, offset={a.offset}, T_QUERIES={a.t_queries}")
-    kw = dict(cfg=MLA, layers=a.layers, kk=a.top_k, offset=a.offset)
+        f"layers={a.layers}, k={a.top_k}, offset={a.offset}, T_QUERIES={a.t_queries}, "
+        f"precision={a.precision}")
+    kw = dict(cfg=MLA, layers=a.layers, kk=a.top_k, offset=a.offset, precision=a.precision)
     rec = {"args": vars(a)}
     try:
         if a.mode == "check":

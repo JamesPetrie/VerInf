@@ -12,7 +12,14 @@ In the order the gate validates:
    rejected: a HeadInterleaveClaim slot swap, the rotary witness from the
    unscaled tables, expert 0's gate shard from expert 1's rows; the claims
    without YaRN are rejected under the honest statement digest and accepted
-   under their own (the digest is what binds YaRN into the statement).
+   under their own (the digest is what binds YaRN into the statement); a
+   standalone rescale's output one higher with its low word 2^r lower
+   (every linear identity kept, only the low word's range broken);
+4. the same at the a14w14 profile, combined rounding: the engine pass equals
+   k2_precision_study's a14w14 model at every name, its consumer inputs at
+   the table scales included; the proof is accepted; the residual stream's
+   2-bit rescale, tampered as above, is rejected; and the record carries the
+   profile with the proof's and the enrollment's identities.
 Float fidelity and routing differences are CPU checks
 (tests/test_k2_int_reference.py, and demo_k2.py --mode fidelity on the real
 GGUF). Plain test functions, for tests/run_tests.py."""
@@ -46,9 +53,9 @@ def _gguf():
     return str(pathlib.Path(_DIR[0].name) / "toy.gguf")
 
 
-def _exact(offset):
+def _exact(offset, precision="baseline"):
     rec = dk.check(_gguf(), PROMPT, CONT, cfg=toy.TOY_MLA, layers=2, kk=KK, offset=offset,
-                   ligero=CFG)
+                   ligero=CFG, precision=precision)
     assert not rec.get("reference_error"), rec.get("reference_error")
     bad = [r for r in rec["exact"] if not r["ok"]]
     assert not bad, bad[:3]
@@ -57,6 +64,7 @@ def _exact(offset):
             "L1.y", "L1.sh", "logits"} <= names
     assert not rec["range_violations"], rec["range_violations"]
     assert rec["ok"]
+    return rec
 
 
 def test_engine_pass_equals_the_integer_reference_at_position_0():
@@ -95,4 +103,27 @@ def test_bridged_proof_accepts_and_negatives_reject_against_the_honest_enrollmen
         assert row["applied"] > 0 and row["rejected_by_rust"] and row["passed"], (neg, row)
     assert negs["yarn-statement"]["accept_under_own_digest"], negs["yarn-statement"]
     assert not negs["yarn-statement"]["same_statement"]
+    assert rec["ok"]
+
+
+def test_engine_pass_equals_the_a14w14_model_at_both_positions():
+    for offset in (0, LONG):
+        rec = _exact(offset, "a14w14")
+        names = {r["name"] for r in rec["exact"]}
+        assert {"L0.scores", "L0.n1g", "L0.ckvg", "L1.router", "L1.g", "L1.h", "L1.y_raw"} <= names
+        assert rec["precision"]["S_act"] == 14 and rec["precision"]["S_tab"] == 12
+
+
+def test_a14w14_proof_accepts_and_a_tampered_residual_rescale_rejects():
+    rec = dk.research_prove(_gguf(), PROMPT, CONT, cfg=toy.TOY_MLA, layers=2, kk=KK, offset=LONG,
+                            bridge=True, negatives=("rescale-witness", "interleave"), ligero=CFG,
+                            wc_params=PARAMS, precision="a14w14")
+    assert rec["verify"]["accept"], rec["verify"].get("tail")
+    row = rec["negatives"]["rescale-witness"]
+    assert row["applied"] > 0 and row["rejected_by_rust"] and row["passed"], row
+    assert row["target"]["rescale_bits"] == 2, row["target"]          # the residual stream's coarse copy
+    assert rec["negatives"]["interleave"]["passed"]
+    ids = rec["identities"]
+    assert ids["precision"]["S_act"] == 14 and ids["weight_root"] and ids["statement_digest"]
+    assert ids["enrollment_identity"]
     assert rec["ok"]

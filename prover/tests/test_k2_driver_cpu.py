@@ -239,3 +239,51 @@ def test_prove_verdict_needs_every_planned_negative():
                             ["interleave"])
     assert not dk.prove_verdict({"verify": {"accept": True}, "negatives": {}}, ["interleave"])
     assert not dk.prove_verdict({"verify": {"accept": False}, "negatives": {}}, [])
+
+
+def _field(vals):
+    """Signed ints as field elements (uint64 bit patterns)."""
+    import torch
+    from core import P
+    return torch.tensor([(v % P) - (1 << 64) if v % P >= 1 << 63 else v % P for v in vals],
+                        dtype=torch.int64).view(torch.uint64)
+
+
+def _ints(t):
+    import torch
+    return [int(v) % (1 << 64) for v in t.view(torch.int64)]
+
+
+def test_the_rescale_witness_tamper_keeps_every_linear_identity_and_only_its_target(gguf):
+    """The first standalone rescale's first output one higher, its shifted word
+    one higher, its low word 2^r lower (mod P): x_full = 2^r·x + low and
+    shifted = x + 2^(w−1) still hold, low leaves [0, 2^r). Every other
+    rescale is honest; the honest compute is back afterwards."""
+    import compute_fns
+    import _cpu_tape as ct
+    from core import P
+    from rescale_claim import RescaleClaim
+    with ct.cuda_on_cpu():
+        b = dk.build(gguf, [3, 17, 0], [41, 9, 9], cfg=toy.TOY_MLA, layers=2, kk=toy.TOY["k"],
+                     precision="a14w14")
+        pair = [c for c in b.tape.claims if isinstance(c, RescaleClaim)][:2]
+        target, other = pair
+        honest = dict.__getitem__(compute_fns.COMPUTE_FNS, RescaleClaim)
+        live = [{c.x_full: _field([-37 * (1 << c.rescale_bits) - 3, 5, (1 << 20) + 3])} for c in pair]
+        want = [honest(c, lv) for c, lv in zip(pair, live)]
+        counts = {}
+        with dk.tampering("rescale-witness", toy.TOY_MLA, counts, tape=b.tape):
+            got = [compute_fns.COMPUTE_FNS[RescaleClaim](c, lv) for c, lv in zip(pair, live)]
+        assert dict.__getitem__(compute_fns.COMPUTE_FNS, RescaleClaim) is honest
+    r = target.rescale_bits
+    assert r == 2 and counts["rescale-witness"] == 1 and counts["rescale-witness-target"]["rescale_bits"] == 2
+    x, low, sh = (_ints(got[0][v]) for v in (target.x, target.x_low, target.x_shifted))
+    hx, hlow, hsh = (_ints(want[0][v]) for v in (target.x, target.x_low, target.x_shifted))
+    assert x[0] == (hx[0] + 1) % P and sh[0] == (hsh[0] + 1) % P and low[0] == (hlow[0] - (1 << r)) % P
+    assert x[1:] == hx[1:] and low[1:] == hlow[1:] and sh[1:] == hsh[1:]
+    full = _ints(live[0][target.x_full])
+    assert all(f == ((1 << r) * a + c) % P for f, a, c in zip(full, x, low))
+    assert all(s_ == (a + (1 << (target.output_width - 1))) % P for s_, a in zip(sh, x))
+    assert not 0 <= low[0] < 1 << r                    # only the low word's range can catch it
+    for v in (other.x, other.x_low, other.x_shifted):
+        assert _ints(got[1][v]) == _ints(want[1][v])

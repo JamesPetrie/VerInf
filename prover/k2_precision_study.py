@@ -104,11 +104,11 @@ class Mixed:
     against the driver's windows (its signed output_width-bit rescales), with
     each implementation's own constraints where they differ."""
 
-    def __init__(self, prec, k=K2_INT):
+    def __init__(self, prec, k=K2_INT, ranges=None):
         self.k = k
         sc = scales(prec)
         self.A, self.Wt, self.N, self.Tb = sc.S_act, sc.S_wt, sc.s_norm, sc.S_tab
-        self.ranges = ki.Ranges()
+        self.ranges = ranges if ranges is not None else ki.Ranges()
         # the tables of the 2^12 model (SiLU, softmax exp, sigmoid)
         self.base = ki.Int(k, self.ranges)
         # a value at S_act whose one consumer is coarser exists only under input-rescale
@@ -186,11 +186,12 @@ def quantized(Wf, il, cfg, prec):
     return {k: to_ints(v, S, sigma if k in SIGMA_FOLDED else 1.0) for k, v in Wf.attn(il).items()}
 
 
-def forward(ids, Wf, cfg, prec, *, layers=2, offset=0, kk=8, head_chunk=16384, k=None):
+def forward(ids, Wf, cfg, prec, *, layers=2, offset=0, kk=8, head_chunk=16384, k=None, ranges=None):
     """The two-layer integer forward at one configuration, from float weights
     (`Wf`, k2_loader.GgufWeights(ints=False), cached by the caller). `k`
-    defaults to the model's constants (k2_loader.int_constants)."""
-    op = Mixed(prec, int_constants(cfg) if k is None else k)
+    defaults to the model's constants (k2_loader.int_constants). Pass
+    `ranges` to keep the measurements made before an UndefinedValue."""
+    op = Mixed(prec, int_constants(cfg) if k is None else k, ranges)
     A, Wt, Tb = op.A, op.Wt, op.Tb
     q = lambda w: to_ints(w, Wt)
     T = len(ids)
