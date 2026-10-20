@@ -94,7 +94,7 @@ def _engine_equal_to_the_reference(monkeypatch):
         return out, rg
     monkeypatch.setattr(ki, "forward", spy)
     monkeypatch.setattr(dk, "build", lambda *a, **k: dk.Built(None, {}, None, None, {}, [], {},
-                                                              {"layers": {}}))
+                                                              {"layers": {}, "tail": kl.tail_params(1 << 12)}))
     monkeypatch.setattr(dk, "engine_values", lambda b: (
         {n: np.asarray([int(x) for x in np.ravel(v)], dtype=np.int64) for n, v in seen.items()},
         0))
@@ -146,7 +146,7 @@ def _fake_prover(monkeypatch, negative_prove, negative_verify=None):
     def build(*a, tamper=None, **k):
         n = next(built)
         tape = _Tape(_Proof if n == 0 else negative_prove)
-        return dk.Built(tape, {}, None, None, {}, [], {}, {"layers": {}})
+        return dk.Built(tape, {}, None, None, {}, [], {}, {"layers": {}, "tail": kl.tail_params(1 << 12)})
     monkeypatch.setattr(dk, "build", build)
     verdicts = []
 

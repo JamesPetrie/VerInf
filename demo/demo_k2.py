@@ -353,10 +353,12 @@ def build(gguf, prompt_ids, cont_ids, *, cfg=K2_MLA, layers=2, kk=8, offset=0, y
     ids = list(prompt_ids) + list(cont_ids)
     O_ext = tape.concat([ind_mid, o_last], (T, V))
     sum_pos = list(range(len(prompt_ids) - 1, T - 1))
-    # the tail takes the logits at S_act, its kernel the same in real units
+    # the tail reads the logits at S_act, its kernel and gap domain the same in
+    # real units, its surprisal at the fixed resolution s_b
+    tail = tail_params(sc.S_act)
+    info["tail"] = tail
     Sz, handles = prove_unexplained_info(tape, logits, ids[1:] + [ids[-1]], T=T, V=V,
-                                         sum_positions=sum_pos, reveal=True, O_ext=O_ext,
-                                         **tail_params(sc.S_act))
+                                         sum_positions=sum_pos, reveal=True, O_ext=O_ext, **tail)
     mark("tail", n0)
     log(f"built at {precision}: {len(tape.claims)} claims, T={T}, V={V}, offset={offset}, "
         f"yarn={'off' if tamper == 'yarn-statement' or not yarn else 'on'}, "
@@ -462,7 +464,7 @@ def check(gguf, prompt_ids, cont_ids, *, cfg=K2_MLA, layers=2, kk=8, offset=0, l
     rec["info"] = b.info
     t0 = time.time()
     got, sz = engine_values(b)
-    rec.update(engine_s=time.time() - t0, Sz=sz)
+    rec.update(engine_s=time.time() - t0, Sz=sz, U_bits=_u_bits(sz, b.info["tail"]))
     rows = compare_exact(got, ref)
     rec["exact"] = rows
     rec["all_exact"] = all(r["ok"] for r in rows)
@@ -594,6 +596,13 @@ def reveal(b: Built):
     return sz
 
 
+def _u_bits(sz, tail):
+    """The bound in bits over the continuation: Σ surprisal / (s_b·ln 2), the
+    tail's own s_b whatever the activations' precision."""
+    from unexplained_info import bound_bits
+    return bound_bits(sz, s_b=tail["s_b"])
+
+
 def _hex(v):
     return v.hex() if isinstance(v, (bytes, bytearray)) else (None if v is None else str(v))
 
@@ -677,6 +686,7 @@ def research_prove(gguf, prompt_ids, cont_ids, *, cfg=K2_MLA, layers=2, kk=8, of
         log(f"bridge enrollment {rec['wc_enroll_s']:.1f}s, identity {wc_enr.identity().hex()[:16]}…")
     t0 = time.time()
     rec["Sz"] = reveal(hon)
+    rec["U_bits"] = _u_bits(rec["Sz"], hon.info["tail"])
     rec["reveal_s"] = time.time() - t0
     core.CLAIM_MEM_LOG.clear()
     torch.cuda.reset_peak_memory_stats()
@@ -690,7 +700,8 @@ def research_prove(gguf, prompt_ids, cont_ids, *, cfg=K2_MLA, layers=2, kk=8, of
                    wc_identity=(proof.wc_bridge["identity"] if bridge else None))
     if anchors["root_w"] != wc.root:
         raise RuntimeError("the proof's weight root is not the enrollment's")
-    rec["identities"] = dict(precision=rec["precision"], weight_root=_hex(anchors["root_w"]),
+    rec["identities"] = dict(precision=rec["precision"], tail=hon.info["tail"],
+                             weight_root=_hex(anchors["root_w"]),
                              statement_digest=_hex(anchors["stmt"]),
                              enrollment_identity=_hex(anchors["wc_identity"]))
     if dump:

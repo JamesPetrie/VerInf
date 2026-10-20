@@ -77,21 +77,33 @@ class Scales:
         return {f.name: getattr(self, f.name).bit_length() - 1 for f in dataclasses.fields(self)}
 
 
-# The unexplained-information tail: demo_maverick_full.UI at 2^12. Its kernel
-# s_c = 2σ² is 2^4·S_logit² (σ² = 8 real logit units), and its ceiling
-# quotient ⌈gap_o²/k⌉ (k = s_c/s_b) must stay below 2^24 (ui_claim.Z_O_BITS).
-TAIL_KERNEL_BITS, TAIL_Z_O_BITS = 4, 24
+# The unexplained-information tail (prover/unexplained_info.py), as
+# demo_maverick_full.UI at 2^12. Its surprisal is at the fixed resolution
+# s_b, independent of the logits' scale (U = Σ surprisal / (s_b·ln 2) bits);
+# the kernel s_c = 2σ² and the gap table are in the logits' own units.
+TAIL_S_B = 1 << 12            # the surprisal's resolution
+TAIL_S_Y = 1 << 28            # the exp kernel's output scale
+TAIL_KERNEL = 16              # s_c / S_logit²: 2σ² in real logit units (σ² = 8)
+TAIL_GAP_REAL = 256           # gaps strictly below 256 real logit units
+TAIL_Z_O_BITS = 24            # ui_claim.Z_O_BITS: the ceiling quotient's range
 
 
 def tail_params(S_logit: int) -> dict:
-    """The tail's constants for logits at S_logit: the same kernel and s_y in
-    real logit units at any scale, and the widest gap table the ceiling
-    quotient allows, gap_max = 2^⌊(Z_O_BITS + kernel bits + log2 S_logit)/2⌋:
-    256 real logit units at 2^12 (demo_maverick_full.UI exactly), 128 at 2^14."""
+    """The tail's constants for logits at S_logit, the same in real units at
+    every scale: s_c = 16·S_logit², gap_max = 256·S_logit, s_b = 2^12,
+    s_y = 2^28 (demo_maverick_full.UI exactly at 2^12). The ceiling quotient
+    ⌈gap_o²/k⌉ at the largest gap, k = s_c/s_b = S_logit²/2^8, is
+    ⌈2^24 − 2^17/S_logit + 2^8/S_logit²⌉: 16,777,185 at 2^12, 16,777,209 at
+    2^14, below 2^24 (ui_claim.Z_O_BITS) up to 2^16 and refused beyond."""
     e = S_logit.bit_length() - 1
-    assert 1 << e == S_logit, f"S_logit = {S_logit} is not a power of two"
-    return dict(s_c=1 << (TAIL_KERNEL_BITS + 2 * e), s_y=1 << 28, s_b=S_logit,
-                gap_max=1 << ((TAIL_Z_O_BITS + TAIL_KERNEL_BITS + e) // 2))
+    assert 1 << e == S_logit and S_logit * S_logit * TAIL_KERNEL % TAIL_S_B == 0, \
+        f"S_logit = {S_logit}: a power of two at least 2^4"
+    t = dict(s_c=TAIL_KERNEL * S_logit * S_logit, s_y=TAIL_S_Y, s_b=TAIL_S_B,
+             gap_max=TAIL_GAP_REAL * S_logit)
+    k = t["s_c"] // t["s_b"]
+    assert ((t["gap_max"] - 1) ** 2 + k - 1) // k < 1 << TAIL_Z_O_BITS, \
+        f"S_logit = {S_logit}: the largest gap's ceiling quotient reaches 2^{TAIL_Z_O_BITS}"
+    return t
 
 
 def int_constants(cfg) -> dict:

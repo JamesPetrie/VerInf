@@ -120,7 +120,9 @@ def test_a14w14s_tables(built):
     import k2_loader as kl
     a, base = built["a14w14"], built["plain"]
     tail = kl.tail_params(1 << 14)
-    assert a["tables"]["ui_exp"] == tail["gap_max"] == 1 << 21 and base["tables"]["ui_exp"] == 1 << 20
+    assert a["tables"]["ui_exp"] == tail["gap_max"] == 1 << 22 and base["tables"]["ui_exp"] == 1 << 20
+    assert a["tables"]["ui_pow"] == base["tables"]["ui_pow"]           # the surprisal's resolution, s_b
+    assert a["info"]["tail"] == tail and base["info"]["tail"]["s_b"] == tail["s_b"]
     assert a["tables"]["k2_sigmoid"] == base["tables"]["k2_sigmoid"]     # router logit at S_tab either way
     for w in (2, 10, 14, 16, 26):
         assert f"rescale_w{w}" in a["tables"], w

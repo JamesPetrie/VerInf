@@ -125,5 +125,7 @@ def test_a14w14_proof_accepts_and_a_tampered_residual_rescale_rejects():
     assert rec["negatives"]["interleave"]["passed"]
     ids = rec["identities"]
     assert ids["precision"]["S_act"] == 14 and ids["weight_root"] and ids["statement_digest"]
+    assert ids["tail"] == dict(s_c=1 << 32, s_y=1 << 28, s_b=1 << 12, gap_max=1 << 22)
+    assert rec["U_bits"] > 0
     assert ids["enrollment_identity"]
     assert rec["ok"]

@@ -126,12 +126,35 @@ def test_a_profile_has_one_meaning_per_scale():
 
 
 def test_the_tail_keeps_its_kernel_at_any_logit_scale():
+    """The kernel and the gap domain in real logit units, the surprisal's
+    resolution s_b fixed; the honest ceiling quotient below 2^24 at the
+    largest gap; demo_maverick_full.UI exactly at 2^12."""
     import ui_claim
     from demo_maverick_full import UI
     assert kl.tail_params(1 << 12) == UI and kl.TAIL_Z_O_BITS == ui_claim.Z_O_BITS
-    for e in range(10, 19):
-        t = kl.tail_params(1 << e)
-        assert t["s_c"] // t["s_b"] ** 2 == UI["s_c"] // UI["s_b"] ** 2 and t["s_y"] == UI["s_y"]
+    for e in range(8, 17):
+        S = 1 << e
+        t = kl.tail_params(S)
+        assert t["s_c"] == 16 * S * S and t["gap_max"] == 256 * S, e
+        assert t["s_b"] == UI["s_b"] and t["s_y"] == UI["s_y"], e
         k = t["s_c"] // t["s_b"]                       # prove_unexplained_info's ceiling divisor
+        assert t["s_c"] % t["s_b"] == 0 and k & (k - 1) == 0, e
         assert ((t["gap_max"] - 1) ** 2 + k - 1) // k < 1 << ui_claim.Z_O_BITS, e
-    assert kl.tail_params(1 << 14)["gap_max"] / (1 << 14) == 128.0
+    a14 = kl.tail_params(1 << 14)
+    assert a14 == dict(s_c=1 << 32, s_y=1 << 28, s_b=1 << 12, gap_max=1 << 22)
+    k = a14["s_c"] // a14["s_b"]
+    assert k == 1 << 20 and ((a14["gap_max"] - 1) ** 2 + k - 1) // k == 16_777_209
+    assert ((UI["gap_max"] - 1) ** 2 + 2 ** 16 - 1) // 2 ** 16 == 16_777_185
+    with pytest.raises(AssertionError, match="reaches 2"):
+        kl.tail_params(1 << 17)
+
+
+def test_the_bound_divides_by_s_b_ln2_at_any_logit_scale():
+    """The same surprisal sum is the same U whatever the logits' scale: the
+    bound reads s_b, which the profiles share."""
+    import math
+    from unexplained_info import bound_bits
+    sz = 123_456_789
+    for e in (12, 14, 16):
+        t = kl.tail_params(1 << e)
+        assert bound_bits(sz, s_b=t["s_b"]) == sz / ((1 << 12) * math.log(2.0))
