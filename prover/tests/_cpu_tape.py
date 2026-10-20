@@ -57,7 +57,8 @@ def cuda_on_cpu():
 
 
 def _entries(t):
-    return hashlib.sha256(t.detach().cpu().contiguous().numpy().tobytes()).hexdigest()[:16]
+    # the array's own buffer, not a copy of it: a 2^28-entry table is 2 GiB
+    return hashlib.sha256(memoryview(t.detach().cpu().contiguous().numpy())).hexdigest()[:16]
 
 
 def _canon(v, tables):
@@ -66,6 +67,8 @@ def _canon(v, tables):
     if isinstance(v, Variable):
         return ["var", v.name, v.length, v.phase, v.persistent]
     if isinstance(v, Table):
+        if v.name in tables:                     # hashed once, however many claims share it
+            return tables[v.name]
         t = ["table", v.name, int(v.T.numel()), _entries(v.T),
              None if v.T_Y is None else _entries(v.T_Y)]
         tables[v.name] = t

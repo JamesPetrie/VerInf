@@ -370,8 +370,11 @@ class Tape:
         See the "Rescale convention" comment above the WitnessTensor class."""
         cache = f"_range_{kind}_w{width}"
         if not hasattr(self, cache):
+            # 0 .. 2^width − 1 built on the device: a Python list of 2^28
+            # ints held ~10 GB of objects before the 2 GB tensor existed
             tbl = self.register_table(f"{kind}_w{width}",
-                                       T_data=list(range(1 << width)))
+                                       T_data=torch.arange(1 << width, dtype=torch.int64,
+                                                           device="cuda").to(torch.uint64))
             setattr(self, cache, tbl)
         return getattr(self, cache)
 
@@ -678,7 +681,8 @@ class Tape:
         """Allocate a shared-mult LogUp table. T_Y_data set → paired table
         (PairedTlookupClaim against it); T_Y_data None → range table
         (RangeWordClaim against it)."""
-        T = torch.tensor(T_data, dtype=torch.uint64, device="cuda")
+        T = (T_data.to(device="cuda", dtype=torch.uint64) if isinstance(T_data, torch.Tensor)
+             else torch.tensor(T_data, dtype=torch.uint64, device="cuda"))
         T_Y = (torch.tensor(T_Y_data, dtype=torch.uint64, device="cuda")
                if T_Y_data is not None else None)
         T_LEN = T.numel()
