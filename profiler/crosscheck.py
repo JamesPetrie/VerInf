@@ -73,14 +73,15 @@ from manifest import Manifest                  # noqa: E402
 
 # Claim types a real tape carries that synth deliberately does not model
 # (README caveats: UI/MaxClaim + hidden-prompt one-hot chain, LogUp table
-# commitments and their settlements). Their presence in the extracted-only
-# section is expected; their absence would be the surprise.
+# commitments and their settlements), by claimcosts.canonical name. Their
+# presence in the extracted-only section is expected; their absence would be
+# the surprise.
 KNOWN_EXTRACT_ONLY = {
     "table_settle": "LogUp settlement — synth doesn't model tables",
-    "MaxClaim": "UI chain — synth omits it (README caveat)",
+    "max_gap": "UI chain (MaxClaim) — synth omits it (README caveat)",
     "concat": "UI chain — the Maverick builders omit it (README caveat); "
               "the top-k layers model their own",
-    "InfoFinalizeClaim": "UI chain — synth omits it (README caveat)",
+    "info_finalize": "UI chain (InfoFinalizeClaim) — synth omits it (README caveat)",
 }
 
 # The routing bundle: synth emits one `routing` row; a real tape emits the
