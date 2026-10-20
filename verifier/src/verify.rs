@@ -192,6 +192,10 @@ pub fn verify_bound_pinned(cs: &mut ClaimSet,
               s_comb: &[u8], s_col: &[u8],
               wc_pins: Vec<(usize, Vec<u64>)>) -> (bool, Vec<(&'static str, bool)>) {
     let cfg: Config = cs.cfg;
+    // the compile settles table_order by id: a malformed order is a REJECT
+    if cs.check_table_order().is_err() {
+        return (false, vec![("table_order", false)]);
+    }
     let cons = compile_claims_bound_pinned(cs, s_op, s_bind, wc_pins);
     let q = random_columns(s_col, &cfg);
     let cols = match opened_columns(r4, &q) {
