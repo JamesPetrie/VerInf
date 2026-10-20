@@ -165,6 +165,34 @@ def _table_settle(p) -> Triple:
     return (p["T_LEN"], p["T_LEN"] + 1, 0.0)
 
 
+# The unexplained-information tail (prover/max_claim.py, prover/ui_claim.py),
+# from their compile functions. L = T·V.
+UI_Z_O_BITS = 24        # ui_claim.Z_O_BITS: the ceiling quotient's range
+
+
+def _max_claim(p) -> Triple:
+    # MaxClaim: the argmax one-hot A, A·l, v*, gap = v* − l, −gap, the gap's
+    # range aux, O·gap and gap_o, and the committed token ids, which first
+    # appear here (W; the select one-hot O is the caller's). cids: the ΣA, v*,
+    # ΣO, gap_o and token rowsums (T each), the gap and −gap identities (L
+    # each). Q: A·A, A·l, O·O, O·gap and the gap's range product (L each).
+    T, V = p["T"], p["V"]
+    L = T * V
+    return (6 * L + 3 * T, 2 * L + 5 * T, 5 * L)
+
+
+def _info_finalize(p) -> Triple:
+    # InfoFinalizeClaim: a = Σe; the log-pin slack d = pw − a in n_d words of
+    # wb bits (d < V·s_y); the ceiling quotient z_o in n_z words; rem; the
+    # surprisal. W: b, pw, a, d, z_o, rem, surprisal, each word and its range
+    # aux, rem's aux (T each). cids: six T-length identities. Q: one range
+    # product per word and one for rem (T each).
+    T, wb = p["T"], p["wb"]
+    n_d = max(1, -(-(p["V"] * p["s_y"]).bit_length() // wb))
+    n_z = -(-UI_Z_O_BITS // wb)
+    return (T * (8 + 2 * n_d + 2 * n_z), 6 * T, T * (n_d + 1 + n_z))
+
+
 def _freivalds_combine(p) -> Triple:
     T, E, F = p["T"], p["E"], p["F"]
     ET = E * T
@@ -286,6 +314,8 @@ _FORMULAS = {
     "concat": _concat,
     "split": _split,
     "head_interleave": _head_interleave,
+    "max_gap": _max_claim,
+    "info_finalize": _info_finalize,
 }
 
 _ALIASES = {
@@ -312,6 +342,8 @@ _ALIASES = {
     "ConcatClaim": "concat",
     "SplitClaim": "split",
     "HeadInterleaveClaim": "head_interleave",
+    "MaxClaim": "max_gap",
+    "InfoFinalizeClaim": "info_finalize",
 }
 
 _SIZE_FROM_W = {"concat", "split"}

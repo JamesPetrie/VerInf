@@ -1934,3 +1934,39 @@ def main():
 if __name__ == "__main__":
     main()
 
+
+
+
+def test_the_tails_formulas_are_its_compile_functions():
+    """MaxClaim's and InfoFinalizeClaim's (W, cids, Q) against their own
+    compile functions on the K2 toy tape, built lazily on the CPU
+    (prover/tests/_cpu_tape.py), at both precision profiles: cids are the
+    rows the compile advances, Q the length of its quadratic families, W the
+    tape's own first-sight slots."""
+    import pathlib
+    _root = pathlib.Path(__file__).resolve().parents[1]
+    for p in ("prover", "prover/tests", "demo"):
+        if str(_root / p) not in sys.path:
+            sys.path.insert(0, str(_root / p))
+    import tempfile
+    import _cpu_tape as ct
+    import _k2_toy as toy
+    import claimcosts
+    from extract import extract_tape
+    with tempfile.TemporaryDirectory() as d, ct.cuda_on_cpu():
+        import claims
+        import core
+        import demo_k2 as dk
+        gguf = pathlib.Path(d) / "toy.gguf"
+        toy.write(gguf)
+        for precision in ("baseline", "a14w14"):
+            b = dk.build(str(gguf), [3, 17, 0], [41, 9, 9], cfg=toy.TOY_MLA, layers=2, kk=toy.TOY["k"],
+                         precision=precision)
+            man = extract_tape(b.tape, model={}, seq=6)
+            core._layout(b.tape.claims, b.tape.cfg)
+            for name in ("MaxClaim", "InfoFinalizeClaim"):
+                c = next(x for x in b.tape.claims if type(x).__name__ == name)
+                _, quads, n_added, _ = claims.COMPILE_FNS[type(c)](c, None, b.tape.cfg, 0)
+                rec = next(m for m in man.claims if m.type == name)
+                assert claimcosts.cost(name, rec.params) == (rec.w_slots, n_added, sum(q.L for q in quads)), \
+                    (precision, name)
