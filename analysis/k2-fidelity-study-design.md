@@ -175,6 +175,60 @@ parameters. The check is an all-F32 toy with an f32 KV cache
 Reported upstream as ggml-org/llama.cpp#30830 (2026-10-19), framed on the
 pinned commit, the GGUF metadata, the override and the toy reproduction.
 
+### 3.4 The a14w14 driver: combined rounding (2026-10-20)
+
+a14w14 is the nominated K2 primary, pending the implementation and cost
+gates (review of 2026-10-20). `demo/demo_k2.py --precision` builds the tape
+at a profile, `k2_loader.Scales`. Each scale has one meaning:
+- `S_act`: activations;
+- `S_wt`: checkpoint weights;
+- `s_norm`: RMSNorm's internal scale;
+- `S_tab`: the SiLU, softmax and router-logit tables;
+- `S_sel`: router scores;
+- `S_w`: gate weights.
+
+The arithmetic is the precision study's model exactly, by combined rounding:
+⌊⌊v/2^a⌋/2^b⌋ = ⌊v/2^(a+b)⌋ for signed v. A producer whose one consumer is
+coarser rescales straight to the consumer's scale:
+- the attention scores to softmax's;
+- the dense, shared and routed gate projections to SiLU's;
+- the router logits to the sigmoid table's;
+- the query-LoRA and KV latents to RMSNorm's.
+
+The residual stream is also read by its residual adds, so it stays at
+`S_act`. It reaches each RMSNorm through one standalone 2-bit rescale: two
+per layer and the final norm, 123 sites over K2's 61 layers. No claim takes
+an input rescale.
+
+The alternative, the claims' own input rescaling, is rejected for this
+study. Its windows bound the coarsened value to [−2^15, 2^15 − 1] (SiLU,
+RMSNorm) and [−2^15, 2^24 − 2^15 − 1] (softmax). Moonlight's full-depth
+values break them at 109 sites. It would need those claims widened, which is
+not implemented unless the combined design meets a concrete limitation.
+
+The tail takes the logits at `S_act`, as the fidelity study measures them.
+Its Gaussian kernel and `s_y` are unchanged in real units: `s_c` = 2^4·S²
+(σ² = 8 logit units). Its gap table is the widest that the 24-bit ceiling
+quotient allows, `gap_max` = 2^⌊(28 + log2 S)/2⌋: 256 real logit units at
+2^12, 128 at 2^14. Moonlight's largest gap is 63, and each run records
+`tail.gap` against it. At 2^12 every constant is the previous one.
+
+Checks:
+- **Baseline lock.** The 2^12 tape is locked by digest
+  (`tests/test_k2_driver_structure.py`, taken before the profiles existed):
+  no zero-shift rescale was added. Maverick shares no changed module.
+- **Exactness.** At a14w14 the engine pass must equal the precision study's
+  model at every traced name: the consumer inputs at `S_tab` and `s_norm`,
+  routing, the gate weights and the logits. The record carries the profile
+  with the proof's weight root, statement digest and enrollment identity;
+  the bridge enrollment is labeled with `S_wt`.
+- **Negative `rescale-witness`.** The first standalone rescale's first
+  output is moved one higher and its low word 2^r lower, keeping every
+  linear identity. The Rust verifier must reject it: only the low word's
+  range check can catch it.
+
+The exactness check, the proof and the negative run on a card (`tests/test_k2_driver.py`).
+
 ## 4. Metrics
 
 For each scored position t (the position whose next-token distribution
@@ -528,3 +582,35 @@ s per token is unmeasured. The first full-depth generation is timed, and the
 remaining passages' estimate updated from it. Four passages were kept with
 their roughly $15 increment over one: with a single passage the passage-level
 uncertainty would be uninformative.
+
+### 9.1 Proof cost by profile (counted 2026-10-20)
+
+`tools/k2_precision_costs.py` counts the driver's own tapes. They are built
+lazily on the CPU at K2's real dimensions, from a sparse stand-in for shard 1
+(its real header, no data), and counted by the profiler's extractor. The
+routed experts are bridge-held. Full depth is the two-layer tape plus 59
+MoE-layer increments. Record: `analysis/k2-precision-costs-2026-10-20.json`.
+Runtime is not extrapolated; the gate measures it (session kit, stage P).
+
+| T = 1000, 61 layers | 2^12 baseline | a14w14 | a16w16 |
+|---|---|---|---|
+| witness slots | 2.145 × 10^11 | +2.1% | +2.3% |
+| linear constraints | 6.80 × 10^10 | +2.7% | +3.0% |
+| quadratic products | 8.61 × 10^10 | +2.0% | +2.0% |
+| rows at ELL 8192 | 26.21 M | +2.1% | +2.3% |
+| proof, compact (T_QUERIES 54) | 15.6 GB | 15.9 GB | 15.9 GB |
+| shared table entries | 104.1 M (30 tables) | 157.0 M (34) | 364.9 M (34) |
+
+- **Per MoE layer, the only difference is the two standalone residual
+  rescales:** +71.7 M slots at T = 1000, +2.1%.
+- **The rest is tables.** a14w14's combine rescales from S_w·S_act·S_wt, a
+  2^26-entry low-word table where the baseline has 2^24. The tail's gap and
+  exp tables double, and its remainder and log tables grow fourfold.
+- **The gate is where tables show.** At the two-layer, T = 100 gate a14w14
+  is +3.1% (a16w16 +13.5%, its combine table 2^28). At full depth the
+  tables amortize.
+- **Live activation set:** at T = 1000 over three layers it peaks at 32.0
+  GiB at the baseline and 33.2 GiB at a14w14, both in the tail's max.
+
+A split low word for the combine's rescale would shrink its table; at full
+depth that is under 0.1% of the witness, and it is not done.
