@@ -478,6 +478,11 @@ The stages run through `prover/fidelity_study.py`:
   inconclusive result remains that result: an exploratory configuration
   passing does not replace it (review of 2026-10-20). The order of the
   configurations plays no part.
+- The p64 reference is named too (`--backend numpy|torch`, `--device`). Its
+  resolved backend, device, dtype and library version are recorded, and
+  they key every part, since each configuration's metrics are scored
+  against it. Switching between NumPy and torch, or between the CPU and a
+  GPU, recomputes; each reference keeps its own parts.
 
 Engine settings beyond the adapter's are pinned by the caller. It runs end
 to end on the toy (`prover/tests/test_llama_engine.py`).

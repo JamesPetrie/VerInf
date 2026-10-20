@@ -237,6 +237,33 @@ def _part(path, key, compute):
     return out, False
 
 
+def reference(backend="numpy", device=None):
+    """The p64 forward a full-depth run uses, `fn(ids, W, cfg, layers, k)` ->
+    the logits, and its identity for the record and the parts' key: the
+    backend, the resolved device, the dtype and the library's version. NumPy
+    runs on the CPU; torch (k2_float_torch, the bulk decoded on the device)
+    on the CPU or a GPU."""
+    if backend == "numpy":
+        if device not in (None, "cpu"):
+            raise ValueError(f"the numpy reference runs on the cpu, not {device!r}")
+        return (dict(backend="numpy", device="cpu", dtype="float64", version=np.__version__),
+                lambda ids, W, cfg, layers, k: kf.forward(ids, W, cfg, layers=layers, k=k)["logits"])
+    if backend == "torch":
+        import torch
+        import k2_float_torch as kt
+        dev = torch.device(device or "cpu")
+        if dev.type == "cuda":
+            dev = torch.device("cuda", torch.cuda.current_device() if dev.index is None else dev.index)
+        name = torch.cuda.get_device_name(dev) if dev.type == "cuda" else "cpu"
+
+        def run(ids, W, cfg, layers, k):
+            return kt.forward(ids, kt.DeviceWeights(W, dev), cfg, layers=layers, k=k, device=dev,
+                              keep={"logits"})["logits"]
+        return dict(backend="torch", device=str(dev), device_name=name, dtype="float64",
+                    version=torch.__version__), run
+    raise ValueError(f"unknown reference backend {backend!r}")
+
+
 def _register_primary(parts, primary):
     """The work directory's primary configuration, recorded by its first run;
     a later run naming another is refused."""
@@ -252,7 +279,8 @@ def _register_primary(parts, primary):
     os.replace(tmp, path)
 
 
-def full_depth(spec, gguf, generated, work, *, primary, exploratory=(), layers=None, integer=None):
+def full_depth(spec, gguf, generated, work, *, primary, exploratory=(), layers=None, integer=None,
+               backend="numpy", device=None):
     """p64 and the integer model on each frozen sequence; per-position KL and
     NLL over the continuation for the integer arm and the engine baseline;
     §6's acceptance and the §6.5 calibration. `integer(ids)` returns the
@@ -263,7 +291,8 @@ def full_depth(spec, gguf, generated, work, *, primary, exploratory=(), layers=N
     The record's acceptance is the primary's, named before the run and kept
     by the work directory (a resume naming another primary is refused); the
     exploratory configurations have their own under "exploratory", and none
-    replaces the primary's verdict.
+    replaces the primary's verdict. p64 is `reference(backend, device)`'s,
+    recorded under "reference".
 
     Proof feasibility is recorded beside it and never enters it: each
     configuration's ranges over every passage against the claims'
@@ -271,8 +300,9 @@ def full_depth(spec, gguf, generated, work, *, primary, exploratory=(), layers=N
 
     Each passage's p64 rows (the continuation's) and each configuration's
     per-position metrics are parts in `work`/full-depth-parts, keyed by the
-    model, the layers, the GGUF's shards, the prover's sources, the sequence
-    and the configuration; a run finds the parts an earlier one finished and
+    model, the layers, the GGUF's shards, the prover's sources, the p64
+    reference's identity, the sequence and the configuration, under one
+    directory per reference (so switching never discards either's); a run finds the parts an earlier one finished and
     resumes after them. An `integer` callable's metrics are never saved, and
     it has no ranges."""
     cfg, k = spec["cfg"], spec["k"]
@@ -294,14 +324,15 @@ def full_depth(spec, gguf, generated, work, *, primary, exploratory=(), layers=N
         arms = {name: (make(name), ps.CONFIGS[name]) for name in configs}
     else:
         arms = {"integer": (lambda ids: (integer(ids), None), None)}
-    parts = pathlib.Path(work) / PARTS
-    _register_primary(parts, primary)
+    ident, p64_forward = reference(backend, device)
+    _register_primary(pathlib.Path(work) / PARTS, primary)
+    parts = pathlib.Path(work) / PARTS / f"{ident['backend']}-{ident['device'].replace(':', '')}"
     base = dict(model=spec["adapter"]["name"], layers=n_layers, k=k, gguf=_gguf_identity(gguf),
-                sources=_sources_sha256())
+                sources=_sources_sha256(), reference=ident)
     per = {name: [] for name in arms}
     per_ranges = {name: [] for name in arms}
     per_eng, per_p64 = [], []
-    rec = dict(model=spec["adapter"]["name"], layers=n_layers, passages={})
+    rec = dict(model=spec["adapter"]["name"], layers=n_layers, reference=ident, passages={})
     for pid, g in generated.items():
         ids, P = g["tokens"], g["n_prompt"]
         rows = slice(P - 1, len(ids) - 1)                  # positions scoring the continuation
@@ -310,8 +341,10 @@ def full_depth(spec, gguf, generated, work, *, primary, exploratory=(), layers=N
 
         def p64():
             t0 = time.time()
-            ref = kf.forward(ids, W, cfg, layers=n_layers, k=k)["logits"]
-            return dict(ref=np.asarray(ref[rows], dtype=np.float64), seconds=np.float64(time.time() - t0))
+            ref = np.asarray(p64_forward(ids, W, cfg, n_layers, k))
+            if ref.dtype != np.dtype(ident["dtype"]):
+                raise TypeError(f"the {ident['backend']} reference gave {ref.dtype}, not {ident['dtype']}")
+            return dict(ref=ref[rows], seconds=np.float64(time.time() - t0))
         part, loaded = _part(parts / pid / "p64.npz", key, p64)
         ref = part["ref"]
         resumed = ["p64"] if loaded else []
@@ -418,7 +451,10 @@ def main(argv=None):
     ap.add_argument("--work", required=True)
     ap.add_argument("--threads", type=int, default=8)
     ap.add_argument("--layers", type=int, default=None, help="full depth: fewer layers, for tests")
-    ap.add_argument("--device", default="cuda", help="p64-check: the torch reference's device")
+    ap.add_argument("--device", default=None,
+                    help="the torch reference's device (p64-check: default cuda; full depth: default cpu)")
+    ap.add_argument("--backend", choices=("numpy", "torch"), default="numpy",
+                    help="full depth: the p64 reference (numpy runs on the cpu)")
     ap.add_argument("--primary", help="full depth: the configuration whose verdict is the record's, "
                     "named before the run (required)")
     ap.add_argument("--exploratory", default="",
@@ -436,7 +472,7 @@ def main(argv=None):
     ids = prompts(a.model, a.passages, a.render, a.gguf, work)
     if a.stage == "p64-check":
         first = next(iter(ids))
-        rec = p64_check(MODELS[a.model], a.gguf, ids[first], device=a.device, layers=a.layers or 2)
+        rec = p64_check(MODELS[a.model], a.gguf, ids[first], device=a.device or "cuda", layers=a.layers or 2)
         rec["passage"] = first
         dst = work / "p64-check.json"
         dst.write_text(json.dumps(rec, indent=1))
@@ -459,7 +495,7 @@ def main(argv=None):
                  for pid, g in gen.items()}, indent=1))
         exploratory = tuple(c for c in a.exploratory.split(",") if c)
         rec = full_depth(MODELS[a.model], a.gguf, gen, work, primary=a.primary, exploratory=exploratory,
-                         layers=a.layers)
+                         layers=a.layers, backend=a.backend, device=a.device)
         dst = work / (f"full-depth-primary-{a.primary}.json" if not exploratory
                       else f"full-depth-primary-{a.primary}-exploratory-{'-'.join(exploratory)}.json")
     dst.write_text(json.dumps(rec, indent=1, default=str))

@@ -62,7 +62,7 @@ def test_a_run_started_again_resumes_and_reproduces_its_record(gguf, tmp_path, c
     gen = _generated()
     first = fs.full_depth(SPEC, gguf, gen, tmp_path, primary="baseline")
     assert sorted(counted) == [("S12", 8), ("S12", 9), ("p64", 8), ("p64", 9)]
-    assert {p.name for p in (tmp_path / fs.PARTS / "a").iterdir()} == {"p64.npz", "baseline.npz"}
+    assert {p.name for p in (tmp_path / fs.PARTS / "numpy-cpu" / "a").iterdir()} == {"p64.npz", "baseline.npz"}
     counted.clear()
     again = fs.full_depth(SPEC, gguf, gen, tmp_path, primary="baseline")
     assert counted == []
@@ -95,7 +95,7 @@ def test_an_interrupted_run_keeps_its_whole_parts(gguf, tmp_path, counted, monke
     monkeypatch.setattr(fs.ps, "forward", stops_at_b)
     with pytest.raises(KeyboardInterrupt):
         fs.full_depth(SPEC, gguf, gen, tmp_path, primary="baseline")
-    assert {p.name for p in (tmp_path / fs.PARTS / "b").iterdir()} == {"p64.npz"}
+    assert {p.name for p in (tmp_path / fs.PARTS / "numpy-cpu" / "b").iterdir()} == {"p64.npz"}
     monkeypatch.setattr(fs.ps, "forward", ps_forward)
     counted.clear()
     rec = fs.full_depth(SPEC, gguf, gen, tmp_path, primary="baseline")
@@ -124,7 +124,7 @@ def test_a_callable_integer_arm_is_never_saved(gguf, tmp_path):
         fs.full_depth(SPEC, gguf, gen, tmp_path, primary="integer", integer=integer)
     assert sorted(calls) == [8, 8, 9, 9]
     assert fs.full_depth(SPEC, gguf, gen, tmp_path, primary="integer", integer=integer)["feasibility"] == {}
-    assert {p.name for p in (tmp_path / fs.PARTS / "a").iterdir()} == {"p64.npz"}
+    assert {p.name for p in (tmp_path / fs.PARTS / "numpy-cpu" / "a").iterdir()} == {"p64.npz"}
 
 
 def test_the_primary_is_named_and_kept_by_the_work_directory(gguf, tmp_path):
@@ -140,3 +140,24 @@ def test_the_primary_is_named_and_kept_by_the_work_directory(gguf, tmp_path):
     with pytest.raises(SystemExit):
         fs.main(["full-depth", "--model", "moonlight", "--gguf", "g", "--passages", "p", "--runner", "r",
                  "--render", "r", "--work", str(tmp_path / "cli")])
+
+
+def test_the_reference_backend_is_recorded_and_keys_every_part(gguf, tmp_path, counted):
+    gen = _generated()
+    np_rec = fs.full_depth(SPEC, gguf, gen, tmp_path, primary="baseline")
+    assert {k: np_rec["reference"][k] for k in ("backend", "device", "dtype")} == \
+        dict(backend="numpy", device="cpu", dtype="float64")
+    counted.clear()
+    t_rec = fs.full_depth(SPEC, gguf, gen, tmp_path, primary="baseline", backend="torch", device="cpu")
+    assert {k: t_rec["reference"][k] for k in ("backend", "device", "dtype")} == \
+        dict(backend="torch", device="cpu", dtype="float64")
+    # NumPy's p64 is not called, and the configuration is scored again against torch's
+    assert sorted(counted) == [("S12", 8), ("S12", 9)] and t_rec["passages"]["a"]["resumed"] == []
+    counted.clear()
+    again = fs.full_depth(SPEC, gguf, gen, tmp_path, primary="baseline")      # NumPy's parts are kept
+    assert counted == [] and again["acceptance"] == np_rec["acceptance"]
+    for name in ("mean_kl", "mean_nll"):
+        a, b = (r["acceptance"]["stats"]["integer"][name] for r in (np_rec, t_rec))
+        assert abs(a - b) <= 1e-10 + 1e-9 * abs(a), (name, a, b)       # float64 both, summed apart
+    with pytest.raises(ValueError, match="runs on the cpu"):
+        fs.full_depth(SPEC, gguf, gen, tmp_path, primary="baseline", device="cuda")
