@@ -110,15 +110,20 @@ def test_rewritten_op_coin_rejects():
 
 
 def test_rewritten_statement_rejects():
-    """Changing the claim set must break its digest, hence the whole transcript."""
-    path, _ = _proof_file()
+    """Changing the claim set must break its digest, hence the whole transcript.
+    The verifier refuses it before parsing it: an explicit REJECT on the
+    digest's policy line (it once panicked compiling this table_order)."""
+    path, proof = _proof_file()
     try:
         def bump(d):
             d["claims"]["table_order"] = d["claims"].get("table_order", []) + [7]
         _rewrite(path, bump)
         acc, msg = _run(path)
         assert not acc, "rewritten claims: expected REJECT"
-        print("    rewritten claim set: REJECT ok")
+        acc, msg = _run(path, "-", proof.statement_digest.hex())
+        assert not acc and "[XX ] statement_digest = trusted policy digest" in msg, msg
+        assert "table_order" not in msg, msg
+        print("    rewritten claim set: REJECT ok (no policy; the honest digest)")
     finally:
         os.unlink(path)
 

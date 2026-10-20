@@ -489,6 +489,15 @@ fn conv_paths(m: HashMap<String, Vec<(String, u8)>>) -> HashMap<u64, Vec<([u8; 3
         .collect()
 }
 
+/// The policy table and a REJECT, without the compile: one of its
+/// preconditions failed, and that line says which.
+fn refuse(policy: &[(String, bool)]) {
+    for (name, b) in policy {
+        println!("  [{}] {}", if *b { "OK " } else { "XX " }, name);
+    }
+    println!("rust_verify: REJECT");
+}
+
 fn main() {
     // argv: proof.json [EXPECTED_R_W_HEX] [EXPECTED_STATEMENT_DIGEST_HEX]
     //       [EXPECTED_WC_ENROLLMENT_IDENTITY_HEX]  (wc_enrollment_identity, not the root)
@@ -509,9 +518,6 @@ fn main() {
         .expect("parse proof.json");
 
     let claims_bytes = top.claims.get().as_bytes().to_vec();
-    let claims_value: Value = serde_json::from_str(top.claims.get())
-        .expect("parse claims sub-document");
-    let mut cs = parse_claim_set_value(claims_value);
     let mut p = top.proof;
     // Assemble blocks in the ROW-BLOCK ORDER named by `blocks` (default the
     // legacy ["p1","p2"]). Each block's (root, opened, paths) join in that
@@ -639,6 +645,23 @@ fn main() {
         _ => {}
     }
 
+    // Only a trusted statement is interpreted: on a transcript proof, the one
+    // whose digest is the policy's (the legacy corpus has no anchor to check).
+    // A rewritten claim set, or one with no trusted digest, is refused here
+    // before it is parsed, so nothing a prover writes into it reaches the
+    // parse or the compile: a REJECT with the policy table, not a panic.
+    let statement_trusted = match (&top.statement_digest, policy_stmt) {
+        (Some(_), Some(exp)) => exp == stmt_recomputed,
+        (Some(_), None) => false,
+        (None, exp) => exp.is_none(),
+    };
+    if !statement_trusted {
+        return refuse(&policy);
+    }
+    let claims_value: Value = serde_json::from_str(top.claims.get())
+        .expect("parse claims sub-document");
+    let mut cs = parse_claim_set_value(claims_value);
+
     // ---- WC-LCRL-STC bridge (spec 0.4/0.5) -------------------------------
     // Verified BEFORE compile: on ACCEPT the authenticated P_trace becomes
     // the public pin for the use_bridge claim's Pj rows; a use_bridge claim
@@ -682,17 +705,23 @@ the trusted enrollment".into(), true));
         _ => {}
     }
 
-    if !cmap.is_empty() && wc_pins.len() != cmap.len() {
-        // The bridge did not authenticate every bridged claim's fold (a wc
-        // section missing, tampered, under the floor, or on the legacy seed
-        // path): the compile would ask for a pin that was never produced and
-        // abort. Report the policy table and REJECT instead — fail-closed,
-        // with the reason on its line rather than in a panic.
-        for (name, b) in &policy {
-            println!("  [{}] {}", if *b { "OK " } else { "XX " }, name);
-        }
-        println!("rust_verify: REJECT");
-        return;
+    // The compile settles table_order by table id: a statement, even a
+    // trusted one, whose order names a table no claim declares, names one
+    // twice or leaves one unsettled is refused before it runs.
+    let table_order = cs.check_table_order();
+    policy.push((match &table_order {
+        Ok(()) => "table_order = the claims' tables, each once".into(),
+        Err(e) => format!("table_order: {e}"),
+    }, table_order.is_ok()));
+
+    if table_order.is_err() || (!cmap.is_empty() && wc_pins.len() != cmap.len()) {
+        // A malformed table_order, or the bridge did not authenticate every
+        // bridged claim's fold (a wc section missing, tampered, under the
+        // floor, or on the legacy seed path): the compile would fail a lookup
+        // or ask for a pin that was never produced, and abort. Report the
+        // policy table and REJECT instead — fail-closed, with the reason on
+        // its line rather than in a panic.
+        return refuse(&policy);
     }
     let t0 = std::time::Instant::now();
     let (ok_checks, per) = verify_bound_pinned(&mut cs, &roots, &r3, r4, &s_op,
