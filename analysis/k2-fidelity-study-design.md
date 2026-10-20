@@ -72,8 +72,9 @@ These are the precision study's `CONFIGS` (`prover/k2_precision_study.py`):
 `w16`, `a16`, `a14w14`, `a16w16`, and `a16w16n14`. The last is hypothetical:
 its RMSNorm bracket would need revising. Selection stays at 2^16, and SiLU
 and softmax keep their 2^12 tables. All six run at two layers. At full depth
-only the chosen configuration runs. Its logits come from the driver's engine
-pass, or, for the proved passage, from the proof's own witness.
+the primary runs, with the exploratory configurations beside it (§3.5, §7).
+Their logits come from the driver's engine pass, or, for the proved passage,
+from the proof's own witness.
 
 ### 3.2 Emulations (K2-specific, two layers, diagnostic)
 
@@ -175,11 +176,51 @@ parameters. The check is an all-F32 toy with an f32 KV cache
 Reported upstream as ggml-org/llama.cpp#30830 (2026-10-19), framed on the
 pinned commit, the GGUF metadata, the override and the toy reproduction.
 
+**The GPU backend, open since session 11** (review of 2026-10-20). On a
+card, the all-F32 toys match p64 at position 0 (layer outputs within
+1.7·10⁻⁷) and are 2–4·10⁻³ off after it, in K2's form and in Moonlight's.
+The CPU path is within float32 rounding.
+
+- **Where it comes from.** The toy test decodes position 0 alone and the
+  other positions as one batch. At `f174553`, multi-token float32 matmuls
+  run in TF32 on Ampere and later:
+  - up to 16 tokens in `mmf`, whose `mma` takes float32 bits as TF32
+    operands;
+  - beyond that in cuBLAS, which llama.cpp sets to
+    `CUBLAS_TF32_TENSOR_OP_MATH`.
+  
+  Single tokens take float32 vector kernels.
+- **What has to be established.** Whether this is expected internal
+  precision or a semantic mismatch, by `tools/engine_precision.py` under a
+  rule fixed before its run:
+  - **Same function:** the CPU and the GPU in one-token steps must be within
+    the float32 bound at every position. If not, it is a semantic mismatch.
+  - **Internal precision:** if they are, every batched departure must start
+    at a matmul's output and stay within 2⁻⁶. Then it is internal
+    precision.
+  - **Unresolved:** anything else, sent back for review.
+- **On K2's weights,** `fidelity_study.py engine-paths` scores the two-layer
+  engine arm against p64 along each path:
+  - the 512-token batch as session 11 replayed it;
+  - one-token steps, as generation decodes;
+  - cuBLAS's TF32 off;
+  - the CPU.
+- **Choosing the baseline.** It is the intended GPU deployment; the CPU path
+  is a diagnostic. The choice is made for deployment relevance, not for
+  what its error does to the criterion. A semantic mismatch is fixed before
+  the configuration is frozen. The baseline's generation-time logits are
+  kept with the run for the full-depth comparison.
+- **Environment in the manifests.** Every engine manifest records the
+  environment variables that can change the arithmetic (`GGML_*`,
+  `NVIDIA_TF32_*`, `CUBLAS_*`).
+
 ### 3.4 The a14w14 driver: combined rounding (2026-10-20)
 
-a14w14 is the nominated K2 primary, pending the implementation and cost
-gates (review of 2026-10-20). `demo/demo_k2.py --precision` builds the tape
-at a profile, `k2_loader.Scales`. Each scale has one meaning:
+a14w14 was the nominated K2 primary, pending the implementation and cost
+gates (review of 2026-10-20). The amendment of §3.5 makes a16w16 the
+primary, built by the same driver at its own scales.
+`demo/demo_k2.py --precision` builds the tape at a profile,
+`k2_loader.Scales`. Each scale has one meaning:
 - `S_act`: activations;
 - `S_wt`: checkpoint weights;
 - `s_norm`: RMSNorm's internal scale;
@@ -239,6 +280,70 @@ Checks:
   range check can catch it.
 
 The exactness check, the proof and the negative run on a card (`tests/test_k2_driver.py`).
+
+The a14w14 implementation gate passed in session 11 on shard 1 (two layers,
+T = 100, bridged):
+- exact at all 42 intermediates, every combined-rounding range inside its
+  constraint;
+- the honest proof accepted by the Rust verifier;
+- the residual rescale tamper and the interleave rejected;
+- against the 2^12 baseline on the same pod: proving +10.6%, Rust
+  verification +8.4%, peak GPU memory +2.6%, the proof file +2.4%.
+
+These runtimes are at the gate's dimensions. The roughly 2% full-depth
+figures of §9.1 are counts, a separate result.
+
+### 3.5 Amendment 2026-10-20: the K2 primary is a16w16
+
+Made after the two-layer diagnostic (session 11, stage C) and before any
+full-depth K2 result exists. §6's acceptance criterion is unchanged.
+
+- **Primary:** a16w16, combined rounding.
+- **Exploratory:** a14w14 and the 2^12 baseline, reported beside it
+  (`--exploratory a14w14,baseline`). As §7 says, an exploratory pass does
+  not replace a primary failure or an inconclusive primary.
+- **a16w16n14** stays hypothetical, left for later research; it does not run
+  at full depth.
+
+**Why.** At two layers, on the four frozen passages, against p64 (record
+`session11-2026-10-19/records/run-records/fidelity/two-layer.json`, sha256
+`e7905b9d…5d1c24`):
+
+| | pooled mean KL | vs the engine |
+|---|---|---|
+| a16w16 | 5.84 × 10⁻⁴ | 0.83× |
+| engine | 7.05 × 10⁻⁴ | 1× |
+| a14w14 | 1.28 × 10⁻³ | 1.81× |
+
+- a14w14 is above the engine on every passage, by 1.65–2.11× in mean KL.
+- On Moonlight, at two layers, it was about half the engine (0.53×, that
+  engine on the CPU). The K2 evidence, not Moonlight's, decides K2's
+  primary, and it favors a16w16 enough to pay its qualification cost.
+
+**What it does not establish.**
+- a16w16's mean KL is below the engine's on each passage. Its p99 KL is
+  not: on p1 it is 1.115× the engine's (0.907, 0.687 and 0.954 on the
+  others).
+- §6 bounds p99 at 1.1× at full depth, so the tails decide, and two layers
+  are not the criterion.
+- The engine figure is llama.cpp on the GPU, replaying each passage as one
+  512-token batch. Its float32 kernels for multi-token batches run in TF32
+  (§3.3's open question, being settled before the baseline is frozen).
+  Full depth scores the baseline's generation-time logits instead.
+
+**Qualification.** a14w14's gate does not qualify a16w16: its tables are
+larger and its residual rescale is 4 bits. a16w16 passes its own
+implementation gate before the full-depth run:
+- exact intermediate agreement with the precision study's a16w16 model;
+- the combined-rounding range checks;
+- the honest proof accepted by the Rust verifier;
+- both tampers rejected: the 4-bit residual rescale and the interleave;
+- memory and timings measured beside the baseline.
+
+Its cost, counted (§9.1):
+- +15.5% witness and +78% constraints at the two-layer gate, from its
+  2^28-entry combine table and the tail's 2^24-entry tables;
+- +2.3% witness at full depth.
 
 ## 4. Metrics
 
@@ -520,7 +625,15 @@ integer computation with its fidelity documented, and the next configuration
 waits for a later run.
 
 The stages run through `prover/fidelity_study.py`:
-- `two-layer`: every arm on each passage's prompt;
+- `two-layer`: every arm on each passage's prompt. Each integer
+  configuration's ranges are kept whole, per passage and over all four:
+  each row's operation, implementation, signed extremes and bounds, and
+  the violations listed per implementation, so combined rounding's are
+  never counted with the rejected input-rescaling's. Session 11 recorded
+  only a count per configuration; the integer configurations run again
+  for the rows (`--configs … --arms "" --no-engine`, one process per
+  passage, `two-layer-merge`);
+- `engine-paths`: the two-layer engine arm along each kernel path (§3.3);
 - `full-depth`: the engine's generation, then p64 and the integer arm on
   the frozen sequences, then §6's acceptance and §6.5's calibration. Each
   passage's p64 rows and each configuration's per-position metrics are
