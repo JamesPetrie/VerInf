@@ -60,13 +60,13 @@ def _without_resumed(rec):
 
 def test_a_run_started_again_resumes_and_reproduces_its_record(gguf, tmp_path, counted):
     gen = _generated()
-    first = fs.full_depth(SPEC, gguf, gen, tmp_path)
+    first = fs.full_depth(SPEC, gguf, gen, tmp_path, primary="baseline")
     assert sorted(counted) == [("S12", 8), ("S12", 9), ("p64", 8), ("p64", 9)]
     assert {p.name for p in (tmp_path / fs.PARTS / "a").iterdir()} == {"p64.npz", "baseline.npz"}
     counted.clear()
-    again = fs.full_depth(SPEC, gguf, gen, tmp_path)
+    again = fs.full_depth(SPEC, gguf, gen, tmp_path, primary="baseline")
     assert counted == []
-    assert again["configs"] == first["configs"] and again["nll_calibration"] == first["nll_calibration"]
+    assert again["acceptance"] == first["acceptance"] and again["nll_calibration"] == first["nll_calibration"]
     assert again["feasibility"] == first["feasibility"]
     f = first["feasibility"]["baseline"]
     assert all(v["ok"] for v in f["implementations"].values()) and "L1.x_out" in f["ranges"]
@@ -76,11 +76,11 @@ def test_a_run_started_again_resumes_and_reproduces_its_record(gguf, tmp_path, c
 
 def test_a_new_configuration_reuses_the_p64_rows(gguf, tmp_path, counted):
     gen = _generated()
-    first = fs.full_depth(SPEC, gguf, gen, tmp_path)
+    first = fs.full_depth(SPEC, gguf, gen, tmp_path, primary="baseline")
     counted.clear()
-    both = fs.full_depth(SPEC, gguf, gen, tmp_path, configs=("baseline", "a16"))
+    both = fs.full_depth(SPEC, gguf, gen, tmp_path, primary="baseline", exploratory=("a16",))
     assert sorted(counted) == [("S16", 8), ("S16", 9)]
-    assert both["configs"]["baseline"] == first["configs"]["baseline"]
+    assert both["acceptance"] == first["acceptance"] and set(both["exploratory"]) == {"a16"}
     assert both["passages"]["a"]["resumed"] == ["p64", "baseline"]
 
 
@@ -94,21 +94,21 @@ def test_an_interrupted_run_keeps_its_whole_parts(gguf, tmp_path, counted, monke
         return ps_forward(ids, *a, **kw)
     monkeypatch.setattr(fs.ps, "forward", stops_at_b)
     with pytest.raises(KeyboardInterrupt):
-        fs.full_depth(SPEC, gguf, gen, tmp_path)
+        fs.full_depth(SPEC, gguf, gen, tmp_path, primary="baseline")
     assert {p.name for p in (tmp_path / fs.PARTS / "b").iterdir()} == {"p64.npz"}
     monkeypatch.setattr(fs.ps, "forward", ps_forward)
     counted.clear()
-    rec = fs.full_depth(SPEC, gguf, gen, tmp_path)
+    rec = fs.full_depth(SPEC, gguf, gen, tmp_path, primary="baseline")
     assert counted == [("S12", 8)] and rec["passages"]["b"]["resumed"] == ["p64"]
-    assert rec["configs"] == fs.full_depth(SPEC, gguf, gen, tmp_path / "fresh")["configs"]
+    assert rec["acceptance"] == fs.full_depth(SPEC, gguf, gen, tmp_path / "fresh", primary="baseline")["acceptance"]
 
 
 def test_a_changed_sequence_is_computed_again(gguf, tmp_path, counted):
     gen = _generated()
-    fs.full_depth(SPEC, gguf, gen, tmp_path)
+    fs.full_depth(SPEC, gguf, gen, tmp_path, primary="baseline")
     gen["b"]["tokens"][-1] = (gen["b"]["tokens"][-1] + 1) % toy.TOY["V"]
     counted.clear()
-    rec = fs.full_depth(SPEC, gguf, gen, tmp_path)
+    rec = fs.full_depth(SPEC, gguf, gen, tmp_path, primary="baseline")
     assert sorted(counted) == [("S12", 8), ("p64", 8)]
     assert rec["passages"]["a"]["resumed"] == ["p64", "baseline"] and rec["passages"]["b"]["resumed"] == []
 
@@ -121,7 +121,22 @@ def test_a_callable_integer_arm_is_never_saved(gguf, tmp_path):
         calls.append(len(ids))
         return np.zeros((len(ids), toy.TOY["V"]))
     for _ in range(2):
-        fs.full_depth(SPEC, gguf, gen, tmp_path, integer=integer)
+        fs.full_depth(SPEC, gguf, gen, tmp_path, primary="integer", integer=integer)
     assert sorted(calls) == [8, 8, 9, 9]
-    assert fs.full_depth(SPEC, gguf, gen, tmp_path, integer=integer)["feasibility"] == {}
+    assert fs.full_depth(SPEC, gguf, gen, tmp_path, primary="integer", integer=integer)["feasibility"] == {}
     assert {p.name for p in (tmp_path / fs.PARTS / "a").iterdir()} == {"p64.npz"}
+
+
+def test_the_primary_is_named_and_kept_by_the_work_directory(gguf, tmp_path):
+    gen = _generated()
+    rec = fs.full_depth(SPEC, gguf, gen, tmp_path, primary="a16", exploratory=("baseline",))
+    assert rec["primary"] == "a16" and set(rec["exploratory"]) == {"baseline"}
+    swapped = fs.full_depth(SPEC, gguf, gen, tmp_path, primary="a16", exploratory=())
+    assert swapped["acceptance"] == rec["acceptance"]               # the order of the others is irrelevant
+    with pytest.raises(ValueError, match="started with primary 'a16'"):
+        fs.full_depth(SPEC, gguf, gen, tmp_path, primary="baseline", exploratory=("a16",))
+    with pytest.raises(ValueError, match="not also exploratory"):
+        fs.full_depth(SPEC, gguf, gen, tmp_path / "x", primary="a16", exploratory=("a16",))
+    with pytest.raises(SystemExit):
+        fs.main(["full-depth", "--model", "moonlight", "--gguf", "g", "--passages", "p", "--runner", "r",
+                 "--render", "r", "--work", str(tmp_path / "cli")])

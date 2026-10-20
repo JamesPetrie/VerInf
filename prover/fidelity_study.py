@@ -237,13 +237,33 @@ def _part(path, key, compute):
     return out, False
 
 
-def full_depth(spec, gguf, generated, work, *, layers=None, integer=None, configs=("baseline",)):
+def _register_primary(parts, primary):
+    """The work directory's primary configuration, recorded by its first run;
+    a later run naming another is refused."""
+    path = pathlib.Path(parts) / "primary.json"
+    if path.exists():
+        was = json.loads(path.read_text())["primary"]
+        if was != primary:
+            raise ValueError(f"{path.parent} was started with primary {was!r}; this run names {primary!r}")
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(dict(primary=primary)) + "\n")
+    os.replace(tmp, path)
+
+
+def full_depth(spec, gguf, generated, work, *, primary, exploratory=(), layers=None, integer=None):
     """p64 and the integer model on each frozen sequence; per-position KL and
     NLL over the continuation for the integer arm and the engine baseline;
     §6's acceptance and the §6.5 calibration. `integer(ids)` returns the
-    integer arm's real-valued logits; by default the CPU integer model runs at
-    each of `configs`, all against one p64 and one baseline. The first is the
-    record's acceptance; every one has its own under "configs".
+    integer arm's real-valued logits (`primary` is then "integer"); by
+    default the CPU integer model runs at `primary` and at each
+    `exploratory` configuration, all against one p64 and one baseline.
+
+    The record's acceptance is the primary's, named before the run and kept
+    by the work directory (a resume naming another primary is refused); the
+    exploratory configurations have their own under "exploratory", and none
+    replaces the primary's verdict.
 
     Proof feasibility is recorded beside it and never enters it: each
     configuration's ranges over every passage against the claims'
@@ -259,6 +279,11 @@ def full_depth(spec, gguf, generated, work, *, layers=None, integer=None, config
     W = GgufWeights(str(gguf), ints=False, cfg=cfg)
     md = gt.metadata(gguf)
     n_layers = layers or int(md[f"{md['general.architecture']}.block_count"])
+    if primary in exploratory:
+        raise ValueError(f"{primary!r} is the primary; it is not also exploratory")
+    if integer is not None and (primary != "integer" or exploratory):
+        raise ValueError("an integer callable is the one configuration, primary 'integer'")
+    configs = (primary, *exploratory)
     if integer is None:
         def make(name):
             def run(ids):
@@ -270,6 +295,7 @@ def full_depth(spec, gguf, generated, work, *, layers=None, integer=None, config
     else:
         arms = {"integer": (lambda ids: (integer(ids), None), None)}
     parts = pathlib.Path(work) / PARTS
+    _register_primary(parts, primary)
     base = dict(model=spec["adapter"]["name"], layers=n_layers, k=k, gguf=_gguf_identity(gguf),
                 sources=_sources_sha256())
     per = {name: [] for name in arms}
@@ -319,10 +345,9 @@ def full_depth(spec, gguf, generated, work, *, layers=None, integer=None, config
             log(pid, name, *(["(resumed)"] if loaded else []), prow["integer"][name])
         log(pid, "engine", prow["engine"])
         rec["passages"][pid] = prow
-    rec["configs"] = {name: fm.acceptance(per[name], per_eng) for name in arms}
-    first = next(iter(arms))
-    rec["acceptance"] = rec["configs"][first]
-    rec["acceptance_config"] = first
+    rec["primary"] = primary
+    rec["acceptance"] = fm.acceptance(per[primary], per_eng)
+    rec["exploratory"] = {name: fm.acceptance(per[name], per_eng) for name in exploratory}
     rec["nll_calibration"] = fm.nll_calibration(per_p64, [e["nll"] for e in per_eng])
     rec["feasibility"] = {}
     for name, rgs in per_ranges.items():
@@ -394,14 +419,18 @@ def main(argv=None):
     ap.add_argument("--threads", type=int, default=8)
     ap.add_argument("--layers", type=int, default=None, help="full depth: fewer layers, for tests")
     ap.add_argument("--device", default="cuda", help="p64-check: the torch reference's device")
-    ap.add_argument("--configs", default="baseline",
-                    help="full depth: integer configurations, comma-separated (the first is the record's)")
+    ap.add_argument("--primary", help="full depth: the configuration whose verdict is the record's, "
+                    "named before the run (required)")
+    ap.add_argument("--exploratory", default="",
+                    help="full depth: further configurations, comma-separated, reported beside the primary")
     ap.add_argument("--reuse", action="store_true",
                     help="full depth: the sequences and baseline logits already in --work, not generated "
                     "again (finished parts in --work are always reused)")
     ap.add_argument("--engine", default="{}", help="JSON: further engine settings (n_gpu_layers, kv_type, "
                     "flash_attn, n_batch, n_ubatch, override_tensor), pinned by the kit")
     a = ap.parse_args(argv)
+    if a.stage == "full-depth" and not a.primary:
+        ap.error("full-depth needs --primary: the configuration named before the run")
     work = pathlib.Path(a.work)
     work.mkdir(parents=True, exist_ok=True)
     ids = prompts(a.model, a.passages, a.render, a.gguf, work)
@@ -428,10 +457,11 @@ def main(argv=None):
             (work / "sequences.json").write_text(json.dumps(
                 {pid: dict(tokens=g["tokens"], n_prompt=g["n_prompt"], sha256=g["sha256"])
                  for pid, g in gen.items()}, indent=1))
-        configs = tuple(a.configs.split(","))
-        rec = full_depth(MODELS[a.model], a.gguf, gen, work, layers=a.layers, configs=configs)
-        dst = work / ("full-depth.json" if configs == ("baseline",)
-                      else f"full-depth-{'-'.join(configs)}.json")
+        exploratory = tuple(c for c in a.exploratory.split(",") if c)
+        rec = full_depth(MODELS[a.model], a.gguf, gen, work, primary=a.primary, exploratory=exploratory,
+                         layers=a.layers)
+        dst = work / (f"full-depth-primary-{a.primary}.json" if not exploratory
+                      else f"full-depth-primary-{a.primary}-exploratory-{'-'.join(exploratory)}.json")
     dst.write_text(json.dumps(rec, indent=1, default=str))
     log("record:", dst)
     return 0

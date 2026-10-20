@@ -471,6 +471,13 @@ The stages run through `prover/fidelity_study.py`:
   implementations differ (the claims' input rescaling, or one combined
   rounding), each is checked under its own constraints. Feasibility never
   enters §6's verdict.
+- The record's verdict is that of one primary configuration, named before
+  the run (`--primary`). The work directory keeps the name, and a resume
+  naming another primary is refused. Every other configuration
+  (`--exploratory`) is reported beside it. A primary failure or
+  inconclusive result remains that result: an exploratory configuration
+  passing does not replace it (review of 2026-10-20). The order of the
+  configurations plays no part.
 
 Engine settings beyond the adapter's are pinned by the caller. It runs end
 to end on the toy (`prover/tests/test_llama_engine.py`).
