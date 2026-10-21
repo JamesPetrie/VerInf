@@ -1,4 +1,5 @@
-// Sparse matrix-vector multiply mod P in CSR format.
+// Sparse matrix-vector multiply mod P in CSR format, with the combiner drawn
+// inline from the challenge PRF (the dense-x variant was retired, unused).
 //
 // y = A · x mod P, where A is (n_rows × n_cols) given as CSR:
 //   values    — length nnz, the non-zero entries
@@ -22,25 +23,6 @@
 
 namespace gl_sparse {
 
-__global__ void k_spmv(
-    const uint64_t* __restrict__ values,    // nnz
-    const uint64_t* __restrict__ col_idx,   // nnz; uint64 to match torch I/O
-    const uint64_t* __restrict__ row_ptr,   // n_rows + 1
-    const uint64_t* __restrict__ x,         // n_cols
-    uint64_t* __restrict__ y,               // n_rows
-    int n_rows
-) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= n_rows) return;
-    uint64_t start = row_ptr[i];
-    uint64_t end   = row_ptr[i + 1];
-    uint64_t s = 0;
-    for (uint64_t p = start; p < end; ++p) {
-        s = gl::add(s, gl::mul(values[p], x[col_idx[p]]));
-    }
-    y[i] = s;
-}
-
 // Inline test-combiner challenge, bit-exact with protocol.challenge:
 //   r[cid] = int.from_bytes(BLAKE3(seed(32) || label || cid_le8)[:16], "little") % P
 // seed is 32 bytes; label is `label_len` bytes ("lin"/"irs"/"quad"). The hash
@@ -63,7 +45,7 @@ __device__ __forceinline__ uint64_t challenge_inline(
     return gl::reduce128(lo, hi);
 }
 
-// k_spmv with the dense combiner x[cid] replaced by challenge_inline(seed, cid)
+// CSR matvec with the combiner x[cid] drawn as challenge_inline(seed, cid)
 // computed in-thread — the (up to ~1.2B-entry) combiner is never materialized.
 //   y[i] = Σ_p values[p] · challenge(seed, col_idx[p], label).
 __global__ void k_spmv_challenged(

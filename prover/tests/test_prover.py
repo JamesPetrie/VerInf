@@ -13,6 +13,7 @@ from core.
 import sys, pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))   # pipeline/ on path
 
+import time
 import torch
 import protocol as pr
 from typing import List
@@ -20,7 +21,7 @@ from core import (
     LigeroConfig, NUM_BLINDING_ROWS, challenge_vec, Proof, AUX_FNS,
     encode_messages, merkle_path, compute_p_0_streaming,
     QIrsAccumulator, QLinAccumulator,
-    _master_seed_to_cuda, _PhaseLogger, _with_synthesized_settlements, _layout,
+    _master_seed_to_cuda, _with_synthesized_settlements, _layout,
     _make_blinding_messages, _encode_2k_blinding_rows, _BLIND_ROW_IRS,
     _make_merkle_acc, _stream_phase, _finalize_merkle_artifact, _LazyResolvingDict,
     _compile_with_chs, _sample_chs, _mix_blinding_into_tests,
@@ -52,6 +53,40 @@ def _sample_test_challenges(claims: List, cfg: LigeroConfig, seed: bytes):
                          len(quads)))
     ch2 = pr.random_columns(s_col, cfg)
     return ch0, ch1, ch2
+
+
+class _PhaseLogger:
+    """Phase-by-phase wall-time + GPU memory logger for prove/verify.
+
+    Output looks like:
+        [prove +12.3s] [alloc=4.2G reserved=8.1G peak=6.5G] Round 1 done — m=4523
+    where alloc = currently-allocated GPU memory by live tensors,
+    reserved = total reserved by PyTorch caching allocator, and peak =
+    max allocated since last reset_peak()."""
+
+    def __init__(self, label: str, verbose: bool):
+        self.label = label
+        self.verbose = verbose
+        self.t0 = time.time()
+
+    def log(self, msg: str):
+        if not self.verbose:
+            return
+        elapsed = time.time() - self.t0
+        try:
+            alloc    = torch.cuda.memory_allocated()     / 1e9
+            reserved = torch.cuda.memory_reserved()      / 1e9
+            peak     = torch.cuda.max_memory_allocated() / 1e9
+            mem = f"[alloc={alloc:.1f}G reserved={reserved:.1f}G peak={peak:.1f}G]"
+        except Exception:
+            mem = ""
+        print(f"  [{self.label} +{elapsed:6.1f}s] {mem} {msg}", flush=True)
+
+    def reset_peak(self):
+        try:
+            torch.cuda.reset_peak_memory_stats()
+        except Exception:
+            pass
 
 
 def prove(claims, inputs, cfg, ch0=None, ch1=None, ch2=None,

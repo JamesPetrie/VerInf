@@ -102,8 +102,6 @@ class WeightSpec:
 def load_layer_weights(model_id_or_path: str, layer_idx: int, *,
                         S: int = 2 ** 12,
                         d_h: Optional[int] = None,
-                        fold_inv_sqrt_d_h_into_W_Q: bool = True,
-                        extra_q_k_shrink: float = 1.0,
                         ) -> Dict[str, torch.Tensor]:
     """Load one transformer block's weights (eager), quantize to scale S,
     return a dict of CUDA uint64 field tensors shaped per `layer_shapes`.
@@ -111,16 +109,12 @@ def load_layer_weights(model_id_or_path: str, layer_idx: int, *,
     Thin wrapper over LazyHFLoader — same spec table, same transforms
     (transpose, 1/√d_h fold into W_Q, GQA KV replication), just resolved
     immediately. `d_h` defaults to the checkpoint's config.json value.
-
-    `extra_q_k_shrink` folds an extra √N into BOTH W_Q and W_K (a stand-in
-    for softmax magnitude control — see the original note). Keys/shapes:
+    Keys/shapes:
       W_Q W_K W_V W_O (d, n_heads·d_h)/(n_heads·d_h, d) [W_Q has 1/√d_h
       folded; K/V replicated to full width under GQA] · W_gate W_up (d,d_ff)
       · W_down (d_ff,d) · rms_pre_attn_w rms_pre_ffn_w (d,) gains.
     """
-    ldr = LazyHFLoader(model_id_or_path, S=S, d_h=d_h,
-                       fold_inv_sqrt_d_h_into_W_Q=fold_inv_sqrt_d_h_into_W_Q,
-                       extra_q_k_shrink=extra_q_k_shrink)
+    ldr = LazyHFLoader(model_id_or_path, S=S, d_h=d_h)
     shapes = ldr.layer_shapes()
     out = {}
     for short, spec in ldr.layer_specs(layer_idx).items():
@@ -138,18 +132,14 @@ class LazyHFLoader:
 
     def __init__(self, model_id_or_path: str, *,
                   S: int = 2 ** 12,
-                  d_h: Optional[int] = None,
-                  fold_inv_sqrt_d_h_into_W_Q: bool = True,
-                  extra_q_k_shrink: float = 1.0):
+                  d_h: Optional[int] = None):
         self.model_id = model_id_or_path
         self.S = S
         self.model_dir = find_model_dir(model_id_or_path)
         self.config = ModelConfig.from_hf(self.model_dir)
         self.d_h = self.config.d_h if d_h is None else d_h
-        sqrt_d_h = math.sqrt(self.d_h)
-        qk_shrink = math.sqrt(extra_q_k_shrink)
-        self.Q_div = (sqrt_d_h if fold_inv_sqrt_d_h_into_W_Q else 1.0) * qk_shrink
-        self.K_div = qk_shrink
+        self.Q_div = math.sqrt(self.d_h)      # 1/√d_h folded into W_Q
+        self.K_div = 1.0
 
         self.shard_map = self._load_shard_map()
 
@@ -187,11 +177,6 @@ class LazyHFLoader:
         from safetensors.torch import safe_open
         with safe_open(self._shard_for(param_name), framework="pt", device="cpu") as f:
             return f.get_tensor(param_name)
-
-    def _get_shape(self, param_name: str) -> Tuple[int, ...]:
-        from safetensors.torch import safe_open
-        with safe_open(self._shard_for(param_name), framework="pt", device="cpu") as f:
-            return tuple(f.get_slice(param_name).get_shape())
 
     def make_loader(self, param_name: str, *,
                      transpose: bool = False,

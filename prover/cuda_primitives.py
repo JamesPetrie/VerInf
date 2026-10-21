@@ -12,24 +12,19 @@ Public surface (uniform "operates on torch.uint64 CUDA tensors" API):
         ntt_forward(a), ntt_inverse(a)
         ntt_forward_batched(rows), ntt_inverse_batched(rows)
 
-    Reed-Solomon row encoding:
-        rs_encode_rows(messages, n_lig, k_deg)
-
     Polynomial arithmetic in coefficient form:
-        poly_mul(a, b), poly_add(a, b)
         poly_mul_batched(A, B)
         poly_eval(coeffs, points)   — Horner, 1-D or 2-D coeffs
 
     Linear algebra mod P:
         gl_matmul(A, B), gl_matvec(M, v)
-        gl_spmv(values, col_idx, row_ptr, x, n_rows)
 
     BLAKE3 column hashing + Merkle:
         hash_columns_streamed(matrix)   — (m, n) u64 → (n, 32) u8
         merkle_build_blake3(leaves)     — (N, 32) u8 → (root, levels)
 
     Lookup helpers (LogUp):
-        lookup_multiplicities(x, table)
+        lookup_multiplicities_into(x, table, mult)
 
 Backed by ligero/cuda/*.cuh. NTT contexts are allocated lazily
 per length and cached for the life of the process. First call to any
@@ -42,7 +37,6 @@ Requires CUDA, ninja, and a PyTorch build with CUDA support.
 
 from pathlib import Path
 
-import os
 import torch
 from torch.utils.cpp_extension import load_inline
 
@@ -71,17 +65,12 @@ void ntt_inverse(torch::Tensor a);
 void ntt_forward_batched(torch::Tensor rows);
 void ntt_inverse_batched(torch::Tensor rows);
 
-// Reed-Solomon row encoding
-torch::Tensor rs_encode_rows(torch::Tensor messages, int64_t n_lig, int64_t k_deg);
-
 // Polynomial
 torch::Tensor poly_eval(torch::Tensor coeffs, torch::Tensor points);
 
 // Linear algebra mod P
 torch::Tensor gl_matmul(torch::Tensor A, torch::Tensor B);
 torch::Tensor gl_matvec(torch::Tensor M, torch::Tensor v);
-torch::Tensor gl_spmv(torch::Tensor values, torch::Tensor col_idx,
-                      torch::Tensor row_ptr, torch::Tensor x, int64_t n_rows);
 torch::Tensor gl_spmv_challenged(torch::Tensor values, torch::Tensor col_idx,
                                  torch::Tensor row_ptr, torch::Tensor seed,
                                  torch::Tensor label, int64_t n_rows);
@@ -134,7 +123,6 @@ torch::Tensor row_prg_indexed(torch::Tensor master_seed, torch::Tensor row_indic
                               int64_t slack_per_row, uint64_t P);
 
 // Lookup
-torch::Tensor lookup_multiplicities(torch::Tensor x, torch::Tensor table);
 void          lookup_multiplicities_into(torch::Tensor x, torch::Tensor table, torch::Tensor mult);
 // Range-table specialization: caller asserts table is [0, T_LEN). mult length must equal T_LEN.
 void          lookup_multiplicities_range_into(torch::Tensor x, int64_t T_LEN, torch::Tensor mult);
@@ -153,13 +141,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("ntt_forward_batched", &ntt_forward_batched);
     m.def("ntt_inverse_batched", &ntt_inverse_batched);
 
-    m.def("rs_encode_rows", &rs_encode_rows);
-
     m.def("poly_eval", &poly_eval);
 
     m.def("gl_matmul", &gl_matmul);
     m.def("gl_matvec", &gl_matvec);
-    m.def("gl_spmv", &gl_spmv);
     m.def("gl_spmv_challenged", &gl_spmv_challenged);
     m.def("challenge_vec", &challenge_vec);
     m.def("challenge_at", &challenge_at);
@@ -178,7 +163,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("row_prg_indexed", &row_prg_indexed);
     m.def("merkle_one_level", &merkle_one_level);
 
-    m.def("lookup_multiplicities", &lookup_multiplicities);
     m.def("lookup_multiplicities_into", &lookup_multiplicities_into);
     m.def("lookup_multiplicities_range_into", &lookup_multiplicities_range_into);
 }
@@ -413,53 +397,6 @@ void ntt_inverse_batched(torch::Tensor rows) {
 }
 
 // ---------------------------------------------------------------------------
-// Reed-Solomon row encoding: each row's first K_DEG slots get iNTT'd (the
-// caller's K_DEG−ELL slots beyond ELL are the ZK pad), then the row is
-// zero-extended to N_LIG and fNTT'd. Output is the codeword matrix.
-// ---------------------------------------------------------------------------
-
-torch::Tensor rs_encode_rows(torch::Tensor messages, int64_t n_lig, int64_t k_deg) {
-    CHECK_U64(messages);
-    TORCH_CHECK(messages.dim() == 2, "rs_encode_rows expects (m, K_DEG)");
-    TORCH_CHECK((int)messages.size(1) == (int)k_deg,
-                "messages's second dim must equal k_deg");
-    TORCH_CHECK(is_power_of_two((int)k_deg) && k_deg >= 2);
-    TORCH_CHECK(is_power_of_two((int)n_lig) && n_lig >= k_deg);
-    int m = messages.size(0);
-
-    // Allocate output and zero-init. Copy each row's K_DEG slots in, then
-    // run batched iNTT(K_DEG) on first K_DEG columns followed by
-    // fNTT(N_LIG) on the full row.
-    auto out = torch::zeros({m, n_lig}, messages.options());
-    // Copy: messages → out[:, :K_DEG].
-    uint64_t* d_out = (uint64_t*)out.data_ptr();
-    const uint64_t* d_msg = (const uint64_t*)messages.data_ptr();
-    for (int i = 0; i < m; ++i) {
-        cudaMemcpy(d_out + (size_t)i * n_lig,
-                   d_msg + (size_t)i * k_deg,
-                   (size_t)k_deg * sizeof(uint64_t),
-                   cudaMemcpyDeviceToDevice);
-    }
-    auto* ctx_k = get_ntt_ctx((int)k_deg);
-    auto* ctx_n = get_ntt_ctx((int)n_lig);
-
-    // iNTT_K on the first K_DEG slots of each row. The buffer is N_LIG-wide
-    // but the NTT operates only on the first K_DEG slots — but our batched
-    // kernels assume contiguous (m, ctx.n) rows. So we run iNTT_K with row
-    // stride = K_DEG by treating it as a separate batched call on a virtual
-    // (m, K_DEG) view. Since out is (m, N_LIG) row-major and only the
-    // first K_DEG slots of each row matter for iNTT_K, we'd need a strided
-    // batched. Simplest correct path: do iNTT_K row-by-row (cheap at K_DEG)
-    // and fNTT_N batched.
-    for (int i = 0; i < m; ++i) {
-        ntt_inverse_dispatch(d_out + (size_t)i * n_lig, *ctx_k);
-    }
-    uint64_t* scratch_n = ((int)n_lig == 65536) ? get_bailey_scratch(m) : nullptr;
-    gl_ntt::ntt_forward_batched_fast(d_out, m, *ctx_n, scratch_n);
-    return out;
-}
-
-// ---------------------------------------------------------------------------
 // Polynomial evaluation (Horner). Accepts 1-D (d,) or 2-D (m, d) coeffs.
 // ---------------------------------------------------------------------------
 
@@ -513,21 +450,7 @@ torch::Tensor gl_matvec(torch::Tensor M, torch::Tensor v) {
     return out;
 }
 
-torch::Tensor gl_spmv(torch::Tensor values, torch::Tensor col_idx,
-                      torch::Tensor row_ptr, torch::Tensor x, int64_t n_rows) {
-    CHECK_U64(values); CHECK_U64(col_idx); CHECK_U64(row_ptr); CHECK_U64(x);
-    TORCH_CHECK(values.dim() == 1 && col_idx.dim() == 1 && row_ptr.dim() == 1 && x.dim() == 1);
-    TORCH_CHECK((int64_t)row_ptr.size(0) == n_rows + 1, "row_ptr length must be n_rows + 1");
-    auto y = torch::zeros({n_rows}, values.options());
-    auto [g, blk] = grid1d((int)n_rows);
-    gl_sparse::k_spmv<<<g, blk>>>(
-        (const uint64_t*)values.data_ptr(), (const uint64_t*)col_idx.data_ptr(),
-        (const uint64_t*)row_ptr.data_ptr(), (const uint64_t*)x.data_ptr(),
-        (uint64_t*)y.data_ptr(), (int)n_rows);
-    return y;
-}
-
-// gl_spmv with the dense combiner x replaced by an inline challenge: x[cid] =
+// CSR mod-P matvec with the combiner x replaced by an inline challenge: x[cid] =
 // challenge(seed, cid, label). seed is the 32-byte round-2 seed s_comb; label
 // is "lin"/"irs"/"quad". Avoids materializing the combiner vector.
 torch::Tensor gl_spmv_challenged(torch::Tensor values, torch::Tensor col_idx,
@@ -1040,21 +963,7 @@ torch::Tensor merkle_one_level(torch::Tensor leaves_u32) {
 // LogUp helper.
 // ---------------------------------------------------------------------------
 
-torch::Tensor lookup_multiplicities(torch::Tensor x, torch::Tensor table) {
-    CHECK_U64(x); CHECK_U64(table);
-    TORCH_CHECK(x.dim() == 1 && table.dim() == 1);
-    int n_table = table.size(0);
-    auto mult_u64 = torch::zeros({n_table}, x.options());
-    if (x.numel() == 0) return mult_u64;
-    auto [g, blk] = grid1d((int)x.numel());
-    gl_extras::k_lookup_multiplicities<<<g, blk>>>(
-        (const uint64_t*)x.data_ptr(), (int)x.numel(),
-        (const uint64_t*)table.data_ptr(), n_table,
-        (unsigned long long*)mult_u64.data_ptr());
-    return mult_u64;
-}
-
-// Accumulating variant: mult[j] += count of i where x[i] == table[j]. The
+// mult[j] += count of i where x[i] == table[j]. The
 // kernel uses atomicAdd, so repeated calls with the same mult tensor
 // produce a running histogram across all calls — used by Tape to share
 // one mult across many tlookups against the same Table.
@@ -1147,13 +1056,6 @@ def ntt_forward_batched(rows):  _ensure_compiled().ntt_forward_batched(rows)
 def ntt_inverse_batched(rows):  _ensure_compiled().ntt_inverse_batched(rows)
 
 
-# ---- Reed-Solomon ----
-
-def rs_encode_rows(messages, n_lig, k_deg):
-    """(m, K_DEG) uint64 → (m, N_LIG) codewords."""
-    return _ensure_compiled().rs_encode_rows(messages, int(n_lig), int(k_deg))
-
-
 # ---- Polynomial ----
 
 def poly_eval(coeffs, points):
@@ -1168,39 +1070,8 @@ def _next_pow2(n):
     return p
 
 
-def poly_mul(a, b):
-    """Multiply two polynomials in coefficient form via NTT."""
-    assert a.dim() == 1 and b.dim() == 1
-    if a.numel() == 0 or b.numel() == 0:
-        return torch.empty(0, dtype=torch.uint64, device=a.device)
-    result_len = a.numel() + b.numel() - 1
-    n = _next_pow2(result_len)
-    a_padded = torch.zeros(n, dtype=torch.uint64, device=a.device)
-    a_padded[:a.numel()] = a
-    b_padded = torch.zeros(n, dtype=torch.uint64, device=b.device)
-    b_padded[:b.numel()] = b
-    ntt_forward(a_padded)
-    ntt_forward(b_padded)
-    prod = gl_mul(a_padded, b_padded)
-    ntt_inverse(prod)
-    return prod[:result_len].contiguous()
-
-
-def poly_add(a, b):
-    """Length-adapting polynomial add."""
-    assert a.dim() == 1 and b.dim() == 1
-    n = max(a.numel(), b.numel())
-    if n == 0:
-        return torch.empty(0, dtype=torch.uint64, device=a.device)
-    a_padded = torch.zeros(n, dtype=torch.uint64, device=a.device)
-    a_padded[:a.numel()] = a
-    b_padded = torch.zeros(n, dtype=torch.uint64, device=b.device)
-    b_padded[:b.numel()] = b
-    return gl_add(a_padded, b_padded)
-
-
 def poly_mul_batched(A, B):
-    """Row-i = poly_mul(A[i], B[i]). A, B same shape (m, d)."""
+    """Row i = A[i] · B[i] as coefficient-form polynomials. A, B same shape (m, d)."""
     assert A.dim() == 2 and B.dim() == 2 and A.shape == B.shape
     m, d = A.shape
     result_len = 2 * d - 1
@@ -1220,11 +1091,6 @@ def poly_mul_batched(A, B):
 
 def gl_matmul(A, B): return _ensure_compiled().gl_matmul(A, B)
 def gl_matvec(M, v): return _ensure_compiled().gl_matvec(M, v)
-
-
-def gl_spmv(values, col_idx, row_ptr, x, n_rows):
-    """CSR mod-P matvec. row_ptr length must be n_rows + 1."""
-    return _ensure_compiled().gl_spmv(values, col_idx, row_ptr, x, int(n_rows))
 
 
 def gl_spmv_challenged(values, col_idx, row_ptr, seed, label, n_rows):
@@ -1461,9 +1327,6 @@ def _is_range_table(table):
     return is_range
 
 
-def lookup_multiplicities(x, table):
-    """Per-table-entry multiplicity histogram. Out-of-range x[i] contribute nothing."""
-    return _ensure_compiled().lookup_multiplicities(x, table)
 
 
 def lookup_multiplicities_into(x, table, mult, label=""):
@@ -1488,7 +1351,6 @@ def _self_test():
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parent / "ref"))
     import goldilocks_ref as ref
-    import blake3 as blake3_py
 
     assert P == ref.P
 

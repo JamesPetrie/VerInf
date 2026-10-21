@@ -8,7 +8,7 @@ format and shells out to the Rust binary (the real TCB), returning
 
 Both test provers (tests/test_prover.prove and the streaming tape.prove) return
 the same Proof object, so one helper covers every test. The dump format mirrors
-tests/dump_routing_proof.py and the demos' --dump-proof.
+the demos' --dump-proof (proof_dump.dump_proof).
 """
 import json
 import os

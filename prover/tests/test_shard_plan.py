@@ -54,13 +54,11 @@ def test_plan_constructors_and_views():
     n = 7
     p = ShardPlan.two_way(3, cut_open=5).validated(n)
     assert p.fold == [(0, 0, 3), (1, 3, 7)] and p.open == [(0, 0, 5), (1, 5, 7)]
-    assert p.coordinator_run("fold") == (0, 3) and p.coordinator_run("open") == (0, 5)
     assert p.worker_runs("fold") == [(1, 3, 7)] and p.worker_runs("open") == [(1, 5, 7)]
-    assert p.n_devices() == 2
     q = as_plan(([(0, 2), (2, 5), (5, 7)], [(0, 1), (1, 6), (6, 7)]), n)
     assert q.fold == [(0, 0, 2), (1, 2, 5), (2, 5, 7)]
     assert q.open == [(0, 0, 1), (1, 1, 6), (2, 6, 7)]
-    assert q.worker_runs("open") == [(1, 1, 6), (2, 6, 7)] and q.n_devices() == 3
+    assert q.worker_runs("open") == [(1, 1, 6), (2, 6, 7)]
     vs = [_V(i) for i in range(n)]
     assert q.owned_ids(0, "fold", vs) == {id(vs[0]), id(vs[1])}
     assert q.owned_ids(2, "open", vs) == {id(vs[6])}

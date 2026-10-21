@@ -470,7 +470,7 @@ combine. The Freivalds-compressed `§B.4` commit form is a later optimization.
 
 Positives: `test_positive` (ACCEPT + mask/r_chosen/combine values),
 `test_tiebreak_lowest_index` (equal logits pin the lowest index). End-to-end
-Rust: `tests/dump_routing_proof.py` dumps an ACCEPT and a wrong-expert REJECT
+Rust: `deprecated/dump_routing_proof.py` (retired) dumped an ACCEPT and a wrong-expert REJECT
 proof for `verify_proof`; compile parity via the `routing_combine` case in
 `test_compile_parity.py` / `compile_difftest`.
 

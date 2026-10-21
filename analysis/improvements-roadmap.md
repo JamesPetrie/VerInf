@@ -203,7 +203,7 @@ targets shift to NTT throughput and BLAKE3 column hashing.
 
 ### 3.1 `analysis/` directory contains exploration scripts
 
-**Files:** `analysis/compare_accuracy.py`, `analysis/per_op_attribution.py`,
+**Files:** `analysis/archive/compare_accuracy.py`, `analysis/archive/per_op_attribution.py`,
 `analysis/shadow_tape.py`, and the other `analysis/*.py` diagnostics.
 
 These were research artefacts. Not part of the production proof

@@ -240,7 +240,7 @@ def _build_range_word_single():
 
 def _run_range_word(cfg, T_data, list_of_xs, tamper=None, seed=b"rw"):
     """Helper: build Variables, populate inputs (with multiplicities computed
-    via lookup_multiplicities), assemble claim list including TableSettlement."""
+    via lookup_multiplicities_into), assemble claim list including TableSettlement."""
     T_LEN = len(T_data)
     mult_var = Variable("rw_mult", length=T_LEN, phase=1)
     w_var    = Variable("rw_w",    length=T_LEN, phase=2)

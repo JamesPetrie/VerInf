@@ -97,7 +97,6 @@ def encode_batch(cfg: Config, messages: Sequence[Sequence[int]]) -> List[List[in
     torch, cp = _mods()
     rows = len(messages)
     msg = [list(m) + [0] * (cfg.ELL - len(m)) for m in messages]
-    nnz = sum(1 for m in msg for v in m if v)
     # gl_matmul is dense: it multiplies every slot, zero or not. So this path
     # gets its own unit rather than the CPU loop's scan/mac split -- the CPU's
     # sparsity saving simply does not exist here.
@@ -160,7 +159,7 @@ def encode_batch_ntt(cfg: Config, messages: Sequence[Sequence[int]]):
 
     Steps 1 and 2 exist because our message is the polynomial's VALUES at the K-th
     roots of unity (not its coefficients), and our codeword lives on the COSET
-    gamma*<w_N> (not on <w_N>). A plain `rs_encode_rows` assumes neither, which is
+    gamma*<w_N> (not on <w_N>). A plain message encode assumes neither, which is
     why its output looked unrelated.
     """
     torch, cp = _mods()

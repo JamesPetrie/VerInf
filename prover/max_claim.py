@@ -24,15 +24,13 @@ is *some* committed token (and O its one-hot); that `tok` is the realized output
 is the same trust the committed weights carry. Nothing reveals which token tok_t
 is -- the surprisal numerator gap_o^2 is computed over a hidden, committed output.
 """
-import math
 from dataclasses import dataclass
 from typing import List, Tuple
 
 import torch
 
-import core
 from core import P, Variable, LigeroConfig, SAMPLE_FNS, AUX_FNS
-from claims import (COMPILE_FNS, QuadraticConstraint, QuadFamily, L2_IdentityScalar,
+from claims import (COMPILE_FNS, QuadFamily, L2_IdentityScalar,
                     L2_RowSumPerSlotVector, L2_StrideOneToManyScalar, _build_b_chunk)
 import compute_fns as _cf
 from cuda_primitives import gl_mul, gl_sub, gl_neg, gl_inv_batched, lookup_multiplicities_into
@@ -105,7 +103,6 @@ def max_compile(c: MaxClaim, _ch, cfg: LigeroConfig, base: int):
     ell, T, V = cfg.ELL, c.T, c.V
     L = T * V
     neg1 = (P - 1) % P
-    n_rows = (L + ell - 1) // ell
     ones_v = torch.ones(V, dtype=torch.uint64, device="cuda")
     idx_v = torch.arange(V, dtype=torch.int64, device="cuda").to(torch.uint64)  # [0..V-1] for tok = Σ i·O
 

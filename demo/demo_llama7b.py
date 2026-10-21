@@ -112,19 +112,6 @@ def _eps_int(mcfg: ModelConfig) -> int:
     """rmsnorm ε at scale S² (168 @ 2^12 for ε=1e-5) — model-dependent."""
     return round(mcfg.eps_real * S * S)
 
-# Production-shape independent benchmarks (NOT chained from x).
-SM_B     = 512
-SM_M     = 2048
-SM_Z_MAX = 1 << 17
-SILU_L   = 4096
-RMS_PROD_B = 2048
-
-
-def _rand_small(*shape, lo=0, hi=1000):
-    return torch.randint(lo, hi, shape, dtype=torch.int64,
-                         device="cuda").to(torch.uint64)
-
-
 def _rand_signed(*shape, half=32):
     """Signed integers in [-half, half), mapped to Goldilocks field rep
     (P − |v| for negative v) via gl_sub for the mod-P subtraction."""
@@ -178,7 +165,7 @@ def _commit_weights_from_hf(tape, model_id: str, layer_idx: int) -> Dict[str, ob
 
     Requires the `transformers` library + a downloaded checkpoint."""
     from loader import load_layer_weights
-    # No extra_q_k_shrink: proper multi-head attention reduces the q·k^T
+    # No extra q·k shrink: proper multi-head attention reduces the q·k^T
     # contraction from d to d_h, and the per-channel RmsNorm gain
     # (rms_pre_attn_w) dampens norm1 outliers before W_Q/K — together these
     # bring scores into a range the saturating softmax handles natively.
@@ -384,6 +371,9 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
         prompt = None               # binding proceeds via token_ids below
     if token_ids is not None:
         SEQ = len(token_ids)        # forward over an exact id stream
+    if ui_sigma != 256 or ui_sy_bits != 16:
+        print("  [warn] --ui-sigma/--ui-sy-bits have no effect; the tables are sized "
+              "by the model constants", flush=True)
     print(f"=== dense-Llama transformer proof, production scale ===")
     print(f"  cfg: ELL={CFG.ELL}, K_DEG={CFG.K_DEG}, "
           f"N_LIG={CFG.N_LIG}, T_QUERIES={CFG.T_QUERIES}")
@@ -752,13 +742,11 @@ if __name__ == "__main__":
                           "(never public). Requires the LM head + eager mode (no "
                           "--engine).")
     ap.add_argument("--ui-sigma", type=int, default=256,
-                     help="Gaussian-kernel width sigma_g (int-logit units at scale S) "
-                          "for --unexplained-info. Larger sigma_g -> larger exp table "
-                          "(Z_max ~ sigma_g^2 * ln s_y). Default 256.")
+                     help="deprecated (no effect: the unexplained-information tables are "
+                          "sized by the model constants; kept so existing invocations keep parsing)")
     ap.add_argument("--ui-sy-bits", type=int, default=16,
-                     help="Entropy-table output scale s_y = 2^bits for "
-                          "--unexplained-info (default 16). s_y >> V keeps the "
-                          "dropped-tail correction negligible.")
+                     help="deprecated (no effect: the unexplained-information tables are "
+                          "sized by the model constants; kept so existing invocations keep parsing)")
     ap.add_argument("--ui-output-tokens", type=str, default=None,
                      help="Comma-separated output token ids (length SEQ) for "
                           "--unexplained-info, committed + hidden. Default: the "

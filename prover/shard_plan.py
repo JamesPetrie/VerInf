@@ -19,7 +19,7 @@ as lists of (lo, hi) indexed by device — `ShardPlan.from_pairs` takes
 them directly.
 """
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 Run = Tuple[int, int, int]      # (device, var_lo, var_hi) — hi exclusive
 
@@ -130,12 +130,6 @@ class ShardPlan:
         """Non-empty runs of every device but the coordinator, in row order."""
         return [(d, lo, hi) for d, lo, hi in self.runs(stage) if d != 0 and hi > lo]
 
-    def coordinator_run(self, stage: str) -> Tuple[int, int]:
-        for d, lo, hi in self.runs(stage):
-            if d == 0:
-                return lo, hi
-        return 0, 0
-
     def owned_ids(self, device: int, stage: str, weight_vars: Sequence) -> set:
         """{id(Variable)} this device owns in `stage` — the filter
         `_stream_sweep(w_owned=...)` applies to each claim's weight group."""
@@ -146,9 +140,6 @@ class ShardPlan:
 
     def device_of(self, device: int) -> Optional[str]:
         return self.devices.get(device)
-
-    def n_devices(self) -> int:
-        return 1 + max([d for d, _, _ in self.fold + self.open] or [0])
 
 
 def as_plan(obj, n_vars: int) -> ShardPlan:

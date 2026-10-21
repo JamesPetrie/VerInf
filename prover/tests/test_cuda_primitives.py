@@ -34,11 +34,9 @@ from cuda_primitives import (
     P,
     gl_mul, gl_add, gl_sub, gl_neg, gl_pow, gl_inv, gl_inv_batched, gl_axpy,
     ntt_forward, ntt_inverse, ntt_forward_batched, ntt_inverse_batched,
-    rs_encode_rows,
-    poly_mul, poly_add, poly_mul_batched, poly_eval,
-    gl_matmul, gl_matvec, gl_spmv,
+    poly_mul_batched, poly_eval,
+    gl_matmul, gl_matvec,
     hash_columns_streamed, merkle_build_blake3,
-    lookup_multiplicities,
 )
 
 import goldilocks_ref as ref
@@ -192,63 +190,6 @@ def test_ntt_batched_at_production_sizes():
 # 3. Reed-Solomon row encoding
 # ===========================================================================
 
-def test_rs_encode_rows_small():
-    """Cross-check against the composed iNTT(K_DEG) + fNTT(N_LIG) sequence
-    that `rs_encode_rows` is supposed to fuse."""
-    rng = random.Random(20)
-    m, ell, k_deg, n_lig = 16, 8, 8, 32
-    msgs_cpu = [_rand_list(ell, rng) + [0] * (k_deg - ell) for _ in range(m)]
-    ref_rows = []
-    for row in msgs_cpu:
-        buf = _u64(row)
-        ntt_inverse(buf)
-        ext = torch.zeros(n_lig, dtype=torch.uint64, device="cuda")
-        ext[:k_deg] = buf
-        ntt_forward(ext)
-        ref_rows.append(ext)
-    expected = torch.stack(ref_rows)
-    msgs = torch.stack([_u64(r) for r in msgs_cpu])
-    out = rs_encode_rows(msgs, n_lig=n_lig, k_deg=k_deg)
-    assert torch.equal(out, expected)
-
-
-def test_rs_encode_rows_production():
-    """At ELL=8192, K_DEG=16384, N_LIG=65536: encode 128 rows at once.
-    Each row's first ELL slots carry the message; trailing slots are
-    ZK pad (zero is fine for a shape/runs test)."""
-    m = 128
-    rng = random.Random(21)
-    msgs = torch.zeros((m, K_DEG), dtype=torch.uint64, device="cuda")
-    msgs[:, :ELL] = _rand_u64_tensor((m, ELL))
-    t0 = time.time()
-    out = rs_encode_rows(msgs, n_lig=N_LIG, k_deg=K_DEG)
-    torch.cuda.synchronize()
-    print(f"  rs_encode_rows m=128 K_DEG=16384 N_LIG=65536: {time.time()-t0:.2f}s")
-    assert out.shape == (m, N_LIG)
-
-
-# ===========================================================================
-# 4. Polynomial arithmetic
-# ===========================================================================
-
-def test_poly_mul_correctness():
-    rng = random.Random(30)
-    for la, lb in [(1, 1), (3, 5), (16, 16), (256, 256)]:
-        a_cpu, b_cpu = _rand_list(la, rng), _rand_list(lb, rng)
-        expected = poly_ref.poly_mul(a_cpu, b_cpu)
-        got = poly_mul(_u64(a_cpu), _u64(b_cpu)).cpu().tolist()
-        assert got == expected, f"poly_mul ({la},{lb}) mismatch"
-
-
-def test_poly_add_correctness():
-    rng = random.Random(31)
-    for la, lb in [(4, 4), (5, 3), (3, 5), (1, 8)]:
-        a_cpu, b_cpu = _rand_list(la, rng), _rand_list(lb, rng)
-        expected = poly_ref.poly_add(a_cpu, b_cpu)
-        got = poly_add(_u64(a_cpu), _u64(b_cpu)).cpu().tolist()
-        assert got == expected
-
-
 def test_poly_mul_batched_matches_single():
     rng = random.Random(32)
     m, la = 32, 64
@@ -256,8 +197,7 @@ def test_poly_mul_batched_matches_single():
     B_cpu = [_rand_list(la, rng) for _ in range(m)]
     A = torch.stack([_u64(r) for r in A_cpu])
     B = torch.stack([_u64(r) for r in B_cpu])
-    expected_rows = [poly_mul(_u64(a), _u64(b)) for a, b in zip(A_cpu, B_cpu)]
-    expected = torch.stack(expected_rows)
+    expected = torch.stack([_u64(poly_ref.poly_mul(a, b)) for a, b in zip(A_cpu, B_cpu)])
     got = poly_mul_batched(A, B)
     assert torch.equal(got, expected)
 
@@ -317,32 +257,6 @@ def test_gl_matvec_correctness():
     assert gl_matvec(M, _u64(v_cpu)).cpu().tolist() == expected
 
 
-def test_gl_spmv_correctness():
-    """CSR mod-P matvec — backs r^T A in the linear-test composition.
-    A is sparse (O(L) non-zeros over a W-slot witness)."""
-    rng = random.Random(43)
-    n_rows, n_cols, nnz_target = 100, 1000, 500
-    triples = sorted({(rng.randrange(n_rows), rng.randrange(n_cols)) for _ in range(nnz_target)})
-    triples = [(r, c, rng.randrange(P)) for r, c in triples]
-    row_ptr = [0] * (n_rows + 1)
-    for r, _, _ in triples:
-        row_ptr[r + 1] += 1
-    for r in range(n_rows):
-        row_ptr[r + 1] += row_ptr[r]
-    col_idx = [c for _, c, _ in triples]
-    values = [v for _, _, v in triples]
-    x_cpu = _rand_list(n_cols, rng)
-    expected = [0] * n_rows
-    for r, c, v in triples:
-        expected[r] = (expected[r] + v * x_cpu[c]) % P
-    got = gl_spmv(_u64(values), _u64(col_idx), _u64(row_ptr), _u64(x_cpu), n_rows)
-    assert got.cpu().tolist() == expected
-
-
-# ===========================================================================
-# 6. Hashing + Merkle
-# ===========================================================================
-
 def test_hash_columns_streamed_correctness():
     """At m > 1024 (the legacy hash_columns row cap) the streamed variant
     must still match the official Python BLAKE3 on every column."""
@@ -401,30 +315,6 @@ def test_merkle_build_blake3_production_size():
 # 7. Lookup helpers
 # ===========================================================================
 
-def test_lookup_multiplicities_correctness():
-    rng = random.Random(70)
-    K, T_LEN = 512, 64
-    table_cpu = list(range(T_LEN))
-    x_cpu = [rng.randrange(T_LEN + 10) for _ in range(K)]
-    expected = [0] * T_LEN
-    for v in x_cpu:
-        if v < T_LEN:
-            expected[v] += 1
-    got = lookup_multiplicities(_u64(x_cpu), _u64(table_cpu)).cpu().tolist()
-    assert got == expected
-
-
-def test_lookup_multiplicities_logup_size():
-    """Paired tlookup table size from design-feasibility.md §B is 2^16;
-    column length K reaches into the millions per commit."""
-    K, T_LEN = 1 << 20, 1 << 16
-    table = torch.arange(T_LEN, dtype=torch.int64, device="cuda").to(torch.uint64)
-    x = torch.randint(0, T_LEN, (K,), dtype=torch.int64, device="cuda").to(torch.uint64)
-    mult = lookup_multiplicities(x, table)
-    assert mult.shape == (T_LEN,)
-    assert int(mult.sum().item()) == K
-
-
 # ===========================================================================
 # 8. Integration smoke — production-parameter commit pipeline
 # ===========================================================================
@@ -432,7 +322,7 @@ def test_lookup_multiplicities_logup_size():
 def test_commit_phase_integration():
     """Encode m rows, hash columns, build Merkle root — the §2.2 commit
     pipeline at production ELL/K_DEG/N_LIG. Catches contract mismatches
-    between rs_encode_rows, hash_columns_streamed, and merkle_build_blake3
+    between the batched NTTs, hash_columns_streamed, and merkle_build_blake3
     that per-primitive tests can miss. m=64 keeps the run under a few seconds
     while exercising every kernel at its real per-element shape."""
     m = 64
@@ -443,7 +333,12 @@ def test_commit_phase_integration():
         dtype=torch.uint64, device="cuda",
     )
     t0 = time.time()
-    codewords = rs_encode_rows(msgs, n_lig=N_LIG, k_deg=K_DEG)
+    # iNTT_K over the message slots, zero-extend to N_LIG, fNTT_N: the row encode.
+    coeffs = msgs.clone()
+    ntt_inverse_batched(coeffs)
+    codewords = torch.zeros((m, N_LIG), dtype=torch.uint64, device="cuda")
+    codewords[:, :K_DEG] = coeffs
+    ntt_forward_batched(codewords)
     column_digests = hash_columns_streamed(codewords)
     root, _levels = merkle_build_blake3(column_digests)
     torch.cuda.synchronize()
@@ -466,22 +361,15 @@ ALL_TESTS = [
     test_ntt_roundtrip_production,
     test_ntt_batched_matches_single,
     test_ntt_batched_at_production_sizes,
-    test_rs_encode_rows_small,
-    test_rs_encode_rows_production,
-    test_poly_mul_correctness,
-    test_poly_add_correctness,
     test_poly_mul_batched_matches_single,
     test_poly_eval_correctness,
     test_gl_matmul_correctness_small,
     test_gl_matmul_llama_shape,
     test_gl_matvec_correctness,
-    test_gl_spmv_correctness,
     test_hash_columns_streamed_correctness,
     test_hash_columns_streamed_scale,
     test_merkle_build_blake3_correctness,
     test_merkle_build_blake3_production_size,
-    test_lookup_multiplicities_correctness,
-    test_lookup_multiplicities_logup_size,
     test_commit_phase_integration,
 ]
 

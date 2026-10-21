@@ -14,7 +14,7 @@ import math
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, List, Optional, Tuple
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -24,14 +24,12 @@ import torch
 
 import protocol                       # shared op-challenge derivation (op_vec / challenge)
 from core import (
-    P, GLOBAL_G,
-    Variable, QuadraticConstraint, QuadFamily, abs_slot,
-    LigeroConfig,
+    P, Variable, QuadraticConstraint, QuadFamily, LigeroConfig,
     SAMPLE_FNS, AUX_FNS, COMPILE_FNS, _build_b_chunk,
-    Table, TableSettlement,
+    Table,
 )
 from packets import (
-    L2_IdentityScalar, L2_PerSlotVector, L2_RowSumPerSlotVector, L2_EmbedE,
+    L2_IdentityScalar, L2_RowSumPerSlotVector, L2_EmbedE,
     L2_FreivaldsLF1B, L2_FreivaldsLF2A,
     L2_StrideManyToOneScalar, L2_StrideOneToManyScalar, L2_FreivaldsLF3C,
     L2_RoPEX, L2_RoPEXRot,
@@ -374,7 +372,6 @@ def matmul_compile(claim: MatmulClaim,
     neg1 = (P - 1) % P
     if claim.rescale_bits > 0:
         L_out = m * H * n
-        offset = 1 << (claim.output_width - 1)
         # C_full = (1 << r) · C + C_low
         _emit_lin_csr_idscalar(claim.C_full, [claim.C, claim.C_low],
                                  [1 << claim.rescale_bits, 1], L_out, ell, cur, row_pkts)
@@ -616,7 +613,6 @@ def hadamard_compile(claim: HadamardClaim, _ch, cfg: LigeroConfig, base: int):
     row_pkts: List[Tuple[int, object]] = []
     cur = base
     if claim.rescale_bits > 0:
-        offset = 1 << (claim.output_width - 1)
         _emit_lin_csr_idscalar(claim.c_full, [claim.c, claim.c_low],
                                  [1 << claim.rescale_bits, 1], L, ell, cur, row_pkts)
         cur += L
@@ -757,7 +753,7 @@ def word_extract_compile(c: WordExtractionClaim, _ch, cfg: LigeroConfig,
     its own scalar coef; the RHS shift is captured by the b_chunk returned
     to _compile_all.
     """
-    ell, L, N = cfg.ELL, c.length, len(c.words)
+    ell, L = cfg.ELL, c.length
     row_pkts: List[Tuple[int, object]] = []
     # x side, coef = 1
     for row_off in range(c.x.n_rows(ell)):
@@ -1125,7 +1121,6 @@ def silu_compile(c: SiluClaim, _ch, cfg: LigeroConfig, base: int):
     cur = base + 7 * L
 
     if sc.rescale_bits > 0:
-        rescale_offset = 1 << (sc.width_2 - 1)
         _emit_lin_csr_idscalar(
             c.x_in, [c.x, c.x_low], [1 << sc.rescale_bits, 1],
             L, ell, cur, row_pkts); cur += L
@@ -1659,7 +1654,6 @@ def rmsnorm_compile(c: RmsNormClaim, rho: List[int], cfg: LigeroConfig,
     # ---- Input rescale (rescale_bits > 0): x_in = (1<<r)·x + x_low, plus
     # offset-trick x_shifted = x + 2^15. Two L_full families.
     if c.config.rescale_bits > 0:
-        rescale_offset = 1 << 15   # signed shift against the 16-bit slack table
         _emit_lin_csr_idscalar(
             c.x_in, [c.x, c.x_low], [1 << c.config.rescale_bits, 1],
             L_full, ell, cur, row_pkts); cur += L_full
@@ -1669,7 +1663,6 @@ def rmsnorm_compile(c: RmsNormClaim, rho: List[int], cfg: LigeroConfig,
     # ---- Output rescale (output_rescale_bits > 0): output_full = (1<<r_out)·output
     # + output_low, plus offset-trick output_shifted = output + 2^(output_width-1).
     if c.config.output_rescale_bits > 0:
-        out_offset = 1 << (c.config.output_width - 1)
         _emit_lin_csr_idscalar(
             c.output_full, [c.output, c.output_low],
             [1 << c.config.output_rescale_bits, 1],
@@ -2105,7 +2098,6 @@ def softmax_compile(c: SoftmaxClaim, _ch, cfg: LigeroConfig, base: int):
     # ---- Input rescale (rescale_bits > 0): x_in = (1<<r)·x + x_low,
     # plus offset-trick x_shifted = x + 2^15 (centred for range_aux).
     if c.config.rescale_bits > 0:
-        rescale_offset = 1 << 15
         _emit_lin_csr_idscalar(
             c.x_in, [c.x, c.x_low], [1 << c.config.rescale_bits, 1],
             L_full, ell, cur, row_pkts); cur += L_full

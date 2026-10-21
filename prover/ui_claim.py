@@ -24,17 +24,16 @@ The exp lookups (e=EXP[gap]) and pow lookup (pw=POW[b]) are done by the tested
 `tape.paired_tlookup`; argmax/gap/select by the tested MaxClaim; the square by
 `tape.hadamard`. This claim only carries the irreducible new arithmetic.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Tuple
 
 import torch
 
-import core
 from core import P, Variable, LigeroConfig, SAMPLE_FNS, AUX_FNS
-from claims import (COMPILE_FNS, QuadraticConstraint, QuadFamily, L2_IdentityScalar,
-                    L2_RowSumPerSlotVector, _build_b_chunk)
+from claims import (COMPILE_FNS, QuadFamily, L2_IdentityScalar,
+                    L2_RowSumPerSlotVector)
 import compute_fns as _cf
-from cuda_primitives import gl_mul, gl_sub, gl_add, gl_inv_batched, lookup_multiplicities_into
+from cuda_primitives import gl_sub, gl_add, gl_inv_batched, lookup_multiplicities_into
 
 
 # The ceiling quotient z_o = ceil(gap_o^2 / k) is ranged to [0, 2^Z_O_BITS) so
@@ -197,7 +196,6 @@ def info_compile(c: InfoFinalizeClaim, _ch, cfg: LigeroConfig, base: int):
     cur += T
 
     # range LogUp quads: (alpha - x)*z = 1   for each dw_j and rem
-    n_rows_T = (T + ell - 1) // ell
     quads: List[QuadFamily] = []
     neg_alpha_wd = (P - c.range_wd.alpha) % P
     for j, (dwj, zj) in enumerate(zip(c.dw, c.z_dw)):

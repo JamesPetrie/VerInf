@@ -54,7 +54,7 @@ def run(elements: int = 1 << 28) -> dict:
         "maverick_vocab": 202_048,
         "maverick_lm_output_elements": 1_000 * 202_048,
         "factor_occurrences": sum(len(factors) for _coef, factors in terms),
-        "rounds": rounds,
+        "rounds": len(proof.round_polys),
         "prove_s": prove_s,
         "verify_s": verify_s,
         "accepted": accepted,

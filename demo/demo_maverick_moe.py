@@ -27,8 +27,6 @@ Smoke test (small dims, fast):
         --d 256 --d-ff 512
 """
 import argparse
-import json
-import math
 import os
 import time
 
@@ -44,7 +42,6 @@ _R = _pl.Path(__file__).resolve().parents[1]
 _s.path.insert(0, str(_R / "prover")); _s.path.insert(0, str(_R / "demo"))
 import _uint64_compat  # noqa: F401 — patch uint64 CUDA op gaps before any prover op
 
-import core
 from core import P, LigeroConfig
 import claims as _C          # noqa: F401
 import packets as _PK         # noqa: F401
@@ -183,7 +180,7 @@ def main():
                                         n_experts=a.experts, skip_experts=True)
         real["_gguf"], real["_layer"] = a.from_gguf, a.layer
     tape = Tape(CFG, silu_config=SILU_CFG, lazy=True)
-    y = build(tape, T=a.seq, E=a.experts, d=a.d, d_ff=a.d_ff, real=real)
+    build(tape, T=a.seq, E=a.experts, d=a.d, d_ff=a.d_ff, real=real)
     print(f"[maverick-moe] {len(tape.claims)} claims recorded")
 
     t0 = time.time()

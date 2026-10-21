@@ -35,7 +35,7 @@ Calling them out of order raises, and with a scheduled transcript the coin is
 refused outright. `tests/test_logup.py` gates both paths.
 """
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 from prover.protocol import P as FIELD_P
 

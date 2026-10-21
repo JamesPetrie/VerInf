@@ -37,7 +37,6 @@ Run:
 import argparse
 import blake3
 import json
-import math
 import os
 import sys
 import pathlib
@@ -55,19 +54,17 @@ _s.path.insert(0, str(_R / "prover")); _s.path.insert(0, str(_R / "demo"))
 import _uint64_compat  # noqa: F401
 
 import core
-import protocol as pr
-from core import P
 import claims as _C          # noqa: F401
 import packets as _PK         # noqa: F401
-from tape import Tape, WitnessTensor
+from tape import Tape
 from routing_claim import route_top1, freivalds_combine
 from unexplained_info import prove_unexplained_info, bound_bits
-from demo_maverick_moe import (_to_field, _rand_int, _sigmoid_table, CFG, S,
-                                SCALE_BITS, OUTPUT_WIDTH, SILU_CFG, SIG_SHIFT,
-                                WORD_BITS, HALF_X)
+from demo_maverick_moe import (_sigmoid_table, CFG, S,
+                                OUTPUT_WIDTH, SILU_CFG, SIG_SHIFT,
+                                WORD_BITS)
 from demo_maverick_block import (load_attention, memo_group,
                                  build_attn_chain, EPS_INT,
-                                  H, HKV, DH)
+                                  H, DH)
 
 SEED = b"maverick-full-demo"
 # s_y = 2^18 > V: the proven EXP table floors every entry at 1 (soundness:

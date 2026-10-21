@@ -32,7 +32,7 @@ operations per unit of geometry -- same encode, same seam, same sumcheck shapes.
 That assumption is explicit and checkable, which is exactly what a kappa is not.
 """
 from dataclasses import dataclass
-from typing import Dict, List, Sequence
+from typing import Dict, Sequence
 
 from . import semantics as sem
 from .counters import Rates

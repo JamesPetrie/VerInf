@@ -15,7 +15,6 @@ Run:
 """
 
 import random
-import struct
 import sys
 
 P = (1 << 64) - (1 << 32) + 1     # 0xFFFFFFFF00000001
@@ -32,10 +31,6 @@ def sub(a, b):
 
 def mul(a, b):
     return (a * b) % P
-
-
-def pow_(base, exp):
-    return pow(base, exp, P)
 
 
 def inv(a):

@@ -29,7 +29,7 @@ by re-encoding rather than by a local LF proof. Soundness is intact; hiding of
 those specific vectors is not.
 """
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Sequence, Tuple
 
 from prover.protocol import P as FIELD_P
 
