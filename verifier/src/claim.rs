@@ -209,6 +209,28 @@ impl ClaimSet {
         }
         m
     }
+
+    /// table_order must settle exactly the claims' tables, each once (the
+    /// prover's _distinct_tables). The compile looks every entry up by id, so
+    /// a statement naming a table no claim declares is refused here, as a
+    /// REJECT, instead of failing that lookup; a duplicate or an unsettled
+    /// table is refused with it.
+    pub fn check_table_order(&self) -> Result<(), String> {
+        let declared = self.tables_by_id();
+        let mut seen = std::collections::HashSet::new();
+        for &tid in &self.table_order {
+            if !declared.contains_key(&tid) {
+                return Err(format!("table_order names table {tid}, which no claim declares"));
+            }
+            if !seen.insert(tid) {
+                return Err(format!("table_order names table {tid} twice"));
+            }
+        }
+        if let Some(tid) = declared.keys().filter(|t| !seen.contains(*t)).min() {
+            return Err(format!("table {tid} is declared but not in table_order"));
+        }
+        Ok(())
+    }
 }
 
 pub fn parse_claim_set(json: &str) -> ClaimSet {
