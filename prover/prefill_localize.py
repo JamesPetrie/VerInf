@@ -237,7 +237,8 @@ def main(argv=None):
     dst = pathlib.Path(a.work) / "prefill-localize.json"
     dst.write_text(json.dumps(out, indent=1, default=str))
     for r in out["rows"]:
-        if r.get("captured") is False:
+        if r.get("captured") is False or r.get("compared") is False:
+            log(f"{r['name']:34s} {'not captured' if r.get('captured') is False else r['reason']}")
             continue
         bs = r.get("batch_vs_steps", {})
         p64 = r.get("p64", {})
