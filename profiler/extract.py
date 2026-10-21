@@ -77,6 +77,10 @@ def _claim_params(claim) -> dict:
     words = getattr(claim, "words", None)
     if isinstance(words, (list, tuple)):
         out["n_words"] = len(words)  # WordExtraction W = n_words * length
+    # Concat and split carry their size only in their variables (`length` is
+    # a property over dst / whole), so record it for their cost rows.
+    if type(claim).__name__ in ("ConcatClaim", "SplitClaim") and "length" not in out:
+        out["length"] = int(claim.length)
     # Rescale presence: prover matmul/hadamard claims carry rescale_bits.
     if "rescale_bits" in out:
         out["rescale"] = bool(out.get("rescale_bits"))

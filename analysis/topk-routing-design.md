@@ -253,6 +253,45 @@ cache's value grows with k. The enrolled weights under the bridge are
 re-derivation pass and, without the two-level enrollment, 21 GB of
 opened columns on the wire.
 
+### 4.1 The profiler's pricing (item 4)
+
+`profiler/synth.py kimi_k2` builds the whole model at Hugging Face revision
+`fd1984e2` of `moonshotai/Kimi-K2-Instruct`. Its FP8 weight count equals the
+published 1,023,893,241,856 exactly, and its total with the norm gains falls
+3,416 parameters short of the published 1,026,408,235,864. The top-k rows in
+`profiler/claimcosts.py` are checked against the prover's compile
+(`prover/tests/test_topk_claimcosts.py`), and `crosscheck.py topk-toy` diffs
+the chain the builder repeats against a real tape on a GPU box. Three parts
+are modeling assumptions until item 5 fixes them: the latent attention's
+composition (no weight absorption, per-head assembly by pins), a second
+sigmoid lookup for the selection scale, and the word counts.
+
+Per MoE layer at S = 1,000 the builder gives 1.35 G slots, the table's
+1.10 G plus the shared expert (0.13 G), the split into slot outputs (0.06 G),
+SiLU at 25 slots after the protocol repairs (0.03 G) and the residual adds.
+Each layer's latent attention adds 1.91 G, 1.34 G of it the S² term. Over the
+model, with the weights enrolled:
+
+| | Maverick, projected | Kimi K2 |
+|---|---|---|
+| W(S), witness besides the weights | 6.5×10⁷ + 5.6×10⁷ S + 40,320 S² | 3.9×10⁸ + 1.2×10⁸ S + 81,984 S² |
+| L(S) | 6.2×10⁷ + 1.8×10⁷ S + 13,440 S² | 3.9×10⁸ + 3.8×10⁷ S + 27,328 S² |
+| Q(S) | 2.6×10⁶ + 2.5×10⁷ S + 19,200 S² | 4.5×10⁶ + 4.6×10⁷ S + 39,040 S² |
+| weights | 4.03×10¹¹ | 1.03×10¹² |
+| routed outputs at S = 1,000 (the routed-output cache, as uint64) | 4.1 GB | 43.3 GB |
+
+At S = 1,000 the K2 witness is 2.07 times Maverick's, and its S² term,
+21 slots per score cell over 64 heads and 61 layers, already holds 41 percent
+of it. On the session-4 B200 profile the cost model's floor is 624 s against
+Maverick's 259 s with every weight enrolled, and 147 s for the Ligero part
+with the routed experts bridge-held, whose own pass the profiler does not
+price (126.6 s for Maverick at S = 100; it decodes every expert shard, so it
+should grow with the expert bytes, 2.6 times Maverick's). The floor is a
+target, not a time: measured proofs have run well above their floors, so the
+ratios between the two models are the usable part. A GGUF at
+Maverick's density would be about 590 GB, beyond the 251 GB container that
+held Maverick's 232 GB in page cache.
+
 ## 5. Soundness and privacy
 
 Selection is exact: booleanity and cardinality are quadratics and one

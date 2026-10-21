@@ -1747,6 +1747,132 @@ def test_extractor_bridged_external_weights():
         assert "UNSUPPORTED ESTIMATE: bridged manifest" in text
 
 
+# --- Kimi K2 and the top-k chain (analysis/topk-routing-design.md item 4) ---
+
+def _totals(man):
+    w = l = q = 0.0
+    for c in man.claims:
+        cw, cl, cq = claimcosts.cost(c.type, c.params)
+        w, l, q = w + cw, l + cl, q + cq
+    return w, l, q
+
+
+def test_kimi_k2_weights_match_the_published_model():
+    """The builder's weight slots against the Hugging Face listing of
+    moonshotai/Kimi-K2-Instruct at revision fd1984e2 (read 2026-10-05):
+    F8_E4M3 1,023,893,241,856, BF16 2,514,970,968, F32 23,040, total
+    1,026,408,235,864. Every FP8 matrix is a shape this builder lays out
+    (everything but the embedding, the head, the router and the biases), so
+    that count must match exactly; the total, which also holds the norm
+    gains the builder keeps as plain inputs, within 1e-8."""
+    import synth
+    m = synth.kimi_k2(10)
+    weights = sum(v.length for v in m.variables if v.persistent)
+    gains = sum(v.length for v in m.variables if v.name.endswith(".gain"))
+    d, V, E, moe_layers = 7168, 163840, 384, 60
+    bf16_or_f32 = 2 * V * d + moe_layers * E * d + moe_layers * E
+    assert weights - bf16_or_f32 == 1_023_893_241_856
+    published = 1_026_408_235_864
+    assert abs(published - weights - gains) / published < 1e-8
+    biases = [v for v in m.variables if v.name.endswith(".bias")]
+    assert len(biases) == moe_layers and sum(v.length for v in biases) == 23_040
+
+
+def test_kimi_k2_structure():
+    import synth
+    seq = 7
+    m = synth.kimi_k2(seq)
+    by = {}
+    for c in m.claims:
+        by.setdefault(c.type, []).append(c)
+    for t in ("topk_routing", "topk_slots", "gate_bracket", "split"):
+        assert len(by[t]) == 60, t
+    assert len(by["routed_projected"]) == 180
+    assert all(c.params["T"] == 8 * seq and c.params["E"] == 384
+               for c in by["routed_projected"])
+    assert len(by["softmax"]) == 61
+    assert all(c.params["B"] == 64 * seq and c.params["M"] == seq for c in by["softmax"])
+    combines = by["freivalds_combine"]
+    assert len(combines) == 60 and all(c.params["E"] == 8 for c in combines)
+    # every claim type has a formula: no fallback pricing
+    assert all(claimcosts.canonical(t) in claimcosts._FORMULAS for t in by)
+    # the DAG is wired both ways, and selection reads the finer scores while
+    # the slot scores read the gate-scale ones
+    _assert_io_consistency(m)
+    names = {c.idx: c for c in m.claims}
+    for c in by["topk_routing"]:
+        layer = c.label.split(".")[0]
+        assert c.inputs == [f"{layer}.s_sel", f"{layer}.bias"], c.inputs
+    for c in by["topk_slots"]:
+        assert c.inputs[1].endswith(".s"), c.inputs
+    for v in m.variables:
+        if v.name.endswith((".s_sel", ".s")) and v.producer is not None \
+                and names[v.producer].type == "ptlookup":
+            assert v.consumers, f"{v.name} feeds nothing"
+
+
+def test_kimi_k2_s2_term_is_attention():
+    """W is exactly quadratic in S, and its S^2 coefficient is 21 slots per
+    score cell (6 in the scores matmul, 15 in softmax) over 64 heads and 61
+    layers — independent of how latent attention is composed."""
+    import synth
+    w = [_totals(synth.kimi_k2(s))[0] for s in (100, 200, 300, 400)]
+    d2 = [w[i + 2] - 2 * w[i + 1] + w[i] for i in range(2)]
+    assert d2[0] == d2[1]
+    assert d2[0] / (2 * 100 ** 2) == 21 * 64 * 61
+
+
+def test_kimi_k2_bridge_marks_the_routed_experts_external():
+    import synth
+    m = synth.kimi_k2(4, bridge=True)
+    ext = sum(v.length for v in m.variables if getattr(v, "external", False))
+    assert ext == 60 * 384 * 3 * 7168 * 2048
+    plain = synth.kimi_k2(4)
+    assert not any(getattr(v, "external", False) for v in plain.variables)
+
+
+def test_topk_word_counts_follow_the_prover():
+    """synth's mirrors of route_topk's and gate_bracket's word counts agree
+    with prover/topk_params, which the prover's builders call."""
+    import synth
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                    "..", "prover"))
+    import topk_params
+    for width in (8, 13, 20, 26, 33, 43):
+        for wb in (4, 8, 12, 13):
+            try:
+                n, _ = topk_params.threshold_words(width, wb)
+            except ValueError:
+                continue
+            assert synth.threshold_words(width, wb) == n, (width, wb)
+    for score_bits in (8, 12, 13):
+        for k in (1, 3, 8, 16):
+            for wb in (8, 12):
+                sz = topk_params.bracket_sizes(score_bits, k, 11579, wb)
+                assert synth.bracket_words(score_bits, k, 11579, wb) == \
+                    (sz["n_rem"], sz["n_w"]), (score_bits, k, wb)
+
+
+def test_topk_toy_and_the_cli():
+    import synth
+    m = synth.topk_toy(6)
+    _assert_io_consistency(m)
+    types = [c.type for c in m.claims]
+    assert types.count("routed_projected") == 3 and types.count("rescale_claim") == 3
+    assert types.count("concat") == 2 and types.count("split") == 1
+    # K2_TOPK at k = 3: selection width 26 in two 13-bit words; the bracket's
+    # Z < 2^15 (13 score bits + 2) gives rem and Z - 1 - rem two 8-bit words
+    # each, and w < 2^14 two more
+    words = [c.params["n_words"] for c in m.claims if c.type == "word_extract"]
+    assert words == [2, 2, 2, 2]
+    assert types.count("range_word") == sum(words)
+    with tempfile.TemporaryDirectory() as td:
+        out = os.path.join(td, "k2.json")
+        with contextlib.redirect_stdout(io.StringIO()):
+            cli.main(["synth", "--model", "kimi-k2", "--seq", "3", "-o", out])
+        assert Manifest.load(out).model["name"] == "kimi-k2"
+
+
 def main():
     test_extractor()
     test_explicit_settlement_reused()
@@ -1773,6 +1899,12 @@ def main():
     test_weightsplit_shared_sources()
     test_shared_source_extraction_roundtrip()
     test_extractor_bridged_external_weights()
+    test_kimi_k2_weights_match_the_published_model()
+    test_kimi_k2_structure()
+    test_kimi_k2_s2_term_is_attention()
+    test_kimi_k2_bridge_marks_the_routed_experts_external()
+    test_topk_word_counts_follow_the_prover()
+    test_topk_toy_and_the_cli()
     print("profiler regression tests OK (no torch needed)")
 
 
