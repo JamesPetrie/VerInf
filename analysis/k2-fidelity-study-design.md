@@ -204,6 +204,8 @@ The CPU path is within float32 rounding.
     every batched GPU run outside it completed and departs first at a
     matmul's output by at most 2⁻⁶.
   - **Unresolved:** anything else, sent back for review.
+  
+  Session 12's outcome under this rule, and its correction: §3.6.
 - **On K2's weights,** `fidelity_study.py engine-paths` scores the two-layer
   engine arm against p64 along each path:
   - the 512-token batch as session 11 replayed it;
@@ -352,6 +354,127 @@ Its cost, counted (§9.1):
 - +15.5% witness and +78% constraints at the two-layer gate, from its
   2^28-entry combine table and the tail's 2^24-entry tables;
 - +2.3% witness at full depth.
+
+### 3.6 Amendment 2026-10-21: a16w16's fidelity is an open question
+
+Made after session 12 (2026-10-21) and before any full-depth K2 result. §3.5's
+reasoning and results stand as recorded. §6's criterion and the primary are
+unchanged; what changes is the expectation.
+
+**a16w16 stays the primary, with no expectation that it passes.** Its
+implementation gate is now supported (below). Its fidelity remains open, and
+the two-layer evidence is unfavorable.
+
+**The engine along its kernel paths**, at two layers on the four frozen
+passages, against p64 (record `session12-2026-10-20/records/records/engine-paths.json`,
+sha256 `0793c642…ef2f0b`; the batch replay reproduces session 11's engine arm
+to 5·10⁻¹⁴):
+
+| engine path | pooled mean KL | a16w16 against it |
+|---|---|---|
+| GPU, the 512-token batch replay (session 11's engine arm) | 7.05 × 10⁻⁴ | 0.83× |
+| GPU, one token at a time | 3.48 × 10⁻⁴ | 1.68× |
+| GPU batch, cuBLAS's TF32 off | 7.11 × 10⁻⁴ | 0.82× |
+| labeled CPU batch | 7.48 × 10⁻⁴ | invalid: ran on the GPU (below) |
+| CPU, one token at a time | 1.03 × 10⁻³ | 0.57× |
+
+- **Against one-token GPU decoding**, a16w16's mean KL is 1.53–1.80× the
+  engine's on every passage, and its p99 KL 1.02–1.18×. a14w14's pooled mean
+  KL is 3.67×.
+- **§3.5's 0.83×** compares a16w16 with the batch replay, which §3.3 makes a
+  diagnostic, not the baseline. It does not support the intended generation
+  baseline.
+- **The one-token diagnostic is not the generation path either.** It decodes
+  position 0 alone (`n_prompt` = 1) and then every token singly. Generation
+  prefills the whole prompt in batches and then decodes one token at a time,
+  and the prefill sets the cached state. Full-depth acceptance continues to
+  score the actual generation-time logits, including the first continuation
+  token's prediction from the prefill.
+- **Two layers cannot settle depth behavior.** No further precision search
+  runs now, and a16w16n14 is not promoted. The batch replay does not become
+  the acceptance baseline: that would change the question.
+
+**Next: full-depth fidelity first.** It is the next substantive measurement,
+ahead of an expensive full proof where practical, with the criterion and the
+primary fixed. The integer computation is reused for proving where possible.
+A failure would still be useful evidence about the model, but no proof is
+committed on the assumption of a pass.
+
+**a16w16's implementation gate (session 12, shard 1, two layers, T = 100,
+bridged).** It passed:
+- exact at all 42 intermediates; 185 ranges recorded, every combined-rounding
+  range inside its constraint;
+- the honest proof accepted by the Rust verifier; the 4-bit residual rescale
+  tamper and the interleave rejected; both kept proofs accepted again from
+  their files on disk.
+
+Against the 2^12 baseline proved on the same pod:
+
+| | baseline | a16w16 | change |
+|---|---|---|---|
+| proving | 66.7 s | 100.0 s | **+50%** |
+| Rust verification | 150.6 s | 209.5 s | **+39%** |
+| peak GPU memory | 50.37 GiB | 57.22 GiB | +13.6% |
+| proof file | 837.7 MB | 934.1 MB | +11.5% |
+
+These are at the gate's dimensions. The +2.3% full-depth witness of §9.1 is
+a count; amortization at full depth is a prediction until measured.
+
+**The two-layer ranges, recovered whole (session 12, stage R).** Each
+configuration's metrics reproduce session 11's within 1.0·10⁻¹³ on every
+passage, and the rows outside their constraint are as many as session 11
+counted (record `records/ranges/two-layer-ranges.json`, sha256 `73cf6786…1638ac`).
+- **Combined rounding**, the drivers' implementation: every range inside
+  its constraint, for a16w16, a14w14 and the baseline.
+- **Input rescaling**, the rejected alternative (§3.4): three rows outside,
+  for a16w16 and a14w14 alike, none for the baseline. a16w16's, over the four
+  passages:
+
+| row | signed extremes | constraint | claim |
+|---|---|---|---|
+| `L0.ckv.x` | [−46,322, 54,340] | −32,768 ≤ v ≤ 32,767 | RMSNorm's s_in: x + 2^15 in the 16-bit slack table |
+| `L0.sm.x` | [−160,735, 82,116] | −32,768 ≤ v ≤ 16,744,447 | softmax's s_in: x + 2^15 in the 24-bit aux table |
+| `L1.sm.x` | [−137,837, 75,513] | −32,768 ≤ v ≤ 16,744,447 | softmax's s_in, the same table |
+
+**The engine diagnostic on the toys (§3.3), corrected.**
+- **The rule's output** was "evidence of a semantic mismatch" for both
+  forms. It stands as the rule's output, not as the scientific conclusion.
+- **The rule's premise was wrong.** It took one-token GPU execution as a
+  float32 control. At `f174553` that fails for MoE layers on NVIDIA:
+  `ggml_cuda_mul_mat_id` sends non-quantized experts to `mmf` at any batch
+  size (`mmvf` only on AMD), and `mmf`'s `mma` reads float32 bits as TF32.
+- **Conclusion: the departure is largely explained by internal precision.**
+  The emulation is p64 with the routed experts' operands truncated to TF32:
+  - for a one-token evaluation, the down projection's;
+  - for batched positions, gate, up and down, as the source predicts.
+
+  The treatment was chosen among 45 candidates on the 12-token one-token
+  runs, then applied unchanged to the other runs. The residual it leaves,
+  as a share of the GPU's layer-1 error (L2):
+
+  | run | K2's form | Moonlight's form |
+  |---|---|---|
+  | 12-token one-token runs | 0.1% | 0.5% |
+  | 40-token one-token runs | 2.8% | 0.9% |
+  | 40-token batch with cuBLAS's TF32 off | 1.6% | 1.7% |
+
+  The rest is unexplained. K2's own routed experts are quantized and take
+  `mmvq`/`mmq`, not `mmf`.
+- **CPU controls: two invalidated, two audited.** In the CUDA build a
+  CPU-labeled condition can run on the GPU: ggml offloads a batch of 32 or
+  more tokens whose weights sit in host memory, and the scheduler then places
+  nearly the whole graph there. A placement audit (`GGML_SCHED_DEBUG`=2)
+  found:
+  - **Invalid:** the toys' `cpu-40` (82 of 86 nodes of the batch graph on
+    the GPU) and E2's CPU batch (81 of 85). Neither supports a CPU/GPU
+    conclusion. With the GPU hidden, `cpu-40` is within float32 on both
+    forms.
+  - **CPU, audited:** the toys' `cpu-12`, where every node runs on the CPU
+    and the logits equal a GPU-hidden run's bit for bit. Also E2's one-token
+    CPU path, where every printed graph is on the CPU and the logits equal
+    the session's. Graph reuse means three prints cover its evaluations.
+  - **K2 with the GPU hidden** aborts in this build (a scheduler assertion),
+    so E2's CPU paths have no GPU-hidden twin.
 
 ## 4. Metrics
 
