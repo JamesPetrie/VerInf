@@ -82,9 +82,12 @@ def rope_tables(cfg, positions):
     return rope_float_tables(cfg, positions)
 
 
-def attention(x, w, cfg, cos, sin):
+def attention(x, w, cfg, cos, sin, trace=None):
     """composition_a_attention in torch: σ folded into the two query weights,
-    half-split RoPE, the shared rotary key, causal softmax."""
+    half-split RoPE, the shared rotary key, causal softmax. `trace`, a dict,
+    receives the normalized KV latent ("ckv", T × kv_rank), the probabilities
+    ("sm", H × T × T) and the heads' output before W_o ("att", T × H·d_v):
+    the points that map onto llama.cpp's kv_cmpr, kq_soft_max and kqv_out."""
     T = x.shape[0]
     H, dn, dr, dv = cfg["H"], cfg["d_nope"], cfg["d_rope"], cfg["d_v"]
 
@@ -109,6 +112,8 @@ def attention(x, w, cfg, cos, sin):
     e = torch.exp(scores)
     p = e / e.sum(dim=-1, keepdim=True)
     out = torch.einsum("htu,uhc->thc", p, v).reshape(T, H * dv)
+    if trace is not None:
+        trace.update(ckv=ckv, sm=p, att=out)
     return out @ w["W_o"]
 
 
@@ -160,9 +165,12 @@ def forward(ids, W, cfg, *, layers, offset=0, k=8, head_chunk=16384, device="cpu
         p = f"L{il}"
         w = {n: _t(v, dev) for n, v in W.attn(il).items()}
         n1g = rmsnorm(x, w["g_attn"], eps)
-        r1 = x + attention(n1g, w, cfg, cos, sin)
+        # the attention's inner points only when named: sm is H × T × T per layer
+        inner = {} if keep is not None and any(want(f"{p}.{n}") for n in ("ckv", "sm", "att")) else None
+        r1 = x + attention(n1g, w, cfg, cos, sin, trace=inner)
         n2g = rmsnorm(r1, w["g_ffn"], eps)
-        step = {f"{p}.n1g": n1g, f"{p}.r1": r1, f"{p}.n2g": n2g}
+        step = {f"{p}.n1g": n1g, f"{p}.r1": r1, f"{p}.n2g": n2g,
+                **{f"{p}.{n}": v for n, v in (inner or {}).items()}}
         del w
         if W.kind(il) == "dense":
             d = W.dense(il)

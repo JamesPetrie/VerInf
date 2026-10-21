@@ -10,7 +10,11 @@ which has no llama.cpp; without the variable the suite is skipped.
   outputs, routing, gates and logits;
 - with llama.cpp's own betas it is not, which is why the adapter sets them;
 - generation is reproduced bit for bit by a replay with one-token steps;
-- a truncation loads on the full model's branch."""
+- a truncation loads on the full model's branch;
+- the runner keeps its device settings, their memory and the whole log, with
+  the scheduler's placement;
+- the prefill localization maps every intermediate onto p64, and capturing
+  changes no logits; an operation runs alone on a run's own inputs."""
 import json
 import os
 import pathlib
@@ -245,3 +249,49 @@ def test_the_engine_paths_are_scored_on_the_same_passages(tmp_path):
         assert row["gpu-batch-no-tf32"]["environment"]["NVIDIA_TF32_OVERRIDE"] == "0"
         assert "NVIDIA_TF32_OVERRIDE" not in row["gpu-batch"]["environment"]
     assert set(rec["pooled"]) == set(paths)
+
+
+def test_the_localization_maps_every_intermediate_and_captures_change_nothing(tmp_path):
+    """prefill_localize on the all-F32 toy with an f32 KV cache, on the CPU: both
+    paths' every mapped intermediate within float32 of p64 (the mapping is right),
+    the paths within float32 of each other, and capturing leaves the logits alone."""
+    import prefill_localize as pl
+    p = tmp_path / "toy.gguf"
+    toy.write(p, quantize_q8=False)
+    spec = dict(cfg=toy.TOY_MLA, adapter=fa.KIMI_K2, k=toy.TOY["k"])
+    ids = [3, 17, 0, 41, 9, 9, 2, 5, 11, 30, 7, 1]
+    out = pl.localize(RUNNER, p, ids, tmp_path / "loc", spec=spec,
+                      settings=dict(n_ctx=64, threads=2, flash_attn="off", kv_type="f32", **fa.KIMI_K2["engine"]))
+    assert not any(c["changed_logits"] for c in out["captures"].values())
+    mapped = [r for r in out["rows"] if "p64" in r]
+    assert {r["name"].split("-")[0] for r in mapped} >= {"attn_norm", "kv_cmpr", "kq_soft_max", "kqv_out", "ffn_inp",
+                                                        "ffn_norm", "ffn_moe_out", "ffn_shexp", "l_out"}
+    assert all(v["rel_l2"] < 2e-6 for r in mapped for v in r["p64"].values()), mapped
+    compared = [r for r in out["rows"] if "batch_vs_steps" in r]
+    assert len(compared) > 40 and all(r["batch_vs_steps"]["rel_l2"] < 2e-6 for r in compared)
+    assert out["first_apart"] is None
+
+
+def test_an_operation_runs_alone_on_the_runs_own_inputs(tmp_path):
+    """engine_optest on the toy's captured batched run, on the CPU backend: each
+    operation's one-graph and per-token runs agree, and against float64 on the same
+    inputs the F32 weights are within float32 and the f16 KV products within f16."""
+    import engine_optest as eo
+    import prefill_localize as pl
+    optest = pathlib.Path(RUNNER).with_name("verinf_optest")
+    if not optest.exists():
+        pytest.skip("verinf_optest not built beside the runner")
+    p = tmp_path / "toy.gguf"
+    toy.write(p, quantize_q8=False)
+    ids = [3, 17, 0, 41, 9, 9, 2, 5, 11, 30, 7, 1]
+    pl.localize(RUNNER, p, ids, tmp_path / "loc", settings=dict(n_ctx=64, threads=2, flash_attn="off",
+                                                                 **fa.KIMI_K2["engine"]))
+    res = lr.load(tmp_path / "loc" / "batch-captured")
+    bounds = {"kq-1": 1e-3, "kqv-1": 1e-3, "weight:blk.1.attn_q_a.weight:attn_norm-1/MUL": 1e-6,
+              "experts:blk.1.ffn_up_exps.weight:ffn_norm-1/MUL:ffn_moe_argsort-1/ARGSORT": 1e-6}
+    for op, bound in bounds.items():
+        spec = eo.build(op, res, p)
+        rec = eo.compare(optest, tmp_path / "op" / op.replace(":", "_").replace("/", "@"), ref=spec["ref"],
+                         inputs=spec["inputs"], devices=("CPU",), mask=spec.get("mask"))
+        assert all(v["rel_l2"] < bound for v in rec["against_float64"].values()), (op, rec)
+        assert rec["between"]["CPU: all vs single"]["rel_l2"] < 1e-6, (op, rec)

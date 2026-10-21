@@ -34,12 +34,14 @@ def file_sha256(path, chunk=1 << 24) -> str:
 
 def run(binary, model, out, *, ids=None, mode="replay", n_prompt=None, n_gen=0,
         prompt_chunk=512, cont_chunk=1, pos_offset=0, capture=(), settings=None,
-        hash_model=False, timeout=None, env=None):
+        hash_model=False, timeout=None, env=None, captures_optional=False):
     """Run the runner; returns load(out). `settings` maps runner flags without
     their dashes (n_batch, n_ubatch, threads, n_gpu_layers, kv_type,
     flash_attn, yarn_beta_fast, yarn_beta_slow) to values; `env` adds
     environment variables. The manifest records the PRECISION_ENV variables
-    the runner ran under."""
+    the runner ran under. A capture is a tensor's name, or "name/OP" or
+    "name/OP/width" where one name labels several; `captures_optional` lists
+    a capture never seen instead of failing the run."""
     out = pathlib.Path(out)
     out.mkdir(parents=True, exist_ok=True)
     cmd = [str(binary), "--model", str(model), "--out", str(out), "--mode", mode]
@@ -53,6 +55,8 @@ def run(binary, model, out, *, ids=None, mode="replay", n_prompt=None, n_gen=0,
             cmd += ["--n-gen", str(n_gen)]
         if capture:
             cmd += ["--capture", ",".join(capture)]
+        if captures_optional:
+            cmd.append("--captures-optional")
     for k, v in (settings or {}).items():
         cmd += [f"--{k.replace('_', '-')}", str(v)]
     environ = dict(os.environ, **{k: str(v) for k, v in (env or {}).items()})
@@ -92,10 +96,23 @@ def load(out):
     V = m["n_vocab"]
     res["logits"] = np.fromfile(out / "logits.f32", dtype="<f4").reshape(-1, V)
     res["tokens"] = [int(x) for x in (out / "tokens.txt").read_text().split()]
-    res["captures"] = {
-        name: np.fromfile(out / "capture" / f"{name}.f32", dtype="<f4").reshape(-1, c["width"])
-        for name, c in m["captures"].items()}
+    res["captures"] = {}
+    for name, c in m["captures"].items():
+        flat = np.fromfile(out / "capture" / f"{name.replace('/', '@')}.f32", dtype="<f4")
+        # a width of -1: the rows' width changed between calls (capture_calls splits them)
+        res["captures"][name] = flat.reshape(-1, c["width"]) if c["width"] > 0 else flat
     return res
+
+
+def capture_calls(res, name) -> list:
+    """A capture's rows split by graph evaluation, each shaped as ggml's ne
+    reversed, (ne3, ne2, ne1, ne0): one array per call of the eval callback."""
+    flat, out, at = res["captures"][name].reshape(-1), [], 0
+    for ne in res["manifest"]["captures"][name]["calls"]:
+        n = ne[0] * ne[1] * ne[2] * ne[3]
+        out.append(flat[at:at + n].reshape(ne[3], ne[2], ne[1], ne[0]))
+        at += n
+    return out
 
 
 _NODE = re.compile(r"^node #\s*(\d+) \(\s*([^)]*?)\):.*?\[\s*([A-Za-z0-9_]+)")

@@ -28,6 +28,7 @@
 #include "llama.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -56,6 +57,7 @@ struct Args {
     std::vector<std::string> capture;
     std::vector<std::string> overrides;   // --override-tensor pattern=buft (e.g. exps=CPU)
     bool extra_bufts = true;
+    bool captures_optional = false;   // a capture never seen is listed, not an error
 };
 
 [[noreturn]] void die(const std::string & m) {
@@ -97,6 +99,7 @@ Args parse(int argc, char ** argv) {
         else if (k == "--capture") a.capture = split(v(), ',');
         else if (k == "--override-tensor") a.overrides.push_back(v());
         else if (k == "--no-extra-bufts") a.extra_bufts = false;
+        else if (k == "--captures-optional") a.captures_optional = true;
         else if (k == "--split-mode") a.split_mode = v();
         else if (k == "--main-gpu") a.main_gpu = std::stoi(v());
         else if (k == "--tensor-split") for (auto & x : split(v(), ',')) a.tensor_split.push_back(std::stof(x));
@@ -124,41 +127,79 @@ void log_cb(ggml_log_level level, const char * text, void *) {
 struct Capture {
     std::set<std::string> names;
     std::map<std::string, std::vector<float>> data;
-    std::map<std::string, int64_t> width;     // elements per position
+    std::map<std::string, int64_t> width;     // elements per row
     std::map<std::string, std::string> dtype;
+    std::map<std::string, std::vector<std::array<int64_t, 4>>> shapes;   // each call's ne
+    std::set<std::string> skipped;             // asked for, but their rows are not contiguous
     int64_t calls = 0;
 };
 
+// a capture is asked for by the tensor's name ("kq-0"), or, where one name labels
+// several tensors, by its name and the operation that made it ("kv_cmpr-0/MUL"),
+// and its row width too ("q-0/MUL_MAT/1536")
+std::string capture_key(const Capture & c, const ggml_tensor * t) {
+    const std::string name = ggml_get_name(t);
+    const std::string by_op = name + "/" + ggml_op_name(t->op);
+    const std::string by_width = by_op + "/" + std::to_string(t->ne[0]);
+    if (c.names.count(by_width)) return by_width;
+    if (c.names.count(by_op)) return by_op;
+    if (c.names.count(name)) return name;
+    return "";
+}
+
 bool eval_cb(ggml_tensor * t, bool ask, void * ud) {
     auto * c = static_cast<Capture *>(ud);
-    if (!c->names.count(ggml_get_name(t))) return ask ? false : true;
+    const std::string name = capture_key(*c, t);
+    if (name.empty()) return ask ? false : true;
     if (ask) return true;
-    const std::string name = ggml_get_name(t);
-    // a view (the MoE top-k ids) is read row by row; its rows must be contiguous
-    if (t->ne[2] != 1 || t->ne[3] != 1 || t->nb[0] != ggml_type_size(t->type))
-        die("capture of a tensor whose rows are not contiguous: " + name);
+    // any rank, read row by row (i3, i2, i1 in order, each call's shape kept); a tensor whose
+    // rows are not contiguous (a permuted view) is skipped and listed; the row width may change
+    // between calls (the attention's KV extent grows), each call's shape says how
+    if (t->nb[0] != ggml_type_size(t->type)) {
+        c->skipped.insert(name);
+        return true;
+    }
     const int64_t w = t->ne[0], rows = ggml_nelements(t) / t->ne[0];
-    if (c->width.count(name) && c->width[name] != w) die("capture width changed for " + name);
-    c->width[name] = w;
+    if (!c->width.count(name) || c->width[name] != w) c->width[name] = c->width.count(name) ? -1 : w;
+    c->shapes[name].push_back({t->ne[0], t->ne[1], t->ne[2], t->ne[3]});
     auto & d = c->data[name];
     const size_t at = d.size();
     d.resize(at + (size_t) (w * rows));
     const size_t row_bytes = (size_t) w * ggml_type_size(t->type);
-    if (t->type == GGML_TYPE_F32) {
-        c->dtype[name] = "f32";
-        for (int64_t r = 0; r < rows; r++)
-            ggml_backend_tensor_get(t, d.data() + at + (size_t) (r * w), (size_t) r * t->nb[1], row_bytes);
-    } else if (t->type == GGML_TYPE_I32) {
-        c->dtype[name] = "i32-as-f32";
-        std::vector<int32_t> tmp((size_t) (w * rows));
-        for (int64_t r = 0; r < rows; r++)
-            ggml_backend_tensor_get(t, tmp.data() + (size_t) (r * w), (size_t) r * t->nb[1], row_bytes);
-        for (size_t i = 0; i < tmp.size(); i++) d[at + i] = (float) tmp[i];
-    } else {
-        die("capture of an unsupported type for " + name);
+    std::vector<uint8_t> raw(row_bytes);
+    int64_t r = 0;
+    for (int64_t i3 = 0; i3 < t->ne[3]; i3++)
+    for (int64_t i2 = 0; i2 < t->ne[2]; i2++)
+    for (int64_t i1 = 0; i1 < t->ne[1]; i1++, r++) {
+        const size_t off = (size_t) (i1 * t->nb[1] + i2 * t->nb[2] + i3 * t->nb[3]);
+        float * dst = d.data() + at + (size_t) (r * w);
+        if (t->type == GGML_TYPE_F32) {
+            c->dtype[name] = "f32";
+            ggml_backend_tensor_get(t, dst, off, row_bytes);
+            continue;
+        }
+        ggml_backend_tensor_get(t, raw.data(), off, row_bytes);
+        if (t->type == GGML_TYPE_F16) {
+            c->dtype[name] = "f16-as-f32";
+            ggml_fp16_to_fp32_row((const ggml_fp16_t *) raw.data(), dst, w);
+        } else if (t->type == GGML_TYPE_BF16) {
+            c->dtype[name] = "bf16-as-f32";
+            ggml_bf16_to_fp32_row((const ggml_bf16_t *) raw.data(), dst, w);
+        } else if (t->type == GGML_TYPE_I32) {
+            c->dtype[name] = "i32-as-f32";
+            for (int64_t i = 0; i < w; i++) dst[i] = (float) ((const int32_t *) raw.data())[i];
+        } else {
+            die("capture of an unsupported type for " + name);
+        }
     }
     c->calls++;
     return true;
+}
+
+int64_t rows_of(Capture & c, const std::string & name) {
+    int64_t n = 0;
+    for (auto & ne : c.shapes[name]) n += ne[1] * ne[2] * ne[3];
+    return n;
 }
 
 ggml_type kv_type(const std::string & s) {
@@ -379,17 +420,26 @@ int main(int argc, char ** argv) {
     }
     std::string caps;
     for (auto & [name, d] : cap.data) {
-        const std::string fn = a.out + "/capture/" + name + ".f32";
+        std::string file = name;                       // an op-qualified name's "/" is "@" on disk
+        std::replace(file.begin(), file.end(), '/', '@');
+        const std::string fn = a.out + "/capture/" + file + ".f32";
         FILE * f = fopen(fn.c_str(), "wb");
         if (!f || fwrite(d.data(), sizeof(float), d.size(), f) != d.size()) die("write capture " + name);
         fclose(f);
+        std::string shapes;
+        for (auto & ne : cap.shapes[name])
+            shapes += std::string(shapes.empty() ? "" : ", ") + "[" + std::to_string(ne[0]) + ", " +
+                      std::to_string(ne[1]) + ", " + std::to_string(ne[2]) + ", " + std::to_string(ne[3]) + "]";
         caps += std::string(caps.empty() ? "" : ", ") + jstr(name) + ": {\"width\": " +
                 std::to_string(cap.width[name]) + ", \"rows\": " +
-                std::to_string((long long) (d.size() / (size_t) cap.width[name])) +
-                ", \"dtype\": " + jstr(cap.dtype[name]) + "}";
+                std::to_string((long long) rows_of(cap, name)) +
+                ", \"dtype\": " + jstr(cap.dtype[name]) + ", \"calls\": [" + shapes + "]}";
     }
     std::string missing;
-    for (auto & n : cap.names) if (!cap.data.count(n)) missing += std::string(missing.empty() ? "" : ", ") + jstr(n);
+    for (auto & n : cap.names)
+        if (!cap.data.count(n) && !cap.skipped.count(n)) missing += std::string(missing.empty() ? "" : ", ") + jstr(n);
+    std::string skipped;
+    for (auto & n : cap.skipped) skipped += std::string(skipped.empty() ? "" : ", ") + jstr(n);
     std::string gen;
     for (size_t i = 0; i < generated.size(); i++) gen += (i ? ", " : "") + std::to_string(generated[i]);
 
@@ -409,6 +459,7 @@ int main(int argc, char ** argv) {
         << ",\n  \"n_scored\": " << n_scored << ",\n  \"generated\": [" << gen << "]"
         << ",\n  \"ended_by_eog\": " << (ended_by_eog ? "true" : "false")
         << ",\n  \"captures\": {" << caps << "},\n  \"captures_missing\": [" << missing << "]"
+        << ",\n  \"captures_skipped\": [" << skipped << "]"
         << ",\n  \"capture_calls\": " << cap.calls
         << ",\n  \"device_memory_after_context\": [" << mem << "]"
         << ",\n  \"timing_s\": {\"load\": " << t_load << ", \"prefill\": " << t_prefill
@@ -417,5 +468,5 @@ int main(int argc, char ** argv) {
 
     llama_free(ctx);
     llama_model_free(model);
-    return missing.empty() ? 0 : 3;
+    return missing.empty() || a.captures_optional ? 0 : 3;
 }
