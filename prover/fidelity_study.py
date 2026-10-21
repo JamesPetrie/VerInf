@@ -600,7 +600,9 @@ def main(argv=None):
                     "again (finished parts in --work are always reused)")
     ap.add_argument("--engine", default="{}", help="JSON: further engine settings (n_gpu_layers, kv_type, "
                     "flash_attn, n_batch, n_ubatch, override_tensor), pinned by the kit")
-    a = ap.parse_args(argv)
+    # intermixed: before 3.12's later patch releases (session 12's pod had 3.12.3),
+    # parse_args leaves `records` empty when options separate it from the stage
+    a = ap.parse_intermixed_args(argv)
     if a.stage == "full-depth" and not a.primary:
         ap.error("full-depth needs --primary: the configuration named before the run")
     work = pathlib.Path(a.work)
