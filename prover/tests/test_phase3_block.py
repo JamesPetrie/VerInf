@@ -20,7 +20,6 @@ can be added without touching the compile.
 import json
 import os
 import pathlib
-import subprocess
 import sys
 import tempfile
 
@@ -31,7 +30,7 @@ import claims as _C       # noqa: F401
 import packets as _PK     # noqa: F401
 import protocol as pr
 from tape import Tape
-from _rust_verify import _verify_proof_bin, rust_verify_tape
+from _rust_verify import _verify_proof_bin, run_verify_proof, rust_verify_tape
 from proof_dump import dump_proof
 
 CFG = core.LigeroConfig(ELL=8, K_DEG=8, N_LIG=32, T_QUERIES=4)
@@ -112,8 +111,8 @@ def test_tampered_phase3_column_rejects():
         doc = json.load(open(path))
         bump(doc)
         json.dump(doc, open(path, "w"))
-        r = subprocess.run([_verify_proof_bin(), path], capture_output=True, text=True)
-        assert "rust_verify: ACCEPT" not in r.stdout, "tampered p3 column: expected REJECT"
+        v = run_verify_proof([_verify_proof_bin(), path])
+        assert v["verdict"] == "REJECT", "tampered p3 column: expected REJECT"
         print("    tampered p3 column: REJECT ok")
     finally:
         os.unlink(path)
@@ -130,8 +129,8 @@ def test_dropped_phase3_message_rejects():
         for k in ("root_p3", "opened_p3", "paths_p3"):
             doc["proof"].pop(k, None)
         json.dump(doc, open(path, "w"))
-        r = subprocess.run([_verify_proof_bin(), path], capture_output=True, text=True)
-        assert "rust_verify: ACCEPT" not in r.stdout, "dropped R3: expected REJECT"
+        v = run_verify_proof([_verify_proof_bin(), path])
+        assert v["verdict"] == "REJECT", "dropped R3: expected REJECT"
         print("    dropped R3 message: REJECT ok")
     finally:
         os.unlink(path)

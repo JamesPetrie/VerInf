@@ -92,6 +92,12 @@ need toy-repaired-verify 'rust_verify: ACCEPT'
 # them (analysis/topk-routing-design.md §3.1-3.3).
 gate topk-routing python3 prover/tests/run_tests.py test_topk_routing
 suite topk-routing 21
+# Maverick's model binding through build_model: every RMSNorm gain and g_out
+# enrolled, every bc_ones entry pinned to 1; an altered gain or bc_ones = 2
+# is an explicit Rust REJECT under the honest weight root (the repair of
+# 2026-10-06; analysis/b200-session-10-archive.md).
+gate maverick-binding python3 prover/tests/run_tests.py test_maverick_binding
+suite maverick-binding 5
 gate toy-ab env LIGERO_SWEEP_TIMING=1 python3 analysis/bench/ab_routed_cache.py
 need toy-ab 'ab_routed_cache: counts as expected'
 # A small REAL-GGUF proof through the research driver, independently

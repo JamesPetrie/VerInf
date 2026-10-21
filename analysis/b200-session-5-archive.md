@@ -1,5 +1,17 @@
 # B200 session 5 — archive (2026-09-19/20)
 
+> **Model binding (annotated 2026-10-06).** The Maverick proofs in this archive
+> were built by `demo_maverick_full.build_model`, which committed every RMSNorm
+> gain and `g_out` as a plain input, outside the persistent weight block that an
+> enrollment's root authenticates, and left `bc_ones`, the operand that spreads
+> the MoE's sigmoid gate over the routed input, unconstrained. These proofs
+> bind the committed projection and expert weights but not the gains, and admit
+> a free per-element scale on the routed input: they lack complete model
+> binding. A toy built from the driver's own pieces was accepted with both
+> altered under the honest weight root (`analysis/b200-session-10-archive.md`).
+> The repaired driver enrolls every gain and pins every `bc_ones` entry to 1;
+> it needs a new enrollment, and these proofs do not verify under it.
+
 A short session for one question: where the bridge's per-proof pass goes,
 and whether moving the mask coefficients onto the card removes most of it.
 One NVIDIA B200 (RunPod secure cloud, US-NE-1, 180 GB HBM, a 3 TB host with

@@ -1,5 +1,12 @@
 # 400B / S=1000 production runbook
 
+> **Re-enroll after the binding repair (2026-10-06).** `build_model` now
+> enrolls every RMSNorm gain and `g_out` as weights and pins `bc_ones` to 1
+> by a public constraint, so the weight root and the statement (2,597 claims,
+> 2,596 before) both change: an enrollment made before the repair does not
+> match a tape built after it, and proofs made before it lack complete model
+> binding (`analysis/b200-session-10-archive.md`).
+
 This runbook is deliberately fail-closed.  It describes the executed path in
 this tree, not a future GKR/PCS implementation and not a random-weight proxy.
 

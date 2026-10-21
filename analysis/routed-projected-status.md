@@ -469,6 +469,14 @@ carried.  The full 400B proof is not started until every stage below is DONE and
       question, not a benchmarking one — see "Open question: what is `linear`"
       below.  Nothing was fabricated to get past it and the proof did not start.
 - [x] **S5c/S6 — the production run. Proved and independently ACCEPTED.**
+      *Annotated 2026-10-06: this run lacks complete model binding.* Its
+      driver committed the RMSNorm gains and `g_out` outside the enrolled
+      weight block and left `bc_ones` (the MoE gate's broadcast operand)
+      unconstrained, so the enrollment did not bind the gains and the routed
+      input admitted a free per-element scale (`analysis/b200-session-10-
+      archive.md`). The repaired driver enrolls the gains and pins
+      `bc_ones`; it needs a new enrollment, and this proof does not verify
+      under it.
       2026-08-06, rented A100-SXM4-80GB (vast, real $1.44/h, 18,076 s total
       = ~$7.2; instance 46989988 destroyed and confirmed gone). Real GGUF
       UD-Q4_K_XL, 48 layers, E=128, S=1000 (442 prompt + 558 continuation),

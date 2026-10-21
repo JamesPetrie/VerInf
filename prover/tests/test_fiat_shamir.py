@@ -17,7 +17,6 @@ Each test below therefore attacks the transcript, not the arithmetic:
 import json
 import os
 import pathlib
-import subprocess
 import sys
 import tempfile
 
@@ -28,7 +27,7 @@ import claims as _C        # noqa: F401  (registers claim handlers)
 import packets as _PK      # noqa: F401
 import protocol as pr
 from tape import Tape
-from _rust_verify import _verify_proof_bin
+from _rust_verify import _verify_proof_bin, run_verify_proof
 from proof_dump import dump_proof
 
 CFG = core.LigeroConfig(ELL=8, K_DEG=8, N_LIG=32, T_QUERIES=4)
@@ -55,9 +54,9 @@ def _proof_file(tape=None):
 
 
 def _run(path, *policy):
-    r = subprocess.run([_verify_proof_bin(), path, *policy],
-                       capture_output=True, text=True)
-    return ("rust_verify: ACCEPT" in r.stdout), (r.stdout + r.stderr).strip()
+    """(accepted, output) for an explicit verdict; VerifierFailure otherwise."""
+    v = run_verify_proof([_verify_proof_bin(), path, *policy])
+    return v["verdict"] == "ACCEPT", v["output"]
 
 
 def _rewrite(path, mutate):
