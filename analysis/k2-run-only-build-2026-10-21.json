@@ -1,0 +1,73 @@
+{
+ "what": "The run-only tape at K2's full depth, built on the CPU and measured apart\nfrom any execution (review of 2026-10-21): the build's wall time, the part of\nit spent allocating the shared tables, their entries and bytes, the claims\nand variables, and the host memory, per precision profile, each in a fresh\nprocess.",
+ "gguf": "Kimi-K2-Instruct-UD-Q4_K_XL-00001-of-00013.gguf",
+ "stand_in": "the 13 shards' real headers (8 MB each), holes after, each MoE layer's selection bias real; unsloth/Kimi-K2-Instruct-GGUF @ 23bf90d8, UD-Q4_K_XL",
+ "runs": {
+  "a16w16": {
+   "precision": "a16w16",
+   "layers": 61,
+   "T": 924,
+   "n_prompt": 424,
+   "build_s": 12.464893341064453,
+   "tables": {
+    "seconds": 2.951493740081787,
+    "calls": 5386,
+    "count": 152,
+    "entries": 405542388,
+    "bytes_keys_and_multiplicities": 6488678208
+   },
+   "build_without_tables_s": 9.513399600982666,
+   "claims": 5133,
+   "deferred": 5133,
+   "inputs": 70314,
+   "lazy_inputs": 70158,
+   "rss_before_gb": 0.551256,
+   "rss_after_gb": 8.359768,
+   "rss_peak_gb": 9.164144
+  },
+  "a14w14": {
+   "precision": "a14w14",
+   "layers": 61,
+   "T": 924,
+   "n_prompt": 424,
+   "build_s": 7.331714153289795,
+   "tables": {
+    "seconds": 1.2719213962554932,
+    "calls": 5386,
+    "count": 152,
+    "entries": 162289896,
+    "bytes_keys_and_multiplicities": 2596638336
+   },
+   "build_without_tables_s": 6.059792757034302,
+   "claims": 5133,
+   "deferred": 5133,
+   "inputs": 70314,
+   "lazy_inputs": 70158,
+   "rss_before_gb": 0.55124,
+   "rss_after_gb": 4.4619,
+   "rss_peak_gb": 4.550488
+  },
+  "baseline": {
+   "precision": "baseline",
+   "layers": 61,
+   "T": 924,
+   "n_prompt": 424,
+   "build_s": 6.814764022827148,
+   "tables": {
+    "seconds": 1.0036938190460205,
+    "calls": 5140,
+    "count": 148,
+    "entries": 104600804,
+    "bytes_keys_and_multiplicities": 1673612864
+   },
+   "build_without_tables_s": 5.811070203781128,
+   "claims": 5010,
+   "deferred": 5010,
+   "inputs": 70310,
+   "lazy_inputs": 70158,
+   "rss_before_gb": 0.551208,
+   "rss_after_gb": 3.560604,
+   "rss_peak_gb": 3.75498
+  }
+ }
+}
