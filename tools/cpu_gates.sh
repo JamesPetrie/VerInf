@@ -29,6 +29,7 @@ SUITES=(
   prover/tests/test_gguf_truncate.py
   prover/tests/test_fidelity_passages.py
   prover/tests/test_fidelity_study.py
+  prover/tests/test_engine_precision.py
   prover/tests/test_k2_driver_structure.py
   prover/tests/test_k2_float_torch.py
   prover/tests/test_k2_emulation.py

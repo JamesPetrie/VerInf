@@ -190,14 +190,19 @@ The CPU path is within float32 rounding.
     `CUBLAS_TF32_TENSOR_OP_MATH`.
   
   Single tokens take float32 vector kernels.
-- **What has to be established.** Whether this is expected internal
-  precision or a semantic mismatch, by `tools/engine_precision.py` under a
-  rule fixed before its run:
-  - **Same function:** the CPU and the GPU in one-token steps must be within
-    the float32 bound at every position. If not, it is a semantic mismatch.
-  - **Internal precision:** if they are, every batched departure must start
-    at a matmul's output and stay within 2⁻⁶. Then it is internal
-    precision.
+- **What has to be established.** Whether the departure is consistent
+  with expected internal precision or shows a semantic mismatch, by
+  `tools/engine_precision.py` under a rule fixed before its run (amended
+  by the review of 2026-10-21, also before it). The rule weighs evidence
+  on two toys at 12 and 40 tokens. Agreement there cannot establish that
+  the GPU computes the same function in general.
+  - **Unresolved, first:** a CPU run or a one-token GPU run that failed or
+    is missing. It is evidence of neither.
+  - **Evidence of a semantic mismatch:** those runs all complete, and one is
+    outside the float32 bound at some position.
+  - **Consistent with internal precision:** they are all within it, and
+    every batched GPU run outside it completed and departs first at a
+    matmul's output by at most 2⁻⁶.
   - **Unresolved:** anything else, sent back for review.
 - **On K2's weights,** `fidelity_study.py engine-paths` scores the two-layer
   engine arm against p64 along each path:
@@ -205,11 +210,14 @@ The CPU path is within float32 rounding.
   - one-token steps, as generation decodes;
   - cuBLAS's TF32 off;
   - the CPU.
-- **Choosing the baseline.** It is the intended GPU deployment; the CPU path
-  is a diagnostic. The choice is made for deployment relevance, not for
-  what its error does to the criterion. A semantic mismatch is fixed before
-  the configuration is frozen. The baseline's generation-time logits are
-  kept with the run for the full-depth comparison.
+- **Choosing the baseline.** The intended GPU deployment remains the
+  preferred baseline, subject to resolving the correctness concerns; the
+  CPU path is a diagnostic. The choice between them is made for deployment
+  relevance, never for which gives the more favorable fidelity verdict.
+  Evidence of a semantic mismatch is fixed before the configuration is
+  frozen, and the configuration is frozen before any full-depth result.
+  The baseline's generation-time logits are kept with the run for the
+  full-depth comparison.
 - **Environment in the manifests.** Every engine manifest records the
   environment variables that can change the arithmetic (`GGML_*`,
   `NVIDIA_TF32_*`, `CUBLAS_*`).

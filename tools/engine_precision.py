@@ -21,13 +21,19 @@ position and the logits' KL; a second run captures layer 0's intermediates,
 compared with the CPU's at each position, so the first op to leave float32
 is named.
 
-The verdict follows a rule fixed before any run (verdict()):
-- same function: the CPU runs and the GPU's one-token steps are within the
-  float32 bound (test_llama_engine's: residual < 1e-5, KL < 1e-10) at every
-  position. If not, the GPU computes something else: a semantic mismatch.
-- internal precision: the same function, and every batched GPU run outside
-  the bound departs first at a matmul's output (attention's or the FFN's,
-  not a norm) by at most 2^-6 relative.
+The verdict follows a rule fixed before any run (verdict()), amended by the
+review of 2026-10-21 before any run: it weighs evidence on these fixtures and
+proves nothing in general. Agreement on two toys at 12 and 40 tokens cannot
+establish that the GPU computes the same function everywhere.
+- unresolved, first: a CPU run or a one-token GPU run that failed or is
+  missing. Such a run is not evidence either way.
+- evidence of a semantic mismatch: those runs all complete and one is
+  outside the float32 bound (test_llama_engine's: residual < 1e-5,
+  KL < 1e-10) at some position.
+- consistent with internal precision: they are all within it, and every
+  batched GPU run outside the bound completed and departs first at a
+  matmul's output (attention's or the FFN's, not a norm) by at most 2^-6
+  relative.
 - otherwise unresolved, for review.
 
     PYTHONPATH=prover:prover/tests python tools/engine_precision.py \\
@@ -57,7 +63,9 @@ MATMUL_SHARE = 2.0 ** -6
 LAYER0 = ("attn_norm-0", "kqv_out-0", "ffn_inp-0", "ffn_norm-0", "ffn_out-0", "l_out-0")
 MATMUL_OUTPUTS = ("kqv_out-0", "ffn_inp-0", "ffn_out-0")
 FORMS = {"k2": (toy.TOY_MLA, fa.KIMI_K2), "moonlight": (toy.TOY_MOON_MLA, fa.MOONLIGHT)}
-SAME_FUNCTION = ("cpu-12", "cpu-40", "gpu-12-steps", "gpu-40-steps")
+AGREEMENT = ("cpu-12", "cpu-40", "gpu-12-steps", "gpu-40-steps")      # the CPU runs, the GPU one-token steps
+SCOPE = ("these fixtures only (two all-F32 toys, 12 and 40 tokens): evidence, "
+         "not a proof that the GPU computes the same function in general")
 TF32_OFF = {"NVIDIA_TF32_OVERRIDE": "0"}
 
 
@@ -124,21 +132,23 @@ def run_form(form, runner, out, gpu_layers):
 
 def verdict(rec):
     """The rule in the module docstring, over one form's conditions."""
-    same = all(rec.get(c, {}).get("within_bound") for c in SAME_FUNCTION)
-    if not same:
-        return dict(verdict="semantic mismatch", same_function=False,
-                    outside=[c for c in SAME_FUNCTION if not rec.get(c, {}).get("within_bound")])
+    missing = [c for c in AGREEMENT if "within_bound" not in rec.get(c, {})]
+    if missing:
+        return dict(verdict="unresolved", reason="the CPU or one-token runs did not all complete",
+                    missing=missing)
+    outside = [c for c in AGREEMENT if not rec[c]["within_bound"]]
+    if outside:
+        return dict(verdict="evidence of a semantic mismatch", outside=outside)
     departures, ok = {}, True
     for name, row in rec.items():
-        if not name.startswith("gpu") or name in SAME_FUNCTION or row.get("within_bound"):
+        if not name.startswith("gpu") or name in AGREEMENT or row.get("within_bound"):
             continue
         lv = row.get("layer0_vs_cpu") or {}
         first = next((n for n in LAYER0 if n in lv and max(lv[n]) > BOUND["residual"]), None)
         size = max(lv[first]) if first else None
-        departures[name] = dict(first=first, relative=size)
-        ok = ok and first in MATMUL_OUTPUTS and size <= MATMUL_SHARE
-    return dict(verdict="internal precision" if ok else "unresolved", same_function=True,
-                departures=departures)
+        departures[name] = dict(first=first, relative=size, completed="within_bound" in row)
+        ok = ok and "within_bound" in row and first in MATMUL_OUTPUTS and size <= MATMUL_SHARE
+    return dict(verdict="consistent with internal precision" if ok else "unresolved", departures=departures)
 
 
 def main(argv=None):
@@ -150,7 +160,7 @@ def main(argv=None):
     a = ap.parse_args(argv)
     out = pathlib.Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
-    rec = dict(bound=BOUND, matmul_share=MATMUL_SHARE, forms={})
+    rec = dict(bound=BOUND, matmul_share=MATMUL_SHARE, scope=SCOPE, forms={})
     for form in a.forms.split(","):
         conds = run_form(form, a.runner, out, a.gpu_layers)
         rec["forms"][form] = dict(conditions=conds, **verdict(conds))
