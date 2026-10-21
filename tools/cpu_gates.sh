@@ -14,6 +14,7 @@ PY=${PY:-python3}
 LOG=${CPU_GATE_LOG:-/tmp/verinf-cpu-gate.log}
 
 SUITES=(
+  prover/tests/test_rope_yarn.py
   prover/tests/test_bench_static_check.py
   prover/tests/test_topk_reference.py
   prover/tests/test_word_extract_compute.py

@@ -1320,15 +1320,30 @@ class Tape:
         `rope_scaling`: optional Llama-3 wavelength ramp — any object with
         .factor/.low_freq_factor/.high_freq_factor/
         .original_max_position_embeddings (e.g. model_config.RopeScaling, as
-        parsed from the checkpoint's config.json). None = no scaling."""
+        parsed from the checkpoint's config.json) — or a
+        model_config.YarnScaling for YaRN. None = no scaling."""
         L = x.var.length
         d_total = heads * d_h
         assert L == SEQ * d_total, (
             f"rope: expected length {SEQ*d_total} (SEQ*H*d_h), got {L}")
         assert d_h % 2 == 0, f"rope: d_h must be even, got {d_h}"
+        from model_config import YarnScaling
         if rope_scaling is None:
             sc = RoPEConfig(SEQ=SEQ, d_h=d_h, s_x=s_x, base=base,
                              position_offset=position_offset, heads=heads)
+        elif isinstance(rope_scaling, YarnScaling):
+            sc = RoPEConfig(SEQ=SEQ, d_h=d_h, s_x=s_x, base=base,
+                             position_offset=position_offset, heads=heads,
+                             scale_factor=float(rope_scaling.factor),
+                             original_max_pos=int(
+                                 rope_scaling.original_max_position_embeddings),
+                             yarn=True,
+                             yarn_beta_fast=float(rope_scaling.beta_fast),
+                             yarn_beta_slow=float(rope_scaling.beta_slow),
+                             yarn_mscale=float(rope_scaling.mscale),
+                             yarn_mscale_all_dim=float(rope_scaling.mscale_all_dim))
+            assert sc.original_max_pos > 0, (
+                "rope_scaling.original_max_position_embeddings must be > 0")
         else:
             sc = RoPEConfig(SEQ=SEQ, d_h=d_h, s_x=s_x, base=base,
                              position_offset=position_offset, heads=heads,

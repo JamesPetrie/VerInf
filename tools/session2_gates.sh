@@ -92,6 +92,12 @@ need toy-repaired-verify 'rust_verify: ACCEPT'
 # them (analysis/topk-routing-design.md §3.1-3.3).
 gate topk-routing python3 prover/tests/run_tests.py test_topk_routing
 suite topk-routing 21
+# RoPE frequency scaling end to end: Llama-3's ramp and YaRN (Kimi K2's
+# config at positions up to 131,070), proved and verified by the Rust binary,
+# with the scaling stripped or changed rejected. The tables themselves are
+# pinned on the CPU (test_rope_scaling's golden vectors, test_rope_yarn.py).
+gate rope-scaling python3 prover/tests/run_tests.py test_rope_scaling
+suite rope-scaling 8
 gate toy-ab env LIGERO_SWEEP_TIMING=1 python3 analysis/bench/ab_routed_cache.py
 need toy-ab 'ab_routed_cache: counts as expected'
 # A small REAL-GGUF proof through the research driver, independently
