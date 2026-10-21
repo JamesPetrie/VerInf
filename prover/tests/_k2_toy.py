@@ -3,7 +3,9 @@ loader and reference tests (CPU) and the driver suite (GPU).
 
 Two layers as K2's first two: layer 0 latent attention and a dense FFN,
 layer 1 latent attention and a top-k MoE (router, selection bias, stacked
-experts, shared expert); then the final norm and an untied head. K2's
+experts, shared expert); then the final norm and an untied head. `layers`
+> 2 appends further MoE layers like layer 1, drawn after the two-layer
+toy's tensors, so those are unchanged. K2's
 attention head dimensions are scaled down to multiples of 32 so the Q8_0
 tensors (attn_k_b, attn_v_b, attn_q_b and the experts, as in UD-Q4_K_XL's
 Q8_0 set) quantize; norms, router and bias are F32 as in the real file.
@@ -19,8 +21,10 @@ TOY = dict(V=48, d_ff_dense=64, E=8, k=3, d_ff_expert=32, d_ff_shared=32)
 TOY_MOON_MLA = dict(TOY_MLA, q_rank=None, yarn=False, routed_scale=2.446, rms_eps=1e-5)
 
 
-def tensors(seed=0, mla=TOY_MLA, toy=TOY):
-    """{name: float32 array in gguf-py's shape} for the two-layer toy."""
+def tensors(seed=0, mla=TOY_MLA, toy=TOY, layers=2):
+    """{name: float32 array in gguf-py's shape} for the toy at `layers`
+    (at least 2)."""
+    assert layers >= 2
     rng = np.random.default_rng(seed)
     d, H, dn, dr, dv = mla["d"], mla["H"], mla["d_nope"], mla["d_rope"], mla["d_v"]
     qr, kr = mla["q_rank"], mla["kv_rank"]
@@ -29,7 +33,7 @@ def tensors(seed=0, mla=TOY_MLA, toy=TOY):
     gain = lambda m: (1.0 + rng.normal(0.0, 0.1, m)).astype(np.float32)
     t = {"token_embd.weight": n(0.5, V, d), "output_norm.weight": gain(d),
          "output.weight": n(d ** -0.5, V, d)}
-    for il in range(2):
+    def attention(il):
         p = f"blk.{il}."
         t[p + "attn_norm.weight"] = gain(d)           # first, as before: K2's draws unchanged
         if qr is None:
@@ -46,19 +50,28 @@ def tensors(seed=0, mla=TOY_MLA, toy=TOY):
             p + "attn_output.weight": n((H * dv) ** -0.5, d, H * dv),
             p + "ffn_norm.weight": gain(d),
         })
+
+    def moe(il):
+        p = f"blk.{il}."
+        t.update({p + "ffn_gate_inp.weight": n(d ** -0.5, E, d),
+                  p + "exp_probs_b.bias": rng.uniform(-0.3, 0.3, E).astype(np.float32),
+                  p + "ffn_gate_exps.weight": n(d ** -0.5, E, fe, d),
+                  p + "ffn_up_exps.weight": n(d ** -0.5, E, fe, d),
+                  p + "ffn_down_exps.weight": n(fe ** -0.5, E, d, fe),
+                  p + "ffn_gate_shexp.weight": n(d ** -0.5, fs, d),
+                  p + "ffn_up_shexp.weight": n(d ** -0.5, fs, d),
+                  p + "ffn_down_shexp.weight": n(fs ** -0.5, d, fs)})
+    for il in range(2):
+        attention(il)
     f = toy["d_ff_dense"]
     t.update({"blk.0.ffn_gate.weight": n(d ** -0.5, f, d),
               "blk.0.ffn_up.weight": n(d ** -0.5, f, d),
               "blk.0.ffn_down.weight": n(f ** -0.5, d, f)})
     fe, fs = toy["d_ff_expert"], toy["d_ff_shared"]
-    t.update({"blk.1.ffn_gate_inp.weight": n(d ** -0.5, E, d),
-              "blk.1.exp_probs_b.bias": rng.uniform(-0.3, 0.3, E).astype(np.float32),
-              "blk.1.ffn_gate_exps.weight": n(d ** -0.5, E, fe, d),
-              "blk.1.ffn_up_exps.weight": n(d ** -0.5, E, fe, d),
-              "blk.1.ffn_down_exps.weight": n(fe ** -0.5, E, d, fe),
-              "blk.1.ffn_gate_shexp.weight": n(d ** -0.5, fs, d),
-              "blk.1.ffn_up_shexp.weight": n(d ** -0.5, fs, d),
-              "blk.1.ffn_down_shexp.weight": n(fs ** -0.5, d, fs)})
+    moe(1)
+    for il in range(2, layers):
+        attention(il)
+        moe(il)
     return t
 
 
@@ -104,7 +117,7 @@ def llama_metadata(w, mla=TOY_MLA, toy=TOY, layers=2):
     w.add_tokenizer_model("none")
 
 
-def write(path, seed=0, drop=(), quantize_q8=True, mla=TOY_MLA):
+def write(path, seed=0, drop=(), quantize_q8=True, mla=TOY_MLA, layers=2):
     """Write the toy and return {name: the float32 values gguf-py reads back}.
     Tensors named in `drop` are left out; `quantize_q8=False` writes every
     tensor F32; `mla=TOY_MOON_MLA` writes Moonlight's variant. The metadata
@@ -113,9 +126,9 @@ def write(path, seed=0, drop=(), quantize_q8=True, mla=TOY_MLA):
     from gguf.constants import GGMLQuantizationType as Q
     from gguf.quants import dequantize, quantize
     w = GGUFWriter(str(path), "deepseek2")
-    llama_metadata(w, mla)
+    llama_metadata(w, mla, layers=layers)
     back = {}
-    for name, a in tensors(seed, mla).items():
+    for name, a in tensors(seed, mla, layers=layers).items():
         if name in drop:
             continue
         if quantize_q8 and any(k in name for k in Q8_0_NAMES):

@@ -31,6 +31,7 @@ SUITES=(
   prover/tests/test_fidelity_study.py
   prover/tests/test_engine_precision.py
   prover/tests/test_k2_driver_structure.py
+  prover/tests/test_k2_run_only.py
   prover/tests/test_k2_float_torch.py
   prover/tests/test_k2_emulation.py
   prover/tests/test_gguf_dequant_torch.py

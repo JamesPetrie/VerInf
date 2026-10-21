@@ -507,6 +507,55 @@ def fidelity(gguf, ids, *, cfg=K2_MLA, layers=2, kk=8, offset=0, rec=None, preci
     return rec
 
 
+# ---- run-only: the integer model's logits, the tape run once without a proof -------
+
+def run_only(gguf, ids, n_prompt, *, cfg=K2_MLA, layers=2, kk=8, offset=0, precision="baseline",
+             ligero=None):
+    """The integer model's logits at a precision profile, from this driver's
+    tape and engine pass run once without a proof (prover/run_only.py): no
+    enrollment, no reveal, no witness kept. A proof of the same sequence runs
+    its own pass. Returns (the logits in real units, T × V float64; the
+    record: the build measured apart from the run, the tables, the lookups'
+    and field safety's checks, the traced names' extremes, U)."""
+    import numpy as np
+    import resource
+    import torch
+    import run_only as ro
+    sc = profile(precision)
+    rec = dict(mode="run-only", ok=False, precision=dict(name=precision, **sc.exponents()),
+               layers=layers, T=len(ids), n_prompt=n_prompt)
+    t0 = time.time()
+    b = build(gguf, list(ids[:n_prompt]), list(ids[n_prompt:]), cfg=cfg, layers=layers, kk=kk,
+              offset=offset, ligero=ligero, precision=precision)
+    rec["build_s"] = time.time() - t0
+    rec["claims"] = len(b.tape.claims)
+    rec["info"] = b.info
+    mults = {v.name[:-len("_mult")]: int(t.numel()) for v, t in b.tape.inputs.items()
+             if v.name.endswith("_mult")}
+    rec["tables"] = dict(count=len(mults), entries=sum(mults.values()), sizes=mults)
+    rec["host_rss_after_build_gb"] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1e6
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
+        rec["gpu_after_build_gib"] = torch.cuda.memory_allocated() / 2 ** 30
+    names = {wt.var: n for n, wt in b.trace.items()}
+    out, run = ro.run(b.tape, [b.logits.var, b.Sz.var], layer_of=b.layer_of, names=names)
+    rec["run"] = run
+    rec["run_s"] = run["seconds"]
+    if torch.cuda.is_available():
+        rec["gpu_peak_gib"] = torch.cuda.max_memory_allocated() / 2 ** 30
+    rec["host_rss_peak_gb"] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1e6
+    sz = int(out[b.Sz.var].reshape(-1)[0])
+    rec.update(Sz=sz, U_bits=_u_bits(sz, b.info["tail"]))
+    rec["ok"] = run["ok"]
+    T, V = len(ids), b.info["V"]
+    logits = out[b.logits.var].cpu().numpy().reshape(T, V).astype(np.float64) / sc.S_act
+    del out, b
+    log(f"run-only at {precision}, {layers} layers, T={T}: build {rec['build_s']:.1f}s, run "
+        f"{rec['run_s']:.1f}s; lookups {'ok' if run['lookups']['ok'] else 'OUTSIDE'}, field "
+        f"{'ok' if run['field']['ok'] else 'NOT ESTABLISHED'}")
+    return logits, rec
+
+
 # ---- prove: the honest proof, then the negatives against its enrollment -------------
 
 def _field_add_at(t, i, delta):
