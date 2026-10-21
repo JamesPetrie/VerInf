@@ -138,13 +138,21 @@ def op_weight(res, gguf, tensor, inp):
 
 def op_experts(res, gguf, tensor, inp, ids_key, k=8):
     """The routed experts' matmul (mul_mat_id): each position's selected experts' weights
-    against its captured input."""
-    X = _rows(res, inp)
+    against its captured input; the reference decodes one selected expert at a time (K2's
+    384 in float64 would be 45 GB a tensor)."""
+    from gguf import GGUFReader
+    from gguf.quants import dequantize
+    X = _rows(res, inp).astype(np.float64)
     ids = _rows(res, ids_key)[:, :k].astype(np.int32)
-    W = _dequant(gguf, tensor)                                              # (E, N, K)
-    ref = np.einsum("tk,tjnk->tjn", X.astype(np.float64), W[ids])
-    return dict(inputs=dict(op="mul_mat_id", a_gguf=gguf, a_tensor=tensor, b=X[:, None, :], ids=ids, token_dim=2),
-                ref=ref)
+    t = next(t for t in GGUFReader(str(gguf)).tensors if t.name == tensor)
+    N = int(t.shape[1])
+    ref = np.zeros((len(X), k, N))
+    for e in np.unique(ids):
+        W = dequantize(t.data[e:e + 1], t.tensor_type).astype(np.float64).reshape(N, -1)
+        rows, slots = np.nonzero(ids == e)
+        ref[rows, slots] = X[rows] @ W.T
+    return dict(inputs=dict(op="mul_mat_id", a_gguf=gguf, a_tensor=tensor, b=X[:, None, :].astype(np.float32),
+                            ids=ids, token_dim=2), ref=ref)
 
 
 def build(op, res, gguf):
