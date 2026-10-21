@@ -12,6 +12,12 @@
 //             loader-branch fingerprint (llama.cpp's print_info lines in load.log);
 //             vocab_only skips those lines and no_alloc cannot load tensors.
 //
+// Devices: --split-mode none|layer|row, --main-gpu and --tensor-split (comma-
+// separated proportions) as llama.cpp's; the settings, every device's memory
+// after the context is made, and the whole log (run.log, written at exit, with
+// the scheduler's placement when GGML_SCHED_DEBUG is set) are kept, so where
+// each operation ran is recorded, not assumed.
+//
 // Outputs in --out: logits.f32 (row-major, one row per scored position, i.e.
 // positions n_prompt-1 .. T-2), capture/<name>.f32 (positions x elements, all
 // positions in order), tokens.txt (the full sequence), load.log, and
@@ -43,7 +49,9 @@ struct Args {
     std::string model, tokens, out, mode = "generate";
     int n_prompt = -1, n_gen = 0, prompt_chunk = 512, cont_chunk = 1, pos_offset = 0;
     int n_batch = 512, n_ubatch = 512, n_ctx = 0, threads = 0, n_gpu_layers = 0;
-    std::string kv_type = "f16", flash_attn = "auto";
+    std::string kv_type = "f16", flash_attn = "auto", split_mode = "layer";
+    int main_gpu = 0;
+    std::vector<float> tensor_split;
     float yarn_beta_fast = -1.0f, yarn_beta_slow = -1.0f;
     std::vector<std::string> capture;
     std::vector<std::string> overrides;   // --override-tensor pattern=buft (e.g. exps=CPU)
@@ -89,17 +97,22 @@ Args parse(int argc, char ** argv) {
         else if (k == "--capture") a.capture = split(v(), ',');
         else if (k == "--override-tensor") a.overrides.push_back(v());
         else if (k == "--no-extra-bufts") a.extra_bufts = false;
+        else if (k == "--split-mode") a.split_mode = v();
+        else if (k == "--main-gpu") a.main_gpu = std::stoi(v());
+        else if (k == "--tensor-split") for (auto & x : split(v(), ',')) a.tensor_split.push_back(std::stof(x));
         else die("unknown argument " + k);
     }
     if (a.model.empty() || a.out.empty()) die("--model and --out are required");
     if (a.mode != "info" && a.tokens.empty()) die("--tokens is required");
     if (a.mode != "generate" && a.mode != "replay" && a.mode != "info") die("mode: generate|replay|info");
+    if (a.split_mode != "none" && a.split_mode != "layer" && a.split_mode != "row") die("split mode: none|layer|row");
     return a;
 }
 
 // ---- load log: kept whole, so the loader-branch fingerprint can be read ----
 
 std::string g_log;
+std::string g_out;      // the whole log goes to <out>/run.log at exit
 
 void log_cb(ggml_log_level level, const char * text, void *) {
     g_log += text;
@@ -187,6 +200,8 @@ int main(int argc, char ** argv) {
     std::string mk = "mkdir -p '" + a.out + "/capture'";
     if (system(mk.c_str()) != 0) die("cannot create " + a.out);
     llama_log_set(log_cb, nullptr);
+    g_out = a.out;
+    atexit([] { std::ofstream lf(g_out + "/run.log"); lf << g_log; });
     llama_backend_init();
 
     // tensor buffer-type overrides, as llama.cpp's --override-tensor
@@ -211,6 +226,13 @@ int main(int argc, char ** argv) {
 
     auto mp = llama_model_default_params();
     mp.n_gpu_layers = a.n_gpu_layers;
+    mp.split_mode = a.split_mode == "none" ? LLAMA_SPLIT_MODE_NONE
+                  : a.split_mode == "row" ? LLAMA_SPLIT_MODE_ROW : LLAMA_SPLIT_MODE_LAYER;
+    mp.main_gpu = a.main_gpu;
+    std::vector<float> ts(llama_max_devices(), 0.0f);
+    if (a.tensor_split.size() > ts.size()) die("--tensor-split names more devices than llama.cpp supports");
+    std::copy(a.tensor_split.begin(), a.tensor_split.end(), ts.begin());
+    if (!a.tensor_split.empty()) mp.tensor_split = ts.data();
     mp.use_extra_bufts = a.extra_bufts && a.mode != "info";
     if (a.mode == "info") mp.n_gpu_layers = 0;
     if (!ov.empty()) mp.tensor_buft_overrides = ov.data();
@@ -275,6 +297,14 @@ int main(int argc, char ** argv) {
     if (all_outputs) { cp.cb_eval = eval_cb; cp.cb_eval_user_data = &cap; }
     llama_context * ctx = llama_init_from_model(model, cp);
     if (!ctx) die("context creation failed");
+    std::string mem;
+    for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
+        auto * dev = ggml_backend_dev_get(i);
+        size_t free = 0, total = 0;
+        ggml_backend_dev_memory(dev, &free, &total);
+        mem += std::string(i ? ", " : "") + "{\"device\": " + jstr(ggml_backend_dev_name(dev)) +
+               ", \"free\": " + std::to_string(free) + ", \"total\": " + std::to_string(total) + "}";
+    }
 
     std::vector<float> logits;          // scored rows, row-major
     int n_scored = 0;
@@ -308,6 +338,7 @@ int main(int argc, char ** argv) {
     const double t0 = now();
     double t_prefill = 0, t_decode = 0;
     std::vector<llama_token> generated;
+    bool ended_by_eog = false;
     if (a.mode == "generate") {
         // prefill: only the last prompt position is scored before decoding starts
         for (int p0 = 0; p0 < n_prompt; p0 += a.prompt_chunk)
@@ -319,7 +350,8 @@ int main(int argc, char ** argv) {
             for (int v = 1; v < n_vocab; v++) if (row[v] > row[best]) best = v;
             seq.push_back(best);
             generated.push_back(best);
-            if (llama_vocab_is_eog(vocab, best) || step + 1 == a.n_gen) break;
+            ended_by_eog = llama_vocab_is_eog(vocab, best);
+            if (ended_by_eog || step + 1 == a.n_gen) break;
             const int p = (int) seq.size() - 1;
             run(p, p + 1, p + 1);
         }
@@ -367,14 +399,18 @@ int main(int argc, char ** argv) {
         << ", \"n_gpu_layers\": " << a.n_gpu_layers << ", \"kv_type\": " << jstr(a.kv_type)
         << ", \"flash_attn\": " << jstr(a.flash_attn) << ", \"yarn_beta_fast\": " << a.yarn_beta_fast
         << ", \"yarn_beta_slow\": " << a.yarn_beta_slow << ", \"extra_bufts\": " << (a.extra_bufts ? "true" : "false")
-        << ", \"overrides\": [";
+        << ", \"split_mode\": " << jstr(a.split_mode) << ", \"main_gpu\": " << a.main_gpu << ", \"tensor_split\": [";
+    for (size_t i = 0; i < a.tensor_split.size(); i++) man << (i ? ", " : "") << a.tensor_split[i];
+    man << "], \"overrides\": [";
     for (size_t i = 0; i < a.overrides.size(); i++) man << (i ? ", " : "") << jstr(a.overrides[i]);
     man << "], \"greedy_tie\": \"lowest id\"}"
         << ",\n  \"n_vocab\": " << n_vocab << ",\n  \"n_embd\": " << llama_model_n_embd(model)
         << ",\n  \"n_prompt\": " << n_prompt << ",\n  \"n_tokens\": " << seq.size()
         << ",\n  \"n_scored\": " << n_scored << ",\n  \"generated\": [" << gen << "]"
+        << ",\n  \"ended_by_eog\": " << (ended_by_eog ? "true" : "false")
         << ",\n  \"captures\": {" << caps << "},\n  \"captures_missing\": [" << missing << "]"
         << ",\n  \"capture_calls\": " << cap.calls
+        << ",\n  \"device_memory_after_context\": [" << mem << "]"
         << ",\n  \"timing_s\": {\"load\": " << t_load << ", \"prefill\": " << t_prefill
         << ", \"decode\": " << t_decode << ", \"total\": " << t_total << "}\n}\n";
     std::ofstream(a.out + "/manifest.json") << man.str();

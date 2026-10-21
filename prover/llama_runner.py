@@ -98,6 +98,40 @@ def load(out):
     return res
 
 
+_NODE = re.compile(r"^node #\s*(\d+) \(\s*([^)]*?)\):.*?\[\s*([A-Za-z0-9_]+)")
+_TOKENS = re.compile(r"input tensor '\s*inp_tokens' \[\w+, ne = \{\s*(\d+),")
+
+
+def placement(log: str) -> dict:
+    """Where the scheduler placed each node, from a run.log written under
+    GGML_SCHED_DEBUG=2: per graph print, a reservation (a graph_reserve line
+    since the last print) or an evaluation, its token count and its nodes per
+    backend. A run's later evaluations reuse a printed graph, so the prints
+    cover them. `printed` False: no placement in the log (the variable unset)."""
+    graphs, reserve, n, cur = [], False, None, None
+    for line in log.splitlines():
+        if line.startswith("graph_reserve:"):
+            reserve = True
+        m = _TOKENS.search(line)
+        if m:
+            n = int(m.group(1))
+        m = _NODE.match(line)
+        if m:
+            if m.group(1).strip() == "0":
+                cur = dict(reserve=reserve, tokens=n, backends={})
+                graphs.append(cur)
+                reserve = False
+            cur["backends"][m.group(3)] = cur["backends"].get(m.group(3), 0) + 1
+    ev = [g for g in graphs if not g["reserve"]]
+    total = {}
+    for g in ev:
+        for b, c in g["backends"].items():
+            total[b] = total.get(b, 0) + c
+    return dict(printed=bool(graphs), reservations=len(graphs) - len(ev), evaluations=len(ev),
+                nodes_per_backend=total,
+                evaluated=[dict(tokens=g["tokens"], backends=g["backends"]) for g in ev])
+
+
 # print_info lines that legitimately differ between a model and its truncation
 TRUNCATION_KEYS = {"n_layer", "n_layer_all", "model type", "model params", "file size",
                    "file type", "general.name"}

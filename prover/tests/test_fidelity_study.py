@@ -25,8 +25,8 @@ def _generated(seed=0):
     out = {}
     for pid, (n, P) in {"a": (9, 4), "b": (8, 3)}.items():
         tokens = [int(t) for t in rng.integers(0, toy.TOY["V"], n)]
-        out[pid] = dict(tokens=tokens, n_prompt=P, logits=rng.normal(0, 2, (n - P, toy.TOY["V"])),
-                        seconds=None)
+        out[pid] = dict(tokens=tokens, n_prompt=P, seconds=None,                 # float32, as the runner's
+                        logits=rng.normal(0, 2, (n - P, toy.TOY["V"])).astype(np.float32))
     return out
 
 
@@ -73,6 +73,65 @@ def test_a_run_started_again_resumes_and_reproduces_its_record(gguf, tmp_path, c
     assert all(v["ok"] for v in f["implementations"].values()) and "L1.x_out" in f["ranges"]
     assert _without_resumed(again) == _without_resumed(first)
     assert again["passages"]["b"]["resumed"] == ["p64", "baseline"]
+
+
+def test_the_reference_is_complete_before_any_integer_arm_runs(gguf, tmp_path, counted):
+    fs.full_depth(SPEC, gguf, _generated(), tmp_path, primary="baseline", exploratory=("a16",))
+    kinds = [kind for kind, _ in counted]
+    assert kinds == ["p64", "p64", "S12", "S16", "S12", "S16"], counted
+
+
+def _manifest(flash_attn="on"):
+    return dict(settings=dict(flash_attn=flash_attn, n_batch=512, n_ubatch=512, kv_type="f16", split_mode="layer"),
+                ended_by_eog=False, devices=["CPU: toy"])
+
+
+def _artifacts(gguf, tmp_path, gen):
+    eng = fs.write_engine_artifact(SPEC, gguf, gen, tmp_path, manifests={pid: _manifest() for pid in gen})
+    ref = fs.write_reference_artifact(SPEC, gguf, gen, tmp_path)
+    return eng, ref
+
+
+def _scored(gguf, gen, name):
+    import k2_loader as kl
+    W = kl.GgufWeights(str(gguf), ints=False, cfg=toy.TOY_MLA)
+    out = {}
+    for pid, g in gen.items():
+        io, _ = fs.ps.forward(g["tokens"], W, toy.TOY_MLA, fs.ps.CONFIGS[name], layers=2, kk=toy.TOY["k"])
+        out[pid] = np.asarray(io["logits"], dtype=np.float64)[g["n_prompt"] - 1:-1] / (1 << fs.ps.CONFIGS[name]["S_act"])
+    return out
+
+
+def test_the_artifacts_score_an_arithmetic_as_the_full_depth_run_does(gguf, tmp_path, counted):
+    gen = _generated()
+    full = fs.full_depth(SPEC, gguf, gen, tmp_path, primary="a16")
+    eng, ref = _artifacts(gguf, tmp_path, gen)
+    assert [k for k, _ in counted].count("p64") == 2               # the artifact reads the run's p64 parts
+    rec = fs.score(eng, ref, _scored(gguf, gen, "a16"), name="a16")
+    assert rec["acceptance"] == full["acceptance"] and rec["nll_calibration"] == full["nll_calibration"]
+    a = fs.load_artifacts(eng, ref)["passages"]["a"]
+    assert a["p64"].dtype == np.float64 and a["logits"].dtype == np.float32
+    assert a["p64"].shape == (len(gen["a"]["tokens"]) - gen["a"]["n_prompt"], toy.TOY["V"])
+
+
+def test_flash_attention_left_to_llama_cpp_is_refused(gguf, tmp_path):
+    gen = _generated()
+    with pytest.raises(ValueError, match="flash attention 'auto'"):
+        fs.write_engine_artifact(SPEC, gguf, gen, tmp_path, manifests={pid: _manifest("auto") for pid in gen})
+
+
+def test_an_altered_artifact_or_another_sequence_is_refused(gguf, tmp_path):
+    gen = _generated()
+    eng, ref = _artifacts(gguf, tmp_path, gen)
+    raw = bytearray((ref / "a.npz").read_bytes())
+    raw[-9] ^= 1
+    (ref / "a.npz").write_bytes(bytes(raw))
+    with pytest.raises(ValueError, match="differ from SHA256SUMS"):
+        fs.load_artifacts(eng, ref)
+    other = _generated(seed=1)
+    ref2 = fs.write_reference_artifact(SPEC, gguf, other, tmp_path / "other")
+    with pytest.raises(ValueError, match="another sequence"):
+        fs.load_artifacts(eng, ref2)
 
 
 def test_a_new_configuration_reuses_the_p64_rows(gguf, tmp_path, counted):

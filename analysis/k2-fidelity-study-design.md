@@ -796,6 +796,85 @@ The stages run through `prover/fidelity_study.py`:
 Engine settings beyond the adapter's are pinned by the caller. It runs end
 to end on the toy (`prover/tests/test_llama_engine.py`).
 
+### 7.1 Full depth in two parts (review of 2026-10-21)
+
+Recorded after session 12, before any full-depth K2 run. §6 is unchanged:
+this changes how the run is organized, not what it compares. A full proof
+waits.
+
+**Reusable artifacts, apart from any arithmetic.** The engine's generation
+and the float64 reference are kept as artifacts from which any arithmetic can
+be scored later without generating or recomputing either
+(`fidelity_study.py` stages `generate`, `reference` and `score`). They run on
+different pods.
+- **The engine artifact** (F1, `engine-artifact/`). Per passage:
+  - the token sequence and the prompt boundary;
+  - whether the continuation ended at end-of-generation or at the cap;
+  - the logits that chose each token, as generation produced them. The
+    scored rows are positions n_prompt − 1 … T − 2, so row 0 is the
+    prefill's prediction of the first continuation token.
+
+  With them: the runner's complete configuration, the devices and their
+  memory after the context is made, the precision environment, the
+  scheduler's placement where it was printed, the GPU topology the kit
+  attaches, and the model's and tokenizer's hashes. Flash attention left to
+  llama.cpp ("auto") is refused: the frozen configuration names it on or off.
+- **The reference artifact** (F2, `reference-artifact/`). p64's float64
+  logits at the same rows of every sequence, with the reference's identity
+  and the sources' hash. It is completed before any integer arm runs, and
+  whatever the arms do. Full depth computes p64 for every passage first.
+- **Both artifacts** carry `SHA256SUMS`, checked on loading, together with
+  the check that both hold the same sequences.
+
+These artifacts can serve a floating-point prover's arithmetic as well.
+Validating such a prover against its own specified arithmetic is separate
+work.
+
+**The integer arm at full depth runs on the GPU** (`--implementation
+run-only`; `prover/run_only.py`, `demo_k2.run_only`). The CPU model takes
+about five minutes per configuration per passage at two layers, which is
+days at 61. The run-only pass instead runs the K2 driver's own tape through
+the engine pass once, without a proof, keeping only the logits. It reuses
+the machinery, not a witness: each value is freed after its last use, and a
+proof of the same sequence runs its own pass.
+
+Two checks a proof would otherwise make are recorded as it runs, and form
+the arm's feasibility record:
+- **Lookups.** Every key is counted at the multiplicity kernel, and those
+  outside their table are reported per claim. The engine pass never refuses
+  such a key; the proof's LogUp does.
+- **Field safety.** A claim's output is trusted once a bound from its
+  inputs' magnitudes is within (P − 1)/2. The bound is K·max|a|·max|b|, then
+  for a matmul max(|a|·|b|) in float64 when that is not enough. The bounds
+  are carried claim by claim from the tape's inputs, since signed extremes
+  of reduced values cannot reveal a wrap.
+
+  The claims that only move values, read tables, or compute within windows
+  their own lookups enforce are trusted when every input is.
+
+On the toy at two and four layers, at the baseline, a14w14 and a16w16, the
+pass's logits equal the NumPy model's and the existing driver's exactly,
+with every key inside its table and every bound holding
+(`tests/test_k2_run_only.py`). Without a card it runs on Python field
+kernels (`tests/_cpu_field.py`); the same cases run on the card's kernels
+with `VERINF_RUN_ONLY_GPU=1`.
+
+**Before the engine's configuration is frozen:**
+- **The prefill discrepancy is located.** That is the first differing
+  intermediate between the batched and one-token paths on K2's weights,
+  then the operation tested with identical inputs through the relevant
+  kernels. A layer comparison alone cannot tell accumulated rounding from a
+  semantic error.
+- **The configuration is fixed:** n_ctx 1024, logical batch and microbatch
+  512, an f16 KV cache, single-token continuation decoding, and flash
+  attention explicit once the diagnostic settles it. No setting is chosen by
+  its effect on the integer arm's verdict.
+- **The deployment is all-GPU, so multi-GPU execution is qualified on its
+  own:** a split run against one GPU on a truncation. The pod is sized from a
+  load test with working-memory and KV headroom, not from checkpoint bytes.
+- **CPU controls run with the GPU hidden.** For K2 that means a CPU-only
+  build, since the CUDA build aborts on K2 without a device.
+
 ## 8. Fixtures
 
 - **The tiny synthetic K2 (`prover/tests/_k2_toy.py`),** extended with the

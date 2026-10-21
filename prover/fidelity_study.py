@@ -405,14 +405,64 @@ def _register_primary(parts, primary):
     os.replace(tmp, path)
 
 
+IMPLEMENTATIONS = ("numpy", "run-only")
+
+
+def _driver_sha256() -> str:
+    """The K2 driver's source: the run-only implementation's parts are keyed by it too."""
+    return hashlib.sha256((pathlib.Path(__file__).resolve().parents[1] / "demo" / "demo_k2.py").read_bytes()).hexdigest()
+
+
+def _run_only_arm(spec, gguf, n_layers, name):
+    """A configuration's integer logits from the K2 driver's tape run once
+    without a proof (demo_k2.run_only): the GPU's arithmetic, exact to the
+    NumPy model's, its lookups and field safety checked as it runs."""
+    if spec["adapter"]["name"] != fa.KIMI_K2["name"]:
+        raise ValueError("the run-only implementation is the K2 driver's: K2's family members need their own")
+    demo = str(pathlib.Path(__file__).resolve().parents[1] / "demo")
+    if demo not in sys.path:
+        sys.path.insert(0, demo)
+    import demo_k2 as dk
+
+    def run(ids, P):
+        logits, rec = dk.run_only(str(gguf), list(ids), P, cfg=spec["cfg"], layers=n_layers, kk=spec["k"],
+                                  precision=name)
+        return logits, rec
+    return run
+
+
+def run_only_feasibility(recs) -> dict:
+    """Proof feasibility from the run-only pass over every passage: every key
+    inside its table and every claim's output within the field by its bound,
+    on each passage; the widest established value per layer."""
+    by_layer = {}
+    for r in recs:
+        for layer, row in r["run"]["field"]["by_layer"].items():
+            b = by_layer.setdefault(layer, dict(max_bits=0.0, unestablished=0))
+            b["max_bits"] = max(b["max_bits"], row["max_bits"])
+            b["unestablished"] += row["unestablished"]
+    return dict(implementation="run-only", ok=all(r["ok"] for r in recs),
+                lookups_outside=[o for r in recs for o in r["run"]["lookups"]["outside"]],
+                field_unestablished=[u for r in recs for u in r["run"]["field"]["unestablished"]],
+                unknown_types=sorted({t for r in recs for t in r["run"]["field"]["unknown_types"]}),
+                max_bits_by_layer=by_layer, U_bits=[r["U_bits"] for r in recs],
+                seconds=dict(build=[r["build_s"] for r in recs], run=[r["run_s"] for r in recs]),
+                witness=recs[0]["run"]["witness"] if recs else None)
+
+
 def full_depth(spec, gguf, generated, work, *, primary, exploratory=(), layers=None, integer=None,
-               backend="numpy", device=None):
+               backend="numpy", device=None, implementation="numpy"):
     """p64 and the integer model on each frozen sequence; per-position KL and
     NLL over the continuation for the integer arm and the engine baseline;
     §6's acceptance and the §6.5 calibration. `integer(ids)` returns the
     integer arm's real-valued logits (`primary` is then "integer"); by
-    default the CPU integer model runs at `primary` and at each
-    `exploratory` configuration, all against one p64 and one baseline.
+    default the integer model runs at `primary` and at each `exploratory`
+    configuration, all against one p64 and one baseline: the CPU model
+    (`implementation` "numpy"), or the K2 driver's tape run once on the GPU
+    without a proof ("run-only", demo_k2.run_only).
+
+    p64 is computed for every passage before any integer arm runs, so the
+    reference is complete whatever happens to the arms.
 
     The record's acceptance is the primary's, named before the run and kept
     by the work directory (a resume naming another primary is refused); the
@@ -420,18 +470,22 @@ def full_depth(spec, gguf, generated, work, *, primary, exploratory=(), layers=N
     replaces the primary's verdict. p64 is `reference(backend, device)`'s,
     recorded under "reference".
 
-    Proof feasibility is recorded beside it and never enters it: each
-    configuration's ranges over every passage against the claims'
-    constraints, per implementation (k2_precision_study.feasibility).
+    Proof feasibility is recorded beside it and never enters it: for the
+    CPU model, each configuration's ranges over every passage against the
+    claims' constraints, per implementation (k2_precision_study.feasibility);
+    for the run-only pass, its lookups and field safety (run_only_feasibility).
 
     Each passage's p64 rows (the continuation's) and each configuration's
     per-position metrics are parts in `work`/full-depth-parts, keyed by the
-    model, the layers, the GGUF's shards, the prover's sources, the p64
-    reference's identity, the sequence and the configuration, under one
-    directory per reference (so switching never discards either's); a run finds the parts an earlier one finished and
-    resumes after them. An `integer` callable's metrics are never saved, and
-    it has no ranges."""
+    model, the layers, the GGUF's shards, the prover's sources (and the
+    driver's, for the run-only pass), the p64 reference's identity, the
+    sequence, the configuration and its implementation, under one directory
+    per reference (so switching never discards either's); a run finds the
+    parts an earlier one finished and resumes after them. An `integer`
+    callable's metrics are never saved, and it has no ranges."""
     cfg, k = spec["cfg"], spec["k"]
+    if implementation not in IMPLEMENTATIONS:
+        raise ValueError(f"implementation {implementation!r}: one of {IMPLEMENTATIONS}")
     W = GgufWeights(str(gguf), ints=False, cfg=cfg)
     md = gt.metadata(gguf)
     n_layers = layers or int(md[f"{md['general.architecture']}.block_count"])
@@ -440,30 +494,33 @@ def full_depth(spec, gguf, generated, work, *, primary, exploratory=(), layers=N
     if integer is not None and (primary != "integer" or exploratory):
         raise ValueError("an integer callable is the one configuration, primary 'integer'")
     configs = (primary, *exploratory)
-    if integer is None:
+    if integer is not None:
+        arms = {"integer": (lambda ids, P: (integer(ids), None), None)}
+    elif implementation == "run-only":
+        arms = {name: (_run_only_arm(spec, gguf, n_layers, name), dict(ps.CONFIGS[name], implementation="run-only",
+                                                                        driver=_driver_sha256()))
+                for name in configs}
+    else:
         def make(name):
-            def run(ids):
+            def run(ids, P):
                 io, ranges = ps.forward(ids, W, cfg, ps.CONFIGS[name], layers=n_layers, kk=k)
                 return (np.asarray(io["logits"], dtype=np.float64) / (1 << ps.CONFIGS[name]["S_act"]),
                         ranges.as_dict())
             return run
         arms = {name: (make(name), ps.CONFIGS[name]) for name in configs}
-    else:
-        arms = {"integer": (lambda ids: (integer(ids), None), None)}
     ident, p64_forward = reference(backend, device)
     _register_primary(pathlib.Path(work) / PARTS, primary)
     parts = pathlib.Path(work) / PARTS / f"{ident['backend']}-{ident['device'].replace(':', '')}"
     base = dict(model=spec["adapter"]["name"], layers=n_layers, k=k, gguf=_gguf_identity(gguf),
                 sources=_sources_sha256(), reference=ident)
-    per = {name: [] for name in arms}
-    per_ranges = {name: [] for name in arms}
-    per_eng, per_p64 = [], []
-    rec = dict(model=spec["adapter"]["name"], layers=n_layers, reference=ident, passages={})
+    rec = dict(model=spec["adapter"]["name"], layers=n_layers, reference=ident, implementation=implementation,
+               passages={})
+
+    # the reference, every passage, before any arm
+    refs = {}
     for pid, g in generated.items():
         ids, P = g["tokens"], g["n_prompt"]
         rows = slice(P - 1, len(ids) - 1)                  # positions scoring the continuation
-        tgt = ids[P:]
-        key = dict(base, sequence=lr.ids_sha256(ids), n_prompt=P)
 
         def p64():
             t0 = time.time()
@@ -471,7 +528,19 @@ def full_depth(spec, gguf, generated, work, *, primary, exploratory=(), layers=N
             if ref.dtype != np.dtype(ident["dtype"]):
                 raise TypeError(f"the {ident['backend']} reference gave {ref.dtype}, not {ident['dtype']}")
             return dict(ref=ref[rows], seconds=np.float64(time.time() - t0))
+        key = dict(base, sequence=lr.ids_sha256(ids), n_prompt=P)
         part, loaded = _part(parts / pid / "p64.npz", key, p64)
+        refs[pid] = (part, loaded, key)
+        log(pid, "p64", "(resumed)" if loaded else f"{float(part['seconds']):.0f} s")
+
+    per = {name: [] for name in arms}
+    per_found = {name: [] for name in arms}
+    per_eng, per_p64 = [], []
+    for pid, g in generated.items():
+        ids, P = g["tokens"], g["n_prompt"]
+        rows = slice(P - 1, len(ids) - 1)
+        tgt = ids[P:]
+        part, loaded, key = refs[pid]
         ref = part["ref"]
         resumed = ["p64"] if loaded else []
         secs = dict(p64=float(part["seconds"]), generate=g.get("seconds"))
@@ -483,25 +552,26 @@ def full_depth(spec, gguf, generated, work, *, primary, exploratory=(), layers=N
         for name, (fn, settings) in arms.items():
             def score():
                 t0 = time.time()
-                logits, ranges = fn(ids)
+                logits, found = fn(ids, P)
                 pi = fm.position_metrics(ref, logits[rows], tgt)
                 out = dict(kl=pi["kl"], nll=pi["nll"], seconds=np.float64(time.time() - t0))
-                if ranges is not None:
-                    out["ranges"] = np.array(json.dumps(ranges))
+                if found is not None:
+                    out["ranges"] = np.array(json.dumps(found, default=str))   # the name earlier parts use
                 return out
             if settings is None:
-                part, loaded = score(), False
+                part_i, loaded_i = score(), False
             else:
-                part, loaded = _part(parts / pid / f"{name}.npz", dict(key, config=name, settings=settings),
-                                     score)
-            pi = dict(kl=part["kl"], nll=part["nll"])
-            secs[name] = float(part["seconds"])
-            if loaded:
+                part_i, loaded_i = _part(parts / pid / (f"{name}.npz" if implementation == "numpy"
+                                                        else f"{name}.{implementation}.npz"),
+                                         dict(key, config=name, settings=settings), score)
+            pi = dict(kl=part_i["kl"], nll=part_i["nll"])
+            secs[name] = float(part_i["seconds"])
+            if loaded_i:
                 resumed.append(name)
             per[name].append(pi)
-            per_ranges[name].append(json.loads(str(part["ranges"])) if "ranges" in part else None)
+            per_found[name].append(json.loads(str(part_i["ranges"])) if "ranges" in part_i else None)
             prow["integer"][name] = summary(pi)
-            log(pid, name, *(["(resumed)"] if loaded else []), prow["integer"][name])
+            log(pid, name, *(["(resumed)"] if loaded_i else []), prow["integer"][name])
         log(pid, "engine", prow["engine"])
         rec["passages"][pid] = prow
     rec["primary"] = primary
@@ -509,14 +579,201 @@ def full_depth(spec, gguf, generated, work, *, primary, exploratory=(), layers=N
     rec["exploratory"] = {name: fm.acceptance(per[name], per_eng) for name in exploratory}
     rec["nll_calibration"] = fm.nll_calibration(per_p64, [e["nll"] for e in per_eng])
     rec["feasibility"] = {}
-    for name, rgs in per_ranges.items():
-        if rgs and all(r is not None for r in rgs):
-            rg = ki.Ranges.from_dicts(*rgs)
+    for name, found in per_found.items():
+        if not found or any(f is None for f in found):
+            continue
+        if implementation == "run-only":
+            f = rec["feasibility"][name] = run_only_feasibility(found)
+            log(name, "run-only:", "every key inside its table, every bound within the field" if f["ok"] else
+                f"{len(f['lookups_outside'])} lookups outside, {len(f['field_unestablished'])} not established",
+                "widest", max((b["max_bits"] for b in f["max_bits_by_layer"].values()), default=0), "bits")
+        else:
+            rg = ki.Ranges.from_dicts(*found)
             rec["feasibility"][name] = dict(ps.feasibility(rg), ranges=rg.as_dict())
             f = rec["feasibility"][name]
             log(name, "feasible:", {i: v["ok"] for i, v in f["implementations"].items()},
                 "output width", f["output_width_needed"], "RMSNorm carries", f["rmsnorm_carries"])
     return rec
+
+
+# ---- the reusable artifacts: the engine's generation and the float64 reference ---------
+
+ENGINE_ARTIFACT, REFERENCE_ARTIFACT = "engine-artifact", "reference-artifact"
+SCORED = "rows n_prompt − 1 .. T − 2: row 0 is the prefill's prediction of the first continuation token"
+
+
+def _sha256_file(path) -> str:
+    return lr.file_sha256(path)
+
+
+def _write_sums(d):
+    d = pathlib.Path(d)
+    lines = [f"{_sha256_file(f)}  {f.name}\n" for f in sorted(d.iterdir()) if f.name != "SHA256SUMS"]
+    (d / "SHA256SUMS").write_text("".join(lines))
+
+
+def _check_sums(d) -> None:
+    d = pathlib.Path(d)
+    listed = {}
+    for line in (d / "SHA256SUMS").read_text().splitlines():
+        h, name = line.split("  ", 1)
+        listed[name] = h
+    present = {f.name for f in d.iterdir() if f.name != "SHA256SUMS"}
+    if present != set(listed):
+        raise ValueError(f"{d}: files {sorted(present ^ set(listed))} are not as SHA256SUMS lists them")
+    bad = [n for n, h in listed.items() if _sha256_file(d / n) != h]
+    if bad:
+        raise ValueError(f"{d}: {bad} differ from SHA256SUMS")
+
+
+def tokenizer_sha256(gguf) -> str:
+    """The GGUF's tokenizer: every tokenizer.* key-value (the vocabulary, its
+    types and merges, the special ids, the chat template), hashed."""
+    md = gt.metadata(gguf)
+    tok = {k: v for k, v in md.items() if k.startswith("tokenizer.")}
+    blob = json.dumps(tok, sort_keys=True, default=lambda x: x.tolist() if hasattr(x, "tolist") else str(x))
+    return hashlib.sha256(blob.encode()).hexdigest()
+
+
+def write_engine_artifact(spec, gguf, generated, work, *, manifests, placements=None, model_sha256=None,
+                          passages_sha256=None, attach=()):
+    """F1's reusable record (§3.3, review of 2026-10-21), enough to score any
+    arithmetic later without generating again: per passage the full token
+    sequence, the prompt boundary, whether the continuation ended at EOS or
+    at the cap, and the logits that chose each token as they were produced
+    (SCORED); with the engine's complete configuration (the runner's
+    manifest: settings, devices, their memory, the precision environment),
+    the scheduler's placement where it was printed, and the model's and
+    tokenizer's hashes. Refused when flash attention was left to llama.cpp
+    ("auto"): the frozen configuration names it."""
+    d = pathlib.Path(work) / ENGINE_ARTIFACT
+    d.mkdir(parents=True, exist_ok=True)
+    man = dict(kind="engine", model=spec["adapter"]["name"], n_ctx=N_CTX, continuation_cap=CONTINUATION,
+               scored=SCORED, gguf=_gguf_identity(gguf), model_sha256=model_sha256,
+               tokenizer_sha256=tokenizer_sha256(gguf), passages_sha256=passages_sha256, passages={})
+    for pid, g in generated.items():
+        m = manifests[pid]
+        fa_setting = m["settings"]["flash_attn"]
+        if fa_setting not in ("on", "off"):
+            raise ValueError(f"{pid}: flash attention {fa_setting!r}; the frozen configuration names it on or off")
+        tokens, P = list(g["tokens"]), int(g["n_prompt"])
+        logits = np.ascontiguousarray(g["logits"], dtype=np.float32)
+        if logits.shape[0] != len(tokens) - P:
+            raise ValueError(f"{pid}: {logits.shape[0]} logit rows for {len(tokens) - P} continuation tokens")
+        eos = bool(m["ended_by_eog"])
+        np.savez(d / f"{pid}.npz", tokens=np.asarray(tokens, dtype=np.int32), n_prompt=np.int64(P), logits=logits)
+        man["passages"][pid] = dict(n_prompt=P, n_tokens=len(tokens), n_scored=len(tokens) - P,
+                                    ended_by="eos" if eos else "cap", last_token=int(tokens[-1]),
+                                    tokens_sha256=lr.ids_sha256(tokens),
+                                    logits_sha256=hashlib.sha256(logits.tobytes()).hexdigest(),
+                                    runner=m, placement=(placements or {}).get(pid))
+    for f in attach:
+        f = pathlib.Path(f)
+        (d / f.name).write_bytes(f.read_bytes())
+        man.setdefault("attached", []).append(f.name)
+    (d / "manifest.json").write_text(json.dumps(man, indent=1, default=str))
+    _write_sums(d)
+    log("engine artifact:", d)
+    return d
+
+
+def write_reference_artifact(spec, gguf, generated, work, *, layers=None, backend="numpy", device=None,
+                             model_sha256=None):
+    """F2's reusable record: p64's logits at the scored rows of every frozen
+    sequence, from the full-depth parts (computed here when absent), with the
+    reference's identity. It is complete before, and whatever, any integer
+    arm does."""
+    cfg, k = spec["cfg"], spec["k"]
+    W = GgufWeights(str(gguf), ints=False, cfg=cfg)
+    md = gt.metadata(gguf)
+    n_layers = layers or int(md[f"{md['general.architecture']}.block_count"])
+    ident, p64_forward = reference(backend, device)
+    parts = pathlib.Path(work) / PARTS / f"{ident['backend']}-{ident['device'].replace(':', '')}"
+    base = dict(model=spec["adapter"]["name"], layers=n_layers, k=k, gguf=_gguf_identity(gguf),
+                sources=_sources_sha256(), reference=ident)
+    d = pathlib.Path(work) / REFERENCE_ARTIFACT
+    d.mkdir(parents=True, exist_ok=True)
+    man = dict(kind="reference", model=spec["adapter"]["name"], layers=n_layers, reference=ident,
+               sources=base["sources"], gguf=base["gguf"], model_sha256=model_sha256, scored=SCORED, passages={})
+    for pid, g in generated.items():
+        ids, P = g["tokens"], g["n_prompt"]
+
+        def p64():
+            t0 = time.time()
+            ref = np.asarray(p64_forward(ids, W, cfg, n_layers, k))
+            return dict(ref=ref[P - 1:len(ids) - 1], seconds=np.float64(time.time() - t0))
+        part, loaded = _part(parts / pid / "p64.npz", dict(base, sequence=lr.ids_sha256(ids), n_prompt=P), p64)
+        ref = np.ascontiguousarray(part["ref"], dtype=np.float64)
+        np.savez(d / f"{pid}.npz", p64=ref)
+        man["passages"][pid] = dict(n_prompt=P, n_tokens=len(ids), tokens_sha256=lr.ids_sha256(ids),
+                                    p64_sha256=hashlib.sha256(ref.tobytes()).hexdigest(),
+                                    seconds=float(part["seconds"]), resumed=loaded)
+        log(pid, "p64", "(resumed)" if loaded else f"{float(part['seconds']):.0f} s")
+    (d / "manifest.json").write_text(json.dumps(man, indent=1, default=str))
+    _write_sums(d)
+    log("reference artifact:", d)
+    return d
+
+
+def load_artifacts(engine_dir, reference_dir) -> dict:
+    """Both artifacts, every file checked against its SHA256SUMS, the two
+    checked to be of the same sequences: {passage: tokens, n_prompt, the
+    engine's logits, p64's}, with both manifests."""
+    _check_sums(engine_dir)
+    _check_sums(reference_dir)
+    em_ = json.loads((pathlib.Path(engine_dir) / "manifest.json").read_text())
+    rm = json.loads((pathlib.Path(reference_dir) / "manifest.json").read_text())
+    if list(em_["passages"]) != list(rm["passages"]):
+        raise ValueError("the artifacts hold different passages")
+    out = {}
+    for pid, e in em_["passages"].items():
+        r = rm["passages"][pid]
+        if e["tokens_sha256"] != r["tokens_sha256"] or e["n_prompt"] != r["n_prompt"]:
+            raise ValueError(f"{pid}: the reference is of another sequence")
+        with np.load(pathlib.Path(engine_dir) / f"{pid}.npz") as z:
+            tokens, P, logits = [int(t) for t in z["tokens"]], int(z["n_prompt"]), z["logits"]
+        with np.load(pathlib.Path(reference_dir) / f"{pid}.npz") as z:
+            p64 = z["p64"]
+        if logits.shape != p64.shape:
+            raise ValueError(f"{pid}: engine rows {logits.shape} against reference rows {p64.shape}")
+        out[pid] = dict(tokens=tokens, n_prompt=P, logits=logits, p64=p64)
+    return dict(passages=out, engine=em_, reference=rm)
+
+
+def score(engine_dir, reference_dir, arm_logits, *, name="arm") -> dict:
+    """§6 for a new arithmetic, from the artifacts alone: `arm_logits` maps
+    each passage to its logits at the scored rows (SCORED), in real units.
+    Nothing is generated or recomputed."""
+    a = load_artifacts(engine_dir, reference_dir)
+    per_arm, per_eng, per_p64, passages = [], [], [], {}
+    for pid, x in a["passages"].items():
+        arm = np.asarray(arm_logits[pid], dtype=np.float64)
+        if arm.shape != x["p64"].shape:
+            raise ValueError(f"{pid}: the arm gives {arm.shape} rows, the artifacts {x['p64'].shape}")
+        tgt = x["tokens"][x["n_prompt"]:]
+        pa = fm.position_metrics(x["p64"], arm, tgt)
+        pe = fm.position_metrics(x["p64"], x["logits"], tgt)
+        per_arm.append(pa)
+        per_eng.append(pe)
+        per_p64.append(fm.nll_bits(x["p64"], tgt))
+        passages[pid] = dict(scored=len(tgt), arm=summary(pa), engine=summary(pe))
+    return dict(arm=name, model=a["engine"]["model"], reference=a["reference"]["reference"],
+                passages=passages, acceptance=fm.acceptance(per_arm, per_eng),
+                nll_calibration=fm.nll_calibration(per_p64, [e["nll"] for e in per_eng]))
+
+
+def sequences_from_engine_artifact(d) -> dict:
+    """The frozen sequences and the baseline's logits, from an engine
+    artifact checked against its SHA256SUMS."""
+    _check_sums(d)
+    man = json.loads((pathlib.Path(d) / "manifest.json").read_text())
+    out = {}
+    for pid in man["passages"]:
+        with np.load(pathlib.Path(d) / f"{pid}.npz") as z:
+            tokens = [int(t) for t in z["tokens"]]
+            out[pid] = dict(tokens=tokens, n_prompt=int(z["n_prompt"]), logits=z["logits"],
+                            sha256=lr.ids_sha256(tokens), seconds=None)
+    return out
 
 
 def load_generated(work) -> dict:
@@ -568,7 +825,8 @@ def p64_check(spec, gguf, ids, *, device="cuda", layers=2):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("stage", choices=("two-layer", "two-layer-merge", "engine-paths", "full-depth", "p64-check"))
+    ap.add_argument("stage", choices=("two-layer", "two-layer-merge", "engine-paths", "generate", "reference",
+                                      "full-depth", "score", "p64-check"))
     ap.add_argument("records", nargs="*", help="two-layer-merge: the records to merge, in passage order")
     ap.add_argument("--model", choices=tuple(MODELS))
     ap.add_argument("--gguf")
@@ -599,7 +857,18 @@ def main(argv=None):
                     help="full depth: the sequences and baseline logits already in --work, not generated "
                     "again (finished parts in --work are always reused)")
     ap.add_argument("--engine", default="{}", help="JSON: further engine settings (n_gpu_layers, kv_type, "
-                    "flash_attn, n_batch, n_ubatch, override_tensor), pinned by the kit")
+                    "flash_attn, n_batch, n_ubatch, split_mode, main_gpu, tensor_split, override_tensor), "
+                    "pinned by the kit")
+    ap.add_argument("--implementation", choices=IMPLEMENTATIONS, default="numpy",
+                    help="full depth: the integer model's implementation (run-only: the K2 driver on the GPU)")
+    ap.add_argument("--model-sha256", help="generate, reference: a JSON file {shard name: sha256} the kit verified")
+    ap.add_argument("--attach", default="", help="generate: further records for the engine artifact "
+                    "(the GPU topology, the kit's pins), comma-separated")
+    ap.add_argument("--engine-artifact", help="reference, score: the engine artifact's directory")
+    ap.add_argument("--reference-artifact", help="score: the reference artifact's directory")
+    ap.add_argument("--arm-logits", help="score: a directory of <passage>.npz, each with `logits` at the "
+                    "scored rows, in real units")
+    ap.add_argument("--name", default="arm", help="score: the arithmetic's name in the record")
     # intermixed: before 3.12's later patch releases (session 12's pod had 3.12.3),
     # parse_args leaves `records` empty when options separate it from the stage
     a = ap.parse_intermixed_args(argv)
@@ -607,12 +876,32 @@ def main(argv=None):
         ap.error("full-depth needs --primary: the configuration named before the run")
     work = pathlib.Path(a.work)
     work.mkdir(parents=True, exist_ok=True)
+    if a.stage == "score":
+        if not (a.engine_artifact and a.reference_artifact and a.arm_logits):
+            ap.error("score needs --engine-artifact, --reference-artifact and --arm-logits")
+        arm = {}
+        for f in sorted(pathlib.Path(a.arm_logits).glob("*.npz")):
+            with np.load(f) as z:
+                arm[f.stem] = z["logits"]
+        rec = score(a.engine_artifact, a.reference_artifact, arm, name=a.name)
+        dst = work / f"score-{a.name}.json"
+        dst.write_text(json.dumps(rec, indent=1, default=str))
+        log(a.name, "acceptance:", rec["acceptance"]["overall"], "record:", dst)
+        return 0
     if a.stage == "two-layer-merge":
         rec = merge_two_layer([json.loads(pathlib.Path(r).read_text()) for r in a.records])
         log_feasibility(rec["feasibility"])
         dst = work / a.out
         dst.write_text(json.dumps(rec, indent=1, default=str))
         log("record:", dst)
+        return 0
+    model_sha = json.loads(pathlib.Path(a.model_sha256).read_text()) if a.model_sha256 else None
+    if a.stage == "reference":
+        if a.model is None or a.gguf is None:
+            ap.error("reference needs --model and --gguf")
+        gen = (sequences_from_engine_artifact(a.engine_artifact) if a.engine_artifact else load_generated(work))
+        write_reference_artifact(MODELS[a.model], a.gguf, gen, work, layers=a.layers, backend=a.backend,
+                                 device=a.device, model_sha256=model_sha)
         return 0
     missing = [o for o in ("model", "gguf", "passages", "runner", "render") if getattr(a, o) is None]
     if missing:
@@ -648,9 +937,18 @@ def main(argv=None):
             (work / "sequences.json").write_text(json.dumps(
                 {pid: dict(tokens=g["tokens"], n_prompt=g["n_prompt"], sha256=g["sha256"])
                  for pid, g in gen.items()}, indent=1))
+        if a.stage == "generate":
+            out = {pid: pathlib.Path(work) / "generate" / pid for pid in gen}
+            write_engine_artifact(MODELS[a.model], a.gguf, gen, work,
+                                  manifests={pid: json.loads((o / "manifest.json").read_text()) for pid, o in out.items()},
+                                  placements={pid: lr.placement((o / "run.log").read_text()) for pid, o in out.items()
+                                              if (o / "run.log").exists()},
+                                  model_sha256=model_sha, passages_sha256=_sha256_file(a.passages),
+                                  attach=[f for f in a.attach.split(",") if f])
+            return 0
         exploratory = tuple(c for c in a.exploratory.split(",") if c)
         rec = full_depth(MODELS[a.model], a.gguf, gen, work, primary=a.primary, exploratory=exploratory,
-                         layers=a.layers, backend=a.backend, device=a.device)
+                         layers=a.layers, backend=a.backend, device=a.device, implementation=a.implementation)
         dst = work / (f"full-depth-primary-{a.primary}.json" if not exploratory
                       else f"full-depth-primary-{a.primary}-exploratory-{'-'.join(exploratory)}.json")
     dst.write_text(json.dumps(rec, indent=1, default=str))

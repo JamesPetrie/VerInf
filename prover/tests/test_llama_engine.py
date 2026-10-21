@@ -11,6 +11,7 @@ which has no llama.cpp; without the variable the suite is skipped.
 - with llama.cpp's own betas it is not, which is why the adapter sets them;
 - generation is reproduced bit for bit by a replay with one-token steps;
 - a truncation loads on the full model's branch."""
+import json
 import os
 import pathlib
 import sys
@@ -127,6 +128,25 @@ def test_the_context_size_is_required(tmp_path):
                settings=dict(threads=2, n_ctx=8))
 
 
+def test_the_device_settings_their_memory_and_the_whole_log_are_kept(tmp_path):
+    p = tmp_path / "toy.gguf"
+    toy.write(p)
+    r = lr.run(RUNNER, p, tmp_path / "x", ids=IDS, mode="replay", n_prompt=1,
+               settings=dict(threads=2, n_ctx=64, split_mode="none", main_gpu=0, tensor_split="1"),
+               env={"GGML_SCHED_DEBUG": "2"})
+    s = r["manifest"]["settings"]
+    assert (s["split_mode"], s["main_gpu"], s["tensor_split"]) == ("none", 0, [1])
+    mem = r["manifest"]["device_memory_after_context"]
+    assert [d["device"] for d in mem] and all(d["total"] >= d["free"] >= 0 for d in mem)
+    log = (tmp_path / "x" / "run.log").read_text()
+    assert "print_info:" in log and "node #" in log         # the load and the scheduler's placement
+    pl = lr.placement(log)
+    assert pl["printed"] and pl["evaluations"] >= 1 and set(pl["nodes_per_backend"]) == {"CPU"}, pl
+    with pytest.raises(RuntimeError, match="split mode"):
+        lr.run(RUNNER, p, tmp_path / "y", ids=IDS, mode="replay", n_prompt=1,
+               settings=dict(threads=2, n_ctx=64, split_mode="rows"))
+
+
 def test_a_truncation_loads_on_the_full_models_branch(f32_toy, tmp_path):
     gt.truncate(f32_toy, tmp_path / "one.gguf", 1)
     full = lr.run(RUNNER, f32_toy, tmp_path / "full", mode="info")["fingerprint"]
@@ -167,13 +187,31 @@ def test_the_study_runs_end_to_end_on_the_toy(tmp_path):
     for name, r in arms.items():
         if name != "p64":
             assert np.isfinite(r["mean_kl"]) and "L1.routing" in r["explain"], name
-    gen = fs.generate(spec, p, {"a": IDS[:5], "b": IDS[3:9]}, RUNNER, tmp_path / "gen", threads=2, n_gen=6)
+    gen = fs.generate(spec, p, {"a": IDS[:5], "b": IDS[3:9]}, RUNNER, tmp_path / "gen", threads=2, n_gen=6,
+                      engine=dict(flash_attn="off"))
     full = fs.full_depth(spec, p, gen, tmp_path / "full", primary="a16", exploratory=("baseline",))
     assert full["layers"] == 2 and set(full["passages"]) == {"a", "b"}
     assert full["primary"] == "a16" and set(full["exploratory"]) == {"baseline"}
     assert full["acceptance"]["overall"] in ("accept", "fail", "inconclusive")
     assert set(full["acceptance"]["rows"]) == {"mean_kl", "p99_kl", "mean_nll", "max_kl"}
     assert "difference" in full["nll_calibration"]
+    # the artifacts: the generation's and p64's, enough to score an arithmetic again without either
+    runs = {pid: tmp_path / "gen" / "generate" / pid for pid in gen}
+    eng = fs.write_engine_artifact(spec, p, gen, tmp_path / "gen",
+                                   manifests={pid: lr.load(o)["manifest"] for pid, o in runs.items()},
+                                   placements={pid: lr.placement((o / "run.log").read_text()) for pid, o in runs.items()})
+    ref = fs.write_reference_artifact(spec, p, gen, tmp_path / "full")
+    m = json.loads((eng / "manifest.json").read_text())
+    for pid, g in gen.items():
+        e = m["passages"][pid]
+        assert e["runner"]["settings"]["flash_attn"] == "off" and e["n_scored"] == len(g["tokens"]) - g["n_prompt"]
+        assert e["ended_by"] in ("eos", "cap") and e["placement"]["printed"] is False   # GGML_SCHED_DEBUG unset
+    W = kl.GgufWeights(str(p), ints=False, cfg=toy.TOY_MLA)
+    arm = {}
+    for pid, g in gen.items():
+        io, _ = fs.ps.forward(g["tokens"], W, toy.TOY_MLA, fs.ps.CONFIGS["a16"], layers=2, kk=toy.TOY["k"])
+        arm[pid] = np.asarray(io["logits"], dtype=np.float64)[g["n_prompt"] - 1:-1] / (1 << fs.ps.CONFIGS["a16"]["S_act"])
+    assert fs.score(eng, ref, arm, name="a16")["acceptance"] == full["acceptance"]
 
 
 def test_the_expected_fingerprint_is_what_llama_cpp_prints(f32_toy, tmp_path):
