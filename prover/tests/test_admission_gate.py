@@ -272,3 +272,22 @@ def test_caps_match_the_model():
     assert total <= admission.TOTAL_CAP_S, total
     print(f"    caps match the model on all {len(parts)} stages; "
           f"total {total:.1f}s of {admission.TOTAL_CAP_S:.0f}s")
+
+
+def test_a_missing_admission_model_is_a_refusal_not_a_name_error():
+    """The caps are loaded at import. Before this fix a missing model surfaced as
+    a FileNotFoundError from exec_module, and the refusal branch named
+    AdmissionError before the class was defined, so it could only have raised
+    NameError."""
+    saved = admission._ANALYSIS
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            admission._ANALYSIS = pathlib.Path(d)
+            try:
+                admission._model_stage_caps()
+            except admission.AdmissionError as exc:
+                assert "admission model not found" in str(exc)
+            else:
+                raise AssertionError("a missing admission model was accepted")
+    finally:
+        admission._ANALYSIS = saved

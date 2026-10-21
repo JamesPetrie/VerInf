@@ -30,6 +30,7 @@ SUITES=(
   prover/tests/test_sha256_trace.py
   prover/tests/test_shard_plan.py
   prover/tests/test_shard_worker.py
+  prover/tests/test_skip_b_chunk.py
   prover/tests/test_statement_stability.py
   prover/tests/test_token_recorder.py
   prover/tests/test_wc_bridge_cpu.py
