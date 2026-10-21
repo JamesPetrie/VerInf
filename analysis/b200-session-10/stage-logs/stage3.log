@@ -1,0 +1,21 @@
+STAGE3 START 22:57:07
+fidelity-s100 rc=0 23:00:51
+    RESEARCH run, mode fidelity: T=100 (synthetic token ids), layers=2, k=8, offset=0, T_QUERIES=54
+    fidelity: logits rel 0.0514, top-1 agreement 0.830
+    routing L1: end to end 37/100 tokens differ; same input 3/100
+    RESULT PASS
+fidelity-s100-long rc=0 23:04:31
+    RESEARCH run, mode fidelity: T=100 (synthetic token ids), layers=2, k=8, offset=130072, T_QUERIES=54
+    fidelity: logits rel 0.0523, top-1 agreement 0.840
+    routing L1: end to end 40/100 tokens differ; same input 1/100
+    RESULT PASS
+prove-s100 rc=0 23:29:08
+    enrolled 365514 weight rows in 11.2s, root b52f1926af2f1cb5…
+    bridge enrollment 5.2s, identity 732da5426bf2fedd…
+    PROVE 80.6s, peak GPU 50.37 GiB
+    rust verify_proof (honest, same-run anchors): ACCEPT in 193.4s
+    negative interleave: change applied 24x; Rust REJECT under the honest anchors -> ok (270.1s)
+    negative yarn-witness: change applied 24x; Rust REJECT under the honest anchors -> ok (271.7s)
+    negative yarn-statement: change applied 4x; Rust REJECT under the honest anchors; own digest ACCEPT -> ok (284.4s)
+    negative wrong-slice: change applied 3x; Rust REJECT under the honest anchors -> ok (135.2s)
+    RESULT PASS

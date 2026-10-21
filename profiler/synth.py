@@ -441,7 +441,9 @@ def _topk_experts(b, x, s_sel, s, bias, il, S, d, d_ff, E, k, prefix, *,
            inputs=[x], out=f"{prefix}.x_k", out_len=Tp * d)
 
     def routed(kind, x_in, K, J, rescaled=True):
-        ws = [b.input_var(f"{prefix}.e{e}.W_{kind}", K * J, persistent=True,
+        # bridge-held shards are not in the W block: external, not persistent,
+        # as the tape records them (extract.py)
+        ws = [b.input_var(f"{prefix}.e{e}.W_{kind}", K * J, persistent=not bridge,
                           external=bridge) for e in range(E)]
         raw = b.emit("routed_projected", dict(T=Tp, K=K, J=J, E=E), layer=il,
                      label=f"{prefix}.{kind}_rp", inputs=[x_in, f"{prefix}.M_k"] + ws,
@@ -474,23 +476,22 @@ def _topk_experts(b, x, s_sel, s, bias, il, S, d, d_ff, E, k, prefix, *,
 
 def _mla_attention(b, x, il, S, d, H, q_rank, kv_rank, d_nope, d_rope, d_v,
                    prefix):
-    """DeepSeek-V3 multi-head latent attention, composed from existing claims
-    WITHOUT weight absorption (the reference modeling code's form): the query
-    through its low-rank pair with a norm between; the compressed KV and the
-    shared rope key from one down projection (two matmuls here, the weight's
-    column split); the per-head key and value from the compressed KV;
-    YaRN RoPE on the rope parts (a RoPE claim with other tables); the rope
-    key broadcast to the heads; query and key assembled per head (a pin of
-    the concat's cost); scores, softmax and AV over all H heads; the output
-    projection. ASSUMPTION until the K2 demo fixes the composition (design
-    item 5): the pins and the split matmuls are one plausible layout. None
-    of them is quadratic in S, so the S^2 term — 21 slots per score cell
-    over H heads, as for every attention here — does not depend on it.
-    Returns (post-attention residual, normed and gained FFN input)."""
+    """DeepSeek-V3 multi-head latent attention as demo/demo_k2.py builds it
+    (composition A, analysis/mla-attention-design.md §4.2), WITHOUT weight
+    absorption: the query through its low-rank pair with a norm between; the
+    compressed KV and the shared rope key from one down projection (two
+    matmuls, the weight's column split); the per-head key and value from the
+    compressed KV; YaRN RoPE on the rope parts; query and key assembled per
+    head by two HeadInterleaveClaims, the key's rope part shared by every
+    head; scores, softmax and AV over all H heads; the output projection.
+    Every gain is an enrolled weight, as the driver commits it. None of this
+    is quadratic in S, so the S^2 term — 21 slots per score cell over H
+    heads, as for every attention here — does not depend on it. Returns
+    (post-attention residual, normed and gained FFN input)."""
     Ld, dqk = S * d, d_nope + d_rope
 
     def norm(x_in, width, tag):
-        g = b.input_var(f"{prefix}.{tag}.gain", width)
+        g = b.input_var(f"{prefix}.{tag}.gain", width, persistent=True)
         n = b.emit("rmsnorm", dict(B=S, d=width), label=f"{prefix}.{tag}",
                    layer=il, inputs=[x_in], out=f"{prefix}.{tag}.n",
                    out_len=S * width)
@@ -520,13 +521,12 @@ def _mla_attention(b, x, il, S, d, H, q_rank, kv_rank, d_nope, d_rope, d_v,
     k_pe = b.emit("rope", dict(L=S * d_rope), label=f"{prefix}.rope_k",
                   layer=il, inputs=[k_pe], out=f"{prefix}.k_pe_r",
                   out_len=S * d_rope)
-    k_pe = b.emit("embed_lookup", dict(L=S * H * d_rope), label=f"{prefix}.k_pe.bcast",
-                  layer=il, inputs=[k_pe], out=f"{prefix}.k_pe_h",
-                  out_len=S * H * d_rope)
-    q = b.emit("concat", dict(L=S * H * dqk), label=f"{prefix}.q", layer=il,
-               inputs=[q_nope, q_pe], out=f"{prefix}.q", out_len=S * H * dqk)
-    k = b.emit("concat", dict(L=S * H * dqk), label=f"{prefix}.k", layer=il,
-               inputs=[k_nope, k_pe], out=f"{prefix}.k", out_len=S * H * dqk)
+    q = b.emit("head_interleave", dict(T=S, H=H, w1=d_nope, w2=d_rope, shared=0),
+               label=f"{prefix}.q", layer=il, inputs=[q_nope, q_pe],
+               out=f"{prefix}.q", out_len=S * H * dqk)
+    k = b.emit("head_interleave", dict(T=S, H=H, w1=d_nope, w2=d_rope, shared=1),
+               label=f"{prefix}.k", layer=il, inputs=[k_nope, k_pe],
+               out=f"{prefix}.k", out_len=S * H * dqk)
     scores = b.emit("matmul", dict(m=S, k=H * dqk, n=S, heads=H), layer=il,
                     label=f"{prefix}.scores", inputs=[q, k],
                     out=f"{prefix}.scores", out_len=H * S * S)
@@ -544,22 +544,20 @@ def _mla_attention(b, x, il, S, d, H, q_rank, kv_rank, d_nope, d_rope, d_v,
 
 def _moe_ffn_topk(b, r1, n2g, il, S, d, d_ff, E, k, prefix, *, bridge=False,
                   **topk):
-    """A DeepSeek-V3 MoE FFN with output-side gates: the router and its
-    sigmoid lookups over all T x E logits (two: the selection scale and the
-    gate scale — ASSUMPTION, design 3.1 leaves the finer selection scale to a
-    second lookup or a shift), the committed per-layer selection bias, the
-    top-k chain of topk_moe_ffn, the shared expert, two residual adds."""
+    """A DeepSeek-V3 MoE FFN with output-side gates, as demo/demo_k2.py
+    builds it: the router and ONE sigmoid lookup over all T x E logits at the
+    selection scale S_sel = 2^16, read by the selection, the slot scores and
+    the gate bracket alike; the enrolled per-layer selection bias; the top-k
+    chain of topk_moe_ffn; the shared expert; two residual adds."""
     Ld, TE = S * d, S * E
     wr = b.input_var(f"{prefix}.W_router", d * E, persistent=True)
     bias = b.input_var(f"{prefix}.bias", E, persistent=True)
     router = b.emit("matmul", dict(m=S, k=d, n=E), label=f"{prefix}.router",
                     layer=il, inputs=[n2g, wr], out=f"{prefix}.router",
                     out_len=TE)
-    s_sel = b.emit("ptlookup", dict(L=TE), label=f"{prefix}.sigma_sel", layer=il,
-                   inputs=[router], out=f"{prefix}.s_sel", out_len=TE)
-    s_gate = b.emit("ptlookup", dict(L=TE), label=f"{prefix}.sigma", layer=il,
-                    inputs=[router], out=f"{prefix}.s", out_len=TE)
-    ffn = _topk_experts(b, n2g, s_sel, s_gate, bias, il, S, d, d_ff, E, k,
+    s = b.emit("ptlookup", dict(L=TE), label=f"{prefix}.sigma", layer=il,
+               inputs=[router], out=f"{prefix}.s", out_len=TE)
+    ffn = _topk_experts(b, n2g, s, s, bias, il, S, d, d_ff, E, k,
                         prefix, bridge=bridge, **topk)
     sh = _dense_ffn_out(b, n2g, il, S, d, d_ff, f"{prefix}.sh")
     a1 = b.emit("add", dict(L=Ld), label=f"{prefix}.resid2a", layer=il,
@@ -585,12 +583,13 @@ def _dense_ffn_out(b, n2g, il, S, d, d_ff, prefix):
                   layer=il, inputs=[h, wd], out=f"{prefix}.d", out_len=S * d)
 
 
-# Kimi K2's top-k parameters as the K2 demo is expected to set them
-# (analysis/topk-routing-design.md 3.1-3.2): selection differences under
-# 2^26 in two 13-bit words, scores at the 2^12 scale (13 bits), C =
-# round(2.827 * 2^12), the bracket's 8-bit words. The word counts are fixed
-# once the router-logit and bias ranges are measured (design item 5).
-K2_TOPK = dict(width=26, select_word_bits=13, score_bits=13,
+# Kimi K2's top-k parameters as demo/demo_k2.py sets them (prover/k2_loader.py
+# K2_INT): scores at the selection scale S_sel = 2^16, so below 2^17; the
+# selection-difference width 26, measured from layer 1's bias (span 44,754 at
+# 2^16; session 10), in two 13-bit words; C = round(2.827 * 2^12); the
+# bracket's 8-bit words. Another layer's bias could widen the width: the
+# driver derives it per layer from the loaded bias.
+K2_TOPK = dict(width=26, select_word_bits=13, score_bits=17,
                C=round(2.827 * 4096), bracket_word_bits=8)
 
 # Kimi K2 (moonshotai/Kimi-K2-Instruct config.json at Hugging Face revision
@@ -601,19 +600,19 @@ K2 = dict(d=7168, layers=61, first_k_dense=1, d_ff_dense=18432, d_ff_expert=2048
           v_head_dim=128, vocab=163840)
 
 
-def kimi_k2(seq: int, t_queries: int = 54, *, bridge: bool = False) -> Manifest:
-    """Kimi K2 under the routed-projected protocol with top-k routing: the
-    token-select embedding, 61 layers of multi-head latent attention, the
-    first with a dense FFN and the other 60 with 384 routed experts (8
-    active) and one shared expert, then the final norm, gain and LM head.
+def kimi_k2(seq: int, t_queries: int = 54, *, bridge: bool = False,
+            layers: int = None) -> Manifest:
+    """Kimi K2 under the routed-projected protocol with top-k routing, as
+    demo/demo_k2.py builds it: the token-select embedding, 61 layers of
+    multi-head latent attention, the first with a dense FFN and the other 60
+    with 384 routed experts (8 active) and one shared expert, then the final
+    norm, gain and LM head; `layers` truncates the stack (the two-layer gate
+    is layers = 2, which crosscheck.py diffs against the driver's tape).
 
-    Modeling assumptions, each replaced by the K2 demo (design item 5): the
-    attention composition (_mla_attention), the two sigmoid lookups
-    (_moe_ffn_topk), and the word counts of K2_TOPK. `bridge` marks the
-    routed experts' weights bridge-held (external), as the session-6 proof
-    held Maverick's; their own cost is then unmodeled, as for Maverick.
-    t_queries defaults to Maverick's demonstrated 54."""
-    c = K2
+    `bridge` marks the routed experts' weights bridge-held (external), as the
+    session-6 proof held Maverick's; their own cost is then unmodeled, as
+    for Maverick. t_queries defaults to Maverick's demonstrated 54."""
+    c = dict(K2, layers=K2["layers"] if layers is None else layers)
     d, V = c["d"], c["vocab"]
     b = _Builder()
     emb = b.input_var("embed.W", V * d, persistent=True)
@@ -633,7 +632,7 @@ def kimi_k2(seq: int, t_queries: int = 54, *, bridge: bool = False) -> Manifest:
             x = _moe_ffn_topk(b, r1, n2g, il, seq, d, c["d_ff_expert"],
                               c["experts"], c["top_k"], prefix, bridge=bridge,
                               **K2_TOPK)
-    gf = b.input_var("final.gain", d)
+    gf = b.input_var("final.gain", d, persistent=True)
     fn = b.emit("rmsnorm", dict(B=seq, d=d), label="final.norm", inputs=[x],
                 out="final.n", out_len=seq * d)
     b.emit("embed_lookup", dict(L=seq * d), label="final.gain.bcast",

@@ -1,0 +1,36 @@
+STAGE1B START 33feddd 22:24:15
+test_k2_driver rc=0 :: === 4 passed, 0 failed (of 4)  22:33:47
+    PROVE 26.1s, peak GPU 3.87 GiB
+    rust verify_proof (honest, same-run anchors): ACCEPT in 24.5s
+    negative interleave: change applied 24x; Rust REJECT under the honest anchors -> ok (58.2s)
+    negative yarn-witness: change applied 24x; Rust REJECT under the honest anchors -> ok (65.2s)
+    negative yarn-statement: change applied 4x; Rust REJECT under the honest anchors; own digest ACCEPT -> ok (58.4s)
+    negative wrong-slice: change applied 6x; Rust REJECT under the honest anchors -> ok (42.8s)
+      PASS test_bridged_proof_accepts_and_negatives_reject_against_the_honest_enrollment
+    ranges: 139 recorded, 0 outside their window
+    engine pass 0.1s, Sz=66571: 42/42 intermediates EXACT
+      PASS test_engine_pass_equals_the_integer_reference_at_long_positions
+    ranges: 139 recorded, 0 outside their window
+    engine pass 0.1s, Sz=66568: 42/42 intermediates EXACT
+      PASS test_engine_pass_equals_the_integer_reference_at_position_0
+    PROVE 20.3s, peak GPU 6.99 GiB
+    rust verify_proof (honest, same-run anchors): ACCEPT in 16.1s
+    negative interleave: change applied 24x; Rust REJECT under the honest anchors -> ok (56.8s)
+    negative yarn-witness: change applied 24x; Rust REJECT under the honest anchors -> ok (62.2s)
+      PASS test_unbridged_proof_accepts_and_witness_tampers_reject
+maverick-binding-probe rc=3 (ungated) :: === 1 passed, 3 failed (of 4) 
+      [binding] {'gain_bump': True}: Rust ACCEPT under the honest anchors; statement unchanged; 255/256 output values differ from the honest run
+      FAIL test_an_altered_gain_rejects_under_the_honest_anchors: AssertionError: g_out altered in one channel ACCEPTED under the honest weight root and statement digest while 255 output values differ: the gain is unbound
+      [binding] {'ones': 2}: Rust ACCEPT under the honest anchors; statement unchanged; 256/256 output values differ from the honest run
+      FAIL test_bc_ones_two_rejects_under_the_honest_anchors: AssertionError: bc_ones = 2 ACCEPTED under the honest weight root and statement digest while 256 output values differ: bc_ones is unbound
+      FAIL test_control_an_altered_enrolled_weight_rejects: AssertionError: re-extracted opened columns do not hash to the committed leaves — the witness differed between sweeps (cache or compute drift); the proof would be rejected, so no result is reported
+      [binding] honest: Rust ACCEPT under the honest anchors; statement unchanged; 0/256 output values differ from the honest run
+      PASS test_control_the_honest_tape_accepts_under_the_honest_anchors
+STAGE1B DONE 22:37:37
+STAGE2 START 22:37:37
+shard 1: pull: 48935303072 bytes in 47 s = 1019 MB/s sha256 f636158537429349a24a2e343b7b07bfe9a033d450945cce949ad67b2ef65370 (55 s) 
+check-s100 rc=0 :: ranges: 139 recorded, 0 outside their window engine pass 50.9s, Sz=3137119: 42/42 intermediates EXACT RESULT PASS  22:41:51
+check-s100-long rc=0 :: ranges: 139 recorded, 0 outside their window engine pass 8.4s, Sz=3137267: 42/42 intermediates EXACT RESULT PASS  22:44:44
+check-s1000 rc=0 :: ranges: 139 recorded, 0 outside their window engine pass 28.5s, Sz=30688889: 42/42 intermediates EXACT RESULT PASS  22:50:06
+check-s1000-long rc=0 :: ranges: 139 recorded, 0 outside their window engine pass 22.2s, Sz=30691020: 42/42 intermediates EXACT RESULT PASS  22:56:27
+STAGE2 DONE 22:56:27

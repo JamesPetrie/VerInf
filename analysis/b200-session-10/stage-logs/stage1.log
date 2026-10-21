@@ -1,0 +1,11 @@
+STAGE1 START ded16f2 22:15:46
+pull started 22:15:52
+== bootstrap: === 25 passed, 0 failed (of 25) ===; verifier 1c700587fdf0da1b; rustc 1.99.0 (b940084d7 2026-09-28)
+PHASE0 DONE 22:17:55
+test_claims rc=0 :: === 21 passed, 0 failed (of 21)  22:18:01
+test_protocol_review_negatives rc=0 :: === 10 passed, 0 failed (of 10)  22:20:00
+test_topk_routing rc=0 :: === 21 passed, 0 failed (of 21)  22:20:09
+test_head_interleave rc=0 :: === 5 passed, 0 failed (of 5)  22:20:15
+test_rope_scaling rc=0 :: === 8 passed, 0 failed (of 8)  22:20:20
+test_k2_driver rc=2 :: === 2 passed, 2 failed (of 4)  22:22:02
+STAGE1 FAILED at test_k2_driver 22:22:02

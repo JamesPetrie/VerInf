@@ -1,0 +1,150 @@
+{
+ "args": {
+  "mode": "prove",
+  "from_gguf": "/workspace/gguf/UD-Q4_K_XL/Kimi-K2-Instruct-UD-Q4_K_XL-00001-of-00013.gguf",
+  "prompt_n": 50,
+  "cont_n": 50,
+  "layers": 2,
+  "top_k": 8,
+  "offset": 130072,
+  "t_queries": 54,
+  "bridge": true,
+  "weight_cache": true,
+  "routed_cache": true,
+  "sweep_timing": true,
+  "negatives": "",
+  "dump_proof": null,
+  "record": "/workspace/records/k2-prove-s100-long.json",
+  "allow_env_geometry": false
+ },
+ "mode": "prove",
+ "ok": true,
+ "bridge": true,
+ "offset": 130072,
+ "T": 100,
+ "planned_negatives": [],
+ "build_s": 7.65834379196167,
+ "enroll_s": 10.220313310623169,
+ "wc_enroll_s": 4.839232444763184,
+ "Sz": 3137267,
+ "reveal_s": 7.729162931442261,
+ "prove_s": 64.06349468231201,
+ "peak_gpu_GiB": 50.372331619262695,
+ "claim_memory": {
+  "1": {
+   "label": "R1",
+   "peak": 24995244032,
+   "at_layer": {
+    "embed": {
+     "allocated": 1931032576,
+     "projections": 0
+    },
+    "0": {
+     "allocated": 16207886336,
+     "projections": 0
+    },
+    "1": {
+     "allocated": 9029322752,
+     "projections": 0
+    },
+    "tail": {
+     "allocated": 10006083584,
+     "projections": 0
+    }
+   }
+  },
+  "2": {
+   "label": "R2",
+   "peak": 34626709504,
+   "at_layer": {
+    "embed": {
+     "allocated": 14733938176,
+     "projections": 0
+    },
+    "0": {
+     "allocated": 33709460992,
+     "projections": 0
+    },
+    "1": {
+     "allocated": 14865731072,
+     "projections": 0
+    },
+    "tail": {
+     "allocated": 14968760320,
+     "projections": 50331648
+    }
+   }
+  },
+  "3": {
+   "label": "R3",
+   "peak": 34171422720,
+   "at_layer": {
+    "embed": {
+     "allocated": 14838771200,
+     "projections": 50331648
+    },
+    "0": {
+     "allocated": 33766059520,
+     "projections": 50331648
+    },
+    "1": {
+     "allocated": 14856793600,
+     "projections": 50331648
+    },
+    "tail": {
+     "allocated": 14868121600,
+     "projections": 50331648
+    }
+   }
+  },
+  "4": {
+   "label": "fold",
+   "peak": 35032758784,
+   "at_layer": {
+    "embed": {
+     "allocated": 15697743360,
+     "projections": 50331648
+    },
+    "0": {
+     "allocated": 34627931136,
+     "projections": 50331648
+    },
+    "1": {
+     "allocated": 15720423936,
+     "projections": 50331648
+    },
+    "tail": {
+     "allocated": 15728259072,
+     "projections": 50331648
+    }
+   }
+  },
+  "5": {
+   "label": "open",
+   "peak": 35033032192,
+   "at_layer": {
+    "embed": {
+     "allocated": 15704656896,
+     "projections": 50331648
+    },
+    "0": {
+     "allocated": 34631945216,
+     "projections": 50331648
+    },
+    "1": {
+     "allocated": 15722679296,
+     "projections": 50331648
+    },
+    "tail": {
+     "allocated": 15728748032,
+     "projections": 50331648
+    }
+   }
+  }
+ },
+ "verify": {
+  "accept": true,
+  "s": 178.78031420707703
+ },
+ "negatives": {}
+}

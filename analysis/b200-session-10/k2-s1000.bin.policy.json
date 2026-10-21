@@ -1,0 +1,9 @@
+{
+  "format": "verinf-dump-policy-v1",
+  "policy_source": "same-run prover (mechanism check only)",
+  "proof_bytes": 1511651677,
+  "proof_file": "k2-s1000.bin",
+  "statement_digest": "fc883beada803cea4b993446c1ffb6d44f2ad2b3bc42c09bcf1fbc91568ad9c5",
+  "wc_identity": "732da5426bf2fedd87b4d2e172169cbf217b2b24a4e69a23833f8af05967927b",
+  "weight_root": "d1dfb3fcfae3ee20187efb8a490ac18f47b3cf3a67f06de8fb1ed3076204c6e6"
+}

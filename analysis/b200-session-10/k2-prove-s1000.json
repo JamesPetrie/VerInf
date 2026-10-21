@@ -1,0 +1,156 @@
+{
+ "args": {
+  "mode": "prove",
+  "from_gguf": "/workspace/gguf/UD-Q4_K_XL/Kimi-K2-Instruct-UD-Q4_K_XL-00001-of-00013.gguf",
+  "prompt_n": 500,
+  "cont_n": 500,
+  "layers": 2,
+  "top_k": 8,
+  "offset": 0,
+  "t_queries": 54,
+  "bridge": true,
+  "weight_cache": true,
+  "routed_cache": true,
+  "sweep_timing": true,
+  "negatives": "",
+  "dump_proof": "/workspace/proofs/k2-s1000.bin",
+  "record": "/workspace/records/k2-prove-s1000.json",
+  "allow_env_geometry": false
+ },
+ "mode": "prove",
+ "ok": true,
+ "bridge": true,
+ "offset": 0,
+ "T": 1000,
+ "planned_negatives": [],
+ "build_s": 12.151635646820068,
+ "enroll_s": 11.339747667312622,
+ "wc_enroll_s": 5.928761959075928,
+ "Sz": 30688889,
+ "reveal_s": 22.63654351234436,
+ "prove_s": 255.9138662815094,
+ "peak_gpu_GiB": 72.67494010925293,
+ "claim_memory": {
+  "1": {
+   "label": "R1",
+   "peak": 46189478912,
+   "at_layer": {
+    "embed": {
+     "allocated": 3110163456,
+     "projections": 0
+    },
+    "0": {
+     "allocated": 19030889472,
+     "projections": 0
+    },
+    "1": {
+     "allocated": 18238026752,
+     "projections": 0
+    },
+    "tail": {
+     "allocated": 27389400064,
+     "projections": 0
+    }
+   }
+  },
+  "2": {
+   "label": "R2",
+   "peak": 55721550848,
+   "at_layer": {
+    "embed": {
+     "allocated": 31479073280,
+     "projections": 0
+    },
+    "0": {
+     "allocated": 51703155200,
+     "projections": 0
+    },
+    "1": {
+     "allocated": 32036981248,
+     "projections": 0
+    },
+    "tail": {
+     "allocated": 32196092928,
+     "projections": 50331648
+    }
+   }
+  },
+  "3": {
+   "label": "R3",
+   "peak": 55738008576,
+   "at_layer": {
+    "embed": {
+     "allocated": 31584397824,
+     "projections": 50331648
+    },
+    "0": {
+     "allocated": 51742943744,
+     "projections": 50331648
+    },
+    "1": {
+     "allocated": 31756429824,
+     "projections": 50331648
+    },
+    "tail": {
+     "allocated": 31819334656,
+     "projections": 50331648
+    }
+   }
+  },
+  "4": {
+   "label": "fold",
+   "peak": 56621121536,
+   "at_layer": {
+    "embed": {
+     "allocated": 32463941120,
+     "projections": 50331648
+    },
+    "0": {
+     "allocated": 52625386496,
+     "projections": 50331648
+    },
+    "1": {
+     "allocated": 32641565696,
+     "projections": 50331648
+    },
+    "tail": {
+     "allocated": 32701956608,
+     "projections": 50331648
+    }
+   }
+  },
+  "5": {
+   "label": "open",
+   "peak": 56622028288,
+   "at_layer": {
+    "embed": {
+     "allocated": 32473791488,
+     "projections": 50331648
+    },
+    "0": {
+     "allocated": 52632337408,
+     "projections": 50331648
+    },
+    "1": {
+     "allocated": 32645823488,
+     "projections": 50331648
+    },
+    "tail": {
+     "allocated": 32703354368,
+     "projections": 50331648
+    }
+   }
+  }
+ },
+ "dump": {
+  "path": "/workspace/proofs/k2-s1000.bin",
+  "bytes": 1511651677,
+  "s": 1.5118560791015625,
+  "policy": "/workspace/proofs/k2-s1000.bin.policy.json"
+ },
+ "verify": {
+  "accept": true,
+  "s": 681.6779868602753
+ },
+ "negatives": {}
+}

@@ -11,7 +11,6 @@ tapes prove on CUDA, as the rest of the bridge suites do."""
 import base64
 import json
 import os
-import subprocess
 import sys
 import tempfile
 
@@ -27,7 +26,7 @@ import wc_bridge as wc
 from proof_dump import dump_proof
 from routed_projected import RoutedProjectedMatmulClaim, routed_projected_matmul
 from tape import Tape
-from _rust_verify import _verify_proof_bin
+from _rust_verify import _verify_proof_bin, run_verify_proof
 from test_routed_projected import _u64, CFG, T, K, J, E
 from test_wc_streaming_flag import _prove_with_flag, PARAMS
 
@@ -43,9 +42,9 @@ def _dump(tape, proof):
 
 
 def _run(path, root_w, stmt, wc_identity):
-    r = subprocess.run([_verify_proof_bin(), path, root_w, stmt, wc_identity],
-                       capture_output=True, text=True)
-    return ("rust_verify: ACCEPT" in r.stdout), (r.stdout + r.stderr).strip()
+    """(accepted, output) for an explicit verdict; VerifierFailure otherwise."""
+    v = run_verify_proof([_verify_proof_bin(), path, root_w, stmt, wc_identity])
+    return v["verdict"] == "ACCEPT", v["output"]
 
 
 def _rewrite(path, mutate):

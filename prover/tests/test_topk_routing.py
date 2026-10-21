@@ -44,7 +44,7 @@ import packets as _PK      # noqa: F401
 import topk_params as tp
 import topk_reference as ref
 import topk_routing as tr
-from _rust_verify import rust_verify_tape
+from _rust_verify import VerifierFailure, rust_verify_tape
 from claims import SiluConfig
 from compute_fns import WITNESS_TAMPER
 from tape import Tape
@@ -198,10 +198,16 @@ def test_the_verifier_refuses_the_counterexample_parameters():
         tape = _selection_tape(width=43, word_bits=9)[0]
     finally:
         tr.threshold_words = real
-    acc, msg = _verdict(tape)
-    assert not acc, "the verifier accepted a statement past the threshold guard"
-    assert "threshold guard" in msg, msg[-400:]
-    print("    R = 63 at width 43 past the Python guard: the verifier refuses it")
+    # The refusal is the compile's assertion, a Rust panic (status 101) that
+    # names the guard; any other ending, a verdict included, fails the test.
+    try:
+        acc, msg = _verdict(tape)
+    except VerifierFailure as e:
+        assert e.returncode == 101 and "threshold guard" in e.output, (e.returncode, e.output[-400:])
+        print("    R = 63 at width 43 past the Python guard: the verifier's compile refuses it")
+        return
+    raise AssertionError(f"the verifier gave a verdict ({'ACCEPT' if acc else 'REJECT'}) "
+                         "for a statement past the threshold guard; its compile must refuse it")
 
 
 def _honest_fields():

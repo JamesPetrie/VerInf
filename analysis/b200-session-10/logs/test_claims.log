@@ -1,0 +1,47 @@
+/workspace/verinf/prover/core.py:644: UserWarning: The given buffer is not writable, and PyTorch does not support non-writable tensors. This means you can write to the underlying (supposedly non-writable) buffer using the tensor. You may want to copy the buffer to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at /pytorch/torch/csrc/utils/tensor_new.cpp:1578.)
+  return torch.frombuffer(bytes(master_seed), dtype=torch.uint8).cuda()
+W1005 22:17:58.975000 1558 torch/utils/cpp_extension.py:2425] TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
+W1005 22:17:58.975000 1558 torch/utils/cpp_extension.py:2425] If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'] to specific architectures.
+test_honest_add
+  PASS test_honest_add
+test_honest_chained
+  PASS test_honest_chained
+test_honest_embedding
+  PASS test_honest_embedding
+test_honest_hadamard
+  PASS test_honest_hadamard
+test_honest_paired_tlookup
+  PASS test_honest_paired_tlookup
+test_honest_range_word
+  PASS test_honest_range_word
+test_honest_rope
+  PASS test_honest_rope
+test_honest_softmax_basic
+  PASS test_honest_softmax_basic
+test_honest_word_extract
+  PASS test_honest_word_extract
+test_out_of_range_word
+  PASS test_out_of_range_word
+test_shared_range_table
+  PASS test_shared_range_table
+test_tampered_p1_column
+  PASS test_tampered_p1_column
+test_tampered_p2_column
+  PASS test_tampered_p2_column
+test_tampered_q_irs
+  PASS test_tampered_q_irs
+test_word_extract_shift_and_coeffs
+  PASS test_word_extract_shift_and_coeffs
+test_wrong_C1
+  PASS test_wrong_C1
+test_wrong_C2
+  PASS test_wrong_C2
+test_wrong_add
+  PASS test_wrong_add
+test_wrong_hadamard
+  PASS test_wrong_hadamard
+test_wrong_paired_tlookup
+  PASS test_wrong_paired_tlookup
+test_wrong_word_extract
+  PASS test_wrong_word_extract
+=== 21 passed, 0 failed (of 21) ===

@@ -1,0 +1,13 @@
+/workspace/verinf/prover/core.py:644: UserWarning: The given buffer is not writable, and PyTorch does not support non-writable tensors. This means you can write to the underlying (supposedly non-writable) buffer using the tensor. You may want to copy the buffer to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at /pytorch/torch/csrc/utils/tensor_new.cpp:1578.)
+  return torch.frombuffer(bytes(master_seed), dtype=torch.uint8).cuda()
+W1005 22:20:19.172000 3224 torch/utils/cpp_extension.py:2425] TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
+W1005 22:20:19.172000 3224 torch/utils/cpp_extension.py:2425] If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'] to specific architectures.
+  PASS test_config_serializes_scaling_fields
+  PASS test_golden_vectors
+  PASS test_honest_scaled_rope_rust_verifies
+  PASS test_honest_yarn_rope_rust_verifies
+  PASS test_scaled_matches_hf_formula
+  PASS test_scaling_stripped_from_claim_rejects
+  PASS test_unscaled_matches_legacy_expression
+  PASS test_yarn_parameters_are_soundness_bearing
+=== 8 passed, 0 failed (of 8) ===
