@@ -307,28 +307,42 @@ UI_S_C, UI_S_Y_BITS, UI_S_B_BITS = 1 << 28, 28, 12
 
 
 def _run_unexplained_info(tape, logits, *, vocab_size, seq, output_tokens=None,
-                           s_c=UI_S_C, sum_positions=None):
+                           s_c=UI_S_C, s_b=1 << UI_S_B_BITS, gap_max=None,
+                           sum_positions=None):
     """Append the unexplained-information bound over the (bound) LM-head logits,
     output tokens HIDDEN. `s_c = 2*sigma^2` sets the kernel width. Returns
-    (Sz_wt, info)."""
+    (Sz_wt, info).
+
+    `gap_max=None` derives the table range from this run's logits (the legacy
+    behavior, which makes the statement depend on the data). A fixed `gap_max`
+    is part of a statement chosen in advance: a run whose largest logit gap
+    falls outside [0, gap_max) is refused here, before any claim is appended."""
     from unexplained_info import prove_unexplained_info
     from max_claim import to_signed
 
     ls = to_signed(logits.data.view(seq, vocab_size))             # signed logits
     vstar = ls.max(dim=1).values
-    gap_max = int((vstar.view(seq, 1) - ls).max().item()) + 2
+    observed = int((vstar.view(seq, 1) - ls).max().item())
+    fixed = gap_max is not None
+    if not fixed:
+        gap_max = observed + 2
+    elif observed >= gap_max:
+        raise ValueError(f"largest logit gap {observed:,} is outside the fixed "
+                         f"range [0, {gap_max:,})")
     if output_tokens is None:
         tokens = [int(ls[t].argmax()) for t in range(seq)]        # greedy -> gap_o = 0
     else:
         assert len(output_tokens) == seq, "ui-output-tokens must have SEQ entries"
         tokens = [int(v) for v in output_tokens]
 
-    s_y, s_b = 1 << UI_S_Y_BITS, 1 << UI_S_B_BITS
+    s_y = 1 << UI_S_Y_BITS
     k = s_c // s_b
-    print(f"  unexplained-info (folded): gap_max={gap_max:,} (exp+gap tables), "
-          f"s_c={s_c}, s_y=2^{UI_S_Y_BITS}, s_b=2^{UI_S_B_BITS}, k={k} "
-          f"(output tokens hidden)")
+    print(f"  unexplained-info (folded): gap_max={gap_max:,} "
+          f"({'fixed' if fixed else 'from this run'}; largest gap {observed:,}), "
+          f"s_c={s_c}, s_y=2^{UI_S_Y_BITS}, s_b={s_b}, k={k} (output tokens hidden)")
     if gap_max.bit_length() > 26:
+        if fixed:
+            raise ValueError(f"fixed gap_max={gap_max:,} is too large for the exp table")
         print(f"    [skip] gap_max=2^{gap_max.bit_length()} too large for the exp table; "
               f"use a coarser LM-head scale.")
         return None, None
@@ -337,7 +351,8 @@ def _run_unexplained_info(tape, logits, *, vocab_size, seq, output_tokens=None,
                                    s_c=s_c, s_y=s_y, s_b=s_b, gap_max=gap_max,
                                    sum_positions=sum_positions, reveal=True)
     n = len(sum_positions) if sum_positions is not None else seq
-    return Sz, dict(s_b=s_b, tokens=tokens, n=n, reveal_pin=h.get('reveal_pin'))
+    return Sz, dict(s_b=s_b, s_c=s_c, s_y=s_y, gap_max=gap_max, observed_gap=observed,
+                    tokens=tokens, n=n, reveal_pin=h.get('reveal_pin'))
 
 
 def _report_unexplained_info(tape, Sz, info, *, seq, vocab_size):
@@ -371,7 +386,10 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
           ui_lm_ow: int = UI_COARSE_OW,
           ui_s_c: int = UI_S_C,
           ui_positions: Optional[list] = None,
-          token_ids: Optional[list] = None):
+          token_ids: Optional[list] = None,
+          ui_s_b: int = 1 << UI_S_B_BITS,
+          ui_gap_max: Optional[int] = None,
+          statement_out: Optional[str] = None):
     global SEQ
     mcfg = (ModelConfig.from_hf(from_hf) if from_hf is not None
             else RANDOM_WEIGHTS_CFG)
@@ -572,7 +590,8 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
         # only those (the Σ chain selects them via embed(surprisal,[i],d=1), 1|ELL ok).
         ui_Sz, ui_info = _run_unexplained_info(
             tape, logits, vocab_size=vocab_size, seq=SEQ,
-            output_tokens=ui_output_tokens, s_c=ui_s_c, sum_positions=ui_positions)
+            output_tokens=ui_output_tokens, s_c=ui_s_c, s_b=ui_s_b,
+            gap_max=ui_gap_max, sum_positions=ui_positions)
 
     # ---------- Forward-only fast path (accuracy checks; no proof) ----------
     # Logits are primary witnesses, so the engine/forward pass produces them
@@ -611,6 +630,16 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
         print(f"  reveal: Sz = {_sz} pinned as PUBLIC bound = "
               f"{bound_bits(_sz, s_b=ui_info['s_b']):.4f} bits "
               f"(verifier reads this from the claim)")
+
+    # Statement only: write the exact claim bytes a proof would carry, and the
+    # block order the prover would use, then stop before proving.
+    if statement_out is not None:
+        from statement_preview import write_statement
+        write_statement(tape, CFG, statement_out,
+                        ui_info={k: v for k, v in (ui_info or {}).items()
+                                 if k not in ("reveal_pin", "tokens")},
+                        sz=_sz if ui_Sz is not None else None)
+        return None
 
     from collections import Counter
     counts = Counter(type(c).__name__ for c in tape.claims)
