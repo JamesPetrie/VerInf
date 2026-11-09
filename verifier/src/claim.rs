@@ -43,6 +43,10 @@ impl Table {
     }
 }
 
+/// Where a claim holds a Variable: a named field (or list field), or one part
+/// of a table.
+pub enum VarRole<'a> { Field(&'a str), TableMult, TableW, TableZ }
+
 /// One claim: op name + its fields (kept as parsed Values, read by accessors).
 pub struct Claim {
     pub op: String,
@@ -157,18 +161,24 @@ impl Claim {
     /// and a table's mult_var/w_var/z_vars. Mirrors protocol._walk_vars (for
     /// m_total). Order-independent (used only for a max).
     pub fn all_vars(&self) -> Vec<Var> {
+        self.named_vars().into_iter().map(|(_, v)| v).collect()
+    }
+
+    /// all_vars, with each Variable's place in the claim.
+    pub fn named_vars(&self) -> Vec<(VarRole<'_>, Var)> {
         let mut out = Vec::new();
-        for v in self.fields.values() {
+        for (name, v) in &self.fields {
             if v.get("var").is_some() {
-                out.push(parse_var(v));
+                out.push((VarRole::Field(name), parse_var(v)));
             } else if let Some(items) = v.get("list").and_then(|x| x.as_array()) {
                 for it in items {
-                    if it.get("var").is_some() { out.push(parse_var(it)); }
+                    if it.get("var").is_some() { out.push((VarRole::Field(name), parse_var(it))); }
                 }
             } else if v.get("table").is_some() {
                 let t = parse_table(v);
-                out.push(t.mult_var); out.push(t.w_var);
-                out.extend(t.z_vars);
+                out.push((VarRole::TableMult, t.mult_var));
+                out.push((VarRole::TableW, t.w_var));
+                out.extend(t.z_vars.into_iter().map(|z| (VarRole::TableZ, z)));
             }
         }
         out

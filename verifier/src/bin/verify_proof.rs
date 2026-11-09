@@ -14,6 +14,7 @@ use serde_json::Value;
 use serde_json::value::RawValue;
 use ligero_verifier::claim::parse_claim_set_value;
 use ligero_verifier::fs;
+use ligero_verifier::layout;
 use ligero_verifier::verify::{Round3, Round4, verify_bound, verify_bound_pinned};
 use ligero_verifier::protocol;
 
@@ -356,6 +357,10 @@ the trusted identity".into());
         let pim = pi.get(wkey).ok_or("pi group missing")?;
         if pim.len() != n_blocks * g.lam {
             return Err("pi shape".into());
+        }
+        // These are hashed as raw bytes into the coin and reduced in the arithmetic.
+        if !layout::is_canonical(pt) || !layout::is_canonical(pim) {
+            return Err("p_trace or pi holds a value at or above P".into());
         }
         let _ = w;
     }
@@ -714,7 +719,17 @@ the trusted enrollment".into(), true));
         Err(e) => format!("table_order: {e}"),
     }, table_order.is_ok()));
 
-    if table_order.is_err() || (!cmap.is_empty() && wc_pins.len() != cmap.len()) {
+    // Every row must be committed before the challenges that depend on it. The
+    // statement says where a variable's rows are, the proof's openings how many
+    // rows each block holds, and the coins are drawn from those blocks' roots.
+    let rows = layout::block_rows(&r4.opened)
+        .and_then(|rows| layout::check_rows(&cs, &block_order, &rows));
+    policy.push((match &rows {
+        Ok(()) => "every row precedes the challenges that depend on it".into(),
+        Err(e) => format!("rows: {e}"),
+    }, rows.is_ok()));
+
+    if table_order.is_err() || rows.is_err() || (!cmap.is_empty() && wc_pins.len() != cmap.len()) {
         // A malformed table_order, or the bridge did not authenticate every
         // bridged claim's fold (a wc section missing, tampered, under the
         // floor, or on the legacy seed path): the compile would fail a lookup
