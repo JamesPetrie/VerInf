@@ -27,9 +27,10 @@ def block_order(layout, cfg):
             + ["p1", "p2"] + (["p3"] if p3_rows else []))
 
 
-def write_statement(tape, cfg, path, *, ui_info=None, sz=None):
+def write_statement(tape, cfg, path, *, ui_info=None, sz=None, weight_root=None):
     """Write `path` (claim bytes) and `path + '.json'` (sidecar). Refuses to
-    overwrite either."""
+    overwrite either. `weight_root` (hex) records the enrolled W root the
+    proof will reference; it is not part of the claim bytes."""
     side = path + ".json"
     for p in (path, side):
         if os.path.exists(p):
@@ -41,7 +42,8 @@ def write_statement(tape, cfg, path, *, ui_info=None, sz=None):
         f.write(raw)
     meta = dict(claims_sha256=hashlib.sha256(raw).hexdigest(), claims_bytes=len(raw),
                 blocks=blocks, statement_digest=pr.statement_digest(raw, blocks).hex(),
-                n_claims=len(tape.claims), sz=sz, ui=ui_info or {})
+                n_claims=len(tape.claims), sz=sz, ui=ui_info or {},
+                weight_root=weight_root)
     with open(side, "x") as f:
         json.dump(meta, f, indent=2, sort_keys=True)
         f.write("\n")

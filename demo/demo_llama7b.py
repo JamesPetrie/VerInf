@@ -389,7 +389,10 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
           token_ids: Optional[list] = None,
           ui_s_b: int = 1 << UI_S_B_BITS,
           ui_gap_max: Optional[int] = None,
-          statement_out: Optional[str] = None):
+          statement_out: Optional[str] = None,
+          persistent_head: bool = False,
+          enroll_out: Optional[str] = None,
+          weight_commitment: Optional[str] = None):
     global SEQ
     mcfg = (ModelConfig.from_hf(from_hf) if from_hf is not None
             else RANDOM_WEIGHTS_CFG)
@@ -497,7 +500,8 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
     E_wt = None
     if E_data is not None and (prompt is not None or mcfg.tied_embeddings):
         E_name = "E_embedding" if mcfg.tied_embeddings else "E_embedding_subset"
-        E_wt = tape.commit(E_name, E_data, E_shape)
+        E_wt = tape.commit(E_name, E_data, E_shape,
+                           persistent=persistent_head and mcfg.tied_embeddings)
         resid = tape.embed(E_wt, token_ids=embed_token_ids, d=mcfg.d)
     else:
         resid = tape.commit("x_input", x_data_init, (SEQ, mcfg.d))
@@ -551,13 +555,18 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
             final_norm_data = torch.full((mcfg.d,), S, dtype=torch.uint64,
                                          device="cuda")
             lm_head_data    = _rand_signed(mcfg.d * vocab_size, half=HALF)
-        final_norm_w_wt = tape.commit("final_norm_w", final_norm_data, (mcfg.d,))
+        # persistent_head puts the final norm and LM head in the persistent W
+        # block with the layer weights, so an enrolled root pins them too. Both
+        # are prompt-independent; a tied head's full embedding table is already
+        # persistent above. An untied embedding subset stays a per-run input.
+        final_norm_w_wt = tape.commit("final_norm_w", final_norm_data, (mcfg.d,),
+                                      persistent=persistent_head)
         if lm_tied_reuse:
             W_lm_head_wt = E_wt          # (vocab, d); transpose_b in the tail
             print("  LM head: tied — reusing the committed embedding table")
         else:
             W_lm_head_wt = tape.commit("W_lm_head", lm_head_data,
-                                        (mcfg.d, vocab_size))
+                                        (mcfg.d, vocab_size), persistent=persistent_head)
         # For --unexplained-info, run the LM head COARSE (s_out=1) so the
         # bound-relevant gaps fit a feasible exp/gap table -- bound by the
         # matmul's own rescale (no separate coarsening claim).
@@ -631,6 +640,22 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
               f"{bound_bits(_sz, s_b=ui_info['s_b']):.4f} bits "
               f"(verifier reads this from the claim)")
 
+    # Enrollment: commit the persistent W block once, under a fresh secret
+    # seed, save the handle, and stop. Proofs that reference it carry its root,
+    # so the root can be pinned before they exist.
+    if enroll_out is not None:
+        import core as _core
+        _wc = _core.WeightCommitment.from_tape(tape, CFG)
+        _wc.save(enroll_out)
+        print(f"  enrolled W block: root {_wc.root.hex()}, {_wc.m_w:,} rows → {enroll_out}")
+        return None
+    wc_ref = None
+    if weight_commitment is not None:
+        import core as _core
+        wc_ref = _core.WeightCommitment.load(weight_commitment)
+        print(f"  weight commitment: root {wc_ref.root.hex()}, "
+              f"{len(wc_ref.opened_columns)} columns already opened")
+
     # Statement only: write the exact claim bytes a proof would carry, and the
     # block order the prover would use, then stop before proving.
     if statement_out is not None:
@@ -638,7 +663,8 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
         write_statement(tape, CFG, statement_out,
                         ui_info={k: v for k, v in (ui_info or {}).items()
                                  if k not in ("reveal_pin", "tokens")},
-                        sz=_sz if ui_Sz is not None else None)
+                        sz=_sz if ui_Sz is not None else None,
+                        weight_root=wc_ref.root.hex() if wc_ref is not None else None)
         return None
 
     from collections import Counter
@@ -648,9 +674,17 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
     print(f"  claims: {len(tape.claims)}  ({dict(sorted(counts.items()))})")
     torch.cuda.synchronize()
     t0 = time.time()
-    proof = tape.prove(seed=b"xformer-single-tape", verbose=verbose)
+    proof = tape.prove(seed=b"xformer-single-tape", verbose=verbose,
+                       weight_commitment=wc_ref)
     torch.cuda.synchronize()
     t_prove = time.time() - t0
+    if wc_ref is not None:
+        # Book the opened columns against the enrollment's pad, and persist
+        # the ledger: an unsaved ledger is a silently reusable pad.
+        wc_ref.record_openings(proof.Q_cols)
+        wc_ref.save(weight_commitment)
+        print(f"  ledger: {len(wc_ref.opened_columns)} of "
+              f"{wc_ref.opening_budget(CFG)} columns spent")
     # Verification is the standalone Rust verifier's job (verifier-rs/verify_proof
     # on the dumped proof); the demo only proves + dumps.
 
