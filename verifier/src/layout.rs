@@ -191,3 +191,52 @@ pub fn check_rows(cs: &ClaimSet, block_order: &[String], rows: &[usize]) -> Resu
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cfg() -> Config { Config { ell: 8, k_deg: 16, n_lig: 64, t_queries: 4 } }
+    fn order(names: &[&str]) -> Vec<String> { names.iter().map(|s| s.to_string()).collect() }
+
+    #[test]
+    fn test_polynomials_are_held_to_their_limits() {
+        let c = cfg();
+        assert_eq!(test_poly_limits(&c), (16, 32, 32));
+        assert!(check_test_polys(16, 32, 32, &c).is_ok());
+        assert!(check_test_polys(17, 32, 32, &c).is_err());
+        assert!(check_test_polys(16, 33, 32, &c).is_err());
+        assert!(check_test_polys(16, 32, 33, &c).is_err());
+        let tight = Config { n_lig: 32, ..cfg() };
+        assert!(check_test_polys(1, 1, 1, &tight).is_err(), "2K must stay below N");
+    }
+
+    #[test]
+    fn coefficients_must_be_canonical() {
+        assert!(is_canonical(&[0, 1, P - 1]));
+        assert!(!is_canonical(&[0, P]));
+    }
+
+    #[test]
+    fn a_block_s_opened_columns_agree_in_length() {
+        let same: HashMap<u64, Vec<u64>> = [(0, vec![1, 2]), (5, vec![3, 4])].into();
+        let ragged: HashMap<u64, Vec<u64>> = [(0, vec![1, 2]), (5, vec![3])].into();
+        assert_eq!(block_rows(&[same.clone()]).unwrap(), vec![2]);
+        assert!(block_rows(&[same, ragged]).is_err());
+    }
+
+    #[test]
+    fn only_the_protocol_s_block_orders_and_sizes_are_accepted() {
+        let b = NUM_BLINDING_ROWS;
+        assert_eq!(check_blocks(&order(&["blind", "p1", "p2"]), &[b, 4, 2]).unwrap(), 2);
+        assert_eq!(check_blocks(&order(&["blind", "w", "p1", "p2", "p3"]), &[b, 5, 4, 2, 1]).unwrap(), 3);
+        assert_eq!(check_blocks(&order(&["blind", "w", "wnew", "p1", "p2"]), &[b, 5, 5, 4, 2]).unwrap(), 4);
+        assert_eq!(check_blocks(&order(&["p1", "p2"]), &[4, 2]).unwrap(), 1);
+        assert!(check_blocks(&order(&["blind", "p1", "p2"]), &[b, 4]).is_err(), "count must match");
+        assert!(check_blocks(&order(&["blind", "p2", "p1"]), &[b, 4, 2]).is_err(), "order is fixed");
+        assert!(check_blocks(&order(&["w", "blind", "p1", "p2"]), &[5, b, 4, 2]).is_err());
+        assert!(check_blocks(&order(&["blind", "p1", "p2"]), &[b + 1, 4, 2]).is_err(), "blind size is fixed");
+        assert!(check_blocks(&order(&["blind", "w", "wnew", "p1", "p2"]), &[b, 5, 4, 4, 2]).is_err(),
+                "wnew must match w");
+    }
+}
