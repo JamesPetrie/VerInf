@@ -729,6 +729,52 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
     print(f"  prove:   {t_prove:.2f}s")
 
 
+def _parse_positions(text, error):
+    """START:STOP (STOP excluded) or a comma-separated list, as sorted distinct
+    non-negative positions."""
+    try:
+        if ":" in text:
+            start, stop = (int(v) for v in text.split(":"))
+            positions = list(range(start, stop))
+        else:
+            positions = [int(v) for v in text.split(",")]
+    except ValueError:
+        error(f"--ui-positions {text!r}: use START:STOP or a comma-separated list")
+    if not positions or min(positions) < 0 or positions != sorted(set(positions)):
+        error(f"--ui-positions {text!r}: positions must be non-empty, "
+              "non-negative, increasing and distinct")
+    return positions
+
+
+def _bound_and_enrollment_kwargs(args, error):
+    """The fixed-bound, statement and enrollment flags as main()'s keywords.
+    `error` reports a combination that cannot run (argparse's ap.error), before
+    any model is loaded. A bound flag left out keeps main()'s default."""
+    bound = {"ui_s_c": args.ui_s_c, "ui_s_b": args.ui_s_b, "ui_gap_max": args.ui_gap_max,
+             "ui_lm_sout": args.ui_lm_sout, "ui_lm_ow": args.ui_lm_ow}
+    if (any(v is not None for v in bound.values()) or args.ui_positions) \
+            and not args.unexplained_info:
+        error("--ui-s-c, --ui-s-b, --ui-gap-max, --ui-positions, --ui-lm-sout and "
+              "--ui-lm-ow set the --unexplained-info bound")
+    for name, v in bound.items():
+        if v is not None and v <= 0:
+            error(f"--{name.replace('_', '-')} must be positive")
+    s_c = UI_S_C if args.ui_s_c is None else args.ui_s_c
+    s_b = 1 << UI_S_B_BITS if args.ui_s_b is None else args.ui_s_b
+    if s_c % s_b:
+        error(f"s_c = {s_c} is not a multiple of s_b = {s_b}")
+    if args.enroll_out and (args.weight_commitment or args.statement_out or args.dump_proof):
+        error("--enroll-out only enrolls: it stops before any statement or proof")
+    if args.statement_out and args.dump_proof:
+        error("--statement-out stops before proving, so there is no proof to dump")
+    kw = {k: v for k, v in bound.items() if v is not None}
+    if args.ui_positions:
+        kw["ui_positions"] = _parse_positions(args.ui_positions, error)
+    kw.update(statement_out=args.statement_out, persistent_head=args.persistent_head,
+              enroll_out=args.enroll_out, weight_commitment=args.weight_commitment)
+    return kw
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--from-hf", type=str, default=None,
@@ -826,7 +872,44 @@ if __name__ == "__main__":
                      help="Comma-separated output token ids (length SEQ) for "
                           "--unexplained-info, committed + hidden. Default: the "
                           "greedy argmax of the int logits.")
+    ap.add_argument("--ui-s-c", type=int, default=None,
+                     help="Kernel width s_c = 2*sigma^2 for --unexplained-info "
+                          f"(default {UI_S_C}). Must be a multiple of s_b.")
+    ap.add_argument("--ui-s-b", type=int, default=None,
+                     help="Bound scale s_b for --unexplained-info "
+                          f"(default {1 << UI_S_B_BITS}).")
+    ap.add_argument("--ui-gap-max", type=int, default=None,
+                     help="Fix the exp/gap table range in advance. A run whose "
+                          "largest logit gap is gap_max or more is refused before "
+                          "any claim. Default: derived from this run's logits, "
+                          "which makes the statement depend on the data.")
+    ap.add_argument("--statement-out", type=str, default=None,
+                     help="Write the claim bytes a proof would carry to this path, "
+                          "and the block order and statement digest to PATH.json, "
+                          "then stop before proving.")
+    ap.add_argument("--persistent-head", action="store_true",
+                     help="Put the final norm and LM head (and a tied model's "
+                          "embedding table) in the persistent W block with the "
+                          "layer weights, so an enrolled root pins them.")
+    ap.add_argument("--enroll-out", type=str, default=None,
+                     help="Commit the persistent W block under a fresh secret "
+                          "seed, save the handle to this path, and stop. The "
+                          "handle is secret; *.wc is gitignored.")
+    ap.add_argument("--weight-commitment", type=str, default=None,
+                     help="Prove against the enrollment handle at this path, then "
+                          "record the opened columns in its ledger and save it.")
+    ap.add_argument("--ui-positions", type=str, default=None,
+                     help="Score only these positions for --unexplained-info: "
+                          "START:STOP (STOP excluded) or a comma-separated list. "
+                          "Default: every position.")
+    ap.add_argument("--ui-lm-sout", type=int, default=None,
+                     help="LM-head output rescale for --unexplained-info "
+                          f"(default {UI_COARSE_S}).")
+    ap.add_argument("--ui-lm-ow", type=int, default=None,
+                     help="LM-head output width in bits for --unexplained-info "
+                          f"(default {UI_COARSE_OW}).")
     args = ap.parse_args()
+    _flag_kwargs = _bound_and_enrollment_kwargs(args, ap.error)
     if args.seq is not None:
         SEQ = args.seq
     _prompt = args.prompt
@@ -850,4 +933,5 @@ if __name__ == "__main__":
          forward_only=args.forward_only,
          dump_proof=args.dump_proof,
          unexplained_info=args.unexplained_info, ui_sigma=args.ui_sigma,
-         ui_sy_bits=args.ui_sy_bits, ui_output_tokens=_ui_tokens)
+         ui_sy_bits=args.ui_sy_bits, ui_output_tokens=_ui_tokens,
+         **_flag_kwargs)
