@@ -23,7 +23,7 @@ _SCRIPT = _ROOT / "demo" / "demo_llama7b.py"
 
 
 def _args(**over):
-    base = dict(unexplained_info=False, ui_s_c=None, ui_s_b=None, ui_gap_max=None,
+    base = dict(from_hf="fixture", unexplained_info=False, ui_s_c=None, ui_s_b=None, ui_gap_max=None,
                 ui_positions=None, ui_lm_sout=None, ui_lm_ow=None,
                 statement_out=None, persistent_head=False, enroll_out=None,
                 weight_commitment=None, dump_proof=None, forward_only=False)
@@ -80,6 +80,8 @@ def test_each_flag_reaches_its_keyword():
     (dict(unexplained_info=True, ui_s_c=1000, ui_s_b=128), "multiple"),
     (dict(unexplained_info=True, ui_s_c=12288), "power-of-two"),
     (dict(unexplained_info=True, ui_s_b=3), "multiple"),
+    (dict(from_hf=None, enroll_out="e.wc"), "require --from-hf"),
+    (dict(from_hf=None, weight_commitment="e.wc"), "require --from-hf"),
     (dict(enroll_out="e.wc", weight_commitment="f.wc"), "only enrolls"),
     (dict(enroll_out="e.wc", statement_out="s.claims"), "only enrolls"),
     (dict(enroll_out="e.wc", dump_proof="p.json"), "only enrolls"),

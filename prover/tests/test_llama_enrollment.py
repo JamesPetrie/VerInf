@@ -63,6 +63,13 @@ def test_opening_budget_counts_the_union_at_the_limit():
         wc.check_openings(cfg, [0, 1, 2, 4])
 
 
+@pytest.mark.parametrize("flag", ["enroll_out", "weight_commitment"])
+def test_enrollment_requires_reloadable_weights(tmp_path, flag):
+    with pytest.raises(ValueError, match="require --from-hf"):
+        driver.main(**{flag: tmp_path / "model.wc"})
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_empty_enrollment_is_refused(monkeypatch):
     monkeypatch.setattr(core, "commit_weights", lambda *a: (None, [], 0))
     with pytest.raises(ValueError, match="no persistent weight rows"):
