@@ -40,9 +40,13 @@ def write_statement(tape, cfg, path, *, ui_info=None, sz=None, weight_root=None)
     blocks = block_order(layout, cfg)
     with open(path, "xb") as f:
         f.write(raw)
+    # The prover also tracks witness diagnostics. Publish only the public
+    # parameters and the number of positions covered by the revealed sum.
+    public_ui = {k: ui_info[k] for k in ("s_b", "s_c", "s_y", "gap_max", "n")
+                 if ui_info and k in ui_info}
     meta = dict(claims_sha256=hashlib.sha256(raw).hexdigest(), claims_bytes=len(raw),
                 blocks=blocks, statement_digest=pr.statement_digest(raw, blocks).hex(),
-                n_claims=len(tape.claims), sz=sz, ui=ui_info or {},
+                n_claims=len(tape.claims), sz=sz, ui=public_ui,
                 weight_root=weight_root)
     with open(side, "x") as f:
         json.dump(meta, f, indent=2, sort_keys=True)

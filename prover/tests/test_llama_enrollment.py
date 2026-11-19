@@ -1,4 +1,5 @@
 """CPU regression tests for the Llama driver's enrollment and ledger."""
+import json
 import os
 import stat
 import sys
@@ -14,6 +15,7 @@ sys.path[:0] = [str(ROOT / "demo"), str(ROOT / "prover")]
 import core
 import demo_llama7b as driver
 import loader
+from statement_preview import write_statement
 
 
 @pytest.mark.parametrize("options, persistent", [
@@ -86,6 +88,16 @@ def test_tied_weight_rows_match_with_and_without_prompt(monkeypatch):
 def _handle():
     leaf = bytes(32)
     return core.WeightCommitment(root=leaf, levels=[[leaf]], m_w=1, n_lig=1)
+
+
+def test_statement_sidecar_contains_only_public_ui_fields(tmp_path):
+    tape = driver.Tape(driver.CFG, lazy=True)
+    public = dict(s_b=16, s_c=256, s_y=256, gap_max=128, n=2)
+    info = dict(public, observed_gap=60, tokens=[1, 2], reveal_pin=object())
+    write_statement(tape, tape.cfg, str(tmp_path / "claims"), ui_info=info, sz=7)
+    sidecar = json.loads((tmp_path / "claims.json").read_text())
+    assert sidecar["ui"] == public
+    assert sidecar["sz"] == 7
 
 
 def test_lock_survives_atomic_save_and_releases_on_error(tmp_path):

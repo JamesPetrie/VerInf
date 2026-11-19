@@ -682,8 +682,7 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
         from statement_preview import write_statement
         wc_ref = WeightCommitment.load(weight_commitment) if weight_commitment is not None else None
         write_statement(tape, CFG, statement_out,
-                        ui_info={k: v for k, v in (ui_info or {}).items()
-                                 if k not in ("reveal_pin", "tokens")},
+                        ui_info=ui_info,
                         sz=_sz if ui_Sz is not None else None,
                         weight_root=wc_ref.root.hex() if wc_ref is not None else None)
         return None
