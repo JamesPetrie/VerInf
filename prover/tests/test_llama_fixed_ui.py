@@ -159,7 +159,12 @@ def test_enrolled_root_anchors_the_proof(tmp_path):
     meta = write_statement(tape, CFG_W, str(path), sz=sz, weight_commitment=wc)
     assert meta["blocks"] == ["blind", "w", "p1", "p2"]
     assert meta["weight_root"] == wc.root.hex()
-    proof = tape.prove(seed=SEED, weight_commitment=wc)
+    from proof_dump import dump_proof, reserved_dense_output
+    output = str(tmp_path / "proof.json")
+    with reserved_dense_output(output, tape) as (part, raw):
+        proof = tape.prove(seed=SEED, weight_commitment=wc, claims_bytes=raw)
+        dump_proof(output, None, None, proof, None, None, reserved_part=part)
+    assert pathlib.Path(output).is_file() and not pathlib.Path(part).exists()
     assert proof.claims_bytes == path.read_bytes()
     verdict, output = _verify_under(tape, proof, wc.root)
     assert verdict == "ACCEPT", output

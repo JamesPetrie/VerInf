@@ -206,6 +206,37 @@ def test_proof_through_symlink_updates_the_locked_target(tmp_path, monkeypatch):
     assert core.WeightCommitment.load(path).opened_columns == [0]
 
 
+@pytest.mark.parametrize("suffix", ["", ".part"])
+def test_output_collision_precedes_proving_and_ledger_update(tmp_path, monkeypatch, suffix):
+    handle = tmp_path / "weights.wc"
+    _handle().save(handle)
+    target = tmp_path / ("proof.json" + suffix)
+    target.write_bytes(b"original")
+    monkeypatch.setattr(driver.ModelConfig, "from_hf", lambda _: driver.RANDOM_WEIGHTS_CFG)
+    monkeypatch.setattr(driver, "_rand_signed", lambda n, **kw: torch.zeros(n))
+    monkeypatch.setattr(torch.cuda, "synchronize", lambda: None)
+    monkeypatch.setattr(driver.Tape, "prove", lambda *a, **kw: pytest.fail("started proof"))
+    monkeypatch.setenv("LIGERO_DUMP_PROOF", str(tmp_path / "proof.json"))
+    with pytest.raises(FileExistsError):
+        driver.main(from_hf="fixture", num_layers=0, with_lm_head=False, weight_commitment=handle)
+    assert target.read_bytes() == b"original"
+    assert core.WeightCommitment.load(handle).opened_columns == []
+
+
+def test_failed_proof_releases_its_reservation(tmp_path):
+    from proof_dump import reserved_dense_output
+    tape = driver.Tape(driver.CFG, lazy=True)
+    path = tmp_path / "proof.json"
+    with pytest.raises(RuntimeError, match="prover stopped"):
+        with reserved_dense_output(path, tape) as (part, claims):
+            assert Path(part).stat().st_size > len(claims) and not path.exists()
+            with pytest.raises(FileExistsError):
+                with reserved_dense_output(path, tape):
+                    pytest.fail("another writer reserved this path")
+            raise RuntimeError("prover stopped")
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_handle_and_temporary_file_are_private_on_every_save(tmp_path, monkeypatch):
     path = tmp_path / "model.wc"
     wc = _handle()

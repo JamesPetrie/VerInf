@@ -720,36 +720,27 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
     print(f"\n--- single-tape proof: {num_layers} layer(s){tail_str} ---")
     print(f"  claims: {len(tape.claims)}  ({dict(sorted(counts.items()))})")
     torch.cuda.synchronize()
-    t0 = time.time()
-    with _locked_enrollment(weight_commitment) as wc_ref:
-        if wc_ref is not None:
-            print(f"  weight commitment: root {wc_ref.root.hex()}, "
-                  f"{len(wc_ref.opened_columns)} columns already opened")
-        proof = tape.prove(seed=b"xformer-single-tape", verbose=verbose,
-                           weight_commitment=wc_ref)
-        torch.cuda.synchronize()
-        t_prove = time.time() - t0
-        if wc_ref is not None:
-            wc_ref.record_openings(proof.Q_cols)
-            wc_ref.save(weight_commitment)
-            print(f"  ledger: {len(wc_ref.opened_columns)} of "
-                  f"{wc_ref.opening_budget(CFG)} columns spent")
-    # Verification is the standalone Rust verifier's job (verifier-rs/verify_proof
-    # on the dumped proof); the demo only proves + dumps.
-
-    # Optional: dump the proof + claims + seeds for the standalone Rust verifier
-    # (verifier-rs/verify_proof). Public data only — no witness.
-    _dump = dump_proof or os.environ.get("LIGERO_DUMP_PROOF")
-    if _dump:
-        import protocol as pr
-        from proof_dump import dump_proof as _write_proof   # single block-driven writer
-        _t_dump = time.time()
-        s_op, s_comb, s_col = pr.round_seeds(b"xformer-single-tape")
-        Q = list(pr.random_columns(s_col, CFG))
-        _write_proof(_dump, pr.claims_to_json(tape.claims, CFG),
-                     {"s_op": s_op.hex(), "s_comb": s_comb.hex(), "s_col": s_col.hex()},
-                     proof, Q, None)
-        print(f"  dumped proof for Rust verifier → {_dump}  (dump {time.time()-_t_dump:.1f}s)")
+    from proof_dump import dump_proof as write_proof, reserved_dense_output
+    output = dump_proof or os.environ.get("LIGERO_DUMP_PROOF")
+    with reserved_dense_output(output, tape) as (part, claims_bytes):
+        t0 = time.time()
+        with _locked_enrollment(weight_commitment) as wc_ref:
+            if wc_ref is not None:
+                print(f"  weight commitment: root {wc_ref.root.hex()}, "
+                      f"{len(wc_ref.opened_columns)} columns already opened")
+            proof = tape.prove(seed=b"xformer-single-tape", verbose=verbose,
+                               weight_commitment=wc_ref, claims_bytes=claims_bytes)
+            torch.cuda.synchronize()
+            t_prove = time.time() - t0
+            if wc_ref is not None:
+                wc_ref.record_openings(proof.Q_cols)
+                wc_ref.save(weight_commitment)
+                print(f"  ledger: {len(wc_ref.opened_columns)} of "
+                      f"{wc_ref.opening_budget(CFG)} columns spent")
+        if part is not None:
+            t_dump = time.time()
+            write_proof(os.fspath(output), None, None, proof, None, None, reserved_part=part)
+            print(f"  dumped proof for Rust verifier → {output}  (dump {time.time()-t_dump:.1f}s)")
     print(f"  prove: {t_prove:.2f}s   (verify the dump with verify_proof)")
 
     if with_lm_head:

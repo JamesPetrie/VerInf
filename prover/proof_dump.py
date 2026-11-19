@@ -10,6 +10,8 @@ import base64
 import torch
 import os
 import shutil
+from contextlib import contextmanager
+from pathlib import Path
 
 CHUNK = 1_000_000
 # 999999 * sizeof(u64) is divisible by 3.  Therefore independently encoded
@@ -114,8 +116,36 @@ def estimated_bytes(proof, claims_bytes_len=0, *, u64_encoding="decimal"):
         n_values += count(br.c) + count(br.v) + count(br.eta_idx)
         n_values += sum(count(t) for t in br.opened.values())
         n_paths += sum(len(steps) for steps in br.paths.values())
+    return _wire_bytes(n_values, n_paths, claims_bytes_len, u64_encoding)
+
+
+def _wire_bytes(n_values, n_paths, claims_bytes_len, u64_encoding):
     per_value = 21 if u64_encoding == "decimal" else 11
     return int(n_values * per_value + n_paths * 80 + claims_bytes_len + (1 << 20))
+
+
+@contextmanager
+def reserved_dense_output(path, tape):
+    """Reserve a dense Ligero dump from its public row layout before proving."""
+    if path is None:
+        yield None, None
+        return
+    from admission import row_manifest
+    from protocol import claims_canonical_bytes
+
+    cfg = tape.cfg
+    rows = row_manifest(tape, cfg)
+    claims = claims_canonical_bytes(tape.claims, cfg)
+    # Each query opens every row and one Merkle path per block. The three
+    # blinded test polynomials contain K, 2K and 2K field elements.
+    blocks = 3 + sum(rows[key] > 0 for key in ("m_w", "m_wnew", "n_p3"))
+    n_values = cfg.T_QUERIES * rows["m_total"] + 5 * cfg.K_DEG
+    n_paths = cfg.T_QUERIES * blocks * (cfg.N_LIG.bit_length() - 1)
+    part = reserve_output(os.fspath(path), _wire_bytes(n_values, n_paths, len(claims), "decimal"))
+    try:
+        yield part, claims
+    finally:
+        Path(part).unlink(missing_ok=True)
 
 
 def reserve_output(path, reserve_bytes):
@@ -129,7 +159,7 @@ def reserve_output(path, reserve_bytes):
     part = path + ".part"
     target_dir = os.path.dirname(os.path.abspath(path)) or "."
     os.makedirs(target_dir, exist_ok=True)
-    if os.path.exists(path) or os.path.exists(part):
+    if os.path.lexists(path) or os.path.lexists(part):
         raise FileExistsError(
             f"refusing to reserve proof output: {path!r} or its .part exists")
     free = shutil.disk_usage(target_dir).free
@@ -139,19 +169,21 @@ def reserve_output(path, reserve_bytes):
             f"free, need {reserve_bytes/1e9:.1f} GB reserved for output")
     fd = os.open(part, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
     try:
+        # A previous writer may have finished between the preflight and O_EXCL.
+        if os.path.lexists(path):
+            raise FileExistsError(f"refusing to overwrite proof output: {path!r}")
         if not hasattr(os, "posix_fallocate"):
             raise OSError(
                 "production proof reservation requires posix_fallocate; "
                 "ftruncate would create a sparse file without reserving space")
         os.posix_fallocate(fd, 0, int(reserve_bytes))
         os.fsync(fd)
-    except Exception:
-        os.close(fd)
-        try: os.unlink(part)
-        except FileNotFoundError: pass
+        _fsync_dir(part)
+    except BaseException:
+        Path(part).unlink(missing_ok=True)
         raise
-    os.close(fd)
-    _fsync_dir(part)
+    finally:
+        os.close(fd)
     return part
 
 
@@ -176,7 +208,7 @@ def dump_proof(path, claims_json, seeds, proof, Q, python_accept, *,
     claims_bytes = getattr(proof, "claims_bytes", None)
     # Reserve first, write atomically. A proof that dies out of disk space
     # after four hours leaves a truncated file that looks like a proof; the
-    # rename makes the final path appear only once the whole document is on
+    # final link makes the path appear only once the whole document is on
     # disk and fsynced.
     need = estimated_bytes(proof, len(claims_bytes or b""),
                            u64_encoding=u64_encoding)
@@ -194,7 +226,7 @@ def dump_proof(path, claims_json, seeds, proof, Q, python_accept, *,
         # Same rule as reserve_output: a proof already at `path`, or a stale
         # .part, is never silently replaced — its sidecars and receipt would
         # then describe a file that no longer exists.
-        if os.path.exists(path) or os.path.exists(part):
+        if os.path.lexists(path) or os.path.lexists(part):
             raise FileExistsError(
                 f"refusing to overwrite proof output: {path!r} or its .part exists")
         free = shutil.disk_usage(target_dir).free
@@ -202,7 +234,7 @@ def dump_proof(path, claims_json, seeds, proof, Q, python_accept, *,
             raise OSError(
                 f"refusing to write the proof: {target_dir} has {free/1e9:.1f} GB "
                 f"free, the proof needs about {need/1e9:.1f} GB")
-    mode = "r+" if reserved_part is not None else "w"
+    mode = "r+" if reserved_part is not None else "x"
     with open(part, mode) as f:
         f.seek(0)
         f.write('{"claims": ')
@@ -285,5 +317,6 @@ def dump_proof(path, claims_json, seeds, proof, Q, python_accept, *,
         f.truncate()
         f.flush()
         os.fsync(f.fileno())
-    os.replace(part, path)
+    os.link(part, path)  # publish exclusively, even if the target appeared mid-proof
+    os.unlink(part)
     _fsync_dir(path)
