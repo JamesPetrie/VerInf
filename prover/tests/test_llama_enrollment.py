@@ -347,6 +347,23 @@ def test_lock_survives_atomic_save_and_releases_on_error(tmp_path):
         assert wc.opened_columns == [0]
 
 
+def test_load_reopens_handle_replaced_before_fstat(tmp_path, monkeypatch):
+    path = tmp_path / "model.wc"
+    wc = _handle()
+    wc.save(path)
+    wc.record_openings([0])
+    original_fstat = os.fstat
+
+    def replace_before_fstat(fd):
+        monkeypatch.setattr(os, "fstat", original_fstat)
+        wc.save(path)
+        assert original_fstat(fd).st_nlink == 0
+        return original_fstat(fd)
+
+    monkeypatch.setattr(os, "fstat", replace_before_fstat)
+    assert core.WeightCommitment.load(path).opened_columns == [0]
+
+
 def test_hard_linked_enrollment_refused_at_load_and_update(tmp_path):
     path = tmp_path / "model.wc"
     alias = tmp_path / "alias.wc"

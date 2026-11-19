@@ -1050,9 +1050,15 @@ class WeightCommitment:
     @staticmethod
     def load(path: str) -> "WeightCommitment":
         try:
-            with open(path, "rb") as f:
-                WeightCommitment._check_link_count(os.fstat(f.fileno()))
-                blob = f.read()
+            while True:
+                with open(path, "rb") as f:
+                    info = os.fstat(f.fileno())
+                    if info.st_nlink == 0:
+                        # A ledger save replaced this inode after open().
+                        continue
+                    WeightCommitment._check_link_count(info)
+                    blob = f.read()
+                    break
         except OSError as e:
             raise AssertionError(f"cannot read weight commitment {path}: {e}") from e
         try:
