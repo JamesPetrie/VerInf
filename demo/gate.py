@@ -111,7 +111,7 @@ def main() -> int:
     sys.stdout = _Tee(old, buf)
     try:
         demo_llama7b.main(
-            from_hf=MODEL, num_layers=LAYERS, token_ids=TOKENS,
+            from_hf=MODEL, num_layers=LAYERS, token_ids=TOKENS, public_input_tokens=True,
             unexplained_info=True,
             ui_lm_sout=4096, ui_lm_ow=26, ui_s_c=1 << 18,   # fine-scale, calibrated kernel
             engine=True, lazy_weights=True,

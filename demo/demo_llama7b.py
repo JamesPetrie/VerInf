@@ -341,7 +341,7 @@ def _run_unexplained_info(tape, logits, *, vocab_size, seq, output_tokens=None,
     k = bound_scale_ratio(s_c, s_b)
     print(f"  unexplained-info (folded): gap_max={gap_max:,} "
           f"({'fixed' if fixed else 'from this run'}; largest gap {observed:,}), "
-          f"s_c={s_c}, s_y=2^{UI_S_Y_BITS}, s_b={s_b}, k={k} (output tokens hidden)")
+          f"s_c={s_c}, s_y=2^{UI_S_Y_BITS}, s_b={s_b}, k={k}")
     if gap_max.bit_length() > 26:
         if fixed or not forward_only:
             raise ValueError(f"gap_max={gap_max:,} is too large for the exp table; "
@@ -365,7 +365,7 @@ def _report_unexplained_info(tape, Sz, info, *, seq, vocab_size):
     U = bound_bits(Sz_val, s_b=info["s_b"])
     n = info.get("n", seq)
     print(f"  unexplained-information bound: U = {U:.4f} bits "
-          f"over {n} hidden output token(s)")
+          f"over {n} scored output token(s)")
     return U
 
 
@@ -421,6 +421,7 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
           ui_s_c: int = UI_S_C,
           ui_positions: Optional[list] = None,
           token_ids: Optional[list] = None,
+          public_input_tokens: bool = False,
           ui_s_b: int = 1 << UI_S_B_BITS,
           ui_gap_max: Optional[int] = None,
           statement_out: Optional[str] = None,
@@ -448,11 +449,17 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
         prompt = None               # binding proceeds via token_ids below
     if token_ids is not None:
         SEQ = len(token_ids)        # forward over an exact id stream
+        prompt = None
     if ui_positions is not None:
         _check_positions(ui_positions, SEQ)
         ui_positions = list(ui_positions)
     mcfg = (ModelConfig.from_hf(from_hf) if from_hf is not None
             else RANDOM_WEIGHTS_CFG)
+    if (unexplained_info and mcfg.tied_embeddings and token_ids is not None
+            and not chat and not public_input_tokens):
+        raise ValueError("tied embeddings publish every input token ID in the statement, "
+                         "including any continuation. Use --public-input-tokens only "
+                         "when the entire supplied input stream is public.")
     if persistent_head and mcfg.tied_embeddings and prompt is None and token_ids is None:
         # W rows follow first use in the claims. A promptless run must also
         # use the canonical (vocab, d) table before the first layer.
@@ -487,10 +494,13 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
                    else tokenize_prompt(from_hf, prompt).cpu().tolist())
         if len(tok_ids) >= SEQ:
             tok_ids = tok_ids[:SEQ]
-            print(f"  prompt tokens (first {SEQ}): {tok_ids}")
         else:
             tok_ids = tok_ids + [0] * (SEQ - len(tok_ids))
-            print(f"  prompt tokens (padded to {SEQ}): {tok_ids}")
+        if unexplained_info:
+            if mcfg.tied_embeddings:
+                print(f"  tied embedding lookup publishes all {SEQ} input token IDs")
+        else:
+            print(f"  prompt tokens: {tok_ids}")
         E_full = load_token_embedding(from_hf, S=S)
         if mcfg.tied_embeddings:
             # Tied model: keep the FULL table (vocab, d) — it is committed
@@ -675,7 +685,8 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
         print(f"  forward-only (no proof): witness in {time.time() - _t:.2f}s")
         if with_lm_head:
             ls = logits.data.view(SEQ, vocab_size).to(torch.int64).clone()
-            print(f"  argmax(logits[{SEQ-1}]) = token {int(ls[SEQ-1].argmax())}")
+            if not unexplained_info:
+                print(f"  argmax(logits[{SEQ-1}]) = token {int(ls[SEQ-1].argmax())}")
             if save_logits is not None:
                 import numpy as np
                 np.save(save_logits, ls.cpu().numpy())
@@ -747,17 +758,16 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
             print(f"  dumped proof for Rust verifier → {output}  (dump {time.time()-t_dump:.1f}s)")
     print(f"  prove: {t_prove:.2f}s   (verify the dump with verify_proof)")
 
-    if with_lm_head:
-        # argmax(logits[last position]) is the predicted next token. The
-        # verifier could compute the same from the committed `logits`.
+    if with_lm_head and (not unexplained_info or save_logits is not None):
         logits_signed = logits.data.view(SEQ, vocab_size).to(torch.int64).clone()
-        next_tok = int(logits_signed[SEQ - 1].argmax().item())
-        print(f"  argmax(logits[{SEQ-1}]) = token {next_tok}")
+        if not unexplained_info:
+            next_tok = int(logits_signed[SEQ - 1].argmax().item())
+            print(f"  argmax(logits[{SEQ-1}]) = token {next_tok}")
         if save_logits is not None:
             import numpy as np
             np.save(save_logits, logits_signed.cpu().numpy())
             print(f"  saved logits ({SEQ}, {vocab_size}) int64 → {save_logits}")
-        if from_hf is not None:
+        if from_hf is not None and not unexplained_info:
             try:
                 from transformers import AutoTokenizer
                 tok = AutoTokenizer.from_pretrained(from_hf)
@@ -881,6 +891,10 @@ if __name__ == "__main__":
                           "\"continuation\": [...]} (concatenated) — the "
                           "Maverick transcript format. Overrides --prompt/"
                           "--chat. SEQ is set to the id count.")
+    ap.add_argument("--public-input-tokens", action="store_true",
+                     help="Allow a tied model to publish every ID from --tokens-file "
+                          "in its embedding claim during unexplained-information scoring. "
+                          "Use only for a public input stream, including any continuation.")
     ap.add_argument("--seq", type=int, default=None,
                      help="Override sequence length (default 2). Larger SEQ "
                           "scales activation cost linearly; attention "
@@ -919,9 +933,9 @@ if __name__ == "__main__":
                           "LIGERO_DUMP_PROOF env var.")
     ap.add_argument("--unexplained-info", action="store_true",
                      help="After the LM head, append the unexplained-information "
-                          "bound U(o) over the output tokens. The output tokens are "
-                          "HIDDEN: committed + blinded exactly like the model weights "
-                          "(never public). Requires the LM head.")
+                          "bound U(o) over committed output tokens. Tied embedding "
+                          "claims publish all input token IDs (including prompt/chat). "
+                          "Requires the LM head.")
     ap.add_argument("--ui-sigma", type=int, default=256,
                      help="Gaussian-kernel width sigma_g (int-logit units at scale S) "
                           "for --unexplained-info. Larger sigma_g -> larger exp table "
@@ -932,7 +946,7 @@ if __name__ == "__main__":
                           "dropped-tail correction negligible.")
     ap.add_argument("--ui-output-tokens", type=str, default=None,
                      help="Comma-separated output token ids (length SEQ) for "
-                          "--unexplained-info, committed + hidden. Default: the "
+                          "--unexplained-info. The scoring claim commits these IDs. Default: the "
                           "greedy argmax of the int logits.")
     ap.add_argument("--ui-s-c", type=int, default=None,
                      help="Kernel width s_c = 2*sigma^2 for --unexplained-info "
@@ -990,7 +1004,7 @@ if __name__ == "__main__":
     main(from_hf=args.from_hf, layer_idx=args.layer_idx,
          num_layers=args.num_layers, prompt=_prompt,
          chat=args.chat and not args.tokens_file,
-         token_ids=_token_ids,
+         token_ids=_token_ids, public_input_tokens=args.public_input_tokens,
          with_lm_head=not args.no_lm_head, verbose=args.verbose,
          lazy_weights=args.lazy_weights, engine=args.engine,
          save_logits=args.save_logits, time_ops=args.time_ops,

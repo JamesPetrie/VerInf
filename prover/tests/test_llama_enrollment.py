@@ -101,16 +101,46 @@ def test_tied_weight_rows_match_with_and_without_prompt(monkeypatch):
         raise TailReached(lookup.token_ids, rows)
 
     monkeypatch.setattr(driver, "_run_tail", inspect_tail)
-    def weight_rows(ids):
+    def weight_rows(ids, **options):
         with pytest.raises(TailReached) as exc:
             driver.main(from_hf="fixture", num_layers=0, token_ids=ids,
-                        persistent_head=True, engine=True)
+                        persistent_head=True, engine=True, **options)
         used_ids, rows = exc.value.args
         assert used_ids == ([0, 0] if ids is None else ids)
         assert [name for name, _, _ in rows] == ["E_embedding", "final_norm_w"]
         return rows
 
-    assert weight_rows(None) == weight_rows([1, 2])
+    rows = weight_rows(None)
+    assert rows == weight_rows([1, 2])
+    assert rows == weight_rows([1, 2], unexplained_info=True, public_input_tokens=True)
+
+
+@pytest.mark.parametrize("output", ["statement_out", "dump_proof"])
+def test_tied_scoring_requires_public_input_consent(tmp_path, monkeypatch, capsys, output):
+    cfg = replace(driver.RANDOM_WEIGHTS_CFG, tied_embeddings=True)
+    monkeypatch.setattr(driver.ModelConfig, "from_hf", lambda _: cfg)
+    monkeypatch.setattr(driver, "SEQ", 2)
+    with pytest.raises(ValueError, match="tied embeddings publish every input token ID"):
+        driver.main(from_hf="fixture", token_ids=[12345, 9876], unexplained_info=True,
+                    **{output: tmp_path / "result"})
+    assert "9876" not in capsys.readouterr().out
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_tied_transcript_file_refused_before_reading_weights(tmp_path):
+    (tmp_path / "config.json").write_text(json.dumps(dict(
+        hidden_size=8, intermediate_size=16, num_hidden_layers=1,
+        num_attention_heads=2, vocab_size=10000, tie_word_embeddings=True)))
+    transcript = tmp_path / "tokens.json"
+    transcript.write_text(json.dumps({"prompt": [2, 3], "continuation": [9876]}))
+    statement = tmp_path / "claims"
+    run = subprocess.run([sys.executable, str(ROOT / "demo" / "demo_llama7b.py"),
+                          "--from-hf", str(tmp_path), "--tokens-file", str(transcript),
+                          "--unexplained-info", "--statement-out", str(statement)],
+                         capture_output=True, text=True, timeout=60)
+    assert run.returncode and "--public-input-tokens" in run.stderr
+    assert "9876" not in run.stdout + run.stderr
+    assert not statement.exists() and not statement.with_suffix(".json").exists()
 
 
 def _handle():
