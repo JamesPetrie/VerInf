@@ -27,15 +27,17 @@ def block_order(layout, cfg):
             + ["p1", "p2"] + (["p3"] if p3_rows else []))
 
 
-def write_statement(tape, cfg, path, *, ui_info=None, sz=None, weight_root=None):
+def write_statement(tape, cfg, path, *, ui_info=None, sz=None, weight_commitment=None):
     """Write `path` (claim bytes) and `path + '.json'` (sidecar). Refuses to
-    overwrite either. `weight_root` (hex) records the enrolled W root the
-    proof will reference; it is not part of the claim bytes."""
+    overwrite either. A referenced enrollment must match the W layout. Its
+    root is recorded in the sidecar."""
     side = path + ".json"
     for p in (path, side):
         if os.path.exists(p):
             raise FileExistsError(f"refusing to overwrite {p!r}")
     layout = core._layout(core._with_synthesized_settlements(tape.claims), cfg)
+    if weight_commitment is not None:
+        weight_commitment.check_layout(cfg, layout[8])  # persistent W rows
     raw = pr.claims_canonical_bytes(tape.claims, cfg)
     blocks = block_order(layout, cfg)
     with open(path, "xb") as f:
@@ -47,7 +49,7 @@ def write_statement(tape, cfg, path, *, ui_info=None, sz=None, weight_root=None)
     meta = dict(claims_sha256=hashlib.sha256(raw).hexdigest(), claims_bytes=len(raw),
                 blocks=blocks, statement_digest=pr.statement_digest(raw, blocks).hex(),
                 n_claims=len(tape.claims), sz=sz, ui=public_ui,
-                weight_root=weight_root)
+                weight_root=weight_commitment.root.hex() if weight_commitment is not None else None)
     with open(side, "x") as f:
         json.dump(meta, f, indent=2, sort_keys=True)
         f.write("\n")

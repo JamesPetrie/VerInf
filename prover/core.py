@@ -1048,6 +1048,13 @@ class WeightCommitment:
         wc.check_topology()
         return wc
 
+    def check_layout(self, cfg: 'LigeroConfig', weight_rows: int) -> None:
+        if weight_rows == 0:
+            raise ValueError("cannot reference a weight commitment without persistent weight rows")
+        if self.m_w != weight_rows or self.n_lig != cfg.N_LIG:
+            raise AssertionError(f"weight commitment mismatch: m_w {self.m_w} vs {weight_rows}, "
+                                 f"N_LIG {self.n_lig} vs {cfg.N_LIG}")
+
     @classmethod
     def opening_budget(cls, cfg: 'LigeroConfig') -> int:
         """How many DISTINCT columns this enrollment may ever reveal."""
@@ -3978,11 +3985,9 @@ def _prove_streaming_body(tape, cfg, seed=None, weight_commitment=None, wnew_see
     # (diff-tests that compare two proofs byte-for-byte do pin it).
     s = _stream_setup(tape, cfg, zk_seed=(zk_seed or new_zk_seed()))
     has_w = bool(s['n_w_total'])
-    # P3: reference a persisted W commitment. The row-count/codeword guard
-    # below checks that it is for this model's W block.
-    if weight_commitment is not None and not has_w:
-        raise ValueError("cannot reference a weight commitment without persistent weight rows")
     wc = weight_commitment
+    if wc is not None:
+        wc.check_layout(cfg, s['n_w_total'])
     # Validate the enrolled split and every active worker's device before
     # any sweep or witness-cache allocation. An open-only worker must also
     # fail here, rather than after the preceding commitment and fold work.
@@ -4110,9 +4115,6 @@ def _prove_streaming_body(tape, cfg, seed=None, weight_commitment=None, wnew_see
                         "physical rows and the proof would not verify")
 
     if wc is not None:
-        assert wc.m_w == s['n_w_total'] and wc.n_lig == cfg.N_LIG, (
-            f"weight commitment mismatch: m_w {wc.m_w} vs {s['n_w_total']}, "
-            f"N_LIG {wc.n_lig} vs {cfg.N_LIG}")
         # P5: pad the W block under the COMMITMENT's seed at the block's
         # logical offset, so the re-extracted columns reproduce the persisted
         # leaves even when the commitment was REFRESHED under a fresh seed.

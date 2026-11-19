@@ -129,6 +129,29 @@ def test_requested_bound_is_required_for_published_outputs(tmp_path, monkeypatch
     assert list(tmp_path.iterdir()) == []
 
 
+@pytest.mark.parametrize("persistent, rows, columns, error", [
+    (False, 1, 64, "without persistent"),
+    (True, 2, 64, "m_w 2 vs 1"),
+    (True, 1, 32, "N_LIG 32 vs 64"),
+    (True, 1, 64, None),
+])
+def test_preview_checks_enrollment_geometry(tmp_path, persistent, rows, columns, error):
+    cfg = core.LigeroConfig(ELL=8, K_DEG=16, N_LIG=64, T_QUERIES=4)
+    tape = driver.Tape(cfg, lazy=True)
+    w = tape.commit("w", torch.ones(8), (8,), persistent=persistent)
+    x = tape.commit("x", torch.ones(8), (8,))
+    tape.add(w, x)
+    wc = replace(_handle(), m_w=rows, n_lig=columns)
+    path = str(tmp_path / "claims")
+    if error:
+        with pytest.raises((ValueError, AssertionError), match=error):
+            write_statement(tape, cfg, path, weight_commitment=wc)
+        assert list(tmp_path.iterdir()) == []
+    else:
+        meta = write_statement(tape, cfg, path, weight_commitment=wc)
+        assert "w" in meta["blocks"] and meta["weight_root"] == wc.root.hex()
+
+
 def test_statement_sidecar_contains_only_public_ui_fields(tmp_path):
     tape = driver.Tape(driver.CFG, lazy=True)
     public = dict(s_b=16, s_c=256, s_y=256, gap_max=128, n=2)

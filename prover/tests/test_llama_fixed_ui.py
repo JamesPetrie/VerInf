@@ -156,7 +156,7 @@ def test_enrolled_root_anchors_the_proof(tmp_path):
     assert sz == _reference_sz(ROWS, TOKENS, POSITIONS, S_C, S_B, 1 << D.UI_S_Y_BITS)
     wc = core.WeightCommitment.from_tape(tape, CFG_W)
     path = tmp_path / "statement.claims"
-    meta = write_statement(tape, CFG_W, str(path), sz=sz, weight_root=wc.root.hex())
+    meta = write_statement(tape, CFG_W, str(path), sz=sz, weight_commitment=wc)
     assert meta["blocks"] == ["blind", "w", "p1", "p2"]
     assert meta["weight_root"] == wc.root.hex()
     proof = tape.prove(seed=SEED, weight_commitment=wc)

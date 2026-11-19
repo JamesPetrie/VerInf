@@ -707,7 +707,7 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
         write_statement(tape, CFG, statement_out,
                         ui_info=ui_info,
                         sz=_sz if ui_Sz is not None else None,
-                        weight_root=wc_ref.root.hex() if wc_ref is not None else None)
+                        weight_commitment=wc_ref)
         return None
 
     from collections import Counter
