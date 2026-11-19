@@ -971,30 +971,37 @@ class WeightCommitment:
     OPENING_BUDGET_FRACTION = 0.5
 
     def save(self, path: str) -> None:
-        import os
         import struct
-        # The ledger is security state, not a cache.  Publish it atomically so
-        # a crash cannot roll the enrollment back to an earlier opening set.
-        part = path + ".part"
-        with open(part, "wb") as f:
-            f.write(self.MAGIC)
-            f.write(struct.pack("<III", self.VERSION, self.m_w, self.n_lig))
-            f.write(self.root)
-            f.write(self.master_seed)
-            f.write(struct.pack("<I", len(self.levels)))
-            for lvl in self.levels:
-                f.write(struct.pack("<I", len(lvl)))
-                for node in lvl:
-                    assert len(node) == 32, "merkle node must be 32 bytes"
-                    f.write(node)
-            cols = sorted(set(self.opened_columns))
-            f.write(struct.pack("<I", len(cols)))
-            for c in cols:
-                f.write(struct.pack("<I", c))
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(part, path)
-        dfd = os.open(os.path.dirname(os.path.abspath(path)) or ".", os.O_RDONLY)
+        import tempfile
+        from pathlib import Path
+
+        # mkstemp creates a fresh owner-only inode on every save, including
+        # ledger updates. Keep it on the same filesystem for atomic publication.
+        directory = os.path.dirname(os.path.abspath(path))
+        fd, part = tempfile.mkstemp(dir=directory, suffix=f".{os.path.basename(path)}.part")
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(self.MAGIC)
+                f.write(struct.pack("<III", self.VERSION, self.m_w, self.n_lig))
+                f.write(self.root)
+                f.write(self.master_seed)
+                f.write(struct.pack("<I", len(self.levels)))
+                for lvl in self.levels:
+                    f.write(struct.pack("<I", len(lvl)))
+                    for node in lvl:
+                        assert len(node) == 32, "merkle node must be 32 bytes"
+                        f.write(node)
+                cols = sorted(set(self.opened_columns))
+                f.write(struct.pack("<I", len(cols)))
+                for c in cols:
+                    f.write(struct.pack("<I", c))
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(part, path)
+        finally:
+            # A write or publication failure leaves the previous handle intact.
+            Path(part).unlink(missing_ok=True)
+        dfd = os.open(directory, os.O_RDONLY)
         try:
             os.fsync(dfd)
         finally:

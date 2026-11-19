@@ -1,4 +1,6 @@
 """CPU regression tests for the Llama driver's enrollment and ledger."""
+import os
+import stat
 import sys
 from pathlib import Path
 
@@ -60,3 +62,27 @@ def test_lock_survives_atomic_save_and_releases_on_error(tmp_path):
                 pytest.fail("another prover acquired the enrollment lock")
     with driver._locked_enrollment(path) as wc:
         assert wc.opened_columns == [0]
+
+
+def test_handle_and_temporary_file_are_private_on_every_save(tmp_path, monkeypatch):
+    path = tmp_path / "model.wc"
+    wc = _handle()
+    fsync = os.fsync
+    modes = []
+
+    def inspect_fsync(fd):
+        mode = os.fstat(fd).st_mode
+        if stat.S_ISREG(mode):
+            modes.append(stat.S_IMODE(mode))
+        fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", inspect_fsync)
+    old_mask = os.umask(0o022)
+    try:
+        for _ in range(2):
+            wc.save(path)
+            assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    finally:
+        os.umask(old_mask)
+    assert modes == [0o600, 0o600]
+    assert list(tmp_path.iterdir()) == [path]
