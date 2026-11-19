@@ -234,6 +234,26 @@ def test_lock_survives_atomic_save_and_releases_on_error(tmp_path):
         assert wc.opened_columns == [0]
 
 
+def test_hard_linked_enrollment_refused_at_load_and_update(tmp_path):
+    path = tmp_path / "model.wc"
+    alias = tmp_path / "alias.wc"
+    wc = _handle()
+    wc.save(path)
+    os.link(path, alias)
+    for name in (path, alias):
+        with pytest.raises(ValueError, match="hard-linked weight commitments"):
+            with driver._locked_enrollment(name):
+                pytest.fail("accepted an ambiguous enrollment")
+    wc.record_openings([0])
+    with pytest.raises(ValueError, match="hard-linked weight commitments"):
+        wc.save(path)
+    assert path.samefile(alias)
+    alias.unlink()
+    assert core.WeightCommitment.load(path).opened_columns == []
+    wc.save(path)
+    assert core.WeightCommitment.load(path).opened_columns == [0]
+
+
 def test_proof_through_symlink_updates_the_locked_target(tmp_path, monkeypatch):
     path = tmp_path / "model.wc"
     _handle().save(path)

@@ -970,6 +970,12 @@ class WeightCommitment:
     # refresh. Half leaves the same margin again for the refresh proof itself.
     OPENING_BUDGET_FRACTION = 0.5
 
+    @staticmethod
+    def _check_link_count(stat_result):
+        if stat_result.st_nlink != 1:
+            raise ValueError("hard-linked weight commitments can fork the opening ledger; "
+                             "keep a single handle and use symlinks for aliases")
+
     def save(self, path: str, *, overwrite: bool = True) -> None:
         """Atomically persist the handle. Use overwrite=False for enrollment."""
         import struct
@@ -999,6 +1005,12 @@ class WeightCommitment:
                 f.flush()
                 os.fsync(f.fileno())
             if overwrite:
+                try:
+                    current = os.stat(path)
+                except FileNotFoundError:
+                    pass  # First save to this path.
+                else:
+                    self._check_link_count(current)
                 os.replace(part, path)
             else:
                 # Publish the complete inode only if no other enrollment won.
@@ -1015,7 +1027,13 @@ class WeightCommitment:
     @staticmethod
     def load(path: str) -> "WeightCommitment":
         try:
-            return WeightCommitment._parse(path)
+            with open(path, "rb") as f:
+                WeightCommitment._check_link_count(os.fstat(f.fileno()))
+                blob = f.read()
+        except OSError as e:
+            raise AssertionError(f"cannot read weight commitment {path}: {e}") from e
+        try:
+            return WeightCommitment._parse(blob)
         except AssertionError:
             raise
         except Exception as e:                      # truncated / scrambled file
@@ -1023,10 +1041,8 @@ class WeightCommitment:
                 f"corrupt weight commitment {path}: {type(e).__name__}: {e}")
 
     @staticmethod
-    def _parse(path: str) -> "WeightCommitment":
+    def _parse(blob: bytes) -> "WeightCommitment":
         import struct
-        with open(path, "rb") as f:
-            blob = f.read()
         assert blob[:8] == WeightCommitment.MAGIC, "not a weight commitment file"
         ver, m_w, n_lig = struct.unpack("<III", blob[8:20])
         assert ver == WeightCommitment.VERSION, f"unsupported version {ver}"
