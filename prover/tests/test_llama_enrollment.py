@@ -447,6 +447,24 @@ def test_handle_and_temporary_file_are_private_on_every_save(tmp_path, monkeypat
     assert list(tmp_path.iterdir()) == [path]
 
 
+def test_interrupted_enrollment_is_readable_once_published(tmp_path, monkeypatch):
+    path = tmp_path / "model.wc"
+    wc = _handle()
+
+    # Interrupt between publication and staging-file cleanup. A complete
+    # handle at the destination must already be usable at this point.
+    def interrupt_cleanup(*args, **kwargs):
+        assert path.exists()
+        raise InterruptedError
+
+    with monkeypatch.context() as m:
+        m.setattr(Path, "unlink", interrupt_cleanup)
+        with pytest.raises(InterruptedError):
+            wc.save(path, overwrite=False)
+    assert core.WeightCommitment.load(path) == wc
+    assert list(tmp_path.iterdir()) == [path]
+
+
 def test_initial_enrollment_preserves_existing_handle(tmp_path):
     path = tmp_path / "model.wc"
     first = _handle()

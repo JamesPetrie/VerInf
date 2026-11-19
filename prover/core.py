@@ -913,6 +913,27 @@ def commit_weights(tape, cfg: LigeroConfig, master_seed: bytes = MASTER_SEED):
     return art, weight_vars, m_w
 
 
+def _rename_exclusive(source, destination):
+    """Atomically publish a new enrollment with a single link to its inode."""
+    import ctypes
+    import errno
+
+    # os.rename can overwrite an existing handle on POSIX. Use the native
+    # no-replace operation so even a process death leaves no hard-link alias.
+    libc = ctypes.CDLL(None, use_errno=True)
+    src, dst = os.fsencode(source), os.fsencode(destination)
+    if sys.platform == "darwin":
+        result = libc.renamex_np(src, dst, 0x4)  # RENAME_EXCL
+    elif hasattr(libc, "renameat2"):
+        at_fdcwd, rename_noreplace = -100, 1
+        result = libc.renameat2(at_fdcwd, src, at_fdcwd, dst, rename_noreplace)
+    else:
+        raise OSError(errno.ENOTSUP, "atomic no-replace rename unavailable", destination)
+    if result != 0:
+        err = ctypes.get_errno()
+        raise OSError(err, os.strerror(err), destination)
+
+
 @dataclass
 class WeightCommitment:
     """A persisted commitment to a model's W block (analysis/persistent-weights.md,
@@ -1016,7 +1037,7 @@ class WeightCommitment:
                 os.replace(part, path)
             else:
                 # Publish the complete inode only if no other enrollment won.
-                os.link(part, path)
+                _rename_exclusive(part, path)
         finally:
             # A write or publication failure leaves the previous handle intact.
             Path(part).unlink(missing_ok=True)
