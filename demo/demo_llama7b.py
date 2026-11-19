@@ -521,6 +521,7 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
               f"{lazy_loader.model_dir})")
 
     # Record each transformer block on the same tape. resid flows through.
+    enroll_layers = persistent_head or enroll_out is not None or weight_commitment is not None
     for L in range(num_layers):
         this_layer_idx = layer_idx + L
         if lazy_loader is not None:
@@ -532,6 +533,11 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
         else:
             layer_weights = _commit_weights_random(
                 tape, mcfg, layer_idx=this_layer_idx)
+        # The W layout is assigned from the recorded claims. Mark every layer
+        # before its first use, independently of how its weights were loaded.
+        if enroll_layers:
+            for weight in layer_weights.values():
+                weight.var.persistent = True
         resid = _run_block(tape, resid, layer_weights, mcfg=mcfg)
         del layer_weights
         torch.cuda.empty_cache()

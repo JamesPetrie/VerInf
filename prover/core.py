@@ -953,6 +953,8 @@ class WeightCommitment:
         if master_seed is None:
             master_seed = new_zk_seed()
         art, _wv, m_w = commit_weights(tape, cfg, master_seed)
+        if m_w == 0:
+            raise ValueError("cannot enroll a tape with no persistent weight rows")
         return WeightCommitment(root=art.root, levels=art.levels, m_w=m_w,
                                 n_lig=cfg.N_LIG, master_seed=bytes(master_seed))
 
@@ -3963,7 +3965,9 @@ def _prove_streaming_body(tape, cfg, seed=None, weight_commitment=None, wnew_see
     has_w = bool(s['n_w_total'])
     # P3: reference a persisted W commitment. The row-count/codeword guard
     # below checks that it is for this model's W block.
-    wc = weight_commitment if has_w else None
+    if weight_commitment is not None and not has_w:
+        raise ValueError("cannot reference a weight commitment without persistent weight rows")
+    wc = weight_commitment
     # Validate the enrolled split and every active worker's device before
     # any sweep or witness-cache allocation. An open-only worker must also
     # fail here, rather than after the preceding commitment and fold work.
