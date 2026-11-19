@@ -45,6 +45,16 @@ def test_flags_left_out_keep_main_s_defaults():
                       enroll_out=None, weight_commitment=None)
 
 
+@pytest.mark.parametrize("option", [
+    {"ui_positions": [0]}, {"ui_gap_max": 128}, {"ui_s_c": D.UI_S_C},
+    {"ui_s_b": 1 << D.UI_S_B_BITS}, {"ui_lm_sout": D.UI_COARSE_S}, {"ui_lm_ow": D.UI_COARSE_OW},
+])
+def test_python_preview_rejects_scoring_options_without_scoring(tmp_path, option):
+    with pytest.raises(ValueError, match="requires --unexplained-info"):
+        D.main(from_hf="/nonexistent", statement_out=tmp_path / "claims", **option)
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_each_flag_reaches_its_keyword():
     kw = D._bound_and_enrollment_kwargs(_args(
         unexplained_info=True, ui_s_c=262144, ui_s_b=128, ui_gap_max=185364,

@@ -425,13 +425,13 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
           ui_sigma: int = 256,
           ui_sy_bits: int = 16,
           ui_output_tokens: Optional[list] = None,
-          ui_lm_sout: int = UI_COARSE_S,
-          ui_lm_ow: int = UI_COARSE_OW,
-          ui_s_c: int = UI_S_C,
+          ui_lm_sout: Optional[int] = None,
+          ui_lm_ow: Optional[int] = None,
+          ui_s_c: Optional[int] = None,
           ui_positions: Optional[list] = None,
           token_ids: Optional[list] = None,
           public_input_tokens: bool = False,
-          ui_s_b: int = 1 << UI_S_B_BITS,
+          ui_s_b: Optional[int] = None,
           ui_gap_max: Optional[int] = None,
           statement_out: Optional[str] = None,
           persistent_head: bool = False,
@@ -441,17 +441,16 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
     output = _proof_output(forward_only, enroll_out, statement_out, weight_commitment, dump_proof, from_hf)
     if ui_output_tokens is not None and not unexplained_info:
         raise ValueError("--ui-output-tokens requires --unexplained-info")
+    ui_s_c, ui_s_b, ui_lm_sout, ui_lm_ow = _checked_bound(
+        unexplained_info, ui_positions, ui_s_c, ui_s_b, ui_lm_sout, ui_lm_ow, ui_gap_max)
     if weight_commitment is not None or enroll_out is not None:
         WeightCommitment.check_query_budget(CFG)
     if weight_commitment is not None:
         # Lock, read and replace the same target even when the caller uses a symlink.
         weight_commitment = os.path.realpath(weight_commitment)
-    if unexplained_info:
-        if statement_out is not None and from_hf is None:
-            raise ValueError("an unexplained-information statement preview requires --from-hf "
-                             "so the proof can reload the same weights")
-        bound_scale_ratio(ui_s_c, ui_s_b)
-        _check_lm_output_scale(ui_lm_sout)
+    if unexplained_info and statement_out is not None and from_hf is None:
+        raise ValueError("an unexplained-information statement preview requires --from-hf "
+                         "so the proof can reload the same weights")
     if enroll_out is not None and os.path.lexists(enroll_out):
         raise FileExistsError(f"refusing to overwrite enrollment: {enroll_out}")
     if chat:
@@ -850,25 +849,33 @@ def _parse_positions(text, error):
         error(str(exc))
 
 
+def _checked_bound(enabled, positions, ui_s_c, ui_s_b, ui_lm_sout, ui_lm_ow, ui_gap_max):
+    """Validate explicit options before filling in the scoring defaults."""
+    for name, value in (("--ui-s-c", ui_s_c), ("--ui-s-b", ui_s_b), ("--ui-lm-sout", ui_lm_sout),
+                        ("--ui-lm-ow", ui_lm_ow), ("--ui-gap-max", ui_gap_max)):
+        if value is not None:
+            if not enabled:
+                raise ValueError(f"{name} requires --unexplained-info")
+            if value <= 0:
+                raise ValueError(f"{name} must be positive")
+    if positions is not None and not enabled:
+        raise ValueError("--ui-positions requires --unexplained-info")
+    s_c = UI_S_C if ui_s_c is None else ui_s_c
+    s_b = 1 << UI_S_B_BITS if ui_s_b is None else ui_s_b
+    lm_sout = UI_COARSE_S if ui_lm_sout is None else ui_lm_sout
+    bound_scale_ratio(s_c, s_b)
+    _check_lm_output_scale(lm_sout)
+    return s_c, s_b, lm_sout, UI_COARSE_OW if ui_lm_ow is None else ui_lm_ow
+
+
 def _bound_and_enrollment_kwargs(args, error):
     """The fixed-bound, statement and enrollment flags as main()'s keywords.
     `error` reports a combination that cannot run (argparse's ap.error), before
     any model is loaded. A bound flag left out keeps main()'s default."""
     bound = {"ui_s_c": args.ui_s_c, "ui_s_b": args.ui_s_b, "ui_gap_max": args.ui_gap_max,
              "ui_lm_sout": args.ui_lm_sout, "ui_lm_ow": args.ui_lm_ow}
-    if (any(v is not None for v in bound.values()) or args.ui_positions is not None) \
-            and not args.unexplained_info:
-        error("--ui-s-c, --ui-s-b, --ui-gap-max, --ui-positions, --ui-lm-sout and "
-              "--ui-lm-ow set the --unexplained-info bound")
-    for name, v in bound.items():
-        if v is not None and v <= 0:
-            error(f"--{name.replace('_', '-')} must be positive")
-    s_c = UI_S_C if args.ui_s_c is None else args.ui_s_c
-    s_b = 1 << UI_S_B_BITS if args.ui_s_b is None else args.ui_s_b
     try:
-        bound_scale_ratio(s_c, s_b)
-        if args.ui_lm_sout is not None:
-            _check_lm_output_scale(args.ui_lm_sout)
+        _checked_bound(args.unexplained_info, args.ui_positions, **bound)
         _proof_output(args.forward_only, args.enroll_out, args.statement_out,
                       args.weight_commitment, args.dump_proof, args.from_hf)
     except ValueError as exc:
