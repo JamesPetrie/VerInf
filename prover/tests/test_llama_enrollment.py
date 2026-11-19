@@ -113,6 +113,29 @@ def test_lock_survives_atomic_save_and_releases_on_error(tmp_path):
         assert wc.opened_columns == [0]
 
 
+def test_proof_through_symlink_updates_the_locked_target(tmp_path, monkeypatch):
+    path = tmp_path / "model.wc"
+    _handle().save(path)
+    alias = tmp_path / "current.wc"
+    alias.symlink_to(path.name)
+    monkeypatch.setattr(driver.ModelConfig, "from_hf", lambda _: driver.RANDOM_WEIGHTS_CFG)
+    monkeypatch.setattr(driver, "_rand_signed", lambda n, **kw: torch.zeros(n))
+    monkeypatch.setattr(torch.cuda, "synchronize", lambda: None)
+
+    def prove(tape, **kwargs):
+        with pytest.raises(BlockingIOError):
+            with driver._locked_enrollment(path):
+                pytest.fail("the canonical enrollment lock must be held")
+        from types import SimpleNamespace
+        return SimpleNamespace(Q_cols=[0])
+
+    monkeypatch.setattr(driver.Tape, "prove", prove)
+    driver.main(from_hf="fixture", num_layers=0, with_lm_head=False,
+                engine=True, weight_commitment=alias)
+    assert alias.is_symlink()
+    assert core.WeightCommitment.load(path).opened_columns == [0]
+
+
 def test_handle_and_temporary_file_are_private_on_every_save(tmp_path, monkeypatch):
     path = tmp_path / "model.wc"
     wc = _handle()

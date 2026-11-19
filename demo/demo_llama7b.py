@@ -425,6 +425,9 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
           weight_commitment: Optional[str] = None):
     global SEQ
     _check_output_mode(forward_only, enroll_out, statement_out, weight_commitment, dump_proof)
+    if weight_commitment is not None:
+        # Lock, read and replace the same target even when the caller uses a symlink.
+        weight_commitment = os.path.realpath(weight_commitment)
     if unexplained_info:
         bound_scale_ratio(ui_s_c, ui_s_b)
     if enroll_out is not None and os.path.lexists(enroll_out):

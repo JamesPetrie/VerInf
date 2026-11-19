@@ -467,6 +467,8 @@ def main():
         # concurrent provers can both read the same opening set and the last
         # save silently loses the other proof's columns.
         import fcntl
+        if a.weight_commitment:
+            a.weight_commitment = os.path.realpath(a.weight_commitment)
         # under the bridge there is no wcommit file; the ledger lock rides
         # next to the proof output instead
         a._wc_lock = open((a.weight_commitment or a.dump_proof) + ".lock",
