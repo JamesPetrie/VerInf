@@ -29,7 +29,7 @@ See [`analysis/full-model-hidden-run-archive.md`](analysis/full-model-hidden-run
 python demo/gate.py
 ```
 
-This builds the verifier, proves a small real-weights forward with the calibrated unexplained-information bound (output tokens hidden), checks it with the Rust verifier, and prints `PASS` on success. It exits 0 only if the verifier ACCEPTs and the bound is non-degenerate, so it also serves as the regression gate. It opens 10 columns for speed; production soundness is 80.
+The gate enrolls the model weights and pins the statement digest before proving. It passes the enrolled root and pinned digest to the Rust verifier and prints `PASS` only when the verifier accepts and the unexplained-information bound is below 2 bits per token. Each run uses a temporary directory for the secret enrollment, statement, and proof. The gate opens 10 columns for speed. Production soundness uses 80.
 
 The manual walk-through:
 

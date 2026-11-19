@@ -33,8 +33,7 @@ os.environ.setdefault("LIGERO_T_QUERIES", "10")
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
-import io
-import re
+import json
 import sys
 import pathlib
 import subprocess
@@ -53,21 +52,6 @@ LAYERS = int(os.environ.get("VERINF_GATE_LAYERS",
 # gate needs no tokenizer call and is reproducible.
 TOKENS = [1, 450, 7483, 310, 3444, 338]
 U_PER_TOK_MAX = 2.0      # non-degenerate guard: log2(vocab)=14.97 (coarse) / blow-ups fail
-
-
-class _Tee:
-    """Write-through stdout: echo live AND capture, so we can parse the U line."""
-    def __init__(self, *streams):
-        self.streams = streams
-
-    def write(self, s):
-        for st in self.streams:
-            st.write(s)
-        return len(s)
-
-    def flush(self):
-        for st in self.streams:
-            st.flush()
 
 
 def _check_model():
@@ -100,40 +84,37 @@ def _verifier_bin() -> pathlib.Path:
 def main() -> int:
     _check_model()
     import demo_llama7b
-    proof = pathlib.Path(tempfile.gettempdir()) / "infproof_gate.json"
-
-    tq = os.environ["LIGERO_T_QUERIES"]
-    print(f"[gate] proving: {LAYERS} layers, SEQ={len(TOKENS)}, T_QUERIES={tq}, real weights "
-          f"({MODEL}), calibrated unexplained-info ...", flush=True)
-
-    buf = io.StringIO()
-    old = sys.stdout
-    sys.stdout = _Tee(old, buf)
-    try:
-        demo_llama7b.main(
-            from_hf=MODEL, num_layers=LAYERS, token_ids=TOKENS, public_input_tokens=True,
-            unexplained_info=True,
-            ui_lm_sout=4096, ui_lm_ow=26, ui_s_c=1 << 18,   # fine-scale, calibrated kernel
-            engine=True, lazy_weights=True,
-            dump_proof=str(proof))
-    finally:
-        sys.stdout = old
-    out = buf.getvalue()
-
-    # Parse the proven U bound.
-    m = re.search(r"U = ([\d.]+) bits over (\d+)", out)
-    if not m:
-        print("[gate] FAIL: no unexplained-information bound found (UI did not run).", flush=True)
-        return 1
-    u_total, n_tok = float(m.group(1)), int(m.group(2))
-    u_per_tok = u_total / max(n_tok, 1)
-    u_ok = u_per_tok < U_PER_TOK_MAX
-    print(f"[gate] U = {u_total:.4f} bits over {n_tok} tokens = {u_per_tok:.4f} bits/token "
-          f"({'non-degenerate' if u_ok else 'DEGENERATE -- calibration regression'})", flush=True)
+    from core import WeightCommitment
+    from unexplained_info import bound_bits
 
     vbin = _verifier_bin()
-    print(f"[gate] verifying with {vbin.relative_to(ROOT)} ...", flush=True)
-    res = subprocess.run([str(vbin), str(proof)], capture_output=True, text=True)
+    model = dict(from_hf=MODEL, num_layers=LAYERS, token_ids=TOKENS, public_input_tokens=True,
+                 engine=True, lazy_weights=True, persistent_head=True)
+    scoring = dict(unexplained_info=True, ui_lm_sout=4096, ui_lm_ow=26, ui_s_c=1 << 18)
+    tq = os.environ["LIGERO_T_QUERIES"]
+    print(f"[gate] {LAYERS} layers, SEQ={len(TOKENS)}, T_QUERIES={tq}, model={MODEL}", flush=True)
+
+    with tempfile.TemporaryDirectory(prefix="verinf-gate-") as directory:
+        work = pathlib.Path(directory)
+        handle, statement, proof = work / "model.wc", work / "claims", work / "proof.json"
+        demo_llama7b.main(**model, enroll_out=handle)
+        root = WeightCommitment.load(handle).root.hex()
+        demo_llama7b.main(**model, **scoring, weight_commitment=handle, statement_out=statement)
+        policy = json.loads(statement.with_suffix(".json").read_bytes())
+        digest = policy["statement_digest"]
+        n_tok = policy["ui"]["n"]
+        if n_tok != len(TOKENS) or policy["sz"] is None:
+            print("[gate] FAIL: the statement must reveal a score over every gate token", flush=True)
+            return 1
+        u_total = bound_bits(policy["sz"], s_b=policy["ui"]["s_b"])
+        u_per_tok = u_total / n_tok
+        u_ok = u_per_tok < U_PER_TOK_MAX
+        print(f"[gate] U = {u_total:.4f} bits over {n_tok} tokens = {u_per_tok:.4f} bits/token "
+              f"({'non-degenerate' if u_ok else 'DEGENERATE -- calibration regression'})", flush=True)
+
+        demo_llama7b.main(**model, **scoring, weight_commitment=handle, dump_proof=proof)
+        print(f"[gate] verifying with {vbin.relative_to(ROOT)} ...", flush=True)
+        res = subprocess.run([str(vbin), str(proof), root, digest], capture_output=True, text=True)
     sys.stdout.write(res.stdout)
     if res.stderr.strip():
         sys.stderr.write(res.stderr)

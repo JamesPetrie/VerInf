@@ -24,6 +24,7 @@ SUITES=(
   prover/tests/test_layout_breakdown.py
   prover/tests/test_llama_cli_flags.py
   prover/tests/test_llama_enrollment.py
+  prover/tests/test_llama_gate.py
   prover/tests/test_merkle_index.py
   prover/tests/test_row_map.py
   prover/tests/test_sampled_audit_prototype_gate.py
