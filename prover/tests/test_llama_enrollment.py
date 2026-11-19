@@ -43,6 +43,26 @@ def test_eager_layer_weights_in_driver(monkeypatch, options, persistent):
         driver.main(from_hf="fixture", engine=True, **options)
 
 
+@pytest.mark.parametrize("queries", [0, 5, 8, 9])
+def test_ineligible_query_count_refused_before_enrolled_proof(monkeypatch, queries):
+    cfg = core.LigeroConfig(ELL=8, K_DEG=16, N_LIG=64, T_QUERIES=queries)
+    monkeypatch.setattr(driver, "CFG", cfg)
+    with pytest.raises(ValueError, match="padding budget"):
+        driver.main(from_hf="unused", weight_commitment="unused.wc")
+    with pytest.raises(ValueError, match="padding budget"):
+        core.prove_streaming(None, cfg, weight_commitment=_handle())
+
+
+def test_opening_budget_counts_the_union_at_the_limit():
+    cfg = core.LigeroConfig(ELL=8, K_DEG=16, N_LIG=64, T_QUERIES=4)
+    wc = _handle()
+    wc.check_query_budget(cfg)
+    wc.record_openings([0, 1, 2, 3])
+    wc.check_openings(cfg, [0, 1, 2, 3])
+    with pytest.raises(AssertionError, match="opening budget exhausted"):
+        wc.check_openings(cfg, [0, 1, 2, 4])
+
+
 def test_empty_enrollment_is_refused(monkeypatch):
     monkeypatch.setattr(core, "commit_weights", lambda *a: (None, [], 0))
     with pytest.raises(ValueError, match="no persistent weight rows"):

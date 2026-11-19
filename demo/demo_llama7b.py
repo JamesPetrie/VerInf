@@ -425,6 +425,8 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
           weight_commitment: Optional[str] = None):
     global SEQ
     _check_output_mode(forward_only, enroll_out, statement_out, weight_commitment, dump_proof)
+    if weight_commitment is not None or enroll_out is not None:
+        WeightCommitment.check_query_budget(CFG)
     if weight_commitment is not None:
         # Lock, read and replace the same target even when the caller uses a symlink.
         weight_commitment = os.path.realpath(weight_commitment)

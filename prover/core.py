@@ -1048,22 +1048,23 @@ class WeightCommitment:
         wc.check_topology()
         return wc
 
-    def opening_budget(self, cfg: 'LigeroConfig') -> int:
+    @classmethod
+    def opening_budget(cls, cfg: 'LigeroConfig') -> int:
         """How many DISTINCT columns this enrollment may ever reveal."""
         slack = cfg.K_DEG - cfg.ELL
-        return int(slack * self.OPENING_BUDGET_FRACTION)
+        return int(slack * cls.OPENING_BUDGET_FRACTION)
+
+    @classmethod
+    def check_query_budget(cls, cfg: 'LigeroConfig') -> None:
+        budget = cls.opening_budget(cfg)
+        if not 0 < cfg.T_QUERIES <= budget:
+            raise ValueError(f"enrolled proof needs 1 to {budget} column queries "
+                             f"for this padding budget, got {cfg.T_QUERIES}")
 
     def check_openings(self, cfg: 'LigeroConfig', new_columns) -> None:
         """Refuse a proof that would spend more of the pad than the ledger
         allows. Called once the column challenge exists and BEFORE any weight
-        column is produced, so an exhausted enrollment costs nothing.
-
-        A config with no usable slack (K_DEG-ELL <= T_QUERIES) is not zero
-        knowledge to begin with — encode_messages already warns about it — so
-        there is no pad to ration and the ledger stands down. Production runs
-        at K_DEG=2*ELL, where the budget is real."""
-        if cfg.K_DEG - cfg.ELL <= cfg.T_QUERIES:
-            return
+        column is produced."""
         after = len(set(self.opened_columns) | set(new_columns))
         budget = self.opening_budget(cfg)
         if after > budget:
@@ -3903,6 +3904,8 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
     memory — is released however the prove ends, a raise included."""
     global _WEIGHT_CACHE
     try:
+        if weight_commitment is not None:
+            WeightCommitment.check_query_budget(cfg)
         return _prove_streaming_body(tape, cfg, seed, weight_commitment, wnew_seed,
                                      claims_bytes, zk_seed, shard_plan,
                                      weight_enrollment=weight_enrollment)
