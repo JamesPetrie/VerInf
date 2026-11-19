@@ -26,6 +26,9 @@ verifier/target/
 *.wc
 *.wc.part
 *.wc.lock
+*.wcommit
+*.wcommit.part
+*.wcommit.lock
 *.tar.gz
 *.tgz
 *.npy
