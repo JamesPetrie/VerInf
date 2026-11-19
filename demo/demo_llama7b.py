@@ -384,6 +384,17 @@ def _locked_enrollment(path):
         yield WeightCommitment.load(path)
 
 
+def _check_output_mode(forward_only, enroll_out, statement_out, weight_commitment, dump_proof):
+    if forward_only and any(path is not None for path in
+                            (enroll_out, statement_out, weight_commitment, dump_proof)):
+        raise ValueError("--forward-only cannot enroll, write a statement, or prove")
+    if enroll_out is not None and any(path is not None for path in
+                                      (weight_commitment, statement_out, dump_proof)):
+        raise ValueError("--enroll-out only enrolls: it stops before any statement or proof")
+    if statement_out is not None and dump_proof is not None:
+        raise ValueError("--statement-out stops before proving, so there is no proof to dump")
+
+
 def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
           save_logits: Optional[str] = None,
           num_layers: int = 1,
@@ -412,6 +423,7 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
           enroll_out: Optional[str] = None,
           weight_commitment: Optional[str] = None):
     global SEQ
+    _check_output_mode(forward_only, enroll_out, statement_out, weight_commitment, dump_proof)
     if enroll_out is not None and os.path.lexists(enroll_out):
         raise FileExistsError(f"refusing to overwrite enrollment: {enroll_out}")
     mcfg = (ModelConfig.from_hf(from_hf) if from_hf is not None
@@ -789,10 +801,11 @@ def _bound_and_enrollment_kwargs(args, error):
     s_b = 1 << UI_S_B_BITS if args.ui_s_b is None else args.ui_s_b
     if s_c % s_b:
         error(f"s_c = {s_c} is not a multiple of s_b = {s_b}")
-    if args.enroll_out and (args.weight_commitment or args.statement_out or args.dump_proof):
-        error("--enroll-out only enrolls: it stops before any statement or proof")
-    if args.statement_out and args.dump_proof:
-        error("--statement-out stops before proving, so there is no proof to dump")
+    try:
+        _check_output_mode(args.forward_only, args.enroll_out, args.statement_out,
+                           args.weight_commitment, args.dump_proof)
+    except ValueError as exc:
+        error(str(exc))
     kw = {k: v for k, v in bound.items() if v is not None}
     if args.ui_positions is not None:
         kw["ui_positions"] = _parse_positions(args.ui_positions, error)

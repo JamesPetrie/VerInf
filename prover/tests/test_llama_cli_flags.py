@@ -26,7 +26,7 @@ def _args(**over):
     base = dict(unexplained_info=False, ui_s_c=None, ui_s_b=None, ui_gap_max=None,
                 ui_positions=None, ui_lm_sout=None, ui_lm_ow=None,
                 statement_out=None, persistent_head=False, enroll_out=None,
-                weight_commitment=None, dump_proof=None)
+                weight_commitment=None, dump_proof=None, forward_only=False)
     base.update(over)
     return argparse.Namespace(**base)
 
@@ -83,6 +83,10 @@ def test_each_flag_reaches_its_keyword():
     (dict(enroll_out="e.wc", statement_out="s.claims"), "only enrolls"),
     (dict(enroll_out="e.wc", dump_proof="p.json"), "only enrolls"),
     (dict(statement_out="s.claims", dump_proof="p.json"), "no proof to dump"),
+    (dict(forward_only=True, statement_out="s.claims"), "--forward-only"),
+    (dict(forward_only=True, enroll_out="e.wc"), "--forward-only"),
+    (dict(forward_only=True, weight_commitment="e.wc"), "--forward-only"),
+    (dict(forward_only=True, dump_proof="p.json"), "--forward-only"),
 ])
 def test_combinations_that_cannot_run_are_refused(over, says):
     with pytest.raises(Refused, match=says):
@@ -102,3 +106,8 @@ def test_the_command_line_lists_the_flags_and_refuses_before_loading():
     assert r.returncode == 2 and "--unexplained-info" in r.stderr
     r = run("--from-hf", "/nonexistent", "--enroll-out", "e.wc", "--weight-commitment", "f.wc")
     assert r.returncode == 2 and "only enrolls" in r.stderr
+
+
+def test_main_rejects_forward_only_statement_before_loading():
+    with pytest.raises(ValueError, match="--forward-only"):
+        D.main(from_hf="/nonexistent", forward_only=True, statement_out="s.claims")
