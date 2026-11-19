@@ -681,9 +681,11 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
     if forward_only:
         torch.cuda.synchronize(); _t = time.time()
         if engine:
-            # Free each layer's witnesses as the residual moves on — only the
-            # logits are kept — so peak memory is O(one layer), not O(all 32).
-            keep = {logits.var} if (with_lm_head and logits is not None) else set()
+            # Keep the reported outputs when their last consumer (e.g. the
+            # public reveal of Sz) runs. Intermediate layer witnesses can go.
+            keep = {logits.var} if logits is not None else set()
+            if ui_Sz is not None:
+                keep.add(ui_Sz.var)
             tape.run_engine_pass(free_intermediates=True, keep=keep)
         torch.cuda.synchronize()
         print(f"  forward-only (no proof): witness in {time.time() - _t:.2f}s")

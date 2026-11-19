@@ -216,6 +216,14 @@ def test_promptless_scoring_preview_matches_prover_input(tmp_path, monkeypatch, 
         driver.main(**tiny_scoring_model, dump_proof=tmp_path / "proof")
 
 
+@pytest.mark.parametrize("gap_max", [8, None])
+def test_forward_engine_reports_revealed_score(tiny_scoring_model, capsys, gap_max):
+    options = dict(tiny_scoring_model, ui_gap_max=gap_max)
+    logits = driver.main(**options, forward_only=True)
+    assert logits.data.tolist() == [3, 1, 3, 1]
+    assert "U = 0.0014 bits over 2 scored output token(s)" in capsys.readouterr().out
+
+
 def test_random_weights_cannot_preview_witness_dependent_bound(tmp_path):
     with pytest.raises(ValueError, match="preview requires --from-hf"):
         driver.main(unexplained_info=True, statement_out=tmp_path / "claims")
