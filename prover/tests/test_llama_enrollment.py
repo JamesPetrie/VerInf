@@ -2,6 +2,7 @@
 import json
 import os
 import stat
+import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -167,6 +168,57 @@ def test_statement_sidecar_contains_only_public_ui_fields(tmp_path):
     sidecar = json.loads((tmp_path / "claims.json").read_text())
     assert sidecar["ui"] == public
     assert sidecar["sz"] == 7
+
+
+def test_failed_preview_publication_can_be_retried(tmp_path, monkeypatch):
+    tape = driver.Tape(driver.CFG, lazy=True)
+    path = tmp_path / "statement"
+    side = tmp_path / "statement.json"
+    link = os.link
+
+    def fail_claims(source, dest):
+        if dest == path:
+            assert side.is_file() and not path.exists()
+            raise OSError("cannot publish claims")
+        link(source, dest)
+
+    with monkeypatch.context() as m:
+        m.setattr(os, "link", fail_claims)
+        with pytest.raises(OSError, match="cannot publish claims"):
+            write_statement(tape, tape.cfg, path)
+    assert list(tmp_path.iterdir()) == []
+    side.write_bytes(b"someone else's sidecar")
+    with pytest.raises(FileExistsError):
+        write_statement(tape, tape.cfg, path)
+    assert side.read_bytes() == b"someone else's sidecar"
+    side.unlink()
+    write_statement(tape, tape.cfg, path)
+    assert path.is_file() and side.is_file()
+
+
+def test_interrupted_preview_recovers_its_own_sidecar(tmp_path):
+    path = tmp_path / "statement"
+    child = """
+import os, sys
+from pathlib import Path
+sys.path[:0] = sys.argv[2:]
+from statement_preview import _publish_statement
+link = os.link
+def stop_after_link(source, dest):
+    link(source, dest)
+    os._exit(7)
+os.link = stop_after_link
+_publish_statement(Path(sys.argv[1]), b"old claims", b"old sidecar")
+"""
+    result = subprocess.run([sys.executable, "-c", child, str(path),
+                             str(ROOT / "demo"), str(ROOT / "prover")], timeout=60)
+    assert result.returncode == 7
+    side = tmp_path / "statement.json"
+    assert side.read_bytes() == b"old sidecar" and not path.exists()
+    tape = driver.Tape(driver.CFG, lazy=True)
+    meta = write_statement(tape, tape.cfg, path)
+    assert json.loads(side.read_bytes()) == meta
+    assert set(tmp_path.iterdir()) == {path, side}
 
 
 def test_lock_survives_atomic_save_and_releases_on_error(tmp_path):
