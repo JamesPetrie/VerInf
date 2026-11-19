@@ -19,6 +19,9 @@ serde = { version = "1", features = ["derive"] }   # typed streaming parse of
                       # the proof (Vec<u64>, not a Value DOM) — the full-model
                       # proof is ~12 GB and a Value DOM OOMs at >120 GB.
 
+[dev-dependencies]
+syn = { version = "2", features = ["full", "visit"] }  # claim handler coverage in round_table
+
 [profile.release]
 opt-level = 3
 lto = true

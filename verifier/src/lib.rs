@@ -12,5 +12,6 @@ pub mod protocol;
 pub mod claim;
 pub mod compile;
 pub mod handlers;
+pub mod layout;   // the bounds and row rule a proof's shape must meet
 pub mod prover;
 pub mod verify;   // the verification side: decode + protocol + the 6 checks

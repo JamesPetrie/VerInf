@@ -15,7 +15,7 @@ use rayon::prelude::*;
 use crate::field::{add, mul, sub};
 use crate::claim::ClaimSet;
 use crate::compile::{CoefSrc, Constraints, Expander, Run};
-use crate::handlers::{compile_claims_bound, compile_claims_bound_pinned};
+use crate::handlers::try_compile_claims_bound_pinned;
 use crate::prover::Prover;
 use crate::protocol::{challenge, lagrange, merkle_leaf, merkle_verify, poly_eval,
                       random_columns, Chal, Config, BLIND_IRS, BLIND_LIN, BLIND_QUAD,
@@ -149,6 +149,12 @@ fn staged<Pr: Prover, R: FnMut() -> Vec<u8>>(
     let r3      = round3(p, &s_op, &s_comb)?;
     let s_col   = rand();                 // only now — after the polys are fixed
     let r4      = round4(p, &s_op, &s_comb, &s_col)?;
+    let rows = crate::layout::block_rows(&r4.opened)
+        .and_then(|rows| crate::layout::check_rows(cs, &["p1".into(), "p2".into()], &rows));
+    if let Err(e) = rows {
+        eprintln!("verify: {e} → REJECT");
+        return Some(false);
+    }
     Some(verify(cs, &[root_p1, root_p2], &r3, r4, &s_op, &s_comb, &s_col).0)
     // NOTE: the staged interactive path commits R_p1, R_p2 one root per round.
     // The persistent W block (a third root, committed in the phase-1 round)
@@ -185,18 +191,36 @@ pub fn verify_bound(cs: &mut ClaimSet,
 }
 
 /// verify_bound with the WC-LCRL-STC bridge pin (claim_index, P_trace) —
-/// already authenticated against the enrollment root by the caller.
+/// already authenticated against the enrollment root by the caller. The row rules
+/// need the block labels, which only the callers have: both verdict paths run
+/// layout::check_rows themselves.
 pub fn verify_bound_pinned(cs: &mut ClaimSet,
               roots: &[[u8; 32]], r3: &Round3, r4: Round4,
               s_op: &[u8], s_bind: Option<&[u8]>,
               s_comb: &[u8], s_col: &[u8],
               wc_pins: Vec<(usize, Vec<u64>)>) -> (bool, Vec<(&'static str, bool)>) {
     let cfg: Config = cs.cfg;
+    if crate::layout::check_test_polys(r3.q_irs.len(), r3.q_lin.len(), r3.p_0.len(), &cfg).is_err() {
+        return (false, vec![("test polynomial degree bound", false)]);
+    }
+    if ![&r3.q_irs, &r3.q_lin, &r3.p_0].iter().all(|q| crate::layout::is_canonical(q)) {
+        return (false, vec![("test polynomial coefficient below P", false)]);
+    }
+    // merkle_test walks the roots: a block with no root would go unauthenticated.
+    if r4.opened.len() != roots.len() || r4.paths.len() != roots.len() {
+        return (false, vec![("one opened block per root", false)]);
+    }
     // the compile settles table_order by id: a malformed order is a REJECT
     if cs.check_table_order().is_err() {
         return (false, vec![("table_order", false)]);
     }
-    let cons = compile_claims_bound_pinned(cs, s_op, s_bind, wc_pins);
+    let cons = match try_compile_claims_bound_pinned(cs, s_op, s_bind, wc_pins) {
+        Ok(cons) => cons,
+        Err(e) => {
+            eprintln!("verify: {e} → REJECT");
+            return (false, vec![("compiled operand spans", false)]);
+        }
+    };
     let q = random_columns(s_col, &cfg);
     let cols = match opened_columns(r4, &q) {
         Some(c) => c,

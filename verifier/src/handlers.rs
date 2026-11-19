@@ -13,6 +13,7 @@ fn nrows(length: usize, ell: usize) -> usize { (length + ell - 1) / ell }
 
 // Mutable compile state threaded through the handlers (families/rhs/quad/nxt).
 struct Build {
+    span_error: Option<String>,
     families: Vec<Family>,
     rhs: Vec<(usize, usize, u64)>,   // compact runs: (start_cid, length, value)
     quad: Vec<QuadFamily>,
@@ -42,6 +43,14 @@ impl Build {
     // chunks (the quad lift); index_base advances by nrows so the r_quad
     // pairing matches the retired per-row Vec's flat order exactly.
     fn emit_quad(&mut self, x: Var, y: Var, z: Var, a_s: u64, b_s: u64, l: usize, ell: usize) {
+        // Each offset in this family is applied to all three row starts.
+        // Keep the actual emitted span inside each declared variable, even
+        // when a handler derives l from independent claim dimensions.
+        if let Some(v) = [x, y, z].into_iter().find(|v| v.length < l) {
+            self.span_error = Some(format!(
+                "quadratic span needs {l} slots, variable at row {} has {}", v.row_start, v.length));
+            return;
+        }
         self.quad.push(QuadFamily {
             x_row: x.row_start, y_row: y.row_start, z_row: z.row_start,
             a: a_s, b: b_s, length: l, ell, index_base: self.nq,
@@ -1393,10 +1402,15 @@ pub fn compile_claims_bound(cs: &mut ClaimSet, s_op: &[u8], s_bind: Option<&[u8]
 /// claim, its bridge-authenticated P_trace slice.
 pub fn compile_claims_bound_pinned(cs: &mut ClaimSet, s_op: &[u8], s_bind: Option<&[u8]>,
                                    wc_pins: Vec<(usize, Vec<u64>)>) -> Constraints {
+    try_compile_claims_bound_pinned(cs, s_op, s_bind, wc_pins).expect("invalid claim operand span")
+}
+
+pub(crate) fn try_compile_claims_bound_pinned(cs: &mut ClaimSet, s_op: &[u8], s_bind: Option<&[u8]>,
+                                              wc_pins: Vec<(usize, Vec<u64>)>) -> Result<Constraints, String> {
     let cfg = cs.cfg;
     let ell = cfg.ell as usize;
     let mt = m_total(cs);
-    let mut b = Build { families: Vec::new(), rhs: Vec::new(), quad: Vec::new(), nxt: 0, nq: 0,
+    let mut b = Build { span_error: None, families: Vec::new(), rhs: Vec::new(), quad: Vec::new(), nxt: 0, nq: 0,
                         wc_pins: wc_pins.into_iter().collect() };
     let n_ops = cs.claims.len();
 
@@ -1419,13 +1433,14 @@ pub fn compile_claims_bound_pinned(cs: &mut ClaimSet, s_op: &[u8], s_bind: Optio
     for ci in 0..cs.claims.len() {
         let cl = &cs.claims[ci];
         compile_op(cl, ci, s_op, s_bind, &mut b, &cfg);
+        if let Some(e) = b.span_error { return Err(format!("claim {ci} ({}): {e}", cl.op)); }
     }
     // Pass 2: settle tables in table_order.
     let by_id = cs.tables_by_id();
     for &tid in &cs.table_order {
         settle_table(by_id.get(&tid).expect(TABLE_ORDER_CHECKED), &mut b, ell);
     }
-    Constraints { families: b.families, rhs: b.rhs, quadratic: b.quad, m_total: mt }
+    Ok(Constraints { families: b.families, rhs: b.rhs, quadratic: b.quad, m_total: mt })
 }
 
 /// The verdict path (verify::verify_bound_pinned) rejects a claim set whose
@@ -1500,7 +1515,7 @@ mod topk_tests {
     fn sc(x: u64) -> Value { json!({"scalar": x}) }
 
     fn build() -> Build {
-        Build { families: Vec::new(), rhs: Vec::new(), quad: Vec::new(), nxt: 0, nq: 0,
+        Build { span_error: None, families: Vec::new(), rhs: Vec::new(), quad: Vec::new(), nxt: 0, nq: 0,
                 wc_pins: std::collections::HashMap::new() }
     }
 

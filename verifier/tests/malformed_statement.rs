@@ -35,10 +35,24 @@ fn statement(claims: &serde_json::Value, table_order: &[u64]) -> (String, String
 /// (exit status, stdout) of verify_proof on a proof carrying `stmt` (its
 /// digest in the file) under the trusted statement digest `policy`.
 fn run(name: &str, stmt: &(String, String), policy: Option<&str>) -> (Option<i32>, String) {
+    run_with_proof(name, stmt, policy, |_| {})
+}
+
+fn run_with_proof(name: &str, stmt: &(String, String), policy: Option<&str>,
+                  change: impl FnOnce(&mut serde_json::Value)) -> (Option<i32>, String) {
+    use serde_json::{json, Value};
     let h = |b: &str| b.repeat(32);
-    let file = format!(
-        r#"{{"claims":{},"seeds":{{"s_op":"{}","s_comb":"{}","s_col":"{}","s_bind":"{}"}},"statement_digest":"{}","proof":{{"root_p1":"{}","root_p2":"{}","q_irs":[],"q_lin":[],"p_0":[],"opened_p1":{{}},"opened_p2":{{}},"paths_p1":{{}},"paths_p2":{{}}}}}}"#,
-        stmt.0, h("11"), h("22"), h("33"), h("44"), stmt.1, h("66"), h("77"));
+    let mut proof = json!({
+        "root_p1": h("66"), "root_p2": h("77"),
+        "q_irs": vec![0; 8], "q_lin": vec![0; 16], "p_0": vec![0; 16],
+        "opened_p1": {}, "opened_p2": {}, "paths_p1": {}, "paths_p2": {}
+    });
+    change(&mut proof);
+    let file = json!({
+        "claims": serde_json::from_str::<Value>(&stmt.0).unwrap(),
+        "seeds": {"s_op": h("11"), "s_comb": h("22"), "s_col": h("33"), "s_bind": h("44")},
+        "statement_digest": stmt.1, "proof": proof
+    }).to_string();
     let path = std::env::temp_dir().join(format!("verinf-malformed-{}-{name}.json", std::process::id()));
     std::fs::write(&path, file).unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_verify_proof"))
@@ -102,4 +116,63 @@ fn a_well_formed_trusted_statement_passes_both_checks() {
     assert_rejects("empty", &s, Some(&s.1), "[OK ] table_order = the claims' tables, each once");
     let (_, out) = run("empty-policy", &s, Some(&s.1));
     assert!(out.contains("[OK ] statement_digest = trusted policy digest"), "{out}");
+}
+
+#[test]
+fn invalid_labels_get_a_verdict_before_block_decoding() {
+    let s = statement(&serde_json::json!([]), &[]);
+    for labels in [vec![], vec!["p2", "p1"], vec!["unknown", "p1", "p2"], vec!["p1", "p1", "p2"]] {
+        let (code, out) = run_with_proof("block-order", &s, Some(&s.1), |p| {
+            p["blocks"] = serde_json::json!(labels);
+        });
+        assert_eq!(code, Some(0), "{labels:?}");
+        assert!(out.contains("[XX ] blocks:") && out.contains("rust_verify: REJECT"), "{out}");
+    }
+}
+
+#[test]
+fn transcript_requires_fixed_width_even_for_zero_polynomials() {
+    let s = statement(&serde_json::json!([]), &[]);
+    for field in ["q_irs", "q_lin", "p_0"] {
+        let (code, out) = run_with_proof(field, &s, Some(&s.1), |p| {
+            p[field].as_array_mut().unwrap().pop();
+        });
+        assert_eq!(code, Some(0));
+        assert!(out.contains("[XX ] Fiat-Shamir coefficient counts") && out.contains("rust_verify: REJECT"), "{out}");
+    }
+}
+
+#[test]
+fn row_policy_checks_the_compiled_lookup_span() {
+    use serde_json::json;
+    let s = statement(&json!([{"op": "RangeWordClaim", "fields": {
+        "x": {"var": [3, 8]}, "z": {"var": [4, 9]}, "length": {"scalar": 9},
+        "table": table(3)
+    }}]), &[3]);
+    let (code, out) = run_with_proof("lookup-span", &s, Some(&s.1), |p| {
+        p["opened_p1"] = json!({"0": [0, 0, 0, 0]});
+        p["opened_p2"] = json!({"0": [0, 0]});
+    });
+    assert_eq!(code, Some(0));
+    assert!(out.contains("x needs 9 slots but declares 8") && out.contains("rust_verify: REJECT"), "{out}");
+}
+
+#[test]
+fn library_verifier_checks_each_emitted_quadratic_operand() {
+    use ligero_verifier::claim::parse_claim_set;
+    use ligero_verifier::verify::{verify, Round3, Round4};
+    use serde_json::json;
+    // The low-level entry point receives no block labels. Its compiler must
+    // still check the handler's actual slot count against all three operands.
+    for field in ["a", "b", "c"] {
+        let mut fields = json!({"length": {"scalar": 9}, "rescale_bits": {"scalar": 0},
+            "a": {"var": [3, 9]}, "b": {"var": [5, 9]}, "c": {"var": [7, 9]}});
+        fields[field]["var"][1] = json!(8);
+        let stmt = statement(&json!([{"op": "HadamardClaim", "fields": fields}]), &[]);
+        let mut cs = parse_claim_set(&stmt.0);
+        let r3 = Round3 { q_irs: vec![0], q_lin: vec![0], p_0: vec![0] };
+        let r4 = Round4 { opened: vec![], paths: vec![] };
+        let (ok, checks) = verify(&mut cs, &[], &r3, r4, &[0; 32], &[0; 32], &[0; 32]);
+        assert!(!ok && checks.contains(&("compiled operand spans", false)), "{field}: {checks:?}");
+    }
 }
