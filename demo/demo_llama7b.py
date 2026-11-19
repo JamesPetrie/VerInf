@@ -436,10 +436,9 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
         weight_commitment = os.path.realpath(weight_commitment)
     if unexplained_info:
         bound_scale_ratio(ui_s_c, ui_s_b)
+        _check_lm_output_scale(ui_lm_sout)
     if enroll_out is not None and os.path.lexists(enroll_out):
         raise FileExistsError(f"refusing to overwrite enrollment: {enroll_out}")
-    mcfg = (ModelConfig.from_hf(from_hf) if from_hf is not None
-            else RANDOM_WEIGHTS_CFG)
     if chat:
         assert from_hf is not None and prompt is not None, (
             "chat mode needs --from-hf (for the tokenizer/template) and "
@@ -447,12 +446,17 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
         from loader import tokenize_chat_prompt
         token_ids = tokenize_chat_prompt(from_hf, prompt)
         prompt = None               # binding proceeds via token_ids below
+    if token_ids is not None:
+        SEQ = len(token_ids)        # forward over an exact id stream
+    if ui_positions is not None:
+        _check_positions(ui_positions, SEQ)
+        ui_positions = list(ui_positions)
+    mcfg = (ModelConfig.from_hf(from_hf) if from_hf is not None
+            else RANDOM_WEIGHTS_CFG)
     if persistent_head and mcfg.tied_embeddings and prompt is None and token_ids is None:
         # W rows follow first use in the claims. A promptless run must also
         # use the canonical (vocab, d) table before the first layer.
         token_ids = [0] * SEQ
-    if token_ids is not None:
-        SEQ = len(token_ids)        # forward over an exact id stream
     print(f"=== dense-Llama transformer proof, production scale ===")
     print(f"  cfg: ELL={CFG.ELL}, K_DEG={CFG.K_DEG}, "
           f"N_LIG={CFG.N_LIG}, T_QUERIES={CFG.T_QUERIES}")
@@ -769,6 +773,25 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
     print(f"  prove:   {t_prove:.2f}s")
 
 
+def _check_lm_output_scale(s_out):
+    # Both matmul inputs have scale S (a power of two). The rescale claim
+    # needs an integral power-of-two divisor and at least one rescale bit.
+    if not 0 < s_out < S * S or s_out & (s_out - 1):
+        raise ValueError(f"--ui-lm-sout must be a positive power of two below {S * S}")
+
+
+def _check_positions(positions, seq=None):
+    if isinstance(positions, range):
+        valid = positions.step == 1 and 0 <= positions.start < positions.stop
+    else:
+        valid = (len(positions) > 0 and positions[0] >= 0
+                 and all(a < b for a, b in zip(positions, positions[1:])))
+    if not valid:
+        raise ValueError("--ui-positions must be non-empty, non-negative, increasing and distinct")
+    if seq is not None and positions[-1] >= seq:
+        raise ValueError(f"--ui-positions includes {positions[-1]} outside the {seq}-token sequence")
+
+
 def _parse_positions(text, error):
     """START:STOP (STOP excluded) or a comma-separated list, as sorted distinct
     non-negative positions."""
@@ -777,14 +800,15 @@ def _parse_positions(text, error):
     try:
         if ":" in text:
             start, stop = (int(v) for v in text.split(":"))
-            positions = list(range(start, stop))
+            positions = range(start, stop)  # expand only after checking the token count
         else:
             positions = [int(v) for v in text.split(",")]
     except ValueError:
         error(f"--ui-positions {text!r}: use START:STOP or a comma-separated list")
-    if not positions or min(positions) < 0 or positions != sorted(set(positions)):
-        error(f"--ui-positions {text!r}: positions must be non-empty, "
-              "non-negative, increasing and distinct")
+    try:
+        _check_positions(positions)
+    except ValueError as exc:
+        error(str(exc))
     return positions
 
 
@@ -805,6 +829,8 @@ def _bound_and_enrollment_kwargs(args, error):
     s_b = 1 << UI_S_B_BITS if args.ui_s_b is None else args.ui_s_b
     try:
         bound_scale_ratio(s_c, s_b)
+        if args.ui_lm_sout is not None:
+            _check_lm_output_scale(args.ui_lm_sout)
         _check_output_mode(args.forward_only, args.enroll_out, args.statement_out,
                            args.weight_commitment, args.dump_proof, args.from_hf)
     except ValueError as exc:
@@ -942,7 +968,7 @@ if __name__ == "__main__":
                           "Default: every position.")
     ap.add_argument("--ui-lm-sout", type=int, default=None,
                      help="LM-head output rescale for --unexplained-info "
-                          f"(default {UI_COARSE_S}).")
+                          f"(power of two below {S * S}, default {UI_COARSE_S}).")
     ap.add_argument("--ui-lm-ow", type=int, default=None,
                      help="LM-head output width in bits for --unexplained-info "
                           f"(default {UI_COARSE_OW}).")

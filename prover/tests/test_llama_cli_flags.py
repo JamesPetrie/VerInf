@@ -54,7 +54,7 @@ def test_each_flag_reaches_its_keyword():
                       enroll_out=None, weight_commitment="e.wc")
     kw = D._bound_and_enrollment_kwargs(_args(
         unexplained_info=True, ui_positions="37:137", ui_lm_sout=4096, ui_lm_ow=26), _refuse)
-    assert kw["ui_positions"] == list(range(37, 137))
+    assert list(kw["ui_positions"]) == list(range(37, 137))
     assert (kw["ui_lm_sout"], kw["ui_lm_ow"]) == (4096, 26)
     kw = D._bound_and_enrollment_kwargs(_args(unexplained_info=True, ui_positions="3,5,9"), _refuse)
     assert kw["ui_positions"] == [3, 5, 9]
@@ -70,6 +70,8 @@ def test_each_flag_reaches_its_keyword():
     (dict(ui_lm_ow=26), "--unexplained-info"),
     (dict(unexplained_info=True, ui_gap_max=0), "positive"),
     (dict(unexplained_info=True, ui_lm_sout=0), "positive"),
+    (dict(unexplained_info=True, ui_lm_sout=3), "power of two"),
+    (dict(unexplained_info=True, ui_lm_sout=D.S * D.S), "power of two"),
     (dict(unexplained_info=True, ui_positions="5:5"), "non-empty"),
     (dict(unexplained_info=True, ui_positions=""), "non-empty"),
     (dict(unexplained_info=True, ui_positions="3,3"), "distinct"),
@@ -109,6 +111,29 @@ def test_the_command_line_lists_the_flags_and_refuses_before_loading():
     assert r.returncode == 2 and "--unexplained-info" in r.stderr
     r = run("--from-hf", "/nonexistent", "--enroll-out", "e.wc", "--weight-commitment", "f.wc")
     assert r.returncode == 2 and "only enrolls" in r.stderr
+
+
+@pytest.mark.parametrize("options, length", [
+    ({}, 5), ({"token_ids": [1, 2]}, 2), ({"chat": True, "prompt": "hello"}, 3),
+])
+def test_positions_use_effective_sequence_before_model_loading(monkeypatch, options, length):
+    import loader
+    monkeypatch.setattr(D, "SEQ", 5)
+    monkeypatch.setattr(loader, "tokenize_chat_prompt", lambda *a: [4, 2, 1])
+    with pytest.raises(ValueError, match=f"outside the {length}-token sequence"):
+        D.main(from_hf="/nonexistent", unexplained_info=True, ui_positions=[length], **options)
+    D._check_positions(range(length), length)
+
+
+def test_position_range_checked_before_expansion():
+    positions = D._parse_positions("0:1000000000000", _refuse)
+    with pytest.raises(ValueError, match="outside"):
+        D.main(from_hf="/nonexistent", unexplained_info=True, ui_positions=positions)
+
+
+def test_main_rejects_invalid_lm_scale_before_model_loading():
+    with pytest.raises(ValueError, match="--ui-lm-sout"):
+        D.main(from_hf="/nonexistent", unexplained_info=True, ui_lm_sout=D.S * D.S)
 
 
 def test_main_rejects_forward_only_statement_before_loading():
