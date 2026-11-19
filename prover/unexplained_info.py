@@ -66,7 +66,6 @@ def prove_unexplained_info(tape, logits, tokens, *, T, V, s_c, s_y, s_b, gap_max
 
     `O_ext`: optional existing (T,V) one-hot to use as the output select
     (see max_gap) — ties the scored tokens to the tokens the model consumed."""
-    assert len(tokens) == T
     k = bound_scale_ratio(s_c, s_b)
     from ui_claim import Z_O_BITS
     assert ((gap_max - 1) ** 2 + k - 1) // k < (1 << Z_O_BITS), \

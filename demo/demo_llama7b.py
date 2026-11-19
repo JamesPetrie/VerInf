@@ -80,6 +80,7 @@ from tape import Tape
 from claims import SiluConfig
 from model_config import ModelConfig
 from unexplained_info import bound_scale_ratio
+from max_claim import checked_output_tokens
 
 # T_QUERIES overridable via env (e.g. =4 for a fast non-sound timing/feasibility
 # run; production soundness uses 80).
@@ -322,6 +323,8 @@ def _run_unexplained_info(tape, logits, *, vocab_size, seq, output_tokens=None,
     from unexplained_info import prove_unexplained_info
     from max_claim import to_signed
 
+    if output_tokens is not None:
+        output_tokens = checked_output_tokens(output_tokens, seq, vocab_size)
     ls = to_signed(logits.data.view(seq, vocab_size))             # signed logits
     vstar = ls.max(dim=1).values
     observed = int((vstar.view(seq, 1) - ls).max().item())
@@ -334,8 +337,7 @@ def _run_unexplained_info(tape, logits, *, vocab_size, seq, output_tokens=None,
     if output_tokens is None:
         tokens = [int(ls[t].argmax()) for t in range(seq)]        # greedy -> gap_o = 0
     else:
-        assert len(output_tokens) == seq, "ui-output-tokens must have SEQ entries"
-        tokens = [int(v) for v in output_tokens]
+        tokens = output_tokens
 
     s_y = 1 << UI_S_Y_BITS
     k = bound_scale_ratio(s_c, s_b)
@@ -430,6 +432,8 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
           weight_commitment: Optional[str] = None):
     global SEQ
     _check_output_mode(forward_only, enroll_out, statement_out, weight_commitment, dump_proof, from_hf)
+    if ui_output_tokens is not None and not unexplained_info:
+        raise ValueError("--ui-output-tokens requires --unexplained-info")
     if weight_commitment is not None or enroll_out is not None:
         WeightCommitment.check_query_budget(CFG)
     if weight_commitment is not None:
@@ -458,6 +462,8 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
         ui_positions = list(ui_positions)
     mcfg = (ModelConfig.from_hf(from_hf) if from_hf is not None
             else RANDOM_WEIGHTS_CFG)
+    if ui_output_tokens is not None:
+        ui_output_tokens = checked_output_tokens(ui_output_tokens, SEQ, mcfg.vocab)
     if (unexplained_info and mcfg.tied_embeddings and token_ids is not None
             and not chat and not public_input_tokens):
         raise ValueError("tied embeddings publish every input token ID in the statement, "
@@ -808,6 +814,13 @@ def _check_positions(positions, seq=None):
         raise ValueError(f"--ui-positions includes {positions[-1]} outside the {seq}-token sequence")
 
 
+def _parse_output_tokens(text):
+    try:
+        return [int(v) for v in text.split(",")]
+    except ValueError:
+        raise argparse.ArgumentTypeError("expected a non-empty comma-separated list of integer IDs") from None
+
+
 def _parse_positions(text, error):
     """START:STOP (STOP excluded) or a comma-separated list, as sorted distinct
     non-negative positions."""
@@ -951,7 +964,7 @@ if __name__ == "__main__":
                      help="Entropy-table output scale s_y = 2^bits for "
                           "--unexplained-info (default 16). s_y >> V keeps the "
                           "dropped-tail correction negligible.")
-    ap.add_argument("--ui-output-tokens", type=str, default=None,
+    ap.add_argument("--ui-output-tokens", type=_parse_output_tokens, default=None,
                      help="Comma-separated output token ids (length SEQ) for "
                           "--unexplained-info. The scoring claim commits these IDs. Default: the "
                           "greedy argmax of the int logits.")
@@ -1000,8 +1013,6 @@ if __name__ == "__main__":
     _prompt = args.prompt
     if args.prompt_file:
         _prompt = open(args.prompt_file).read()
-    _ui_tokens = ([int(v) for v in args.ui_output_tokens.split(",")]
-                  if args.ui_output_tokens else None)
     _token_ids = None
     if args.tokens_file:
         blob = json.load(open(args.tokens_file))
@@ -1018,5 +1029,5 @@ if __name__ == "__main__":
          forward_only=args.forward_only,
          dump_proof=args.dump_proof,
          unexplained_info=args.unexplained_info, ui_sigma=args.ui_sigma,
-         ui_sy_bits=args.ui_sy_bits, ui_output_tokens=_ui_tokens,
+         ui_sy_bits=args.ui_sy_bits, ui_output_tokens=args.ui_output_tokens,
          **_flag_kwargs)

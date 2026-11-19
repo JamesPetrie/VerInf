@@ -224,6 +224,13 @@ def test_forward_engine_reports_revealed_score(tiny_scoring_model, capsys, gap_m
     assert "U = 0.0014 bits over 2 scored output token(s)" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("tokens, expected_sz", [(None, 0), ([0, 1], 2)])
+def test_default_greedy_and_explicit_scoring(tiny_scoring_model, tokens, expected_sz, tmp_path):
+    options = dict(tiny_scoring_model, ui_output_tokens=tokens)
+    driver.main(**options, statement_out=tmp_path / "claims")
+    assert json.loads((tmp_path / "claims.json").read_bytes())["sz"] == expected_sz
+
+
 def test_random_weights_cannot_preview_witness_dependent_bound(tmp_path):
     with pytest.raises(ValueError, match="preview requires --from-hf"):
         driver.main(unexplained_info=True, statement_out=tmp_path / "claims")

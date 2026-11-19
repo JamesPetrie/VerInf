@@ -125,6 +125,42 @@ def test_positions_use_effective_sequence_before_model_loading(monkeypatch, opti
     D._check_positions(range(length), length)
 
 
+@pytest.mark.parametrize("text", ["", "1,,2", "1,", "1.5", "abc"])
+def test_explicit_output_list_cannot_be_parsed_as_greedy(text):
+    with pytest.raises(argparse.ArgumentTypeError, match="non-empty"):
+        D._parse_output_tokens(text)
+    assert D._parse_output_tokens("0, 1") == [0, 1]
+
+
+@pytest.mark.parametrize("tokens, message", [
+    ([], "exactly 2"), ([0], "exactly 2"), ([0, 1, 2], "exactly 2"),
+    ([-1, 0], "outside vocabulary"), ([0, 32000], "outside vocabulary"),
+    ([0, 1.5], "integer IDs"), ([False, 1], "integer IDs"),
+])
+def test_output_tokens_rejected_before_model_tensors(monkeypatch, tokens, message):
+    from max_claim import max_gap
+    monkeypatch.setattr(D, "SEQ", 10)
+    monkeypatch.setattr(D.ModelConfig, "from_hf", lambda _: D.RANDOM_WEIGHTS_CFG)
+    with pytest.raises(ValueError, match=message):
+        D.main(from_hf="fixture", token_ids=[2, 3], unexplained_info=True, ui_output_tokens=tokens)
+    with pytest.raises(ValueError, match=message):
+        D._run_unexplained_info(None, None, seq=2, vocab_size=32000, output_tokens=tokens)
+    with pytest.raises(ValueError, match=message):
+        max_gap(None, None, tokens, T=2, V=32000, gap_max=8)
+
+
+def test_command_line_refuses_empty_output_list_before_loading():
+    run = subprocess.run([sys.executable, str(_SCRIPT), "--from-hf", "/nonexistent",
+                          "--unexplained-info", "--ui-output-tokens", ""],
+                         capture_output=True, text=True, timeout=60)
+    assert run.returncode == 2 and "--ui-output-tokens" in run.stderr and "non-empty" in run.stderr
+
+
+def test_output_tokens_require_scoring():
+    with pytest.raises(ValueError, match="requires --unexplained-info"):
+        D.main(from_hf="/nonexistent", ui_output_tokens=[0, 1])
+
+
 def test_position_range_checked_before_expansion():
     positions = D._parse_positions("0:1000000000000", _refuse)
     with pytest.raises(ValueError, match="outside"):
