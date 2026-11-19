@@ -421,6 +421,10 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
         from loader import tokenize_chat_prompt
         token_ids = tokenize_chat_prompt(from_hf, prompt)
         prompt = None               # binding proceeds via token_ids below
+    if persistent_head and mcfg.tied_embeddings and prompt is None and token_ids is None:
+        # W rows follow first use in the claims. A promptless run must also
+        # use the canonical (vocab, d) table before the first layer.
+        token_ids = [0] * SEQ
     if token_ids is not None:
         SEQ = len(token_ids)        # forward over an exact id stream
     print(f"=== dense-Llama transformer proof, production scale ===")
@@ -465,7 +469,7 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
             E_data = E_full.view(-1)
             E_shape = (mcfg.vocab, mcfg.d)
             embed_token_ids = tok_ids
-            tok_t = torch.tensor(tok_ids, dtype=torch.int64, device="cuda")
+            tok_t = torch.tensor(tok_ids, dtype=torch.int64, device=E_full.device)
             x_data_init = E_full.view(mcfg.vocab, mcfg.d).index_select(
                 0, tok_t).contiguous().view(-1)
             print(f"  E: full table ({mcfg.vocab} × {mcfg.d}) — tied, "
@@ -909,7 +913,9 @@ if __name__ == "__main__":
     ap.add_argument("--persistent-head", action="store_true",
                      help="Put the final norm and LM head (and a tied model's "
                           "embedding table) in the persistent W block with the "
-                          "layer weights, so an enrolled root pins them.")
+                          "layer weights, so an enrolled root pins them. On a "
+                          "tied model with no prompt or token IDs, use token 0 "
+                          "at every position to keep the same W layout.")
     ap.add_argument("--enroll-out", type=str, default=None,
                      help="Commit the persistent W block under a fresh secret "
                           "seed, save the handle to this path, and stop. The "

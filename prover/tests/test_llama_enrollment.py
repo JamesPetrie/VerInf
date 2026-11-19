@@ -2,6 +2,7 @@
 import os
 import stat
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -44,6 +45,42 @@ def test_empty_enrollment_is_refused(monkeypatch):
     monkeypatch.setattr(core, "commit_weights", lambda *a: (None, [], 0))
     with pytest.raises(ValueError, match="no persistent weight rows"):
         core.WeightCommitment.from_tape(None, driver.CFG)
+
+
+def test_tied_weight_rows_match_with_and_without_prompt(monkeypatch):
+    cfg = replace(driver.RANDOM_WEIGHTS_CFG, d=8, vocab=16, tied_embeddings=True)
+    embedding = torch.arange(cfg.vocab * cfg.d).to(torch.uint64)
+    monkeypatch.setattr(driver.ModelConfig, "from_hf", lambda _: cfg)
+    monkeypatch.setattr(driver, "SEQ", 2)
+    monkeypatch.setattr(loader, "load_token_embedding", lambda *a, **kw: embedding)
+    monkeypatch.setattr(loader.LazyHFLoader, "__init__", lambda *a, **kw: None)
+    monkeypatch.setattr(loader.LazyHFLoader, "load_final_norm", lambda _: torch.ones(cfg.d))
+    monkeypatch.setattr(torch.cuda, "synchronize", lambda: None)
+
+    class TailReached(Exception):
+        pass
+
+    def inspect_tail(tape, resid, norm, head, **kwargs):
+        assert kwargs["lm_transpose_b"] and head.shape == (cfg.vocab, cfg.d)
+        lookup, = tape.claims
+        assert lookup.E is head.var
+        tape.embed(norm, [0], cfg.d)
+        tape.matmul(resid, head, transpose_b=True)
+        layout = core._layout(tape.claims, tape.cfg)
+        rows = [(w.name, w.row_start, tape.inputs[w].tolist()) for w in layout[7]]
+        raise TailReached(lookup.token_ids, rows)
+
+    monkeypatch.setattr(driver, "_run_tail", inspect_tail)
+    def weight_rows(ids):
+        with pytest.raises(TailReached) as exc:
+            driver.main(from_hf="fixture", num_layers=0, token_ids=ids,
+                        persistent_head=True, engine=True)
+        used_ids, rows = exc.value.args
+        assert used_ids == ([0, 0] if ids is None else ids)
+        assert [name for name, _, _ in rows] == ["E_embedding", "final_norm_w"]
+        return rows
+
+    assert weight_rows(None) == weight_rows([1, 2])
 
 
 def _handle():
