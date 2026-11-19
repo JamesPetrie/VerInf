@@ -79,6 +79,7 @@ from core import LigeroConfig, WeightCommitment
 from tape import Tape
 from claims import SiluConfig
 from model_config import ModelConfig
+from unexplained_info import bound_scale_ratio
 
 # T_QUERIES overridable via env (e.g. =4 for a fast non-sound timing/feasibility
 # run; production soundness uses 80).
@@ -337,7 +338,7 @@ def _run_unexplained_info(tape, logits, *, vocab_size, seq, output_tokens=None,
         tokens = [int(v) for v in output_tokens]
 
     s_y = 1 << UI_S_Y_BITS
-    k = s_c // s_b
+    k = bound_scale_ratio(s_c, s_b)
     print(f"  unexplained-info (folded): gap_max={gap_max:,} "
           f"({'fixed' if fixed else 'from this run'}; largest gap {observed:,}), "
           f"s_c={s_c}, s_y=2^{UI_S_Y_BITS}, s_b={s_b}, k={k} (output tokens hidden)")
@@ -424,6 +425,8 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
           weight_commitment: Optional[str] = None):
     global SEQ
     _check_output_mode(forward_only, enroll_out, statement_out, weight_commitment, dump_proof)
+    if unexplained_info:
+        bound_scale_ratio(ui_s_c, ui_s_b)
     if enroll_out is not None and os.path.lexists(enroll_out):
         raise FileExistsError(f"refusing to overwrite enrollment: {enroll_out}")
     mcfg = (ModelConfig.from_hf(from_hf) if from_hf is not None
@@ -799,9 +802,8 @@ def _bound_and_enrollment_kwargs(args, error):
             error(f"--{name.replace('_', '-')} must be positive")
     s_c = UI_S_C if args.ui_s_c is None else args.ui_s_c
     s_b = 1 << UI_S_B_BITS if args.ui_s_b is None else args.ui_s_b
-    if s_c % s_b:
-        error(f"s_c = {s_c} is not a multiple of s_b = {s_b}")
     try:
+        bound_scale_ratio(s_c, s_b)
         _check_output_mode(args.forward_only, args.enroll_out, args.statement_out,
                            args.weight_commitment, args.dump_proof)
     except ValueError as exc:
@@ -913,7 +915,7 @@ if __name__ == "__main__":
                           "greedy argmax of the int logits.")
     ap.add_argument("--ui-s-c", type=int, default=None,
                      help="Kernel width s_c = 2*sigma^2 for --unexplained-info "
-                          f"(default {UI_S_C}). Must be a multiple of s_b.")
+                          f"(default {UI_S_C}). Must be a power-of-two multiple of s_b.")
     ap.add_argument("--ui-s-b", type=int, default=None,
                      help="Bound scale s_b for --unexplained-info "
                           f"(default {1 << UI_S_B_BITS}).")

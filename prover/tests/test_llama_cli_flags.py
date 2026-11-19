@@ -78,6 +78,7 @@ def test_each_flag_reaches_its_keyword():
     (dict(unexplained_info=True, ui_positions="a:b"), "START:STOP"),
     (dict(unexplained_info=True, ui_s_b=-128), "positive"),
     (dict(unexplained_info=True, ui_s_c=1000, ui_s_b=128), "multiple"),
+    (dict(unexplained_info=True, ui_s_c=12288), "power-of-two"),
     (dict(unexplained_info=True, ui_s_b=3), "multiple"),
     (dict(enroll_out="e.wc", weight_commitment="f.wc"), "only enrolls"),
     (dict(enroll_out="e.wc", statement_out="s.claims"), "only enrolls"),
@@ -111,3 +112,8 @@ def test_the_command_line_lists_the_flags_and_refuses_before_loading():
 def test_main_rejects_forward_only_statement_before_loading():
     with pytest.raises(ValueError, match="--forward-only"):
         D.main(from_hf="/nonexistent", forward_only=True, statement_out="s.claims")
+
+
+def test_main_rejects_unsupported_bound_scale_before_loading():
+    with pytest.raises(ValueError, match="power-of-two"):
+        D.main(from_hf="/nonexistent", unexplained_info=True, ui_s_c=12288)
