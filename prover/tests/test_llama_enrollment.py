@@ -42,3 +42,21 @@ def test_empty_enrollment_is_refused(monkeypatch):
     monkeypatch.setattr(core, "commit_weights", lambda *a: (None, [], 0))
     with pytest.raises(ValueError, match="no persistent weight rows"):
         core.WeightCommitment.from_tape(None, driver.CFG)
+
+
+def _handle():
+    leaf = bytes(32)
+    return core.WeightCommitment(root=leaf, levels=[[leaf]], m_w=1, n_lig=1)
+
+
+def test_lock_survives_atomic_save_and_releases_on_error(tmp_path):
+    path = str(tmp_path / "model.wc")
+    _handle().save(path)
+    with pytest.raises(BlockingIOError, match="already in use"):
+        with driver._locked_enrollment(path) as wc:
+            wc.record_openings([0])
+            wc.save(path)
+            with driver._locked_enrollment(path):
+                pytest.fail("another prover acquired the enrollment lock")
+    with driver._locked_enrollment(path) as wc:
+        assert wc.opened_columns == [0]

@@ -59,6 +59,7 @@ import math
 import os
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -74,7 +75,7 @@ _s.path.insert(0, str(_R / "prover")); _s.path.insert(0, str(_R / "demo"))
 import _uint64_compat  # noqa: F401  — patch uint64 CUDA op gaps (gather/index_select/...) before any prover op runs
 
 from cuda_primitives import P, gl_sub
-from core import LigeroConfig
+from core import LigeroConfig, WeightCommitment
 from tape import Tape
 from claims import SiluConfig
 from model_config import ModelConfig
@@ -366,6 +367,23 @@ def _report_unexplained_info(tape, Sz, info, *, seq, vocab_size):
     return U
 
 
+@contextmanager
+def _locked_enrollment(path):
+    """Hold the ledger lock across loading, checking the budget and saving."""
+    if path is None:
+        yield None
+        return
+    import fcntl
+    # The handle inode changes on save. Keep the lock on a stable sibling,
+    # using the same filename as the Maverick driver.
+    with open(os.fspath(path) + ".lock", "a+b") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise BlockingIOError(f"enrollment already in use: {path}") from exc
+        yield WeightCommitment.load(path)
+
+
 def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
           save_logits: Optional[str] = None,
           num_layers: int = 1,
@@ -650,22 +668,15 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
     # seed, save the handle, and stop. Proofs that reference it carry its root,
     # so the root can be pinned before they exist.
     if enroll_out is not None:
-        import core as _core
-        _wc = _core.WeightCommitment.from_tape(tape, CFG)
+        _wc = WeightCommitment.from_tape(tape, CFG)
         _wc.save(enroll_out)
         print(f"  enrolled W block: root {_wc.root.hex()}, {_wc.m_w:,} rows → {enroll_out}")
         return None
-    wc_ref = None
-    if weight_commitment is not None:
-        import core as _core
-        wc_ref = _core.WeightCommitment.load(weight_commitment)
-        print(f"  weight commitment: root {wc_ref.root.hex()}, "
-              f"{len(wc_ref.opened_columns)} columns already opened")
-
     # Statement only: write the exact claim bytes a proof would carry, and the
     # block order the prover would use, then stop before proving.
     if statement_out is not None:
         from statement_preview import write_statement
+        wc_ref = WeightCommitment.load(weight_commitment) if weight_commitment is not None else None
         write_statement(tape, CFG, statement_out,
                         ui_info={k: v for k, v in (ui_info or {}).items()
                                  if k not in ("reveal_pin", "tokens")},
@@ -680,17 +691,19 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
     print(f"  claims: {len(tape.claims)}  ({dict(sorted(counts.items()))})")
     torch.cuda.synchronize()
     t0 = time.time()
-    proof = tape.prove(seed=b"xformer-single-tape", verbose=verbose,
-                       weight_commitment=wc_ref)
-    torch.cuda.synchronize()
-    t_prove = time.time() - t0
-    if wc_ref is not None:
-        # Book the opened columns against the enrollment's pad, and persist
-        # the ledger: an unsaved ledger is a silently reusable pad.
-        wc_ref.record_openings(proof.Q_cols)
-        wc_ref.save(weight_commitment)
-        print(f"  ledger: {len(wc_ref.opened_columns)} of "
-              f"{wc_ref.opening_budget(CFG)} columns spent")
+    with _locked_enrollment(weight_commitment) as wc_ref:
+        if wc_ref is not None:
+            print(f"  weight commitment: root {wc_ref.root.hex()}, "
+                  f"{len(wc_ref.opened_columns)} columns already opened")
+        proof = tape.prove(seed=b"xformer-single-tape", verbose=verbose,
+                           weight_commitment=wc_ref)
+        torch.cuda.synchronize()
+        t_prove = time.time() - t0
+        if wc_ref is not None:
+            wc_ref.record_openings(proof.Q_cols)
+            wc_ref.save(weight_commitment)
+            print(f"  ledger: {len(wc_ref.opened_columns)} of "
+                  f"{wc_ref.opening_budget(CFG)} columns spent")
     # Verification is the standalone Rust verifier's job (verifier-rs/verify_proof
     # on the dumped proof); the demo only proves + dumps.
 

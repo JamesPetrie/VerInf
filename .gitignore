@@ -25,6 +25,7 @@ verifier/target/
 # Enrollment handles contain a secret padding seed, including during save.
 *.wc
 *.wc.part
+*.wc.lock
 *.tar.gz
 *.tgz
 *.npy
