@@ -110,6 +110,25 @@ def _handle():
     return core.WeightCommitment(root=leaf, levels=[[leaf]], m_w=1, n_lig=1)
 
 
+@pytest.mark.parametrize("output", ["statement_out", "dump_proof"])
+def test_requested_bound_is_required_for_published_outputs(tmp_path, monkeypatch, output):
+    cfg = replace(driver.RANDOM_WEIGHTS_CFG, d=2, vocab=2)
+    monkeypatch.setattr(driver.ModelConfig, "from_hf", lambda _: cfg)
+    monkeypatch.setattr(driver, "SEQ", 2)
+    monkeypatch.setattr(driver, "_rand_signed", lambda n, **kw: torch.zeros(n))
+    monkeypatch.setattr(loader.LazyHFLoader, "__init__", lambda *a, **kw: None)
+    monkeypatch.setattr(loader.LazyHFLoader, "load_final_norm", lambda _: torch.ones(2))
+    monkeypatch.setattr(loader.LazyHFLoader, "load_final_weights",
+                        lambda _: {"W_lm_head": torch.ones(4)})
+    data = torch.tensor([0, 1 << 26, 0, 1], dtype=torch.uint64)
+    monkeypatch.setattr(driver, "_run_tail",
+                        lambda tape, *a, **kw: tape.commit("logits", data, (2, 2)))
+    with pytest.raises(ValueError, match="too large for the exp table"):
+        driver.main(from_hf="fixture", num_layers=0, unexplained_info=True,
+                    engine=True, **{output: str(tmp_path / "result")})
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_statement_sidecar_contains_only_public_ui_fields(tmp_path):
     tape = driver.Tape(driver.CFG, lazy=True)
     public = dict(s_b=16, s_c=256, s_y=256, gap_max=128, n=2)

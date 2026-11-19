@@ -310,7 +310,7 @@ UI_S_C, UI_S_Y_BITS, UI_S_B_BITS = 1 << 28, 28, 12
 
 def _run_unexplained_info(tape, logits, *, vocab_size, seq, output_tokens=None,
                            s_c=UI_S_C, s_b=1 << UI_S_B_BITS, gap_max=None,
-                           sum_positions=None):
+                           sum_positions=None, forward_only=False):
     """Append the unexplained-information bound over the (bound) LM-head logits,
     output tokens HIDDEN. `s_c = 2*sigma^2` sets the kernel width. Returns
     (Sz_wt, info).
@@ -343,8 +343,9 @@ def _run_unexplained_info(tape, logits, *, vocab_size, seq, output_tokens=None,
           f"({'fixed' if fixed else 'from this run'}; largest gap {observed:,}), "
           f"s_c={s_c}, s_y=2^{UI_S_Y_BITS}, s_b={s_b}, k={k} (output tokens hidden)")
     if gap_max.bit_length() > 26:
-        if fixed:
-            raise ValueError(f"fixed gap_max={gap_max:,} is too large for the exp table")
+        if fixed or not forward_only:
+            raise ValueError(f"gap_max={gap_max:,} is too large for the exp table; "
+                             "use a coarser LM-head scale")
         print(f"    [skip] gap_max=2^{gap_max.bit_length()} too large for the exp table; "
               f"use a coarser LM-head scale.")
         return None, None
@@ -650,7 +651,7 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
         ui_Sz, ui_info = _run_unexplained_info(
             tape, logits, vocab_size=vocab_size, seq=SEQ,
             output_tokens=ui_output_tokens, s_c=ui_s_c, s_b=ui_s_b,
-            gap_max=ui_gap_max, sum_positions=ui_positions)
+            gap_max=ui_gap_max, sum_positions=ui_positions, forward_only=forward_only)
 
     # ---------- Forward-only fast path (accuracy checks; no proof) ----------
     # Logits are primary witnesses, so the engine/forward pass produces them
