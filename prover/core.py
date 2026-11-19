@@ -3082,6 +3082,11 @@ def _layout(claims: List, cfg: LigeroConfig):
             seen.add(id(v))
             all_vars.append(v)
     for c in claims:
+        # Enrollment and statement preview take this same layout before any
+        # claim is compiled. Enforce claim-specific row requirements here too.
+        check_layout = getattr(c, "check_layout", None)
+        if check_layout is not None:
+            check_layout(cfg)
         # Streaming relayout: a table's shared mult/w and its collected z's are
         # placed only at the table's APPENDED TableSettlement, not at the first
         # using-claim. So mult/w fall to the bottom of their phase, and each

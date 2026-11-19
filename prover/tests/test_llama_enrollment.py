@@ -77,6 +77,19 @@ def test_empty_enrollment_is_refused(monkeypatch):
         core.WeightCommitment.from_tape(None, driver.CFG)
 
 
+@pytest.mark.parametrize("mode", ["statement", "enrollment"])
+def test_straddling_embedding_refused_before_publication(tmp_path, mode):
+    tape = driver.Tape(driver.CFG, lazy=True)
+    table = tape.commit("E_embedding", torch.zeros(3 * 3072), (3, 3072), persistent=True)
+    tape.embed(table, token_ids=[0], d=3072)
+    with pytest.raises(ValueError, match=r"d=3072, ELL=8192"):
+        if mode == "statement":
+            write_statement(tape, tape.cfg, tmp_path / "claims")
+        else:
+            core.WeightCommitment.from_tape(tape, tape.cfg).save(tmp_path / "model.wc")
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_tied_weight_rows_match_with_and_without_prompt(monkeypatch):
     cfg = replace(driver.RANDOM_WEIGHTS_CFG, d=8, vocab=16, tied_embeddings=True)
     embedding = torch.arange(cfg.vocab * cfg.d).to(torch.uint64)

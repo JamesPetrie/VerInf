@@ -2410,6 +2410,13 @@ class EmbeddingLookupClaim:
     token_ids: List[int]       # public, length SEQ
     d: int                     # embedding dim per token
 
+    def check_layout(self, cfg):
+        # A single witness row can hold the whole table at any width.
+        # Otherwise L2_EmbedE requires each embedding to fit within one row.
+        if self.E.length > cfg.ELL and cfg.ELL % self.d:
+            raise ValueError("embedding lookup requires d | ELL or a single-row table "
+                             f"(d={self.d}, ELL={cfg.ELL}, E.length={self.E.length})")
+
 
 def embedding_lookup_sample(c: EmbeddingLookupClaim, ci, s_op):
     return None
@@ -2434,13 +2441,7 @@ def embedding_lookup_compile(c: EmbeddingLookupClaim, _ch, cfg: LigeroConfig,
     SEQ = len(c.token_ids)
     d = c.d
     L = SEQ * d
-    # d | ELL is required only when vocab rows PACK multiple-per-witness-row
-    # (rows_per_w = ell//d > 1). A single-row table (E.length <= ELL — e.g.
-    # hadamard_broadcast's vocab=1 gain at Maverick's d=5120) never straddles,
-    # so rows_per_w = max(1, ell//d) = 1 is exact.
-    assert ell % d == 0 or c.E.length <= ell, (
-        f"embedding_lookup_compile requires d | ELL or a single-row table "
-        f"(d={d}, ell={ell}, E.length={c.E.length})")
+    c.check_layout(cfg)
     tok_t = torch.tensor(c.token_ids, dtype=torch.int64, device="cuda")
     row_pkts: List[Tuple[int, object]] = []
     for row_off in range(c.x.n_rows(ell)):
