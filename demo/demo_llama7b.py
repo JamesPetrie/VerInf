@@ -756,6 +756,8 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
 def _parse_positions(text, error):
     """START:STOP (STOP excluded) or a comma-separated list, as sorted distinct
     non-negative positions."""
+    if not text.strip():
+        error("--ui-positions must be non-empty")
     try:
         if ":" in text:
             start, stop = (int(v) for v in text.split(":"))
@@ -776,7 +778,7 @@ def _bound_and_enrollment_kwargs(args, error):
     any model is loaded. A bound flag left out keeps main()'s default."""
     bound = {"ui_s_c": args.ui_s_c, "ui_s_b": args.ui_s_b, "ui_gap_max": args.ui_gap_max,
              "ui_lm_sout": args.ui_lm_sout, "ui_lm_ow": args.ui_lm_ow}
-    if (any(v is not None for v in bound.values()) or args.ui_positions) \
+    if (any(v is not None for v in bound.values()) or args.ui_positions is not None) \
             and not args.unexplained_info:
         error("--ui-s-c, --ui-s-b, --ui-gap-max, --ui-positions, --ui-lm-sout and "
               "--ui-lm-ow set the --unexplained-info bound")
@@ -792,7 +794,7 @@ def _bound_and_enrollment_kwargs(args, error):
     if args.statement_out and args.dump_proof:
         error("--statement-out stops before proving, so there is no proof to dump")
     kw = {k: v for k, v in bound.items() if v is not None}
-    if args.ui_positions:
+    if args.ui_positions is not None:
         kw["ui_positions"] = _parse_positions(args.ui_positions, error)
     kw.update(statement_out=args.statement_out, persistent_head=args.persistent_head,
               enroll_out=args.enroll_out, weight_commitment=args.weight_commitment)
