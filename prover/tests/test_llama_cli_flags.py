@@ -164,6 +164,24 @@ def test_output_tokens_require_scoring():
         D.main(from_hf="/nonexistent", ui_output_tokens=[0, 1])
 
 
+@pytest.mark.parametrize("positions", [[0.1, 0.9], [0, 1.0], [False, 1]])
+def test_noninteger_positions_refused_before_model_loading(positions):
+    with pytest.raises(ValueError, match="integer indices"):
+        D.main(from_hf="/nonexistent", unexplained_info=True, ui_positions=positions)
+
+
+def test_strided_positions_match_explicit_indices():
+    import numpy as np
+
+    positions = range(0, 6, 2)
+    expected = [0, 2, 4]
+    assert list(D._check_positions(positions, seq=5)) == expected
+    indices = D._check_positions(np.array(expected), seq=5)
+    assert indices == expected and all(type(i) is int for i in indices)
+    with pytest.raises(ValueError, match="outside"):
+        D._check_positions(positions, seq=4)
+
+
 def test_position_range_checked_before_expansion():
     positions = D._parse_positions("0:1000000000000", _refuse)
     with pytest.raises(ValueError, match="outside"):

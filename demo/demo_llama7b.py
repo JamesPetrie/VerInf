@@ -59,10 +59,13 @@ import math
 import os
 import sys
 import time
+from collections.abc import Sequence
 from contextlib import contextmanager
+from numbers import Integral
 from pathlib import Path
 from typing import Dict, Optional
 
+import numpy as np
 import torch
 
 HERE = Path(__file__).resolve().parent
@@ -462,8 +465,7 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
         SEQ = len(token_ids)        # forward over an exact id stream
         prompt = None
     if ui_positions is not None:
-        _check_positions(ui_positions, SEQ)
-        ui_positions = list(ui_positions)
+        ui_positions = list(_check_positions(ui_positions, SEQ))
     mcfg = (ModelConfig.from_hf(from_hf) if from_hf is not None
             else RANDOM_WEIGHTS_CFG)
     if ui_output_tokens is not None:
@@ -704,7 +706,6 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
             if not unexplained_info:
                 print(f"  argmax(logits[{SEQ-1}]) = token {int(ls[SEQ-1].argmax())}")
             if save_logits is not None:
-                import numpy as np
                 np.save(save_logits, ls.cpu().numpy())
                 print(f"  saved logits ({SEQ}, {vocab_size}) int64 → {save_logits}")
         if ui_Sz is not None:
@@ -779,7 +780,6 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
             next_tok = int(logits_signed[SEQ - 1].argmax().item())
             print(f"  argmax(logits[{SEQ-1}]) = token {next_tok}")
         if save_logits is not None:
-            import numpy as np
             np.save(save_logits, logits_signed.cpu().numpy())
             print(f"  saved logits ({SEQ}, {vocab_size}) int64 → {save_logits}")
         if from_hf is not None and not unexplained_info:
@@ -807,14 +807,21 @@ def _check_lm_output_scale(s_out):
 
 def _check_positions(positions, seq=None):
     if isinstance(positions, range):
-        valid = positions.step == 1 and 0 <= positions.start < positions.stop
+        valid = positions.step > 0 and 0 <= positions.start < positions.stop
     else:
+        if isinstance(positions, (torch.Tensor, np.ndarray)):
+            positions = positions.tolist()
+        if (not isinstance(positions, Sequence) or isinstance(positions, (str, bytes, bytearray))
+                or any(not isinstance(i, Integral) or isinstance(i, bool) for i in positions)):
+            raise ValueError("--ui-positions must contain integer indices")
+        positions = [int(i) for i in positions]
         valid = (len(positions) > 0 and positions[0] >= 0
                  and all(a < b for a, b in zip(positions, positions[1:])))
     if not valid:
         raise ValueError("--ui-positions must be non-empty, non-negative, increasing and distinct")
     if seq is not None and positions[-1] >= seq:
         raise ValueError(f"--ui-positions includes {positions[-1]} outside the {seq}-token sequence")
+    return positions
 
 
 def _parse_output_tokens(text):
@@ -838,10 +845,9 @@ def _parse_positions(text, error):
     except ValueError:
         error(f"--ui-positions {text!r}: use START:STOP or a comma-separated list")
     try:
-        _check_positions(positions)
+        return _check_positions(positions)
     except ValueError as exc:
         error(str(exc))
-    return positions
 
 
 def _bound_and_enrollment_kwargs(args, error):
