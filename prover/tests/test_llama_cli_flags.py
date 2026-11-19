@@ -98,7 +98,8 @@ def test_combinations_that_cannot_run_are_refused(over, says):
         D._bound_and_enrollment_kwargs(_args(**over), _refuse)
 
 
-def test_the_command_line_lists_the_flags_and_refuses_before_loading():
+def test_the_command_line_lists_the_flags_and_refuses_before_loading(monkeypatch):
+    monkeypatch.delenv("LIGERO_DUMP_PROOF", raising=False)
     run = lambda *a: subprocess.run([sys.executable, str(_SCRIPT), *a],
                                     capture_output=True, text=True, timeout=300)
     help_text = run("--help").stdout
@@ -111,6 +112,8 @@ def test_the_command_line_lists_the_flags_and_refuses_before_loading():
     assert r.returncode == 2 and "--unexplained-info" in r.stderr
     r = run("--from-hf", "/nonexistent", "--enroll-out", "e.wc", "--weight-commitment", "f.wc")
     assert r.returncode == 2 and "only enrolls" in r.stderr
+    r = run("--from-hf", "/nonexistent", "--weight-commitment", "e.wc")
+    assert r.returncode == 2 and "requires --dump-proof or LIGERO_DUMP_PROOF" in r.stderr
 
 
 @pytest.mark.parametrize("options, length", [

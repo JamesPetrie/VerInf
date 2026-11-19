@@ -388,7 +388,7 @@ def _locked_enrollment(path):
         yield WeightCommitment.load(path)
 
 
-def _check_output_mode(forward_only, enroll_out, statement_out, weight_commitment, dump_proof, from_hf):
+def _proof_output(forward_only, enroll_out, statement_out, weight_commitment, dump_proof, from_hf):
     if forward_only and any(path is not None for path in
                             (enroll_out, statement_out, weight_commitment, dump_proof)):
         raise ValueError("--forward-only cannot enroll, write a statement, or prove")
@@ -400,6 +400,10 @@ def _check_output_mode(forward_only, enroll_out, statement_out, weight_commitmen
     if (enroll_out is not None or weight_commitment is not None) and from_hf is None:
         raise ValueError("--enroll-out and --weight-commitment require --from-hf "
                          "to reload the same model weights")
+    output = dump_proof or os.environ.get("LIGERO_DUMP_PROOF") or None
+    if weight_commitment is not None and statement_out is None and output is None:
+        raise ValueError("an enrolled proof requires --dump-proof or LIGERO_DUMP_PROOF")
+    return output
 
 
 def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
@@ -431,7 +435,7 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
           enroll_out: Optional[str] = None,
           weight_commitment: Optional[str] = None):
     global SEQ
-    _check_output_mode(forward_only, enroll_out, statement_out, weight_commitment, dump_proof, from_hf)
+    output = _proof_output(forward_only, enroll_out, statement_out, weight_commitment, dump_proof, from_hf)
     if ui_output_tokens is not None and not unexplained_info:
         raise ValueError("--ui-output-tokens requires --unexplained-info")
     if weight_commitment is not None or enroll_out is not None:
@@ -748,7 +752,6 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
     print(f"  claims: {len(tape.claims)}  ({dict(sorted(counts.items()))})")
     torch.cuda.synchronize()
     from proof_dump import dump_proof as write_proof, reserved_dense_output
-    output = dump_proof or os.environ.get("LIGERO_DUMP_PROOF")
     with reserved_dense_output(output, tape) as (part, claims_bytes):
         t0 = time.time()
         with _locked_enrollment(weight_commitment) as wc_ref:
@@ -860,8 +863,8 @@ def _bound_and_enrollment_kwargs(args, error):
         bound_scale_ratio(s_c, s_b)
         if args.ui_lm_sout is not None:
             _check_lm_output_scale(args.ui_lm_sout)
-        _check_output_mode(args.forward_only, args.enroll_out, args.statement_out,
-                           args.weight_commitment, args.dump_proof, args.from_hf)
+        _proof_output(args.forward_only, args.enroll_out, args.statement_out,
+                      args.weight_commitment, args.dump_proof, args.from_hf)
     except ValueError as exc:
         error(str(exc))
     kw = {k: v for k, v in bound.items() if v is not None}
@@ -995,7 +998,8 @@ if __name__ == "__main__":
                           "handle is secret; *.wc is gitignored. Requires --from-hf.")
     ap.add_argument("--weight-commitment", type=str, default=None,
                      help="Prove against the enrollment handle at this path, then "
-                          "record the opened columns in its ledger and save it. Requires --from-hf.")
+                          "record the opened columns in its ledger and save it. Requires --from-hf. "
+                          "Set --dump-proof or LIGERO_DUMP_PROOF for the proof output.")
     ap.add_argument("--ui-positions", type=str, default=None,
                      help="Score only these positions for --unexplained-info: "
                           "START:STOP (STOP excluded) or a comma-separated list. "

@@ -22,7 +22,7 @@ from statement_preview import write_statement
 @pytest.mark.parametrize("options, persistent", [
     ({}, False),
     ({"enroll_out": "model.wc"}, True),
-    ({"weight_commitment": "model.wc"}, True),
+    ({"weight_commitment": "model.wc", "dump_proof": "proof.json"}, True),
     ({"persistent_head": True}, True),
 ])
 def test_eager_layer_weights_in_driver(monkeypatch, options, persistent):
@@ -49,7 +49,7 @@ def test_ineligible_query_count_refused_before_enrolled_proof(monkeypatch, queri
     cfg = core.LigeroConfig(ELL=8, K_DEG=16, N_LIG=64, T_QUERIES=queries)
     monkeypatch.setattr(driver, "CFG", cfg)
     with pytest.raises(ValueError, match="padding budget"):
-        driver.main(from_hf="unused", weight_commitment="unused.wc")
+        driver.main(from_hf="unused", weight_commitment="unused.wc", dump_proof="proof.json")
     with pytest.raises(ValueError, match="padding budget"):
         core.prove_streaming(None, cfg, weight_commitment=_handle())
 
@@ -382,12 +382,16 @@ def test_proof_through_symlink_updates_the_locked_target(tmp_path, monkeypatch):
         with pytest.raises(BlockingIOError):
             with driver._locked_enrollment(path):
                 pytest.fail("the canonical enrollment lock must be held")
-        from types import SimpleNamespace
-        return SimpleNamespace(Q_cols=[0])
+        empty = torch.empty(0, dtype=torch.uint64)
+        return core.Proof(root_p1=bytes(32), root_p2=bytes(32), q_irs=empty, q_lin=empty, p_0=empty,
+                          opened_p1={0: empty}, opened_p2={0: empty}, paths_p1={0: []}, paths_p2={0: []},
+                          Q_cols=[0], claims_bytes=kwargs["claims_bytes"])
 
     monkeypatch.setattr(driver.Tape, "prove", prove)
+    output = tmp_path / "proof.json"
     driver.main(from_hf="fixture", num_layers=0, with_lm_head=False,
-                weight_commitment=alias)
+                weight_commitment=alias, dump_proof=output)
+    assert json.loads(output.read_bytes())["proof"]["opened_p1"] == {"0": []}
     assert alias.is_symlink()
     assert core.WeightCommitment.load(path).opened_columns == [0]
 
