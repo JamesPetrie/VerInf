@@ -412,6 +412,8 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
           enroll_out: Optional[str] = None,
           weight_commitment: Optional[str] = None):
     global SEQ
+    if enroll_out is not None and os.path.lexists(enroll_out):
+        raise FileExistsError(f"refusing to overwrite enrollment: {enroll_out}")
     mcfg = (ModelConfig.from_hf(from_hf) if from_hf is not None
             else RANDOM_WEIGHTS_CFG)
     if chat:
@@ -673,7 +675,7 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
     # so the root can be pinned before they exist.
     if enroll_out is not None:
         _wc = WeightCommitment.from_tape(tape, CFG)
-        _wc.save(enroll_out)
+        _wc.save(enroll_out, overwrite=False)
         print(f"  enrolled W block: root {_wc.root.hex()}, {_wc.m_w:,} rows → {enroll_out}")
         return None
     # Statement only: write the exact claim bytes a proof would carry, and the
@@ -917,7 +919,7 @@ if __name__ == "__main__":
                           "at every position to keep the same W layout.")
     ap.add_argument("--enroll-out", type=str, default=None,
                      help="Commit the persistent W block under a fresh secret "
-                          "seed, save the handle to this path, and stop. The "
+                          "seed, save the handle to a new path, and stop. The "
                           "handle is secret; *.wc is gitignored.")
     ap.add_argument("--weight-commitment", type=str, default=None,
                      help="Prove against the enrollment handle at this path, then "

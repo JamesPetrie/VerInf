@@ -135,3 +135,19 @@ def test_handle_and_temporary_file_are_private_on_every_save(tmp_path, monkeypat
         os.umask(old_mask)
     assert modes == [0o600, 0o600]
     assert list(tmp_path.iterdir()) == [path]
+
+
+def test_initial_enrollment_preserves_existing_handle(tmp_path):
+    path = tmp_path / "model.wc"
+    first = _handle()
+    first.record_openings([0])
+    first.save(path, overwrite=False)
+    original = path.read_bytes()
+
+    with pytest.raises(FileExistsError, match="refusing to overwrite enrollment"):
+        driver.main(from_hf="unused", enroll_out=path)
+    # The atomic publish must also refuse a file created after the preflight.
+    with pytest.raises(FileExistsError):
+        _handle().save(path, overwrite=False)
+    assert path.read_bytes() == original
+    assert list(tmp_path.iterdir()) == [path]

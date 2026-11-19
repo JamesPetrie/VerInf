@@ -970,7 +970,8 @@ class WeightCommitment:
     # refresh. Half leaves the same margin again for the refresh proof itself.
     OPENING_BUDGET_FRACTION = 0.5
 
-    def save(self, path: str) -> None:
+    def save(self, path: str, *, overwrite: bool = True) -> None:
+        """Atomically persist the handle. Use overwrite=False for enrollment."""
         import struct
         import tempfile
         from pathlib import Path
@@ -997,7 +998,11 @@ class WeightCommitment:
                     f.write(struct.pack("<I", c))
                 f.flush()
                 os.fsync(f.fileno())
-            os.replace(part, path)
+            if overwrite:
+                os.replace(part, path)
+            else:
+                # Publish the complete inode only if no other enrollment won.
+                os.link(part, path)
         finally:
             # A write or publication failure leaves the previous handle intact.
             Path(part).unlink(missing_ok=True)
