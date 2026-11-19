@@ -185,6 +185,7 @@ def test_proof_through_symlink_updates_the_locked_target(tmp_path, monkeypatch):
     monkeypatch.setattr(torch.cuda, "synchronize", lambda: None)
 
     def prove(tape, **kwargs):
+        assert tape.lazy
         with pytest.raises(BlockingIOError):
             with driver._locked_enrollment(path):
                 pytest.fail("the canonical enrollment lock must be held")
@@ -193,7 +194,7 @@ def test_proof_through_symlink_updates_the_locked_target(tmp_path, monkeypatch):
 
     monkeypatch.setattr(driver.Tape, "prove", prove)
     driver.main(from_hf="fixture", num_layers=0, with_lm_head=False,
-                engine=True, weight_commitment=alias)
+                weight_commitment=alias)
     assert alias.is_symlink()
     assert core.WeightCommitment.load(path).opened_columns == [0]
 

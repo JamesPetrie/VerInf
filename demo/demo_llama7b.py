@@ -534,7 +534,8 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
     # Lookup tables (SiLU, RmsNorm range, softmax exp) are shared across
     # all layers via Tape's register_table cache, so their TableSettlement
     # constraints are emitted once instead of N_LAYERS times.
-    tape = Tape(CFG, silu_config=SILU_CFG, lazy=engine, time_ops=time_ops)
+    proving = not forward_only and enroll_out is None and statement_out is None
+    tape = Tape(CFG, silu_config=SILU_CFG, lazy=engine or proving, time_ops=time_ops)
 
     # Initial residual: bound via EmbeddingLookupClaim when a committed
     # table + ids exist, else an opaque commit. Untied models keep the
@@ -883,14 +884,9 @@ if __name__ == "__main__":
                           "where holding all weights simultaneously trips the "
                           "DGX Spark GB10 driver bug (pytorch #174358).")
     ap.add_argument("--engine", action="store_true",
-                     help="Build the Tape in lazy mode: compute_fn dispatch "
-                          "and per-claim side effects defer to a single engine "
-                          "pass right before prove. tape.inputs only holds "
-                          "externally-committed values; intermediates flow "
-                          "through a live dict. Required to scale single-tape "
-                          "Llama-2-7B past ~7 layers — combined with "
-                          "--lazy-weights, never holds the whole layer set in "
-                          "memory at once.")
+                     help="Defer witness computation to the streaming engine. "
+                          "Proofs use the engine automatically. This flag also "
+                          "enables it for forward passes, enrollment and statement previews.")
     ap.add_argument("--forward-only", action="store_true",
                      help="Skip the proof: run only the witness/forward pass "
                           "and emit logits. For accuracy/quantization checks "
@@ -905,8 +901,7 @@ if __name__ == "__main__":
                      help="After the LM head, append the unexplained-information "
                           "bound U(o) over the output tokens. The output tokens are "
                           "HIDDEN: committed + blinded exactly like the model weights "
-                          "(never public). Requires the LM head + eager mode (no "
-                          "--engine).")
+                          "(never public). Requires the LM head.")
     ap.add_argument("--ui-sigma", type=int, default=256,
                      help="Gaussian-kernel width sigma_g (int-logit units at scale S) "
                           "for --unexplained-info. Larger sigma_g -> larger exp table "
