@@ -153,7 +153,8 @@ def test_requested_bound_is_required_for_published_outputs(tmp_path, monkeypatch
     cfg = replace(driver.RANDOM_WEIGHTS_CFG, d=2, vocab=2)
     monkeypatch.setattr(driver.ModelConfig, "from_hf", lambda _: cfg)
     monkeypatch.setattr(driver, "SEQ", 2)
-    monkeypatch.setattr(driver, "_rand_signed", lambda n, **kw: torch.zeros(n))
+    monkeypatch.setattr(loader, "load_token_embedding", lambda *a, **kw: torch.ones(4))
+    monkeypatch.setattr(torch.cuda, "synchronize", lambda: None)
     monkeypatch.setattr(loader.LazyHFLoader, "__init__", lambda *a, **kw: None)
     monkeypatch.setattr(loader.LazyHFLoader, "load_final_norm", lambda _: torch.ones(2))
     monkeypatch.setattr(loader.LazyHFLoader, "load_final_weights",
@@ -164,6 +165,60 @@ def test_requested_bound_is_required_for_published_outputs(tmp_path, monkeypatch
     with pytest.raises(ValueError, match="too large for the exp table"):
         driver.main(from_hf="fixture", num_layers=0, unexplained_info=True,
                     engine=True, **{output: str(tmp_path / "result")})
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.fixture
+def tiny_scoring_model(monkeypatch):
+    """Checkpoint fixture with an identity tail and a witness-dependent reveal on CPU."""
+    import compute_fns
+    import unexplained_info
+
+    cfg = replace(driver.RANDOM_WEIGHTS_CFG, d=2, vocab=2)
+    monkeypatch.setattr(driver.ModelConfig, "from_hf", lambda _: cfg)
+    monkeypatch.setattr(driver, "SEQ", 2)
+    monkeypatch.setattr(loader, "load_token_embedding",
+                        lambda *a, **kw: torch.tensor([3, 1, 0, 4], dtype=torch.uint64))
+    monkeypatch.setattr(loader.LazyHFLoader, "__init__", lambda *a, **kw: None)
+    monkeypatch.setattr(loader.LazyHFLoader, "load_final_norm", lambda _: torch.ones(2))
+    monkeypatch.setattr(loader.LazyHFLoader, "load_final_weights",
+                        lambda _: {"W_lm_head": torch.eye(2)})
+    monkeypatch.setattr(torch.cuda, "synchronize", lambda: None)
+    monkeypatch.setattr(driver, "_run_tail", lambda tape, resid, *a, **kw: resid)
+    monkeypatch.setattr(compute_fns, "gl_add", torch.add)
+
+    def score(tape, logits, tokens, **kw):
+        rows = logits.data.view(2, 2).to(torch.int64)
+        gaps = rows.max(1).values - rows[range(2), tokens]
+        parts = [tape.commit(f"gap_{i}", v, (1,)) for i, v in enumerate(gaps)]
+        sz = tape.add(*parts)
+        return sz, {"reveal_pin": tape.reveal(sz)}
+
+    monkeypatch.setattr(unexplained_info, "prove_unexplained_info", score)
+    return dict(from_hf="fixture", num_layers=0, engine=True, unexplained_info=True,
+                ui_output_tokens=[1, 1], ui_gap_max=8)
+
+
+def test_promptless_scoring_preview_matches_prover_input(tmp_path, monkeypatch, tiny_scoring_model):
+    statement = tmp_path / "claims"
+    driver.main(**tiny_scoring_model, statement_out=statement)
+    assert json.loads((tmp_path / "claims.json").read_bytes())["sz"] == 4
+
+    class ProverReached(Exception):
+        pass
+
+    def check_claims(tape, *, claims_bytes, **kw):
+        assert claims_bytes == statement.read_bytes()
+        raise ProverReached
+
+    monkeypatch.setattr(driver.Tape, "prove", check_claims)
+    with pytest.raises(ProverReached):
+        driver.main(**tiny_scoring_model, dump_proof=tmp_path / "proof")
+
+
+def test_random_weights_cannot_preview_witness_dependent_bound(tmp_path):
+    with pytest.raises(ValueError, match="preview requires --from-hf"):
+        driver.main(unexplained_info=True, statement_out=tmp_path / "claims")
     assert list(tmp_path.iterdir()) == []
 
 

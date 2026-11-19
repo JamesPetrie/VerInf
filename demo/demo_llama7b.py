@@ -436,6 +436,9 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
         # Lock, read and replace the same target even when the caller uses a symlink.
         weight_commitment = os.path.realpath(weight_commitment)
     if unexplained_info:
+        if statement_out is not None and from_hf is None:
+            raise ValueError("an unexplained-information statement preview requires --from-hf "
+                             "so the proof can reload the same weights")
         bound_scale_ratio(ui_s_c, ui_s_b)
         _check_lm_output_scale(ui_lm_sout)
     if enroll_out is not None and os.path.lexists(enroll_out):
@@ -460,9 +463,10 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
         raise ValueError("tied embeddings publish every input token ID in the statement, "
                          "including any continuation. Use --public-input-tokens only "
                          "when the entire supplied input stream is public.")
-    if persistent_head and mcfg.tied_embeddings and prompt is None and token_ids is None:
-        # W rows follow first use in the claims. A promptless run must also
-        # use the canonical (vocab, d) table before the first layer.
+    if (from_hf is not None and prompt is None and token_ids is None
+            and (unexplained_info or (persistent_head and mcfg.tied_embeddings))):
+        # Use the same input for the preview and the proof. On tied models
+        # this also gives the embedding its canonical first use in the W layout.
         token_ids = [0] * SEQ
     print(f"=== dense-Llama transformer proof, production scale ===")
     print(f"  cfg: ELL={CFG.ELL}, K_DEG={CFG.K_DEG}, "
@@ -522,7 +526,7 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
             # a Merkle anchor.
             unique_ids = sorted(set(tok_ids))
             id_to_subset_idx = {tid: i for i, tid in enumerate(unique_ids)}
-            unique_t = torch.tensor(unique_ids, dtype=torch.int64, device="cuda")
+            unique_t = torch.tensor(unique_ids, dtype=torch.int64, device=E_full.device)
             E_data = E_full.view(-1, mcfg.d).index_select(
                 0, unique_t).contiguous().view(-1)
             E_shape = (len(unique_ids), mcfg.d)
@@ -531,7 +535,7 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
             # (layer 0 RE-binds via embed in the tape; downstream layers
             # need the .data).
             tok_t = torch.tensor(embed_token_ids, dtype=torch.int64,
-                                 device="cuda")
+                                 device=E_data.device)
             x_data_init = E_data.view(len(unique_ids), mcfg.d).index_select(
                 0, tok_t).contiguous().view(-1)
             print(f"  E subset: {len(unique_ids)} rows (full E would be "
@@ -935,7 +939,8 @@ if __name__ == "__main__":
                      help="After the LM head, append the unexplained-information "
                           "bound U(o) over committed output tokens. Tied embedding "
                           "claims publish all input token IDs (including prompt/chat). "
-                          "Requires the LM head.")
+                          "With --from-hf and no input, use token 0 as input at every "
+                          "position. Requires the LM head.")
     ap.add_argument("--ui-sigma", type=int, default=256,
                      help="Gaussian-kernel width sigma_g (int-logit units at scale S) "
                           "for --unexplained-info. Larger sigma_g -> larger exp table "
@@ -962,7 +967,7 @@ if __name__ == "__main__":
     ap.add_argument("--statement-out", type=str, default=None,
                      help="Write the claim bytes a proof would carry to this path, "
                           "and the block order and statement digest to PATH.json, "
-                          "then stop before proving.")
+                          "then stop before proving. Scoring previews require --from-hf.")
     ap.add_argument("--persistent-head", action="store_true",
                      help="Put the final norm and LM head (and a tied model's "
                           "embedding table) in the persistent W block with the "
