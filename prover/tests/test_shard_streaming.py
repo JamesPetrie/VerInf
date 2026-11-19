@@ -32,7 +32,7 @@ from tape import Tape
 from routed_projected import routed_projected_matmul, RoutedProjectedMatmulClaim
 from _rust_verify import rust_verify_tape
 
-CFG = core.LigeroConfig(ELL=8, K_DEG=8, N_LIG=32, T_QUERIES=4)
+CFG = core.LigeroConfig(ELL=8, K_DEG=16, N_LIG=64, T_QUERIES=4)
 T, K, J, E = 2, 4, 4, 128
 
 

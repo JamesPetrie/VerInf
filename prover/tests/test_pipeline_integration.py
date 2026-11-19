@@ -32,7 +32,7 @@ from routed_projected import routed_projected_matmul
 from proof_dump import dump_proof
 from _rust_verify import _verify_proof_bin
 
-CFG = core.LigeroConfig(ELL=8, K_DEG=8, N_LIG=32, T_QUERIES=4)
+CFG = core.LigeroConfig(ELL=8, K_DEG=16, N_LIG=64, T_QUERIES=4)
 T, K, J, E = 3, 4, 4, 4
 S, WIDTH = 1 << 4, 16
 

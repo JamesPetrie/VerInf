@@ -49,6 +49,16 @@ def pow_table_values(K, s_y, s_b):
     return np.floor(s_y * np.exp(k / s_b)).astype(np.uint64)
 
 
+def bound_scale_ratio(s_c, s_b):
+    """Return the power-of-two ceiling divisor required by the bound circuit."""
+    if s_c <= 0 or s_b <= 0:
+        raise ValueError("s_c and s_b must be positive")
+    k, remainder = divmod(s_c, s_b)
+    if remainder or k & (k - 1):
+        raise ValueError(f"s_c ({s_c}) must be a power-of-two multiple of s_b ({s_b})")
+    return k
+
+
 def prove_unexplained_info(tape, logits, tokens, *, T, V, s_c, s_y, s_b, gap_max,
                            force_argmax=None, sum_positions=None, reveal=False,
                            O_ext=None):
@@ -56,10 +66,7 @@ def prove_unexplained_info(tape, logits, tokens, *, T, V, s_c, s_y, s_b, gap_max
 
     `O_ext`: optional existing (T,V) one-hot to use as the output select
     (see max_gap) — ties the scored tokens to the tokens the model consumed."""
-    assert len(tokens) == T
-    assert s_c % s_b == 0 and (s_c // s_b) & (s_c // s_b - 1) == 0, \
-        "need s_c/s_b a power of two (clean ceil divisor k)"
-    k = s_c // s_b
+    k = bound_scale_ratio(s_c, s_b)
     from ui_claim import Z_O_BITS
     assert ((gap_max - 1) ** 2 + k - 1) // k < (1 << Z_O_BITS), \
         f"gap_max={gap_max}, k={k}: the honest ceiling quotient exceeds the {Z_O_BITS}-bit range"

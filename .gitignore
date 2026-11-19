@@ -22,6 +22,13 @@ verifier/target/
 /spark-bench/bench_goldilocks_matmul
 
 # Generated artifacts (proofs, logits)
+# Enrollment handles contain a secret padding seed, including during save.
+*.wc
+*.wc.part
+*.wc.lock
+*.wcommit
+*.wcommit.part
+*.wcommit.lock
 *.tar.gz
 *.tgz
 *.npy

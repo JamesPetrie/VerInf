@@ -157,7 +157,8 @@ def _proof_preflight():
 
 
 def _prove_with_plan(plan):
-    wc = SimpleNamespace(m_w=2, n_lig=CFG.N_LIG, master_seed=core.MASTER_SEED)
+    wc = core.WeightCommitment(root=bytes(32), levels=[], m_w=2, n_lig=CFG.N_LIG,
+                               master_seed=core.MASTER_SEED)
     return core.prove_streaming(SimpleNamespace(claims=[]), CFG,
                                 weight_commitment=wc, shard_plan=plan,
                                 claims_bytes=b"[]", zk_seed=b"\x22" * 32)

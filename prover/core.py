@@ -913,6 +913,27 @@ def commit_weights(tape, cfg: LigeroConfig, master_seed: bytes = MASTER_SEED):
     return art, weight_vars, m_w
 
 
+def _rename_exclusive(source, destination):
+    """Atomically publish a new enrollment with a single link to its inode."""
+    import ctypes
+    import errno
+
+    # os.rename can overwrite an existing handle on POSIX. Use the native
+    # no-replace operation so even a process death leaves no hard-link alias.
+    libc = ctypes.CDLL(None, use_errno=True)
+    src, dst = os.fsencode(source), os.fsencode(destination)
+    if sys.platform == "darwin":
+        result = libc.renamex_np(src, dst, 0x4)  # RENAME_EXCL
+    elif hasattr(libc, "renameat2"):
+        at_fdcwd, rename_noreplace = -100, 1
+        result = libc.renameat2(at_fdcwd, src, at_fdcwd, dst, rename_noreplace)
+    else:
+        raise OSError(errno.ENOTSUP, "atomic no-replace rename unavailable", destination)
+    if result != 0:
+        err = ctypes.get_errno()
+        raise OSError(err, os.strerror(err), destination)
+
+
 @dataclass
 class WeightCommitment:
     """A persisted commitment to a model's W block (analysis/persistent-weights.md,
@@ -953,6 +974,8 @@ class WeightCommitment:
         if master_seed is None:
             master_seed = new_zk_seed()
         art, _wv, m_w = commit_weights(tape, cfg, master_seed)
+        if m_w == 0:
+            raise ValueError("cannot enroll a tape with no persistent weight rows")
         return WeightCommitment(root=art.root, levels=art.levels, m_w=m_w,
                                 n_lig=cfg.N_LIG, master_seed=bytes(master_seed))
 
@@ -968,31 +991,57 @@ class WeightCommitment:
     # refresh. Half leaves the same margin again for the refresh proof itself.
     OPENING_BUDGET_FRACTION = 0.5
 
-    def save(self, path: str) -> None:
-        import os
+    @staticmethod
+    def _check_link_count(stat_result):
+        if stat_result.st_nlink != 1:
+            raise ValueError("hard-linked weight commitments can fork the opening ledger; "
+                             "keep a single handle and use symlinks for aliases")
+
+    def save(self, path: str, *, overwrite: bool = True) -> None:
+        """Atomically persist the handle. Use overwrite=False for enrollment."""
         import struct
-        # The ledger is security state, not a cache.  Publish it atomically so
-        # a crash cannot roll the enrollment back to an earlier opening set.
-        part = path + ".part"
-        with open(part, "wb") as f:
-            f.write(self.MAGIC)
-            f.write(struct.pack("<III", self.VERSION, self.m_w, self.n_lig))
-            f.write(self.root)
-            f.write(self.master_seed)
-            f.write(struct.pack("<I", len(self.levels)))
-            for lvl in self.levels:
-                f.write(struct.pack("<I", len(lvl)))
-                for node in lvl:
-                    assert len(node) == 32, "merkle node must be 32 bytes"
-                    f.write(node)
-            cols = sorted(set(self.opened_columns))
-            f.write(struct.pack("<I", len(cols)))
-            for c in cols:
-                f.write(struct.pack("<I", c))
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(part, path)
-        dfd = os.open(os.path.dirname(os.path.abspath(path)) or ".", os.O_RDONLY)
+        import tempfile
+        from pathlib import Path
+
+        # mkstemp creates a fresh owner-only inode on every save, including
+        # ledger updates. Keep it on the same filesystem for atomic publication.
+        if overwrite:
+            path = os.path.realpath(path)
+        directory = os.path.dirname(os.path.abspath(path))
+        fd, part = tempfile.mkstemp(dir=directory, suffix=f".{os.path.basename(path)}.part")
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(self.MAGIC)
+                f.write(struct.pack("<III", self.VERSION, self.m_w, self.n_lig))
+                f.write(self.root)
+                f.write(self.master_seed)
+                f.write(struct.pack("<I", len(self.levels)))
+                for lvl in self.levels:
+                    f.write(struct.pack("<I", len(lvl)))
+                    for node in lvl:
+                        assert len(node) == 32, "merkle node must be 32 bytes"
+                        f.write(node)
+                cols = sorted(set(self.opened_columns))
+                f.write(struct.pack("<I", len(cols)))
+                for c in cols:
+                    f.write(struct.pack("<I", c))
+                f.flush()
+                os.fsync(f.fileno())
+            if overwrite:
+                try:
+                    current = os.stat(path)
+                except FileNotFoundError:
+                    pass  # First save to this path.
+                else:
+                    self._check_link_count(current)
+                os.replace(part, path)
+            else:
+                # Publish the complete inode only if no other enrollment won.
+                _rename_exclusive(part, path)
+        finally:
+            # A write or publication failure leaves the previous handle intact.
+            Path(part).unlink(missing_ok=True)
+        dfd = os.open(directory, os.O_RDONLY)
         try:
             os.fsync(dfd)
         finally:
@@ -1001,7 +1050,19 @@ class WeightCommitment:
     @staticmethod
     def load(path: str) -> "WeightCommitment":
         try:
-            return WeightCommitment._parse(path)
+            while True:
+                with open(path, "rb") as f:
+                    info = os.fstat(f.fileno())
+                    if info.st_nlink == 0:
+                        # A ledger save replaced this inode after open().
+                        continue
+                    WeightCommitment._check_link_count(info)
+                    blob = f.read()
+                    break
+        except OSError as e:
+            raise AssertionError(f"cannot read weight commitment {path}: {e}") from e
+        try:
+            return WeightCommitment._parse(blob)
         except AssertionError:
             raise
         except Exception as e:                      # truncated / scrambled file
@@ -1009,10 +1070,8 @@ class WeightCommitment:
                 f"corrupt weight commitment {path}: {type(e).__name__}: {e}")
 
     @staticmethod
-    def _parse(path: str) -> "WeightCommitment":
+    def _parse(blob: bytes) -> "WeightCommitment":
         import struct
-        with open(path, "rb") as f:
-            blob = f.read()
         assert blob[:8] == WeightCommitment.MAGIC, "not a weight commitment file"
         ver, m_w, n_lig = struct.unpack("<III", blob[8:20])
         assert ver == WeightCommitment.VERSION, f"unsupported version {ver}"
@@ -1034,22 +1093,30 @@ class WeightCommitment:
         wc.check_topology()
         return wc
 
-    def opening_budget(self, cfg: 'LigeroConfig') -> int:
+    def check_layout(self, cfg: 'LigeroConfig', weight_rows: int) -> None:
+        if weight_rows == 0:
+            raise ValueError("cannot reference a weight commitment without persistent weight rows")
+        if self.m_w != weight_rows or self.n_lig != cfg.N_LIG:
+            raise AssertionError(f"weight commitment mismatch: m_w {self.m_w} vs {weight_rows}, "
+                                 f"N_LIG {self.n_lig} vs {cfg.N_LIG}")
+
+    @classmethod
+    def opening_budget(cls, cfg: 'LigeroConfig') -> int:
         """How many DISTINCT columns this enrollment may ever reveal."""
         slack = cfg.K_DEG - cfg.ELL
-        return int(slack * self.OPENING_BUDGET_FRACTION)
+        return int(slack * cls.OPENING_BUDGET_FRACTION)
+
+    @classmethod
+    def check_query_budget(cls, cfg: 'LigeroConfig') -> None:
+        budget = cls.opening_budget(cfg)
+        if not 0 < cfg.T_QUERIES <= budget:
+            raise ValueError(f"enrolled proof needs 1 to {budget} column queries "
+                             f"for this padding budget, got {cfg.T_QUERIES}")
 
     def check_openings(self, cfg: 'LigeroConfig', new_columns) -> None:
         """Refuse a proof that would spend more of the pad than the ledger
         allows. Called once the column challenge exists and BEFORE any weight
-        column is produced, so an exhausted enrollment costs nothing.
-
-        A config with no usable slack (K_DEG-ELL <= T_QUERIES) is not zero
-        knowledge to begin with — encode_messages already warns about it — so
-        there is no pad to ration and the ledger stands down. Production runs
-        at K_DEG=2*ELL, where the budget is real."""
-        if cfg.K_DEG - cfg.ELL <= cfg.T_QUERIES:
-            return
+        column is produced."""
         after = len(set(self.opened_columns) | set(new_columns))
         budget = self.opening_budget(cfg)
         if after > budget:
@@ -3021,6 +3088,11 @@ def _layout(claims: List, cfg: LigeroConfig):
             seen.add(id(v))
             all_vars.append(v)
     for c in claims:
+        # Enrollment and statement preview take this same layout before any
+        # claim is compiled. Enforce claim-specific row requirements here too.
+        check_layout = getattr(c, "check_layout", None)
+        if check_layout is not None:
+            check_layout(cfg)
         # Streaming relayout: a table's shared mult/w and its collected z's are
         # placed only at the table's APPENDED TableSettlement, not at the first
         # using-claim. So mult/w fall to the bottom of their phase, and each
@@ -3889,6 +3961,8 @@ def prove_streaming(tape, cfg, seed=None, weight_commitment=None, wnew_seed=None
     memory — is released however the prove ends, a raise included."""
     global _WEIGHT_CACHE
     try:
+        if weight_commitment is not None:
+            WeightCommitment.check_query_budget(cfg)
         return _prove_streaming_body(tape, cfg, seed, weight_commitment, wnew_seed,
                                      claims_bytes, zk_seed, shard_plan,
                                      weight_enrollment=weight_enrollment)
@@ -3961,9 +4035,9 @@ def _prove_streaming_body(tape, cfg, seed=None, weight_commitment=None, wnew_see
     # (diff-tests that compare two proofs byte-for-byte do pin it).
     s = _stream_setup(tape, cfg, zk_seed=(zk_seed or new_zk_seed()))
     has_w = bool(s['n_w_total'])
-    # P3: reference a persisted W commitment. The row-count/codeword guard
-    # below checks that it is for this model's W block.
-    wc = weight_commitment if has_w else None
+    wc = weight_commitment
+    if wc is not None:
+        wc.check_layout(cfg, s['n_w_total'])
     # Validate the enrolled split and every active worker's device before
     # any sweep or witness-cache allocation. An open-only worker must also
     # fail here, rather than after the preceding commitment and fold work.
@@ -4091,9 +4165,6 @@ def _prove_streaming_body(tape, cfg, seed=None, weight_commitment=None, wnew_see
                         "physical rows and the proof would not verify")
 
     if wc is not None:
-        assert wc.m_w == s['n_w_total'] and wc.n_lig == cfg.N_LIG, (
-            f"weight commitment mismatch: m_w {wc.m_w} vs {s['n_w_total']}, "
-            f"N_LIG {wc.n_lig} vs {cfg.N_LIG}")
         # P5: pad the W block under the COMMITMENT's seed at the block's
         # logical offset, so the re-extracted columns reproduce the persisted
         # leaves even when the commitment was REFRESHED under a fresh seed.

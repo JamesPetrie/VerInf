@@ -28,7 +28,7 @@ from proof_dump import dump_proof
 from routed_projected import RoutedProjectedMatmulClaim, routed_projected_matmul
 from tape import Tape
 from _rust_verify import _verify_proof_bin
-from test_routed_projected import _u64, CFG, T, K, J, E
+from test_routed_projected import _u64, T, K, J, E
 from test_wc_streaming_flag import _prove_with_flag, PARAMS
 
 WRONG = "ab" * 32
@@ -205,7 +205,8 @@ def _build_production_shape():
     bridged expert shards held outside the witness: the proof carries a w
     block and a wc section, two anchors."""
     core._COSET_POWERS_K_CACHE.clear()
-    tape = Tape(CFG, lazy=True)
+    cfg = core.LigeroConfig(ELL=8, K_DEG=16, N_LIG=64, T_QUERIES=4)
+    tape = Tape(cfg, lazy=True)
     X = torch.arange(1, T * K + 1).reshape(T, K)
     D = (torch.arange(1, K * K + 1) % 11).reshape(K, K)
     W = torch.arange(1, E * K * J + 1).reshape(E, K * J)
@@ -219,7 +220,7 @@ def _build_production_shape():
     w = [tape.external(f"W{e}", _u64(W[e]), (K, J)) for e in range(E)]
     routed_projected_matmul(tape, xd, m, w, T=T, K=K, J=J, E=E, use_bridge=True)
     enr = wc.enroll_tape(tape, b"prod-mask", b"prod-manifest", PARAMS)
-    wcm = core.WeightCommitment.from_tape(tape, CFG)
+    wcm = core.WeightCommitment.from_tape(tape, cfg)
     proof = tape.prove(weight_commitment=wcm, weight_enrollment=enr)
     return tape, proof
 

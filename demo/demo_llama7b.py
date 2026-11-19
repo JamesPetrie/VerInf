@@ -59,9 +59,13 @@ import math
 import os
 import sys
 import time
+from collections.abc import Sequence
+from contextlib import contextmanager
+from numbers import Integral
 from pathlib import Path
 from typing import Dict, Optional
 
+import numpy as np
 import torch
 
 HERE = Path(__file__).resolve().parent
@@ -74,10 +78,12 @@ _s.path.insert(0, str(_R / "prover")); _s.path.insert(0, str(_R / "demo"))
 import _uint64_compat  # noqa: F401  — patch uint64 CUDA op gaps (gather/index_select/...) before any prover op runs
 
 from cuda_primitives import P, gl_sub
-from core import LigeroConfig
+from core import LigeroConfig, WeightCommitment
 from tape import Tape
 from claims import SiluConfig
 from model_config import ModelConfig
+from unexplained_info import bound_scale_ratio
+from max_claim import checked_output_tokens
 
 # T_QUERIES overridable via env (e.g. =4 for a fast non-sound timing/feasibility
 # run; production soundness uses 80).
@@ -307,28 +313,44 @@ UI_S_C, UI_S_Y_BITS, UI_S_B_BITS = 1 << 28, 28, 12
 
 
 def _run_unexplained_info(tape, logits, *, vocab_size, seq, output_tokens=None,
-                           s_c=UI_S_C, sum_positions=None):
+                           s_c=UI_S_C, s_b=1 << UI_S_B_BITS, gap_max=None,
+                           sum_positions=None, forward_only=False):
     """Append the unexplained-information bound over the (bound) LM-head logits,
     output tokens HIDDEN. `s_c = 2*sigma^2` sets the kernel width. Returns
-    (Sz_wt, info)."""
+    (Sz_wt, info).
+
+    `gap_max=None` derives the table range from this run's logits (the legacy
+    behavior, which makes the statement depend on the data). A fixed `gap_max`
+    is part of a statement chosen in advance: a run whose largest logit gap
+    falls outside [0, gap_max) is refused here, before any claim is appended."""
     from unexplained_info import prove_unexplained_info
     from max_claim import to_signed
 
+    if output_tokens is not None:
+        output_tokens = checked_output_tokens(output_tokens, seq, vocab_size)
     ls = to_signed(logits.data.view(seq, vocab_size))             # signed logits
     vstar = ls.max(dim=1).values
-    gap_max = int((vstar.view(seq, 1) - ls).max().item()) + 2
+    observed = int((vstar.view(seq, 1) - ls).max().item())
+    fixed = gap_max is not None
+    if not fixed:
+        gap_max = observed + 2
+    elif observed >= gap_max:
+        raise ValueError(f"largest logit gap {observed:,} is outside the fixed "
+                         f"range [0, {gap_max:,})")
     if output_tokens is None:
         tokens = [int(ls[t].argmax()) for t in range(seq)]        # greedy -> gap_o = 0
     else:
-        assert len(output_tokens) == seq, "ui-output-tokens must have SEQ entries"
-        tokens = [int(v) for v in output_tokens]
+        tokens = output_tokens
 
-    s_y, s_b = 1 << UI_S_Y_BITS, 1 << UI_S_B_BITS
-    k = s_c // s_b
-    print(f"  unexplained-info (folded): gap_max={gap_max:,} (exp+gap tables), "
-          f"s_c={s_c}, s_y=2^{UI_S_Y_BITS}, s_b=2^{UI_S_B_BITS}, k={k} "
-          f"(output tokens hidden)")
+    s_y = 1 << UI_S_Y_BITS
+    k = bound_scale_ratio(s_c, s_b)
+    print(f"  unexplained-info (folded): gap_max={gap_max:,} "
+          f"({'fixed' if fixed else 'from this run'}; largest gap {observed:,}), "
+          f"s_c={s_c}, s_y=2^{UI_S_Y_BITS}, s_b={s_b}, k={k}")
     if gap_max.bit_length() > 26:
+        if fixed or not forward_only:
+            raise ValueError(f"gap_max={gap_max:,} is too large for the exp table; "
+                             "use a coarser LM-head scale")
         print(f"    [skip] gap_max=2^{gap_max.bit_length()} too large for the exp table; "
               f"use a coarser LM-head scale.")
         return None, None
@@ -337,7 +359,8 @@ def _run_unexplained_info(tape, logits, *, vocab_size, seq, output_tokens=None,
                                    s_c=s_c, s_y=s_y, s_b=s_b, gap_max=gap_max,
                                    sum_positions=sum_positions, reveal=True)
     n = len(sum_positions) if sum_positions is not None else seq
-    return Sz, dict(s_b=s_b, tokens=tokens, n=n, reveal_pin=h.get('reveal_pin'))
+    return Sz, dict(s_b=s_b, s_c=s_c, s_y=s_y, gap_max=gap_max, observed_gap=observed,
+                    tokens=tokens, n=n, reveal_pin=h.get('reveal_pin'))
 
 
 def _report_unexplained_info(tape, Sz, info, *, seq, vocab_size):
@@ -347,8 +370,43 @@ def _report_unexplained_info(tape, Sz, info, *, seq, vocab_size):
     U = bound_bits(Sz_val, s_b=info["s_b"])
     n = info.get("n", seq)
     print(f"  unexplained-information bound: U = {U:.4f} bits "
-          f"over {n} hidden output token(s)")
+          f"over {n} scored output token(s)")
     return U
+
+
+@contextmanager
+def _locked_enrollment(path):
+    """Hold the ledger lock across loading, checking the budget and saving."""
+    if path is None:
+        yield None
+        return
+    import fcntl
+    # The handle inode changes on save. Keep the lock on a stable sibling,
+    # using the same filename as the Maverick driver.
+    with open(os.fspath(path) + ".lock", "a+b") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise BlockingIOError(f"enrollment already in use: {path}") from exc
+        yield WeightCommitment.load(path)
+
+
+def _proof_output(forward_only, enroll_out, statement_out, weight_commitment, dump_proof, from_hf):
+    if forward_only and any(path is not None for path in
+                            (enroll_out, statement_out, weight_commitment, dump_proof)):
+        raise ValueError("--forward-only cannot enroll, write a statement, or prove")
+    if enroll_out is not None and any(path is not None for path in
+                                      (weight_commitment, statement_out, dump_proof)):
+        raise ValueError("--enroll-out only enrolls: it stops before any statement or proof")
+    if statement_out is not None and dump_proof is not None:
+        raise ValueError("--statement-out stops before proving, so there is no proof to dump")
+    if (enroll_out is not None or weight_commitment is not None) and from_hf is None:
+        raise ValueError("--enroll-out and --weight-commitment require --from-hf "
+                         "to reload the same model weights")
+    output = dump_proof or os.environ.get("LIGERO_DUMP_PROOF") or None
+    if weight_commitment is not None and statement_out is None and output is None:
+        raise ValueError("an enrolled proof requires --dump-proof or LIGERO_DUMP_PROOF")
+    return output
 
 
 def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
@@ -367,14 +425,34 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
           ui_sigma: int = 256,
           ui_sy_bits: int = 16,
           ui_output_tokens: Optional[list] = None,
-          ui_lm_sout: int = UI_COARSE_S,
-          ui_lm_ow: int = UI_COARSE_OW,
-          ui_s_c: int = UI_S_C,
+          ui_lm_sout: Optional[int] = None,
+          ui_lm_ow: Optional[int] = None,
+          ui_s_c: Optional[int] = None,
           ui_positions: Optional[list] = None,
-          token_ids: Optional[list] = None):
+          token_ids: Optional[list] = None,
+          public_input_tokens: bool = False,
+          ui_s_b: Optional[int] = None,
+          ui_gap_max: Optional[int] = None,
+          statement_out: Optional[str] = None,
+          persistent_head: bool = False,
+          enroll_out: Optional[str] = None,
+          weight_commitment: Optional[str] = None):
     global SEQ
-    mcfg = (ModelConfig.from_hf(from_hf) if from_hf is not None
-            else RANDOM_WEIGHTS_CFG)
+    output = _proof_output(forward_only, enroll_out, statement_out, weight_commitment, dump_proof, from_hf)
+    if ui_output_tokens is not None and not unexplained_info:
+        raise ValueError("--ui-output-tokens requires --unexplained-info")
+    ui_s_c, ui_s_b, ui_lm_sout, ui_lm_ow = _checked_bound(
+        unexplained_info, ui_positions, ui_s_c, ui_s_b, ui_lm_sout, ui_lm_ow, ui_gap_max)
+    if weight_commitment is not None or enroll_out is not None:
+        WeightCommitment.check_query_budget(CFG)
+    if weight_commitment is not None:
+        # Lock, read and replace the same target even when the caller uses a symlink.
+        weight_commitment = os.path.realpath(weight_commitment)
+    if unexplained_info and statement_out is not None and from_hf is None:
+        raise ValueError("an unexplained-information statement preview requires --from-hf "
+                         "so the proof can reload the same weights")
+    if enroll_out is not None and os.path.lexists(enroll_out):
+        raise FileExistsError(f"refusing to overwrite enrollment: {enroll_out}")
     if chat:
         assert from_hf is not None and prompt is not None, (
             "chat mode needs --from-hf (for the tokenizer/template) and "
@@ -384,6 +462,23 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
         prompt = None               # binding proceeds via token_ids below
     if token_ids is not None:
         SEQ = len(token_ids)        # forward over an exact id stream
+        prompt = None
+    if ui_positions is not None:
+        ui_positions = list(_check_positions(ui_positions, SEQ))
+    mcfg = (ModelConfig.from_hf(from_hf) if from_hf is not None
+            else RANDOM_WEIGHTS_CFG)
+    if ui_output_tokens is not None:
+        ui_output_tokens = checked_output_tokens(ui_output_tokens, SEQ, mcfg.vocab)
+    if (unexplained_info and mcfg.tied_embeddings and token_ids is not None
+            and not chat and not public_input_tokens):
+        raise ValueError("tied embeddings publish every input token ID in the statement, "
+                         "including any continuation. Use --public-input-tokens only "
+                         "when the entire supplied input stream is public.")
+    if (from_hf is not None and prompt is None and token_ids is None
+            and (unexplained_info or (persistent_head and mcfg.tied_embeddings))):
+        # Use the same input for the preview and the proof. On tied models
+        # this also gives the embedding its canonical first use in the W layout.
+        token_ids = [0] * SEQ
     print(f"=== dense-Llama transformer proof, production scale ===")
     print(f"  cfg: ELL={CFG.ELL}, K_DEG={CFG.K_DEG}, "
           f"N_LIG={CFG.N_LIG}, T_QUERIES={CFG.T_QUERIES}")
@@ -414,10 +509,13 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
                    else tokenize_prompt(from_hf, prompt).cpu().tolist())
         if len(tok_ids) >= SEQ:
             tok_ids = tok_ids[:SEQ]
-            print(f"  prompt tokens (first {SEQ}): {tok_ids}")
         else:
             tok_ids = tok_ids + [0] * (SEQ - len(tok_ids))
-            print(f"  prompt tokens (padded to {SEQ}): {tok_ids}")
+        if unexplained_info:
+            if mcfg.tied_embeddings:
+                print(f"  tied embedding lookup publishes all {SEQ} input token IDs")
+        else:
+            print(f"  prompt tokens: {tok_ids}")
         E_full = load_token_embedding(from_hf, S=S)
         if mcfg.tied_embeddings:
             # Tied model: keep the FULL table (vocab, d) — it is committed
@@ -426,7 +524,7 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
             E_data = E_full.view(-1)
             E_shape = (mcfg.vocab, mcfg.d)
             embed_token_ids = tok_ids
-            tok_t = torch.tensor(tok_ids, dtype=torch.int64, device="cuda")
+            tok_t = torch.tensor(tok_ids, dtype=torch.int64, device=E_full.device)
             x_data_init = E_full.view(mcfg.vocab, mcfg.d).index_select(
                 0, tok_t).contiguous().view(-1)
             print(f"  E: full table ({mcfg.vocab} × {mcfg.d}) — tied, "
@@ -439,7 +537,7 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
             # a Merkle anchor.
             unique_ids = sorted(set(tok_ids))
             id_to_subset_idx = {tid: i for i, tid in enumerate(unique_ids)}
-            unique_t = torch.tensor(unique_ids, dtype=torch.int64, device="cuda")
+            unique_t = torch.tensor(unique_ids, dtype=torch.int64, device=E_full.device)
             E_data = E_full.view(-1, mcfg.d).index_select(
                 0, unique_t).contiguous().view(-1)
             E_shape = (len(unique_ids), mcfg.d)
@@ -448,7 +546,7 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
             # (layer 0 RE-binds via embed in the tape; downstream layers
             # need the .data).
             tok_t = torch.tensor(embed_token_ids, dtype=torch.int64,
-                                 device="cuda")
+                                 device=E_data.device)
             x_data_init = E_data.view(len(unique_ids), mcfg.d).index_select(
                 0, tok_t).contiguous().view(-1)
             print(f"  E subset: {len(unique_ids)} rows (full E would be "
@@ -468,7 +566,8 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
     # Lookup tables (SiLU, RmsNorm range, softmax exp) are shared across
     # all layers via Tape's register_table cache, so their TableSettlement
     # constraints are emitted once instead of N_LAYERS times.
-    tape = Tape(CFG, silu_config=SILU_CFG, lazy=engine, time_ops=time_ops)
+    proving = not forward_only and enroll_out is None and statement_out is None
+    tape = Tape(CFG, silu_config=SILU_CFG, lazy=engine or proving, time_ops=time_ops)
 
     # Initial residual: bound via EmbeddingLookupClaim when a committed
     # table + ids exist, else an opaque commit. Untied models keep the
@@ -479,7 +578,8 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
     E_wt = None
     if E_data is not None and (prompt is not None or mcfg.tied_embeddings):
         E_name = "E_embedding" if mcfg.tied_embeddings else "E_embedding_subset"
-        E_wt = tape.commit(E_name, E_data, E_shape)
+        E_wt = tape.commit(E_name, E_data, E_shape,
+                           persistent=persistent_head and mcfg.tied_embeddings)
         resid = tape.embed(E_wt, token_ids=embed_token_ids, d=mcfg.d)
     else:
         resid = tape.commit("x_input", x_data_init, (SEQ, mcfg.d))
@@ -499,6 +599,7 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
               f"{lazy_loader.model_dir})")
 
     # Record each transformer block on the same tape. resid flows through.
+    enroll_layers = persistent_head or enroll_out is not None or weight_commitment is not None
     for L in range(num_layers):
         this_layer_idx = layer_idx + L
         if lazy_loader is not None:
@@ -510,6 +611,11 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
         else:
             layer_weights = _commit_weights_random(
                 tape, mcfg, layer_idx=this_layer_idx)
+        # The W layout is assigned from the recorded claims. Mark every layer
+        # before its first use, independently of how its weights were loaded.
+        if enroll_layers:
+            for weight in layer_weights.values():
+                weight.var.persistent = True
         resid = _run_block(tape, resid, layer_weights, mcfg=mcfg)
         del layer_weights
         torch.cuda.empty_cache()
@@ -533,13 +639,18 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
             final_norm_data = torch.full((mcfg.d,), S, dtype=torch.uint64,
                                          device="cuda")
             lm_head_data    = _rand_signed(mcfg.d * vocab_size, half=HALF)
-        final_norm_w_wt = tape.commit("final_norm_w", final_norm_data, (mcfg.d,))
+        # persistent_head puts the final norm and LM head in the persistent W
+        # block with the layer weights, so an enrolled root pins them too. Both
+        # are prompt-independent; a tied head's full embedding table is already
+        # persistent above. An untied embedding subset stays a per-run input.
+        final_norm_w_wt = tape.commit("final_norm_w", final_norm_data, (mcfg.d,),
+                                      persistent=persistent_head)
         if lm_tied_reuse:
             W_lm_head_wt = E_wt          # (vocab, d); transpose_b in the tail
             print("  LM head: tied — reusing the committed embedding table")
         else:
             W_lm_head_wt = tape.commit("W_lm_head", lm_head_data,
-                                        (mcfg.d, vocab_size))
+                                        (mcfg.d, vocab_size), persistent=persistent_head)
         # For --unexplained-info, run the LM head COARSE (s_out=1) so the
         # bound-relevant gaps fit a feasible exp/gap table -- bound by the
         # matmul's own rescale (no separate coarsening claim).
@@ -572,7 +683,8 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
         # only those (the Σ chain selects them via embed(surprisal,[i],d=1), 1|ELL ok).
         ui_Sz, ui_info = _run_unexplained_info(
             tape, logits, vocab_size=vocab_size, seq=SEQ,
-            output_tokens=ui_output_tokens, s_c=ui_s_c, sum_positions=ui_positions)
+            output_tokens=ui_output_tokens, s_c=ui_s_c, s_b=ui_s_b,
+            gap_max=ui_gap_max, sum_positions=ui_positions, forward_only=forward_only)
 
     # ---------- Forward-only fast path (accuracy checks; no proof) ----------
     # Logits are primary witnesses, so the engine/forward pass produces them
@@ -580,17 +692,19 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
     if forward_only:
         torch.cuda.synchronize(); _t = time.time()
         if engine:
-            # Free each layer's witnesses as the residual moves on — only the
-            # logits are kept — so peak memory is O(one layer), not O(all 32).
-            keep = {logits.var} if (with_lm_head and logits is not None) else set()
+            # Keep the reported outputs when their last consumer (e.g. the
+            # public reveal of Sz) runs. Intermediate layer witnesses can go.
+            keep = {logits.var} if logits is not None else set()
+            if ui_Sz is not None:
+                keep.add(ui_Sz.var)
             tape.run_engine_pass(free_intermediates=True, keep=keep)
         torch.cuda.synchronize()
         print(f"  forward-only (no proof): witness in {time.time() - _t:.2f}s")
         if with_lm_head:
             ls = logits.data.view(SEQ, vocab_size).to(torch.int64).clone()
-            print(f"  argmax(logits[{SEQ-1}]) = token {int(ls[SEQ-1].argmax())}")
+            if not unexplained_info:
+                print(f"  argmax(logits[{SEQ-1}]) = token {int(ls[SEQ-1].argmax())}")
             if save_logits is not None:
-                import numpy as np
                 np.save(save_logits, ls.cpu().numpy())
                 print(f"  saved logits ({SEQ}, {vocab_size}) int64 → {save_logits}")
         if ui_Sz is not None:
@@ -612,45 +726,62 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
               f"{bound_bits(_sz, s_b=ui_info['s_b']):.4f} bits "
               f"(verifier reads this from the claim)")
 
+    # Enrollment: commit the persistent W block once, under a fresh secret
+    # seed, save the handle, and stop. Proofs that reference it carry its root,
+    # so the root can be pinned before they exist.
+    if enroll_out is not None:
+        _wc = WeightCommitment.from_tape(tape, CFG)
+        _wc.save(enroll_out, overwrite=False)
+        print(f"  enrolled W block: root {_wc.root.hex()}, {_wc.m_w:,} rows → {enroll_out}")
+        return None
+    # Statement only: write the exact claim bytes a proof would carry, and the
+    # block order the prover would use, then stop before proving.
+    if statement_out is not None:
+        from statement_preview import write_statement
+        wc_ref = WeightCommitment.load(weight_commitment) if weight_commitment is not None else None
+        write_statement(tape, CFG, statement_out,
+                        ui_info=ui_info,
+                        sz=_sz if ui_Sz is not None else None,
+                        weight_commitment=wc_ref)
+        return None
+
     from collections import Counter
     counts = Counter(type(c).__name__ for c in tape.claims)
     tail_str = " + tail" if with_lm_head else ""
     print(f"\n--- single-tape proof: {num_layers} layer(s){tail_str} ---")
     print(f"  claims: {len(tape.claims)}  ({dict(sorted(counts.items()))})")
     torch.cuda.synchronize()
-    t0 = time.time()
-    proof = tape.prove(seed=b"xformer-single-tape", verbose=verbose)
-    torch.cuda.synchronize()
-    t_prove = time.time() - t0
-    # Verification is the standalone Rust verifier's job (verifier-rs/verify_proof
-    # on the dumped proof); the demo only proves + dumps.
-
-    # Optional: dump the proof + claims + seeds for the standalone Rust verifier
-    # (verifier-rs/verify_proof). Public data only — no witness.
-    _dump = dump_proof or os.environ.get("LIGERO_DUMP_PROOF")
-    if _dump:
-        import protocol as pr
-        from proof_dump import dump_proof as _write_proof   # single block-driven writer
-        _t_dump = time.time()
-        s_op, s_comb, s_col = pr.round_seeds(b"xformer-single-tape")
-        Q = list(pr.random_columns(s_col, CFG))
-        _write_proof(_dump, pr.claims_to_json(tape.claims, CFG),
-                     {"s_op": s_op.hex(), "s_comb": s_comb.hex(), "s_col": s_col.hex()},
-                     proof, Q, None)
-        print(f"  dumped proof for Rust verifier → {_dump}  (dump {time.time()-_t_dump:.1f}s)")
+    from proof_dump import dump_proof as write_proof, reserved_dense_output
+    with reserved_dense_output(output, tape) as (part, claims_bytes):
+        t0 = time.time()
+        with _locked_enrollment(weight_commitment) as wc_ref:
+            if wc_ref is not None:
+                print(f"  weight commitment: root {wc_ref.root.hex()}, "
+                      f"{len(wc_ref.opened_columns)} columns already opened")
+            proof = tape.prove(seed=b"xformer-single-tape", verbose=verbose,
+                               weight_commitment=wc_ref, claims_bytes=claims_bytes)
+            torch.cuda.synchronize()
+            t_prove = time.time() - t0
+            if wc_ref is not None:
+                wc_ref.record_openings(proof.Q_cols)
+                wc_ref.save(weight_commitment)
+                print(f"  ledger: {len(wc_ref.opened_columns)} of "
+                      f"{wc_ref.opening_budget(CFG)} columns spent")
+        if part is not None:
+            t_dump = time.time()
+            write_proof(os.fspath(output), None, None, proof, None, None, reserved_part=part)
+            print(f"  dumped proof for Rust verifier → {output}  (dump {time.time()-t_dump:.1f}s)")
     print(f"  prove: {t_prove:.2f}s   (verify the dump with verify_proof)")
 
-    if with_lm_head:
-        # argmax(logits[last position]) is the predicted next token. The
-        # verifier could compute the same from the committed `logits`.
+    if with_lm_head and (not unexplained_info or save_logits is not None):
         logits_signed = logits.data.view(SEQ, vocab_size).to(torch.int64).clone()
-        next_tok = int(logits_signed[SEQ - 1].argmax().item())
-        print(f"  argmax(logits[{SEQ-1}]) = token {next_tok}")
+        if not unexplained_info:
+            next_tok = int(logits_signed[SEQ - 1].argmax().item())
+            print(f"  argmax(logits[{SEQ-1}]) = token {next_tok}")
         if save_logits is not None:
-            import numpy as np
             np.save(save_logits, logits_signed.cpu().numpy())
             print(f"  saved logits ({SEQ}, {vocab_size}) int64 → {save_logits}")
-        if from_hf is not None:
+        if from_hf is not None and not unexplained_info:
             try:
                 from transformers import AutoTokenizer
                 tok = AutoTokenizer.from_pretrained(from_hf)
@@ -664,6 +795,97 @@ def main(*, from_hf: Optional[str] = None, layer_idx: int = 0,
     print(f"\n=== total ===")
     print(f"  claims:  {len(tape.claims)}")
     print(f"  prove:   {t_prove:.2f}s")
+
+
+def _check_lm_output_scale(s_out):
+    # Both matmul inputs have scale S (a power of two). The rescale claim
+    # needs an integral power-of-two divisor and at least one rescale bit.
+    if not 0 < s_out < S * S or s_out & (s_out - 1):
+        raise ValueError(f"--ui-lm-sout must be a positive power of two below {S * S}")
+
+
+def _check_positions(positions, seq=None):
+    if isinstance(positions, range):
+        valid = positions.step > 0 and 0 <= positions.start < positions.stop
+    else:
+        if isinstance(positions, (torch.Tensor, np.ndarray)):
+            positions = positions.tolist()
+        if (not isinstance(positions, Sequence) or isinstance(positions, (str, bytes, bytearray))
+                or any(not isinstance(i, Integral) or isinstance(i, bool) for i in positions)):
+            raise ValueError("--ui-positions must contain integer indices")
+        positions = [int(i) for i in positions]
+        valid = (len(positions) > 0 and positions[0] >= 0
+                 and all(a < b for a, b in zip(positions, positions[1:])))
+    if not valid:
+        raise ValueError("--ui-positions must be non-empty, non-negative, increasing and distinct")
+    if seq is not None and positions[-1] >= seq:
+        raise ValueError(f"--ui-positions includes {positions[-1]} outside the {seq}-token sequence")
+    return positions
+
+
+def _parse_output_tokens(text):
+    try:
+        return [int(v) for v in text.split(",")]
+    except ValueError:
+        raise argparse.ArgumentTypeError("expected a non-empty comma-separated list of integer IDs") from None
+
+
+def _parse_positions(text, error):
+    """START:STOP (STOP excluded) or a comma-separated list, as sorted distinct
+    non-negative positions."""
+    if not text.strip():
+        error("--ui-positions must be non-empty")
+    try:
+        if ":" in text:
+            start, stop = (int(v) for v in text.split(":"))
+            positions = range(start, stop)  # expand only after checking the token count
+        else:
+            positions = [int(v) for v in text.split(",")]
+    except ValueError:
+        error(f"--ui-positions {text!r}: use START:STOP or a comma-separated list")
+    try:
+        return _check_positions(positions)
+    except ValueError as exc:
+        error(str(exc))
+
+
+def _checked_bound(enabled, positions, ui_s_c, ui_s_b, ui_lm_sout, ui_lm_ow, ui_gap_max):
+    """Validate explicit options before filling in the scoring defaults."""
+    for name, value in (("--ui-s-c", ui_s_c), ("--ui-s-b", ui_s_b), ("--ui-lm-sout", ui_lm_sout),
+                        ("--ui-lm-ow", ui_lm_ow), ("--ui-gap-max", ui_gap_max)):
+        if value is not None:
+            if not enabled:
+                raise ValueError(f"{name} requires --unexplained-info")
+            if value <= 0:
+                raise ValueError(f"{name} must be positive")
+    if positions is not None and not enabled:
+        raise ValueError("--ui-positions requires --unexplained-info")
+    s_c = UI_S_C if ui_s_c is None else ui_s_c
+    s_b = 1 << UI_S_B_BITS if ui_s_b is None else ui_s_b
+    lm_sout = UI_COARSE_S if ui_lm_sout is None else ui_lm_sout
+    bound_scale_ratio(s_c, s_b)
+    _check_lm_output_scale(lm_sout)
+    return s_c, s_b, lm_sout, UI_COARSE_OW if ui_lm_ow is None else ui_lm_ow
+
+
+def _bound_and_enrollment_kwargs(args, error):
+    """The fixed-bound, statement and enrollment flags as main()'s keywords.
+    `error` reports a combination that cannot run (argparse's ap.error), before
+    any model is loaded. A bound flag left out keeps main()'s default."""
+    bound = {"ui_s_c": args.ui_s_c, "ui_s_b": args.ui_s_b, "ui_gap_max": args.ui_gap_max,
+             "ui_lm_sout": args.ui_lm_sout, "ui_lm_ow": args.ui_lm_ow}
+    try:
+        _checked_bound(args.unexplained_info, args.ui_positions, **bound)
+        _proof_output(args.forward_only, args.enroll_out, args.statement_out,
+                      args.weight_commitment, args.dump_proof, args.from_hf)
+    except ValueError as exc:
+        error(str(exc))
+    kw = {k: v for k, v in bound.items() if v is not None}
+    if args.ui_positions is not None:
+        kw["ui_positions"] = _parse_positions(args.ui_positions, error)
+    kw.update(statement_out=args.statement_out, persistent_head=args.persistent_head,
+              enroll_out=args.enroll_out, weight_commitment=args.weight_commitment)
+    return kw
 
 
 if __name__ == "__main__":
@@ -704,6 +926,10 @@ if __name__ == "__main__":
                           "\"continuation\": [...]} (concatenated) — the "
                           "Maverick transcript format. Overrides --prompt/"
                           "--chat. SEQ is set to the id count.")
+    ap.add_argument("--public-input-tokens", action="store_true",
+                     help="Allow a tied model to publish every ID from --tokens-file "
+                          "in its embedding claim during unexplained-information scoring. "
+                          "Use only for a public input stream, including any continuation.")
     ap.add_argument("--seq", type=int, default=None,
                      help="Override sequence length (default 2). Larger SEQ "
                           "scales activation cost linearly; attention "
@@ -727,14 +953,9 @@ if __name__ == "__main__":
                           "where holding all weights simultaneously trips the "
                           "DGX Spark GB10 driver bug (pytorch #174358).")
     ap.add_argument("--engine", action="store_true",
-                     help="Build the Tape in lazy mode: compute_fn dispatch "
-                          "and per-claim side effects defer to a single engine "
-                          "pass right before prove. tape.inputs only holds "
-                          "externally-committed values; intermediates flow "
-                          "through a live dict. Required to scale single-tape "
-                          "Llama-2-7B past ~7 layers — combined with "
-                          "--lazy-weights, never holds the whole layer set in "
-                          "memory at once.")
+                     help="Defer witness computation to the streaming engine. "
+                          "Proofs use the engine automatically. This flag also "
+                          "enables it for forward passes, enrollment and statement previews.")
     ap.add_argument("--forward-only", action="store_true",
                      help="Skip the proof: run only the witness/forward pass "
                           "and emit logits. For accuracy/quantization checks "
@@ -747,10 +968,10 @@ if __name__ == "__main__":
                           "LIGERO_DUMP_PROOF env var.")
     ap.add_argument("--unexplained-info", action="store_true",
                      help="After the LM head, append the unexplained-information "
-                          "bound U(o) over the output tokens. The output tokens are "
-                          "HIDDEN: committed + blinded exactly like the model weights "
-                          "(never public). Requires the LM head + eager mode (no "
-                          "--engine).")
+                          "bound U(o) over committed output tokens. Tied embedding "
+                          "claims publish all input token IDs (including prompt/chat). "
+                          "With --from-hf and no input, use token 0 as input at every "
+                          "position. Requires the LM head.")
     ap.add_argument("--ui-sigma", type=int, default=256,
                      help="Gaussian-kernel width sigma_g (int-logit units at scale S) "
                           "for --unexplained-info. Larger sigma_g -> larger exp table "
@@ -759,18 +980,56 @@ if __name__ == "__main__":
                      help="Entropy-table output scale s_y = 2^bits for "
                           "--unexplained-info (default 16). s_y >> V keeps the "
                           "dropped-tail correction negligible.")
-    ap.add_argument("--ui-output-tokens", type=str, default=None,
+    ap.add_argument("--ui-output-tokens", type=_parse_output_tokens, default=None,
                      help="Comma-separated output token ids (length SEQ) for "
-                          "--unexplained-info, committed + hidden. Default: the "
+                          "--unexplained-info. The scoring claim commits these IDs. Default: the "
                           "greedy argmax of the int logits.")
+    ap.add_argument("--ui-s-c", type=int, default=None,
+                     help="Kernel width s_c = 2*sigma^2 for --unexplained-info "
+                          f"(default {UI_S_C}). Must be a power-of-two multiple of s_b.")
+    ap.add_argument("--ui-s-b", type=int, default=None,
+                     help="Bound scale s_b for --unexplained-info "
+                          f"(default {1 << UI_S_B_BITS}).")
+    ap.add_argument("--ui-gap-max", type=int, default=None,
+                     help="Fix the exp/gap table range in advance. A run whose "
+                          "largest logit gap is gap_max or more is refused before "
+                          "any claim. Default: derived from this run's logits, "
+                          "which makes the statement depend on the data.")
+    ap.add_argument("--statement-out", type=str, default=None,
+                     help="Write the claim bytes a proof would carry to this path, "
+                          "and the block order and statement digest to PATH.json, "
+                          "then stop before proving. Scoring previews require --from-hf.")
+    ap.add_argument("--persistent-head", action="store_true",
+                     help="Put the final norm and LM head (and a tied model's "
+                          "embedding table) in the persistent W block with the "
+                          "layer weights, so an enrolled root pins them. On a "
+                          "tied model with no prompt or token IDs, use token 0 "
+                          "at every position to keep the same W layout.")
+    ap.add_argument("--enroll-out", type=str, default=None,
+                     help="Commit the persistent W block under a fresh secret "
+                          "seed, save the handle to a new path, and stop. The "
+                          "handle is secret; *.wc is gitignored. Requires --from-hf.")
+    ap.add_argument("--weight-commitment", type=str, default=None,
+                     help="Prove against the enrollment handle at this path, then "
+                          "record the opened columns in its ledger and save it. Requires --from-hf. "
+                          "Set --dump-proof or LIGERO_DUMP_PROOF for the proof output.")
+    ap.add_argument("--ui-positions", type=str, default=None,
+                     help="Score only these positions for --unexplained-info: "
+                          "START:STOP (STOP excluded) or a comma-separated list. "
+                          "Default: every position.")
+    ap.add_argument("--ui-lm-sout", type=int, default=None,
+                     help="LM-head output rescale for --unexplained-info "
+                          f"(power of two below {S * S}, default {UI_COARSE_S}).")
+    ap.add_argument("--ui-lm-ow", type=int, default=None,
+                     help="LM-head output width in bits for --unexplained-info "
+                          f"(default {UI_COARSE_OW}).")
     args = ap.parse_args()
+    _flag_kwargs = _bound_and_enrollment_kwargs(args, ap.error)
     if args.seq is not None:
         SEQ = args.seq
     _prompt = args.prompt
     if args.prompt_file:
         _prompt = open(args.prompt_file).read()
-    _ui_tokens = ([int(v) for v in args.ui_output_tokens.split(",")]
-                  if args.ui_output_tokens else None)
     _token_ids = None
     if args.tokens_file:
         blob = json.load(open(args.tokens_file))
@@ -780,11 +1039,12 @@ if __name__ == "__main__":
     main(from_hf=args.from_hf, layer_idx=args.layer_idx,
          num_layers=args.num_layers, prompt=_prompt,
          chat=args.chat and not args.tokens_file,
-         token_ids=_token_ids,
+         token_ids=_token_ids, public_input_tokens=args.public_input_tokens,
          with_lm_head=not args.no_lm_head, verbose=args.verbose,
          lazy_weights=args.lazy_weights, engine=args.engine,
          save_logits=args.save_logits, time_ops=args.time_ops,
          forward_only=args.forward_only,
          dump_proof=args.dump_proof,
          unexplained_info=args.unexplained_info, ui_sigma=args.ui_sigma,
-         ui_sy_bits=args.ui_sy_bits, ui_output_tokens=_ui_tokens)
+         ui_sy_bits=args.ui_sy_bits, ui_output_tokens=args.ui_output_tokens,
+         **_flag_kwargs)

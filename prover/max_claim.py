@@ -25,9 +25,12 @@ is the same trust the committed weights carry. Nothing reveals which token tok_t
 is -- the surprisal numerator gap_o^2 is computed over a hidden, committed output.
 """
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
+from numbers import Integral
 from typing import List, Tuple
 
+import numpy as np
 import torch
 
 import core
@@ -205,6 +208,27 @@ def to_signed(f):
 _BUILD = [0]
 
 
+def checked_output_tokens(tokens, seq, vocab_size):
+    """Validate the same token IDs that the one-hot select and token commit use."""
+    if isinstance(tokens, (torch.Tensor, np.ndarray)):
+        tokens = tokens.tolist()
+    if not isinstance(tokens, Sequence) or isinstance(tokens, (str, bytes, bytearray)):
+        raise ValueError("output tokens must be a sequence of integer IDs")
+    if seq < 1 or len(tokens) != seq:
+        raise ValueError(f"output tokens must contain exactly {seq} entries for a non-empty sequence")
+    ids = []
+    for token in tokens:
+        if isinstance(token, torch.Tensor) and token.ndim == 0:
+            token = token.item()
+        if not isinstance(token, Integral) or isinstance(token, bool):
+            raise ValueError("output tokens must be integer IDs")
+        token = int(token)
+        if not 0 <= token < vocab_size:
+            raise ValueError(f"output token ID outside vocabulary [0, {vocab_size})")
+        ids.append(token)
+    return ids
+
+
 def max_gap(tape, logits, tokens, *, T, V, gap_max, force_argmax=None, O_ext=None):
     """Build the MaxClaim on committed `logits` (T,V) and committed output `tokens`
     (length T, blinded like the weights). Returns (gap, gap_o, neg_gap, vstar)
@@ -221,6 +245,7 @@ def max_gap(tape, logits, tokens, *, T, V, gap_max, force_argmax=None, O_ext=Non
     hidden INPUT indicator rows (shifted by one position), and one committed
     token stream drives both the forward pass and the surprisal."""
     from tape import WitnessTensor
+    tokens = checked_output_tokens(tokens, T, V)
     _BUILD[0] += 1
     pfx = f"mx{_BUILD[0]}_"
     table = tape.register_table(f"{pfx}gap", T_data=list(range(gap_max)))
