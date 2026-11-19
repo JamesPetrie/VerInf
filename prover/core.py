@@ -984,6 +984,8 @@ class WeightCommitment:
 
         # mkstemp creates a fresh owner-only inode on every save, including
         # ledger updates. Keep it on the same filesystem for atomic publication.
+        if overwrite:
+            path = os.path.realpath(path)
         directory = os.path.dirname(os.path.abspath(path))
         fd, part = tempfile.mkstemp(dir=directory, suffix=f".{os.path.basename(path)}.part")
         try:

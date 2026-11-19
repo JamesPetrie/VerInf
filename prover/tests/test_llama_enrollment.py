@@ -354,6 +354,20 @@ def test_hard_linked_enrollment_refused_at_load_and_update(tmp_path):
     assert core.WeightCommitment.load(path).opened_columns == [0]
 
 
+def test_handle_save_through_symlink_updates_the_target(tmp_path):
+    path = tmp_path / "model.wc"
+    _handle().save(path)
+    alias = tmp_path / "current.wc"
+    alias.symlink_to(path.name)
+
+    wc = core.WeightCommitment.load(alias)
+    wc.record_openings([0])
+    wc.save(alias)
+
+    assert alias.is_symlink() and alias.samefile(path)
+    assert core.WeightCommitment.load(path).opened_columns == [0]
+
+
 def test_proof_through_symlink_updates_the_locked_target(tmp_path, monkeypatch):
     path = tmp_path / "model.wc"
     _handle().save(path)
