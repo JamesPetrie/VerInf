@@ -15,7 +15,7 @@ use serde_json::value::RawValue;
 use ligero_verifier::claim::parse_claim_set_value;
 use ligero_verifier::fs;
 use ligero_verifier::layout;
-use ligero_verifier::verify::{Round3, Round4, verify_bound, verify_bound_pinned};
+use ligero_verifier::verify::{Round3, Round4, verify_bound_pinned};
 use ligero_verifier::protocol;
 
 /// A field vector on the proof wire.  Legacy proofs use a JSON array; the
@@ -528,6 +528,10 @@ fn main() {
     // legacy ["p1","p2"]). Each block's (root, opened, paths) join in that
     // order to form the joint column the compiled row_starts index into.
     let block_order = p.blocks.take().unwrap_or_else(|| vec!["p1".into(), "p2".into()]);
+    let p2 = match layout::check_block_order(&block_order) {
+        Ok(index) => index,
+        Err(e) => return refuse(&[(format!("blocks: {e}"), false)]),
+    };
     let mut roots = Vec::new();
     let mut opened = Vec::new();
     let mut paths = Vec::new();
@@ -541,11 +545,14 @@ fn main() {
             "w"  => (p.root_w.take(), p.opened_w.take(), p.paths_w.take()),
             "wnew" => (p.root_wnew.take(), p.opened_wnew.take(), p.paths_wnew.take()),
             "blind" => (p.root_blind.take(), p.opened_blind.take(), p.paths_blind.take()),
-            other => panic!("unknown proof block '{other}'"),
+            _ => unreachable!("validated block order"),
         };
-        roots.push(hex32(&root.expect("missing root for block")));
-        opened.push(conv_open(ow.expect("missing opened for block")));
-        paths.push(conv_paths(pw.expect("missing paths for block")));
+        let (Some(rt), Some(cols), Some(proofs)) = (root.and_then(|rt| hex32_try(&rt)), ow, pw) else {
+            return refuse(&[(format!("blocks: missing or invalid commitment data for {b}"), false)]);
+        };
+        roots.push(rt);
+        opened.push(conv_open(cols));
+        paths.push(conv_paths(proofs));
     }
     // The block layout is part of the statement: the digest covers it, so a
     // proof cannot relabel or reorder its own blocks.
@@ -565,60 +572,17 @@ fn main() {
     // compared for agreement and otherwise unused, so a prover that wrote
     // itself convenient columns fails the s_col check below.
     let mut policy: Vec<(String, bool)> = Vec::new();
-    let mut s_bind_out: Option<Vec<u8>> = None;
-    let (s_op, s_comb, s_col) = match &top.statement_digest {
-        Some(stmt_hex) => {
-            let stmt_claimed = hex32(stmt_hex);
-            policy.push(("statement_digest = H(claim bytes, block order)".into(),
-                         stmt_claimed == stmt_recomputed));
-            // FAIL-CLOSED: the trusted statement digest is not optional. With
-            // no external statement the prover picks what it proves, and the
-            // verifier is reduced to checking that a proof is internally
-            // consistent with itself.
-            match policy_stmt {
-                Some(exp) => policy.push((
-                    "statement_digest = trusted policy digest".into(),
-                    exp == stmt_recomputed)),
-                None => policy.push((
-                    "trusted statement digest supplied as policy".into(), false)),
-            }
-            // Row-block order is blind|W|Wnew|p1|p2[|p3]: everything up to p2
-            // is R1, p2 is R2, and the optional p3 is R3.
-            let has_p3 = block_order.last().map(|b| b == "p3").unwrap_or(false);
-            let n2 = block_order.len() - 1 - has_p3 as usize;   // index of p2
-            assert!(block_order[n2] == "p2", "phase-2 block is misplaced");
-            let s_op = fs::s_op(&stmt_recomputed, &block_order[..n2], &roots[..n2]);
-            let s_bind = fs::s_bind(&s_op, &roots[n2]);
-            s_bind_out = Some(s_bind.to_vec());
-            let root_p3 = if has_p3 { roots[n2 + 1] } else { fs::EMPTY_COMMIT_ROOT };
-            let s_comb = fs::s_comb(&s_bind, &root_p3);
-            let s_col = fs::s_col(&s_comb, &r3.q_irs, &r3.q_lin, &r3.p_0);
-            let bind_ok = top.seeds.s_bind.as_ref()
-                .map(|h| hexbytes(h) == s_bind).unwrap_or(false);
-            policy.push(("seeds in file = recomputed transcript".into(),
-                         hexbytes(&top.seeds.s_op) == s_op
-                             && bind_ok
-                             && hexbytes(&top.seeds.s_comb) == s_comb
-                             && hexbytes(&top.seeds.s_col) == s_col));
-            (s_op.to_vec(), s_comb.to_vec(), s_col.to_vec())
+    if let Some(stmt_hex) = &top.statement_digest {
+        policy.push(("statement_digest = H(claim bytes, block order)".into(),
+                     hex32(stmt_hex) == stmt_recomputed));
+        match policy_stmt {
+            Some(exp) => policy.push(("statement_digest = trusted policy digest".into(),
+                                      exp == stmt_recomputed)),
+            None => policy.push(("trusted statement digest supplied as policy".into(), false)),
         }
-        // Legacy corpus (the non-streaming test prover): coins were expanded
-        // from one base seed, so there is no transcript to recompute.
-        None => {
-            if policy_stmt.is_some() {
-                policy.push(("statement digest required but proof has none".into(), false));
-            }
-            // The bridge's late coins (alpha, eta) derive from s_bind; a
-            // file-supplied s_bind would let the prover know the 40 points
-            // before committing, and the 1024 free mask coefficients then
-            // solve the 40 constraints exactly. Legacy-seed proofs carry no
-            // recomputed transcript, so they carry no s_bind for the bridge
-            // and a wc section on this path is refused below.
-            s_bind_out = None;
-            (hexbytes(&top.seeds.s_op), hexbytes(&top.seeds.s_comb),
-             hexbytes(&top.seeds.s_col))
-        }
-    };
+    } else if policy_stmt.is_some() {
+        policy.push(("statement digest required but proof has none".into(), false));
+    }
     // A proof over an enrolled model must be checked against the enrolled
     // root; without it the prover chooses its own weights.
     let w_idx = block_order.iter().position(|b| b == "w");
@@ -666,6 +630,28 @@ fn main() {
     let claims_value: Value = serde_json::from_str(top.claims.get())
         .expect("parse claims sub-document");
     let mut cs = parse_claim_set_value(claims_value);
+
+    let (s_op, s_bind_out, s_comb, s_col) = if top.statement_digest.is_some() {
+        // fs::s_col hashes the framed vectors. The fixed wire widths give a
+        // lower-degree polynomial exactly one encoding, including its padding.
+        if let Err(e) = layout::check_transcript_polys(r3.q_irs.len(), r3.q_lin.len(), r3.p_0.len(), &cs.cfg) {
+            policy.push((e, false));
+            return refuse(&policy);
+        }
+        let s_op = fs::s_op(&stmt_recomputed, &block_order[..p2], &roots[..p2]);
+        let s_bind = fs::s_bind(&s_op, &roots[p2]);
+        let root_p3 = roots.get(p2 + 1).unwrap_or(&fs::EMPTY_COMMIT_ROOT);
+        let s_comb = fs::s_comb(&s_bind, root_p3);
+        let s_col = fs::s_col(&s_comb, &r3.q_irs, &r3.q_lin, &r3.p_0);
+        let bind_ok = top.seeds.s_bind.as_ref().is_some_and(|h| hexbytes(h) == s_bind);
+        policy.push(("seeds in file = recomputed transcript".into(),
+                     hexbytes(&top.seeds.s_op) == s_op && bind_ok
+                         && hexbytes(&top.seeds.s_comb) == s_comb && hexbytes(&top.seeds.s_col) == s_col));
+        (s_op.to_vec(), Some(s_bind.to_vec()), s_comb.to_vec(), s_col.to_vec())
+    } else {
+        // Legacy corpus seeds have no transcript-bound late coin for the bridge.
+        (hexbytes(&top.seeds.s_op), None, hexbytes(&top.seeds.s_comb), hexbytes(&top.seeds.s_col))
+    };
 
     // ---- WC-LCRL-STC bridge (spec 0.4/0.5) -------------------------------
     // Verified BEFORE compile: on ACCEPT the authenticated P_trace becomes

@@ -20,7 +20,7 @@
 
 use std::collections::HashMap;
 
-use crate::claim::{ClaimSet, VarRole};
+use crate::claim::{Claim, ClaimSet, VarRole};
 use crate::field::P;
 use crate::protocol::{Config, NUM_BLINDING_ROWS};
 
@@ -36,13 +36,23 @@ pub fn test_poly_limits(cfg: &Config) -> (usize, usize, usize) {
 /// Rule 1. A polynomial of degree below 2K can agree with a different one on
 /// fewer than 2K of the N columns, so the limits only bite when 2K < N.
 pub fn check_test_polys(q_irs: usize, q_lin: usize, p_0: usize, cfg: &Config) -> Result<(), String> {
-    let (irs, lin, quad) = test_poly_limits(cfg);
-    if 2 * (cfg.k_deg as usize) >= cfg.n_lig as usize {
-        return Err(format!("N = {} leaves no room above 2K = {}", cfg.n_lig, 2 * cfg.k_deg));
+    if cfg.k_deg >= cfg.n_lig.div_ceil(2) {
+        return Err(format!("N = {} must exceed twice K = {}", cfg.n_lig, cfg.k_deg));
     }
+    let (irs, lin, quad) = test_poly_limits(cfg);
     if q_irs > irs { return Err(format!("q_irs has {q_irs} coefficients, the limit is {irs}")); }
     if q_lin > lin { return Err(format!("q_lin has {q_lin} coefficients, the limit is {lin}")); }
     if p_0 > quad { return Err(format!("p_0 has {p_0} coefficients, the limit is {quad}")); }
+    Ok(())
+}
+
+/// The Fiat-Shamir prover hashes a fixed-width coefficient vector for each
+/// test polynomial. Shorter encodings of a zero high coefficient change s_col.
+pub fn check_transcript_polys(irs: usize, lin: usize, quad: usize, cfg: &Config) -> Result<(), String> {
+    check_test_polys(irs, lin, quad, cfg)?;
+    if (irs, lin, quad) != test_poly_limits(cfg) {
+        return Err("Fiat-Shamir coefficient counts must be K, 2K, 2K".into());
+    }
     Ok(())
 }
 
@@ -118,15 +128,64 @@ fn latest_round(op: &str, role: &VarRole) -> Round {
     if auxiliaries.contains(&field) { Round::R3 } else { Round::R1 }
 }
 
+/// Linear families walk a variable's declared rows. Quadratic families instead
+/// walk the length supplied by their handler (including the rescale gadget).
+/// Check those slot counts before trusting the end row computed from a Var.
+fn check_operand_span(cl: &Claim, field: &str, available: usize) -> Result<(), String> {
+    let dims: &[&str] = match (cl.op.as_str(), field) {
+        ("RangeWordClaim", "x" | "z") | ("PairedTlookupClaim", "u" | "z") |
+        ("HadamardClaim", "a" | "b" | "c" | "c_full" | "c_low" | "c_shifted" | "z_c_low" | "z_c_shifted") |
+        ("RescaleClaim", "x_low" | "x_shifted" | "z_low" | "z_shifted") => &["length"],
+        ("SiluClaim", "sign" | "x" | "C" | "inv_x" | "g" | "inv_g" | "is_high" | "y" |
+            "mux_a" | "mux_b" | "output_sat" | "a_0" | "a_1" | "a_2" | "a_3" | "a_4" |
+            "z_a0" | "z_a1" | "z_a2" | "z_a3" | "z_a4" | "pt_u" | "pt_z" |
+            "x_low" | "x_shifted" | "z_x_low" | "z_x_shifted") => &["length"],
+        ("MatmulClaim", "u" | "y" | "p") => &["k"],
+        ("MatmulClaim", "C_low" | "C_shifted" | "z_C_low" | "z_C_shifted") => &["m", "heads", "n"],
+        ("RoutedProjectedMatmulClaim", "X" | "Qm" | "Hd") => &["T", "K"],
+        ("RoutedProjectedMatmulClaim", "f_u" | "f_y" | "f_p") => &["E"],
+        ("RoPEClaim", "x_rot_low" | "x_rot_shifted" | "z_x_rot_low" | "z_x_rot_shifted") =>
+            &["SEQ", "heads", "d_h"],
+        ("RmsNormClaim", "x" | "X_sq" | "x_low" | "x_shifted" | "z_x_low" | "z_x_shifted" |
+            "output_low" | "output_shifted" | "z_output_low" | "z_output_shifted") => &["B", "d"],
+        ("RmsNormClaim", "y" | "u" | "p" | "y_m1" | "q1" | "q2" | "S_limbs" | "lo_H" | "hi_H" |
+            "s_lo_chunks" | "s_hi_chunks" | "ym1_chunks" | "lo_gl" | "hi_gl" |
+            "lo_g0h_chunks" | "lo_g1h_chunks" | "lo_G2_chunks" | "hi_g0h_chunks" |
+            "hi_g1h_chunks" | "hi_G2_chunks" | "z_lo_chunks" | "z_hi_chunks" | "z_ym1_chunks" |
+            "z_S_limbs" | "z_lo_gl" | "z_hi_gl" | "z_lo_g0h" | "z_lo_g1h" | "z_lo_G2" |
+            "z_hi_g0h" | "z_hi_g1h" | "z_hi_G2") => &["B"],
+        ("SoftmaxClaim", "c2_shifted" | "z_c2" | "r_lo" | "z_r_lo" | "r_hi" | "z_r_hi") => &["B"],
+        ("SoftmaxClaim", "pt_u_A" | "pt_z_A" | "pt_u_B" | "pt_z_B" | "z_high" |
+            "inv_z_high" | "is_high" | "y_A_raw" | "y_B_raw" | "mux_y_A" | "mux_y_B" |
+            "z_z_high" | "x_low" | "x_shifted" | "z_x_low" | "z_x_shifted") => &["B", "M"],
+        ("MaxClaim", "A" | "l" | "Al" | "O" | "gap" | "Ogap" | "z_gap") => &["T", "V"],
+        ("RoutingClaim", "m" | "rt" | "mrt") | ("TopkRoutingClaim", "m" | "d" | "md") |
+        ("TopkSlotsClaim", "M" | "s" | "MS") |
+        ("FreivaldsCombineClaim", "m_em" | "s_em" | "ms_em") => &["T", "E"],
+        ("GateBracketClaim", "w" | "Zb" | "wZ") => &["T", "k"],
+        ("MaskedCombineClaim", "m_rep" | "xs" | "prods") => &["T", "F"],
+        ("InfoFinalizeClaim", "dw" | "z_dw" | "rem" | "z_rem" | "zw" | "z_zw") => &["T"],
+        _ => return Ok(()),
+    };
+    let mut needed = 1usize;
+    for &dim in dims {
+        let size = match cl.op.as_str() {
+            "RmsNormClaim" | "SoftmaxClaim" | "RoPEClaim" => cl.config_dimension(dim),
+            _ => cl.opt_scalar(dim).and_then(|v| usize::try_from(v).ok()),
+        }.ok_or_else(|| format!("missing or invalid dimension {dim} for {field}"))?;
+        needed = needed.checked_mul(size).ok_or_else(|| format!("span overflows for {field}"))?;
+    }
+    if needed > available {
+        return Err(format!("{field} needs {needed} slots but declares {available}"));
+    }
+    Ok(())
+}
+
 /// Rule 3. The prover's order is blind, w, wnew, p1, p2, p3; a statement with no
 /// `blind` holds the blinding rows in p1 (the legacy corpus). The blinding block
 /// fixes where `w` starts, the trusted root fixes how long `w` is, and `wnew` must
 /// match it. Returns where p2 is.
-fn check_blocks(block_order: &[String], rows: &[usize]) -> Result<usize, String> {
-    if rows.len() != block_order.len() {
-        return Err(format!("the proof opens {} blocks and the statement names {}",
-                           rows.len(), block_order.len()));
-    }
+pub fn check_block_order(block_order: &[String]) -> Result<usize, String> {
     let names: Vec<&str> = block_order.iter().map(String::as_str).collect();
     let weights = names.iter().position(|b| *b == "p1").unwrap_or(names.len());
     let known = matches!(names[..weights], [] | ["blind"] | ["blind", "w"] | ["blind", "w", "wnew"])
@@ -134,13 +193,22 @@ fn check_blocks(block_order: &[String], rows: &[usize]) -> Result<usize, String>
     if !known {
         return Err(format!("the block order {} is not the protocol's", names.join(",")));
     }
-    if names[0] == "blind" && rows[0] != NUM_BLINDING_ROWS {
+    Ok(weights + 1)
+}
+
+fn check_blocks(block_order: &[String], rows: &[usize]) -> Result<usize, String> {
+    if rows.len() != block_order.len() {
+        return Err(format!("the proof opens {} blocks and the statement names {}",
+                           rows.len(), block_order.len()));
+    }
+    let p2 = check_block_order(block_order)?;
+    if block_order[0] == "blind" && rows[0] != NUM_BLINDING_ROWS {
         return Err(format!("the blind block holds {} rows, not {NUM_BLINDING_ROWS}", rows[0]));
     }
-    if weights == 3 && rows[1] != rows[2] {
+    if block_order.iter().any(|b| b == "wnew") && rows[1] != rows[2] {
         return Err(format!("w holds {} rows and wnew {}", rows[1], rows[2]));
     }
-    Ok(weights + 1)
+    Ok(p2)
 }
 
 /// Rules 2 and 3, for a statement already trusted. `block_order` is the
@@ -152,6 +220,7 @@ pub fn check_rows(cs: &ClaimSet, block_order: &[String], rows: &[usize]) -> Resu
     let total: usize = rows.iter().sum();
 
     let ell = cs.cfg.ell as usize;
+    if ell == 0 { return Err("ELL must be positive".into()); }
     let mut top = NUM_BLINDING_ROWS;
     for (ci, cl) in cs.claims.iter().enumerate() {
         for (role, v) in cl.named_vars() {
@@ -172,7 +241,11 @@ pub fn check_rows(cs: &ClaimSet, block_order: &[String], rows: &[usize]) -> Resu
                 }
                 continue;
             }
-            let end = v.row_start + v.length.div_ceil(ell);
+            if let VarRole::Field(field) = role {
+                check_operand_span(cl, field, v.length).map_err(|e| format!("claim {ci} ({}): {e}", cl.op))?;
+            }
+            let end = v.row_start.checked_add(v.length.div_ceil(ell))
+                .ok_or_else(|| format!("claim {ci} ({}): {name} end row overflows", cl.op))?;
             top = top.max(end);
             let (limit, round) = match latest_round(&cl.op, &role) {
                 Round::R1 => (r1_end, 1),

@@ -141,6 +141,11 @@ impl Claim {
     pub fn cfg_int(&self, field: &str, key: &str) -> u64 {
         as_u64(&self.fields[field]["config"][key])
     }
+    pub(crate) fn config_dimension(&self, key: &str) -> Option<usize> {
+        let value = self.fields.get("config")?.get("config")?.get(key)?;
+        usize::try_from(value.as_u64()?).ok()
+    }
+
     /// Float config field with a default for proofs predating its
     /// serialization (e.g. RoPEConfig.base, absent in older dumps).
     pub fn cfg_f64_or(&self, field: &str, key: &str, default: f64) -> f64 {

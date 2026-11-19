@@ -5,6 +5,8 @@
 use ligero_verifier::claim::parse_claim_set;
 use ligero_verifier::layout::check_rows;
 use serde_json::json;
+use std::collections::{HashMap, HashSet};
+use syn::visit::{self, Visit};
 
 /// The latest round this field passes in: a statement with the field at row 3
 /// (round 1), 4 (round 2) or 5 (round 3).
@@ -12,10 +14,18 @@ fn latest(op: &str, field: &str) -> u8 {
     let order: Vec<String> = ["blind", "p1", "p2", "p3"].iter().map(|s| s.to_string()).collect();
     let mut best = 0;
     for (row, round) in [(3u64, 1u8), (4, 2), (5, 3)] {
+        // Unit dimensions make each handler's operand span fit in one slot.
+        let mut fields = json!({
+            "length": {"scalar": 1}, "k": {"scalar": 1}, "T": {"scalar": 1},
+            "K": {"scalar": 1}, "E": {"scalar": 1}, "V": {"scalar": 1}, "F": {"scalar": 1},
+            "heads": {"scalar": 1}, "m": {"scalar": 1}, "n": {"scalar": 1},
+            "config": {"config": {"SEQ": 1, "heads": 1, "d_h": 1, "B": 1, "M": 1, "d": 1}}
+        });
+        fields[field] = json!({"var": [row, 8]});
         let cs = parse_claim_set(&json!({
             "cfg": {"ELL": 8, "K_DEG": 8, "N_LIG": 32, "T_QUERIES": 4},
-            "claims": [{"op": op, "fields": {field: {"var": [row, 8]}}},
-                       {"op": "RoutedProjectedMatmulClaim", "fields": {"f_p": {"var": [5, 8]}}}],
+            "claims": [{"op": op, "fields": fields},
+                       {"op": "RoutedProjectedMatmulClaim", "fields": {"E": {"scalar": 1}, "f_p": {"var": [5, 8]}}}],
             "table_order": []}).to_string());
         if check_rows(&cs, &order, &[3, 1, 1, 1]).is_ok() { best = round; }
     }
@@ -95,20 +105,69 @@ fn auxiliaries_may_come_after_s_op() {
     }
 }
 
-/// Every inverse the compile reads is either an auxiliary above or one of the
-/// two z-named fields the prover commits in round 1. A new field fails here.
-#[test]
-fn every_z_field_the_compile_reads_is_in_the_table() {
-    let round_1 = ["z_high", "z_o"];
-    let source = include_str!("../src/handlers.rs");
-    let mut found = 0;
-    for accessor in ["var(\"z_", "var_list(\"z_"] {
-        for piece in source.split(accessor).skip(1) {
-            let name = format!("z_{}", piece.split('"').next().unwrap());
-            found += 1;
-            let listed = AUXILIARIES.iter().any(|(_, fields)| fields.contains(&name.as_str()));
-            assert!(listed || round_1.contains(&name.as_str()), "{name} is in no list");
+/// Walk each dispatch arm and the helper functions it calls. Looking at string
+/// literals also covers the SiLU inverse names passed through a local variable.
+struct HandlerFields<'a> {
+    functions: &'a HashMap<String, syn::ItemFn>,
+    visited: HashSet<String>,
+    fields: HashSet<String>,
+}
+
+impl<'ast> Visit<'ast> for HandlerFields<'_> {
+    fn visit_lit_str(&mut self, lit: &'ast syn::LitStr) {
+        let name = lit.value();
+        if name.starts_with("z_") { self.fields.insert(name); }
+    }
+
+    fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+        // Scalar parameter names such as GateBracketClaim.z_bits are not rows.
+        if call.method != "scalar" && call.method != "opt_scalar" && call.method != "cfg_int" {
+            visit::visit_expr_method_call(self, call);
         }
     }
-    assert!(found > 30, "the scan found only {found} fields");
+
+    fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+        if let syn::Expr::Path(path) = call.func.as_ref() {
+            if let Some(id) = path.path.get_ident() {
+                let name = id.to_string();
+                if let Some(helper) = self.functions.get(&name) {
+                    if self.visited.insert(name) { self.visit_block(&helper.block); }
+                }
+            }
+        }
+        visit::visit_expr_call(self, call);
+    }
+}
+
+#[test]
+fn every_z_field_the_compile_reads_is_in_the_table() {
+    let file = syn::parse_file(include_str!("../src/handlers.rs")).unwrap();
+    let functions: HashMap<_, _> = file.items.into_iter().filter_map(|item| match item {
+        syn::Item::Fn(f) => Some((f.sig.ident.to_string(), f)),
+        _ => None,
+    }).collect();
+    let dispatcher = &functions["compile_op"];
+    let Some(syn::Stmt::Expr(syn::Expr::Match(dispatch), _)) = dispatcher.block.stmts.last() else {
+        panic!("expected the claim dispatch match");
+    };
+    let mut found = HashSet::new();
+    for arm in &dispatch.arms {
+        let op = match &arm.pat {
+            syn::Pat::Lit(syn::ExprLit { lit: syn::Lit::Str(op), .. }) => op.value(),
+            syn::Pat::Ident(_) | syn::Pat::Wild(_) => continue, // unsupported claim
+            _ => panic!("unrecognized claim dispatch pattern"),
+        };
+        let mut reads = HandlerFields { functions: &functions, visited: HashSet::new(), fields: HashSet::new() };
+        reads.visit_expr(&arm.body);
+        for field in reads.fields {
+            let listed = AUXILIARIES.iter().chain(OPERANDS).any(|(claim, fields)|
+                *claim == op && fields.contains(&field.as_str()));
+            assert!(listed, "{op}.{field} is missing from the round table");
+            found.insert((op.clone(), field));
+        }
+    }
+    // Exercise both indirect field names and a name shared by two handlers.
+    for (op, name) in [("SiluClaim", "z_a1"), ("SiluClaim", "z_x_low"), ("RmsNormClaim", "z_x_low")] {
+        assert!(found.contains(&(op.into(), name.into())), "scan missed {op}.{name}");
+    }
 }
